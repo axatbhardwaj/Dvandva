@@ -1,0 +1,15 @@
+{
+  "schema": "dvandva.baton.v1",
+  "updated_at": "2026-05-12T00:00:00Z",
+  "mode": "feature-pr",
+  "status": "claude_working",
+  "assignee": "claude",
+  "branch": "",
+  "checkpoint": 0,
+  "summary": "",
+  "changed_paths": [],
+  "verification": [],
+  "blockers": [],
+  "next_action": "Claude: implement the requested change, verify it, then assign review to Codex."
+}
+
