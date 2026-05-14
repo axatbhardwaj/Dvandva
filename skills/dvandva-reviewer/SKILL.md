@@ -135,6 +135,19 @@ You MUST hand back (not fix) for:
 
 **If approve with no changes:**
 
+First check the incoming baton's `narrow_fixups` array. If it is **non-empty**, that means an earlier Mode B pass applied fixups during a "fixups + handback" branch and the mutual review for those fixups is still owed — Claude only addressed the handback findings, not the fixups. In that case, do NOT advance the phase; route to mutual review instead:
+
+- `phase: <current N>` (unchanged)
+- `status: "review_of_review"`
+- `assignee: "claude"`
+- `review_target: "codex_fixups"`
+- `narrow_fixups: [<existing array, carried forward unchanged>]`
+- `summary: "Phase <N> handback addressed by Claude. Mutual review of carried-forward narrow fixups now owed."`
+- `next_action: "Claude: review Codex's narrow fixups for phase <N> (carried forward from the earlier review pass). Approve to advance, or counter."`
+- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Surface BATON_STATE. Exit.
+
+Otherwise (incoming `narrow_fixups` is empty — normal happy-path approval):
+
 - `phase: <N+1>` (advance) or `phase: <current N>, status: "done"` if N was final
 - `status: "implementing"` on advance, or `"done"` on terminal
 - `assignee: "claude"` on advance, or `"human"` on terminal (so the human knows to write the PR summary)
