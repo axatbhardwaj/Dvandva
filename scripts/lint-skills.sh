@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Lint a SKILL.md file: validate frontmatter, body length, and inlined dvandva.baton.v1 schema.
-# Usage: bash scripts/lint-skills.sh <path/to/SKILL.md>
+# Usage: scripts/lint-skills.sh <path/to/SKILL.md>
 # Exit codes: 0 = ok; 1 = lint failure; 2 = usage error.
-set -u
+# set -e is intentionally omitted; this script uses explicit 'if !' guards
+# and emits structured FAIL messages on each failure path.
+set -uo pipefail
 
 if [[ $# -ne 1 ]]; then
   echo "Usage: bash $0 <path/to/SKILL.md>" >&2
@@ -12,7 +14,14 @@ fi
 FILE="$1"
 
 if [[ ! -f "$FILE" ]]; then
-  echo "ERROR: file not found: $FILE" >&2
+  echo "FAIL: file not found: $FILE" >&2
+  exit 1
+fi
+
+# Reject if frontmatter is not closed (need at least two '---' lines)
+DASH_COUNT=$(grep -c '^---$' "$FILE")
+if [[ $DASH_COUNT -lt 2 ]]; then
+  echo "FAIL: frontmatter block not closed (need two '---' lines) in $FILE" >&2
   exit 1
 fi
 
@@ -49,8 +58,9 @@ if [[ $BODY_LINES -gt 500 ]]; then
 fi
 
 # Inlined schema check: find a fenced JSON block whose first key is "schema"
-# Extract the first JSON block and parse with jq, then check required keys
-JSON_BLOCK=$(awk '/^```json$/{flag=1; next} /^```$/{flag=0} flag' "$FILE" | head -100)
+# Only scan body lines (after the second '---') to ignore any ```json in frontmatter.
+# The awk terminates at the closing fence so no truncation limit is needed.
+JSON_BLOCK=$(awk '/^---$/{c++; next} c>=2 && /^```json$/{flag=1; next} c>=2 && /^```$/{flag=0} flag' "$FILE")
 if [[ -z "$JSON_BLOCK" ]]; then
   echo "FAIL: no fenced JSON block found in body of $FILE" >&2
   exit 1
