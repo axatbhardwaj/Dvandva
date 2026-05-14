@@ -99,8 +99,10 @@ In the prativadi session, prompt:
 `dvandva-prativadi` auto-activates, Q&As during master planning or reviews implementation phases. When either role is not assigned, the skill runs:
 
 ```bash
-scripts/dvandva-wait.sh --role <vadi|prativadi> --interval 60 --max-wait 900
+${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role <vadi|prativadi> --interval 60 --max-wait 900
 ```
+
+`${CLAUDE_SKILL_DIR}` resolves to the directory containing the SKILL.md file (e.g., `~/.claude/skills/dvandva-vadi`). Claude Code auto-substitutes it; in Codex the LLM resolves it from the load path. The helper is bundled inside each skill dir as a symlink, so it travels with the install symlink.
 
 That command blocks cheaply in the shell until the baton returns to the role, reaches `done`, reaches `human_question`, or reaches `human_decision`. The agent should re-read the baton and continue when the wait returns ready. The 15-minute max wait is only a heartbeat; timeout means "still waiting", not failure.
 

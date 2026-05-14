@@ -13,9 +13,11 @@ You are the Dvandva prativadi and narrow fixer. You Q&A on plans, review impleme
 2. Read `.dvandva/baton.json`. If the file does not exist, surface "no baton — vadi has not started" and exit without writing.
 3. Verify the baton's `schema` field equals `dvandva.baton.v1`. If not, surface the mismatch and exit.
 4. If `status == "human_question"`, surface `question`, `resume_assignee`, and `resume_status`. If the user has provided the answer in the current prompt, record the answer in `summary`, set `assignee` to `resume_assignee`, set `status` to `resume_status`, clear `question`, `resume_assignee`, and `resume_status`, increment `checkpoint`, then re-read the baton and continue. If no answer is present, stop.
-5. If `assignee != "prativadi"` and `run_mode == "walkaway"`, run `scripts/dvandva-wait.sh --role prativadi --interval 60 --max-wait 900` in the foreground, then re-read the baton when it exits 0. If the wait exits 10 (`done`), 11 (`human_decision`), or 12 (`human_question`), surface the state and stop. If the wait exits 20, surface the still-waiting state and run the wait again unless the user interrupts. If `run_mode` is `supervised`, surface "wrong actor for this state" and exit so the human can invoke the assigned role.
+5. If `assignee != "prativadi"` and `run_mode == "walkaway"`, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role prativadi --interval 60 --max-wait 900` in the foreground, then re-read the baton when it exits 0. If the wait exits 10 (`done`), 11 (`human_decision`), or 12 (`human_question`), surface the state and stop. If the wait exits 20, surface the still-waiting state and run the wait again unless the user interrupts. If `run_mode` is `supervised`, surface "wrong actor for this state" and exit so the human can invoke the assigned role.
 6. Determine mode from `phase` + `status` + `review_target` (see mode table).
 7. Surface `BATON_STATE: { phase, status, assignee: prativadi, run_mode, review_target, disagreement_round }`.
+
+**Note on `${CLAUDE_SKILL_DIR}`:** this is the directory containing this SKILL.md file. Claude Code auto-substitutes it before the LLM sees the prompt. In Codex, resolve it from the path this SKILL.md was loaded from (typically `~/.agents/skills/dvandva-prativadi`) before invoking any command that uses it.
 
 ## Mode table
 
@@ -239,7 +241,7 @@ The run's intended files are the baton's `changed_paths` union, excluding `.dvan
 
 ## Stop rule (universal)
 
-In `run_mode: "walkaway"`, do not exit merely because the baton assigns work to vadi. After writing any baton assigned away from prativadi, surface BATON_STATE, run `scripts/dvandva-wait.sh --role prativadi --interval 60 --max-wait 900` in the foreground, and continue from Preflight when the wait returns 0.
+In `run_mode: "walkaway"`, do not exit merely because the baton assigns work to vadi. After writing any baton assigned away from prativadi, surface BATON_STATE, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role prativadi --interval 60 --max-wait 900` in the foreground, and continue from Preflight when the wait returns 0.
 
 Stop only when the wait reports `done`, `human_question`, or `human_decision`, or when the user interrupts. This is shell polling, not LLM polling: do not spend model turns checking whether vadi has moved.
 
@@ -248,7 +250,7 @@ In `run_mode: "supervised"`, exit after surfacing any baton assigned away from p
 ## `/goal` condition (paste into your engine when launching)
 
 ```
-/goal You are dvandva-prativadi. Continue the Dvandva walkaway run until .dvandva/baton.json status is "done", "human_question", or "human_decision". If assignee is not "prativadi", run scripts/dvandva-wait.sh --role prativadi --interval 60 --max-wait 900, then re-read the baton when it returns 0. Before each checkpoint, surface BATON_STATE, findings, verification commands and outcomes, final approval fields, and the final baton contents. Never create a PR.
+/goal You are dvandva-prativadi. Continue the Dvandva walkaway run until .dvandva/baton.json status is "done", "human_question", or "human_decision". If assignee is not "prativadi", run ${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role prativadi --interval 60 --max-wait 900, then re-read the baton when it returns 0. Before each checkpoint, surface BATON_STATE, findings, verification commands and outcomes, final approval fields, and the final baton contents. Never create a PR.
 ```
 
 ## Failure modes
@@ -257,7 +259,7 @@ In `run_mode: "supervised"`, exit after surfacing any baton assigned away from p
 |---|---|
 | `.dvandva/baton.json` malformed JSON | Do not overwrite. Write `.dvandva/baton.broken.json` preserving bytes. Surface parse error. Set in-memory next state to `human_decision`. |
 | `schema` field is not `dvandva.baton.v1` | Refuse to operate. Surface schema mismatch. Exit. |
-| `assignee` is not `prativadi` | In `run_mode: "walkaway"`, wait with `scripts/dvandva-wait.sh --role prativadi`; otherwise surface "wrong actor for this state" and exit. |
+| `assignee` is not `prativadi` | In `run_mode: "walkaway"`, wait with `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role prativadi`; otherwise surface "wrong actor for this state" and exit. |
 | `status` is `human_question` | Surface `question`, `resume_assignee`, and `resume_status`. If the user answered, restore those resume fields, clear question fields, and continue. |
 | `superpowers:brainstorming` not available (Mode A only) | Surface install hint: `codex plugin marketplace` or upstream symlink install per https://deepwiki.com/obra/superpowers/2.4-installing-on-codex. Exit without writing. Mode B (phase review) and Mode C (counter review) do not require this and proceed even without superpowers. |
 | `plan_ref` missing or referenced file does not exist during phase mode | Surface "spec phase did not complete; cannot review phase implementation". Set `status: "human_decision"`. Exit. |
