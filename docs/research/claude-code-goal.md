@@ -38,12 +38,13 @@ The Claude docs recommend conditions with:
 - Constraints that must hold.
 - Optional turn or time bound.
 
-Dvandva goal conditions should therefore include:
+Dvandva's current walkaway goal conditions should therefore include:
 
 ```text
-Work until .dvandva/baton.json has assignee "codex" or status "done".
-Before stopping, read the baton back into the transcript, list changed files, list verification commands and outcomes, and do not modify files outside the requested scope.
-Stop after 20 turns and set status "human_decision" if blocked.
+Continue until .dvandva/baton.json status is "done", "human_question", or "human_decision".
+If the baton assigns work to the other role, run scripts/dvandva-wait.sh in the foreground and re-read the baton when it returns ready.
+Before each checkpoint, surface BATON_STATE, changed files, verification commands and outcomes, and final approval fields.
+Never create a PR. Stop after the baton turn_cap and set status "human_decision" if blocked.
 ```
 
 ## Why It Replaces Polling
@@ -54,11 +55,10 @@ Claude's docs compare `/goal`, `/loop`, and Stop hooks:
 - `/loop` starts the next turn on a time interval.
 - Stop hooks can be deterministic or model-evaluated and live in settings.
 
-For Dvandva, `/goal` is better than a timer because the target is a state transition, not elapsed time.
+For Dvandva, `/goal` should supervise work and checkpoint surfacing, while `scripts/dvandva-wait.sh` handles cheap waiting when the baton belongs to the other role. Model turns should not be spent polling elapsed time.
 
 ## Open Questions
 
 - Whether Claude Code goal behavior is stable enough to use in a public workflow without marking it experimental.
 - Whether a future file-watch runner should start the other agent automatically after a baton transition.
 - Whether the best reusable implementation is a Claude skill, a shell wrapper, or a tiny local orchestrator.
-

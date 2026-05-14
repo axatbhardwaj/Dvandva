@@ -27,6 +27,7 @@ The shareable templates live in `templates/channel/`.
   "schema": "dvandva.baton.v1",
   "updated_at": "2026-05-13T10:30:00Z",
   "mode": "feature-pr",
+  "run_mode": "walkaway",
   "phase": 1,
   "total_phases": 3,
   "status": "phase_review",
@@ -34,11 +35,22 @@ The shareable templates live in `templates/channel/`.
   "current_engine": "codex",
   "review_target": "implementation",
   "plan_ref": "./superpowers/plans/2026-05-13-example-feature.md",
+  "master_plan_locked": true,
+  "question": null,
+  "resume_assignee": null,
+  "resume_status": null,
   "disagreement_round": 0,
   "disagreement_cap": 3,
   "turn_cap": 20,
   "branch": "feature/example",
   "checkpoint": 4,
+  "allow_commit": true,
+  "allow_push": true,
+  "allow_pr": false,
+  "vadi_final_approval": false,
+  "prativadi_final_approval": false,
+  "final_commit": null,
+  "pushed_ref": null,
   "summary": "Claude implemented phase 1: scaffolding + tests. Awaiting Codex review.",
   "changed_paths": ["src/example.ts", "test/example.test.ts"],
   "verification": [
@@ -62,6 +74,7 @@ The shareable templates live in `templates/channel/`.
 - `spec_drafting` — vadi is writing the plan
 - `spec_review` — prativadi is doing Q&A on the plan
 - `spec_revision` — vadi is responding to prativadi Q&A
+- `human_question` — planning-only user question before `master_plan_locked`
 - `implementing` — vadi is doing the current phase
 - `phase_review` — prativadi is reviewing the current phase
 - `phase_fixing` — vadi is fixing per prativadi findings
@@ -79,6 +92,8 @@ The shareable templates live in `templates/channel/`.
 - `spec_review` → `spec_revision` (Codex Q&A)
 - `spec_review` → `phase: 1, implementing` (Codex accepts plan; only Codex can advance the spec)
 - `spec_revision` → `spec_review` (Claude answered Q&A, hands back)
+- any spec state while `master_plan_locked: false` → `human_question` (human answer needed before master plan lock)
+- `human_question` → `resume_status` with `assignee: resume_assignee` (human answers; skill clears question fields)
 
 **Implementation phase (per phase N):** `(impl)` below is shorthand for `review_target: implementation`.
 
@@ -86,17 +101,17 @@ The shareable templates live in `templates/channel/`.
 - `phase: N, implementing` → `human_decision`
 - `phase_review (impl)` → `phase_fixing` (substantive findings)
 - `phase_review (impl)` → `review_of_review (prativadi_fixups)` (narrow fixups applied)
-- `phase_review (impl)` → `phase: N+1, implementing` (approve no changes) **or** terminal `done` if N is final
+- `phase_review (impl)` → `phase: N+1, implementing` (approve no changes) **or** terminal `done` after dual final approval if N is final
 - `phase_review (impl)` → `human_decision`
 - `phase_fixing` → `phase_review (impl)`
 - `phase_fixing` → `human_decision`
 
 **Mutual review and disagreement loop:**
 
-- `review_of_review (prativadi_fixups)` → `phase: N+1, implementing` (vadi approves) or terminal `done`
+- `review_of_review (prativadi_fixups)` → `phase: N+1, implementing` (vadi approves) or terminal `done` after dual final approval
 - `review_of_review (prativadi_fixups)` → `counter_review (vadi_counter)` (vadi disapproves; `disagreement_round += 1`)
 - `review_of_review (prativadi_fixups)` → `human_decision` (when `disagreement_round >= cap`)
-- `counter_review (vadi_counter)` → `phase: N+1, implementing` (prativadi approves counter) or terminal `done`
+- `counter_review (vadi_counter)` → `phase: N+1, implementing` (prativadi approves counter) or terminal `done` after dual final approval
 - `counter_review (vadi_counter)` → `review_of_review (prativadi_fixups)` (prativadi disapproves counter, writes new fix; `disagreement_round += 1`)
 - `counter_review (vadi_counter)` → `human_decision` (when `disagreement_round >= cap`)
 
@@ -109,13 +124,16 @@ Any other transition is illegal in v1. The writing agent must reject illegal tra
 
 ## Handoff Rule
 
-The active agent must stop after writing a baton that assigns the next action to another actor.
+The active agent must stop doing LLM work after writing a baton that assigns the next action to another actor. In default `run_mode: "walkaway"`, it then blocks in the foreground wait helper instead of exiting the overall run.
 
-This is the core anti-polling rule:
+This is the core anti-token-polling rule:
 
-- The vadi does not wait for the prativadi.
-- The prativadi does not wait for the vadi.
-- The human, a shell notifier, or a future orchestrator starts the next actor.
+- The vadi does not spend model turns asking whether the prativadi moved.
+- The prativadi does not spend model turns asking whether the vadi moved.
+- In walkaway mode, the assigned-away agent runs `scripts/dvandva-wait.sh --role <vadi|prativadi> --interval 60 --max-wait 900`.
+- In supervised mode, the assigned-away agent exits and the human invokes the next role manually.
+- When the helper exits 0, the agent re-reads the baton and resumes.
+- When the helper exits 10, 11, or 12, the agent surfaces `done`, `human_decision`, or `human_question` and stops. For `human_question`, the helper also prints `question`, `resume_assignee`, and `resume_status`.
 
 ## Goal Conditions
 
@@ -126,27 +144,26 @@ The canonical v1 goal conditions are embedded in the two skill bodies (`skills/d
 Vadi goal (paste into your engine):
 
 ```
-/goal You are dvandva-vadi. Work until .dvandva/baton.json has assignee not equal to "vadi" or status is "done" or "human_decision". Before stopping, surface BATON_STATE, list changed files, list verification commands and outcomes, and do not modify files outside the requested scope. Stop after 20 turns and assign human if still blocked.
+/goal You are dvandva-vadi. Continue the Dvandva walkaway run until .dvandva/baton.json status is "done", "human_question", or "human_decision". If assignee is not "vadi", run scripts/dvandva-wait.sh --role vadi --interval 60 --max-wait 900, then re-read the baton when it returns 0. Before each checkpoint, surface BATON_STATE, changed files, verification commands and outcomes, and final approval fields. Never create a PR. Stop after the baton turn_cap and assign human if still blocked.
 ```
 
 Prativadi goal (paste into your engine):
 
 ```
-/goal You are dvandva-prativadi. Review the branch using .dvandva/baton.json as the handoff. Apply only narrow fixups within the allowlist. Stop when the baton has assignee not equal to "prativadi" or status is "done" or "human_decision". Before stopping, surface BATON_STATE, findings, verification commands and outcomes, and the final baton contents.
+/goal You are dvandva-prativadi. Continue the Dvandva walkaway run until .dvandva/baton.json status is "done", "human_question", or "human_decision". If assignee is not "prativadi", run scripts/dvandva-wait.sh --role prativadi --interval 60 --max-wait 900, then re-read the baton when it returns 0. Before each checkpoint, surface BATON_STATE, findings, verification commands and outcomes, final approval fields, and the final baton contents. Never create a PR.
 ```
 
 Both goals require the agent to surface a structured `BATON_STATE: { ... }` line at every checkpoint. The `/goal` evaluator detects exit conditions by reading that line in the transcript.
 
-## Why Not Two Loops At Once
+## Why Not LLM Polling
 
-Two autonomous sessions polling the same channel recreate the PR 353 problem locally. They spend tokens checking whether the other agent has moved.
+Two autonomous sessions using model turns to poll the same channel recreate the PR 353 problem locally. They spend tokens checking whether the other agent has moved.
 
-The better default is serialized autonomy:
+The better default is serialized model work with shell waiting:
 
 1. One agent runs.
 2. It writes a baton.
-3. It exits.
-4. The next actor starts.
+3. It blocks in the wait helper if the run is still active.
+4. The already-running next actor wakes and works.
 
 Parallelism should be explicit and branch-scoped.
-

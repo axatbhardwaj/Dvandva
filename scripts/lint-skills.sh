@@ -72,7 +72,7 @@ if ! echo "$JSON_BLOCK" | jq -e '.schema == "dvandva.baton.v1"' >/dev/null 2>&1;
   exit 1
 fi
 
-REQUIRED_KEYS=(schema updated_at mode phase total_phases status assignee current_engine review_target plan_ref disagreement_round disagreement_cap turn_cap branch checkpoint summary changed_paths verification findings narrow_fixups vadi_counter deferred blockers next_action)
+REQUIRED_KEYS=(schema updated_at mode run_mode phase total_phases status assignee current_engine review_target plan_ref master_plan_locked question resume_assignee resume_status disagreement_round disagreement_cap turn_cap branch checkpoint allow_commit allow_push allow_pr vadi_final_approval prativadi_final_approval final_commit pushed_ref summary changed_paths verification findings narrow_fixups vadi_counter deferred blockers next_action)
 for key in "${REQUIRED_KEYS[@]}"; do
   if ! echo "$JSON_BLOCK" | jq -e "has(\"$key\")" >/dev/null 2>&1; then
     echo "FAIL: inlined JSON block missing required key '$key' in $FILE" >&2

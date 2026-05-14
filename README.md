@@ -6,7 +6,7 @@ vadi (वादी) is Sanskrit for "proposer" and prativadi (प्रतिव
 
 ## Current State
 
-v1 ships as a pair of [agentskills.io](https://agentskills.io)-standard skills (`dvandva-vadi` for Claude Code, `dvandva-prativadi` for Codex) that encode a phased spec-then-implementation flow with mutual review and a disagreement cap.
+v1 ships as a pair of [agentskills.io](https://agentskills.io)-standard skills (`dvandva-vadi` for Claude Code, `dvandva-prativadi` for Codex) plus a small foreground wait helper. The default `run_mode` is `walkaway`: start both sessions once, then let the baton decide which role works next.
 
 The full product spec is in `product.md`. A sanitized case study of the internal PR 353 research run that motivated the design lives at `docs/case-studies/pr-353.md`.
 
@@ -14,11 +14,11 @@ The full product spec is in `product.md`. A sanitized case study of the internal
 
 Dvandva treats agent collaboration as a state machine with three lifecycle segments:
 
-1. **Spec phase** — the vadi drafts a plan using `superpowers:brainstorming` and `superpowers:writing-plans`. The prativadi Q&As. The vadi revises. Loop until the plan converges.
+1. **Master planning** — the vadi drafts a plan using `superpowers:brainstorming` and `superpowers:writing-plans`. The prativadi Q&As. Either role may ask the user questions until the master plan is locked.
 2. **Per-phase implementation loop** — the vadi implements each phase. The prativadi reviews. If the prativadi applies narrow fixups, the vadi reviews them (mutual review). On disagreement, the vadi counter-changes and the prativadi reviews; up to 3 rounds before forced human escalation.
-3. **Phase advancement or completion** — on agreement, advance to phase N+1; on the final phase, transition to `done`.
+3. **Walkaway completion** — after the master plan is locked, the agents keep handing off through `.dvandva/baton.json` until `done`, `human_question`, or `human_decision`. On final agreement, both roles must set final approval before commit/push. PR creation is forbidden.
 
-Both agents run autonomously via `/goal` within each invocation. The human dispatches between invocations.
+The human can watch `.dvandva/baton.json`, the transcript, or the wait-helper output, but involvement is voluntary unless the baton asks a planning question or escalates to `human_decision`.
 
 ## Prerequisites
 
@@ -30,6 +30,7 @@ At least one engine must have superpowers installed. The canonical setup pairs C
 | Codex CLI ≥ 0.130 (optional if using Claude Code for both roles) | `codex --version` |
 | superpowers plugin on the engine(s) you will use | `claude` then `/skills` lists `superpowers:brainstorming`; or `codex` then `/skills` lists it. Install via `codex plugin marketplace` or upstream symlink per https://deepwiki.com/obra/superpowers/2.4-installing-on-codex |
 | Working directory is a git repo on a feature branch | `git rev-parse --abbrev-ref HEAD` returns something other than `main` / `master` |
+| `jq` installed | `jq --version` |
 
 The `dvandva-prativadi` skill refuses to run if `superpowers:brainstorming` is not available in the current session (Mode A only — phase reviews and counter reviews proceed without superpowers).
 
@@ -83,27 +84,42 @@ Consumer repos that intentionally adopt Dvandva check the skills under their own
 
 ## Usage
 
-In a feature-branch worktree, prompt your vadi engine with natural language:
+In a feature-branch worktree, start both agent sessions once.
+
+In the vadi session, prompt natural language:
 
 > "Implement the X feature with Codex review. Use dvandva."
 
-`dvandva-vadi` auto-activates from the description. It scaffolds `.dvandva/baton.json`, drives the spec phase, and writes a handoff. When the baton's `assignee` flips to `prativadi`, start your prativadi engine:
+`dvandva-vadi` auto-activates from the description. It scaffolds `.dvandva/baton.json`, drives master planning, and writes a handoff.
+
+In the prativadi session, prompt:
 
 > "Review the dvandva baton."
 
-`dvandva-prativadi` auto-activates, Q&As during spec or reviews the implementation, writes a handoff, exits. Repeat the cycle until the baton reaches `status: "done"` or `human_decision`.
+`dvandva-prativadi` auto-activates, Q&As during master planning or reviews implementation phases. When either role is not assigned, the skill runs:
+
+```bash
+scripts/dvandva-wait.sh --role <vadi|prativadi> --interval 60 --max-wait 900
+```
+
+That command blocks cheaply in the shell until the baton returns to the role, reaches `done`, reaches `human_question`, or reaches `human_decision`. The agent should re-read the baton and continue when the wait returns ready. The 15-minute max wait is only a heartbeat; timeout means "still waiting", not failure.
 
 Explicit invocation (`/dvandva-vadi`, `$dvandva-vadi`, `/dvandva-prativadi`, `$dvandva-prativadi`) is documented fallback if auto-activation misfires.
 
-**Single-engine workflow:** if you have only Claude Code (or only Codex) installed, both skills run in that one engine. The first invocation kicks off the vadi flow; when the baton flips to `assignee: "prativadi"`, exit the current session and start a new session in the same engine, then invoke `/dvandva-prativadi` (or describe what you want in natural language). Run sequentially until the baton reaches `done` or `human_decision`.
+**Planning questions:** before `master_plan_locked: true`, either role may set `status: "human_question"`. The wait helper prints the question plus `resume_assignee` and `resume_status`. Answer in the agent session; the skill records the answer, restores `assignee`/`status` from those resume fields, clears the question fields, and continues.
+
+**Single-engine workflow:** if you have only Claude Code (or only Codex) installed, run `run_mode: "supervised"`. In supervised mode the assigned-away role exits instead of blocking in the wait helper, so you can invoke the other role in the same session without deadlock. Full walkaway requires two persistent sessions.
+
+**Commit/push rule:** in default walkaway mode, agents may commit and push only after `vadi_final_approval` and `prativadi_final_approval` are both true. The baton defaults to `allow_commit: true`, `allow_push: true`, and `allow_pr: false`. Agents must never open a PR.
 
 ## Linting and Validation
 
-A small Bash+jq linter at `scripts/lint-skills.sh` validates SKILL.md frontmatter and the inlined baton schema:
+Small Bash+jq scripts validate the skill bodies and wait helper:
 
 ```bash
 bash scripts/lint-skills.sh skills/dvandva-vadi/SKILL.md
 bash scripts/lint-skills.sh skills/dvandva-prativadi/SKILL.md
+bash scripts/test-dvandva-wait.sh
 ```
 
 A future v2 will add a deterministic baton schema and transition validator (see `product.md` section 16).
@@ -115,10 +131,10 @@ The files at `templates/prompts/claude-doer-goal.md` and `templates/prompts/code
 ## Non-Goals
 
 - Dvandva is not trying to make agents chat endlessly.
-- It is not trying to replace human approval for risky changes.
+- It is not trying to replace human approval for risky or ambiguous changes; those route to `human_question` during planning or `human_decision` after the plan is locked.
 - It does not assume GitHub PR comments are the main coordination channel.
-- It does not require both agents to run at the same time.
-- v1 does not include a CLI binary, a daemon, or a GitHub integration. Those are tracked as v2 work in `product.md` section 16.
+- It does not create PRs.
+- v1 does not include a daemon, process launcher, schema validator, or GitHub integration. Those are tracked as future work in `product.md` section 16.
 
 ## Reading Order
 

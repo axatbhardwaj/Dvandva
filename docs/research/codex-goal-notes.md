@@ -18,18 +18,18 @@ Treat Codex goals as available on this machine but experimental for a public wor
 
 For public Dvandva docs, the safe phrasing is:
 
-- Codex can be launched as a reviewer/fixer in an autonomous goal-style loop when goals are available.
-- The workflow should still work manually if goal support is missing.
+- Codex can participate as vadi or prativadi in a persistent walkaway session when goals are available.
+- The workflow should still work manually if goal support is missing, but full walkaway requires a session that can keep following the baton.
 - The baton file is the stable protocol; `/goal` is just one runner.
 
 ## Reviewer Goal Pattern
 
-Codex should review until the baton state no longer assigns review work to Codex.
+Codex should review when the baton assigns its current role and block in the wait helper when assigned away.
 
 Recommended condition:
 
 ```text
-/goal Review the current branch using .dvandva/baton.json as the handoff. Apply only narrow fixups. Stop when the baton has assignee "claude", assignee "human", or status "done". Before stopping, surface verification commands and write .dvandva/codex-review.md.
+/goal Continue the Dvandva walkaway run until .dvandva/baton.json status is "done", "human_question", or "human_decision". If assignee is not your current role, run scripts/dvandva-wait.sh --role <role> --interval 60 --max-wait 900, then re-read the baton when it returns 0. Before each checkpoint, surface BATON_STATE, verification commands and outcomes, findings, and final approval fields. Never create a PR.
 ```
 
 ## Fix Permissions
@@ -50,4 +50,3 @@ Codex should not directly fix:
 - Dependency removals.
 - Product behavior changes.
 - Anything that requires guessing user intent.
-
