@@ -1,15 +1,25 @@
 {
   "schema": "dvandva.baton.v1",
-  "updated_at": "2026-05-12T00:00:00Z",
+  "updated_at": "",
   "mode": "feature-pr",
-  "status": "claude_working",
+  "phase": "spec",
+  "total_phases": 0,
+  "status": "spec_drafting",
   "assignee": "claude",
+  "review_target": null,
+  "plan_ref": "",
+  "disagreement_round": 0,
+  "disagreement_cap": 3,
+  "turn_cap": 20,
   "branch": "",
   "checkpoint": 0,
-  "summary": "",
+  "summary": "Initial baton seed. dvandva-doer will overwrite on first run.",
   "changed_paths": [],
   "verification": [],
+  "findings": [],
+  "narrow_fixups": [],
+  "claude_counter": [],
+  "deferred": [],
   "blockers": [],
-  "next_action": "Claude: implement the requested change, verify it, then assign review to Codex."
+  "next_action": "dvandva-doer: read AGENTS.md, brainstorm the spec, write plan_ref, hand off to codex."
 }
-
