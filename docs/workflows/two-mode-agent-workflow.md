@@ -136,5 +136,4 @@ Dvandva changes the defaults:
 - One active autonomous loop at a time.
 - Checkpoint batches instead of every tiny thought.
 - Explicit `assignee` field for "ball is in your court".
-- Raw PR history archived once for offline analysis.
-
+- Raw PR history archived locally for offline analysis, outside any public repo.

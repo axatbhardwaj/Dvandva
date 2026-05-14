@@ -13,15 +13,9 @@ The name is intentional: two agents working as a pair, with separate roles and a
 
 ## Current State
 
-This repo contains the first research pass from PR 353 in `defi-com/monorepo`, where Claude and Codex ran 118 iterations across a broad docs-coverage campaign.
+This repo contains the public product notes from an internal PR-353 research pass, where Claude and Codex ran 118 iterations across a broad docs-coverage campaign.
 
-Local archive:
-
-- Raw PR history: `artifacts/pr-353/pr-353-full-history.json`
-- Readable comment timeline: `artifacts/pr-353/comments-timeline.md`
-- Readable commit timeline: `artifacts/pr-353/commits-timeline.md`
-- Changed files table: `artifacts/pr-353/files.md`
-- Case study: `docs/case-studies/pr-353.md`
+The raw PR export and timelines are intentionally not published. The sanitized baseline case study lives at `docs/case-studies/pr-353.md`.
 
 ## Core Design
 
@@ -63,4 +57,3 @@ This avoids wasteful polling. Only one autonomous goal loop should be active at 
 - Claude Code commands: https://code.claude.com/docs/en/commands
 - Claude Code subagents: https://code.claude.com/docs/en/sub-agents
 - Codex local feature state on this machine: `codex features list` shows `goals experimental true` on 2026-05-12.
-

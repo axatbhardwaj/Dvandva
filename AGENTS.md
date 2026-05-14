@@ -12,9 +12,9 @@ Prefer concise, source-backed docs over speculative architecture. If a workflow 
 - Keep workflow designs in `docs/workflows/`.
 - Keep tool research in `docs/research/`.
 - Keep case studies in `docs/case-studies/`.
-- Keep raw imported artifacts in `artifacts/`.
-- Do not put private project secrets or proprietary source snippets in this repo.
-- If importing a PR history, store raw JSON plus a readable Markdown index.
+- Keep public case studies sanitized and source-backed.
+- Do not put private project secrets, proprietary source snippets, or raw private PR exports in this repo.
+- If importing a private PR history for local research, keep raw JSON and timelines outside the public tree, for example under ignored `private-artifacts/`.
 
 ## Preferred Workflow Model
 
@@ -33,4 +33,3 @@ Each agent handoff must answer:
 - What exact command or prompt should the next agent run?
 
 No silent handoffs. No indefinite polling.
-
