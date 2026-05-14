@@ -1,3 +1,6 @@
 .dvandva/
+artifacts/
+private-artifacts/
+journal/
 *.log
-
+/superpowers/
