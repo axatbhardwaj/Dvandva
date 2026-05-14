@@ -41,10 +41,8 @@ if [[ $DESC_LEN -gt 1536 ]]; then
   exit 1
 fi
 
-# Body length: total lines minus frontmatter block
-TOTAL_LINES=$(wc -l < "$FILE")
-FRONTMATTER_LINES=$(awk '/^---$/{c++} c<=2{n++} END{print n}' "$FILE")
-BODY_LINES=$(( TOTAL_LINES - FRONTMATTER_LINES ))
+# Body length: count lines after the second '---'
+BODY_LINES=$(awk '/^---$/{c++; next} c>=2{n++} END{print n+0}' "$FILE")
 if [[ $BODY_LINES -gt 500 ]]; then
   echo "FAIL: body is $BODY_LINES lines (max 500) in $FILE" >&2
   exit 1
