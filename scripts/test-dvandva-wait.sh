@@ -102,6 +102,19 @@ run_case "returns 20 on timeout while assigned away" 20 \
 run_case "rejects zero interval with positive max wait" 2 \
   "$SCRIPT" --role vadi --file "$BATON_WAIT" --interval 0 --max-wait 1
 
+# Drift check: the canonical helper at scripts/dvandva-wait.sh must be
+# byte-identical to the bundled copies inside each skill dir. When the
+# canonical changes, the maintainer must `cp` it into both skill dirs.
+for copy in skills/dvandva-vadi/scripts/dvandva-wait.sh skills/dvandva-prativadi/scripts/dvandva-wait.sh; do
+  if cmp -s "$SCRIPT" "$ROOT_DIR/$copy"; then
+    echo "PASS: $copy byte-identical to canonical"
+  else
+    echo "FAIL: $copy has drifted from canonical scripts/dvandva-wait.sh"
+    echo "  Re-sync with: cp scripts/dvandva-wait.sh $copy"
+    failures=$((failures + 1))
+  fi
+done
+
 if [[ "$failures" -gt 0 ]]; then
   exit 1
 fi

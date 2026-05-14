@@ -1,5 +1,16 @@
 #!/usr/bin/env bash
 # Cheap foreground wait for Dvandva baton ownership.
+#
+# This file is canonical. Identical copies live at:
+#   skills/dvandva-vadi/scripts/dvandva-wait.sh
+#   skills/dvandva-prativadi/scripts/dvandva-wait.sh
+# so copy-installs (project-level adoption, Windows without mklink) keep the
+# helper findable via ${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh. After
+# editing this file, sync both copies:
+#   cp scripts/dvandva-wait.sh skills/dvandva-vadi/scripts/dvandva-wait.sh
+#   cp scripts/dvandva-wait.sh skills/dvandva-prativadi/scripts/dvandva-wait.sh
+# scripts/test-dvandva-wait.sh fails if any copy drifts from this canonical.
+#
 # Exit codes:
 #   0  role is assigned
 #   10 baton status is done
