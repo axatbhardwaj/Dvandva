@@ -26,7 +26,7 @@
   "prativadi_final_approval": false,
   "final_commit": null,
   "pushed_ref": null,
-  "summary": "Initial baton seed. vadi will overwrite on first run.",
+  "summary": "Initial baton seed. The vadi skill will overwrite on first run.",
   "changed_paths": [],
   "verification": [],
   "findings": [],

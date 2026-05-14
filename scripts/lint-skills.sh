@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Lint a SKILL.md file: validate frontmatter, body length, and inlined dvandva.baton.v1 schema.
 # Usage: scripts/lint-skills.sh <path/to/SKILL.md>
+# Example: scripts/lint-skills.sh plugins/dvandva/skills/vadi/SKILL.md
 # Exit codes: 0 = ok; 1 = lint failure; 2 = usage error.
 # set -e is intentionally omitted; this script uses explicit 'if !' guards
 # and emits structured FAIL messages on each failure path.

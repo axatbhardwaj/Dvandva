@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
 # Cheap foreground wait for Dvandva baton ownership.
 #
-# This file is canonical. Identical copies live at:
-#   skills/dvandva-vadi/scripts/dvandva-wait.sh
-#   skills/dvandva-prativadi/scripts/dvandva-wait.sh
-# so copy-installs (project-level adoption, Windows without mklink) keep the
-# helper findable via ${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh. After
-# editing this file, sync both copies:
-#   cp scripts/dvandva-wait.sh skills/dvandva-vadi/scripts/dvandva-wait.sh
-#   cp scripts/dvandva-wait.sh skills/dvandva-prativadi/scripts/dvandva-wait.sh
-# scripts/test-dvandva-wait.sh fails if any copy drifts from this canonical.
+# This helper is bundled as a real executable inside each runtime skill:
+#   plugins/dvandva/skills/vadi/scripts/dvandva-wait.sh
+#   plugins/dvandva/skills/prativadi/scripts/dvandva-wait.sh
+# The two copies must stay byte-identical so copy-installs and plugin installs
+# keep the helper findable via ${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh.
+# scripts/test-dvandva-wait.sh fails if either runtime copy is missing or drifts.
 #
 # Exit codes:
 #   0  role is assigned
@@ -29,7 +26,7 @@ MAX_WAIT=900
 
 usage() {
   cat >&2 <<'USAGE'
-Usage: scripts/dvandva-wait.sh --role <vadi|prativadi> [--file .dvandva/baton.json] [--interval seconds] [--max-wait seconds]
+Usage: dvandva-wait.sh --role <vadi|prativadi> [--file .dvandva/baton.json] [--interval seconds] [--max-wait seconds]
 
 Defaults: --interval 60 --max-wait 900
 USAGE

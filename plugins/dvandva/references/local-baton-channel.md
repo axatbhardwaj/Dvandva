@@ -18,7 +18,10 @@ Recommended files:
 - `.dvandva/codex-review.md` - latest Codex review.
 - `.dvandva/decisions.md` - human decisions that should survive context loss.
 
-The shareable templates live in `templates/channel/`.
+The bundled seed and transition references live next to this file:
+
+- `references/baton-schema.json`
+- `references/state-transition-table.md`
 
 ## Baton Schema
 
@@ -67,7 +70,7 @@ The shareable templates live in `templates/channel/`.
 
 ## State Machine
 
-> **Authority:** `product.md` Appendix A is authoritative for v1 transitions. This section is reference; if the two diverge, the spec wins. Update this section when the spec changes.
+> **Authority:** `references/state-transition-table.md` is authoritative for bundled v1 transitions. This section is a readable overview.
 
 ### States (v1)
 
@@ -139,7 +142,7 @@ This is the core anti-token-polling rule:
 
 Use `/goal` around the baton state instead of around a timer.
 
-The canonical v1 goal conditions are embedded in the two skill bodies (`plugins/dvandva/skills/vadi/SKILL.md` and `plugins/dvandva/skills/prativadi/SKILL.md`) under their `/goal condition` sections. Always use the version from the skill file rather than copying from this doc, since the skill version is what the goal evaluator actually parses against.
+The canonical v1 goal conditions are embedded in the two skill bodies (`skills/vadi/SKILL.md` and `skills/prativadi/SKILL.md`) under their `/goal condition` sections. Always use the version from the skill file rather than copying from this doc, since the skill version is what the goal evaluator actually parses against.
 
 Vadi goal (paste into your engine):
 

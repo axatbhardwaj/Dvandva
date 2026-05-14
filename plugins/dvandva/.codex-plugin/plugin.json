@@ -1,0 +1,37 @@
+{
+  "name": "dvandva",
+  "version": "0.1.0",
+  "description": "Two-agent baton protocol for paired coding agents.",
+  "author": {
+    "name": "Dvandva",
+    "url": "https://github.com/axatbhardwaj"
+  },
+  "homepage": "https://github.com/axatbhardwaj/Dvandva",
+  "repository": "https://github.com/axatbhardwaj/Dvandva",
+  "keywords": [
+    "agents",
+    "coding",
+    "review",
+    "workflow"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Dvandva",
+    "shortDescription": "Paired agent coding with baton handoffs",
+    "longDescription": "Coordinate two coding agents through a local baton protocol: one role proposes and implements, the other reviews, applies narrow fixups, and hands control back without PR-comment polling.",
+    "developerName": "Dvandva",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "websiteURL": "https://github.com/axatbhardwaj/Dvandva",
+    "defaultPrompt": [
+      "Draft a Dvandva plan for this task.",
+      "Review the Dvandva baton.",
+      "Start a Dvandva walkaway run."
+    ],
+    "brandColor": "#2563EB"
+  }
+}

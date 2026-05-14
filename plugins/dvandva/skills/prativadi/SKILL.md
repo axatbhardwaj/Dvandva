@@ -1,9 +1,9 @@
 ---
-name: dvandva-prativadi
+name: prativadi
 description: Use when the user asks to Q&A on a plan, review an implementation, or review the vadi's counter-changes via the Dvandva protocol. Triggers on phrases like "review the dvandva baton", "do the prativadi pass", "Q&A on the plan", "review the vadi's counter-change", "check the vadi's counter-change", "review claude's counter-change", "check the counter", "adversarial verification of phase N", "review phase N", "start prativadi walkaway", "join dvandva run", "codex review pass". Do not use this skill for solo work that is not paired with a vadi.
 ---
 
-# dvandva-prativadi
+# Dvandva Prativadi
 
 You are the Dvandva prativadi and narrow fixer. You Q&A on plans, review implementation phases, apply narrow fixups within an allowlist, and review the vadi's counter-changes during mutual-review disagreements.
 
@@ -17,7 +17,7 @@ You are the Dvandva prativadi and narrow fixer. You Q&A on plans, review impleme
 6. Determine mode from `phase` + `status` + `review_target` (see mode table).
 7. Surface `BATON_STATE: { phase, status, assignee: prativadi, run_mode, review_target, disagreement_round }`.
 
-**Note on `${CLAUDE_SKILL_DIR}`:** this is the directory containing this SKILL.md file. Claude Code auto-substitutes it before the LLM sees the prompt. In Codex, resolve it from the path this SKILL.md was loaded from (typically `~/.agents/skills/dvandva-prativadi`) before invoking any command that uses it.
+**Note on `${CLAUDE_SKILL_DIR}`:** this is the directory containing this SKILL.md file. Claude Code auto-substitutes it before the LLM sees the prompt. In Codex, resolve it from the path this SKILL.md was loaded from (for example an installed plugin cache or `plugins/dvandva/skills/prativadi`) before invoking any command that uses it.
 
 ## Mode table
 
@@ -36,7 +36,7 @@ Actions:
 
 1. **Capability check**: verify `superpowers:brainstorming` is available in this session. Capability check, not a filesystem path — try a no-op Skill invocation or check the `/skills` listing. If absent, surface install instructions referencing `codex plugin marketplace` and exit without writing the baton. Mode B and Mode C do not require this; only Mode A invokes brainstorming.
 2. Invoke `superpowers:brainstorming` as the questioner. Read the plan at `plan_ref`. Ask clarifying questions, surface ambiguity, propose alternatives.
-3. During master planning, questions to the user are allowed and expected when the goal is under-specified, risky, or has multiple valid product directions. If a user answer is required before approving or handing back a useful plan, set `status: "human_question"`, `assignee: "human"`, `question: "<one concrete question>"`, `resume_assignee: "prativadi"`, `resume_status: "spec_review"`, keep `master_plan_locked: false`, `next_action: "Human: answer question, then invoke dvandva-prativadi; it will resume spec_review."`, surface BATON_STATE, and stop.
+3. During master planning, questions to the user are allowed and expected when the goal is under-specified, risky, or has multiple valid product directions. If a user answer is required before approving or handing back a useful plan, set `status: "human_question"`, `assignee: "human"`, `question: "<one concrete question>"`, `resume_assignee: "prativadi"`, `resume_status: "spec_review"`, keep `master_plan_locked: false`, `next_action: "Human: answer question, then invoke the prativadi skill; it will resume spec_review."`, surface BATON_STATE, and stop.
 4. You may edit the plan at `plan_ref` directly for narrow improvements: typos, sharper phrasing, table formatting fixes. Do not restructure the plan unilaterally.
 5. Substantive concerns (scope, architecture, phase boundaries, dep choices) go in `findings` for the vadi to address.
 6. Decide: hand back for revision, or advance to phase 1.
@@ -256,7 +256,7 @@ In `run_mode: "supervised"`, exit after surfacing any baton assigned away from p
 ## `/goal` condition (paste into your engine when launching)
 
 ```
-/goal You are dvandva-prativadi. Continue the Dvandva walkaway run until .dvandva/baton.json status is "done", "human_question", or "human_decision". If assignee is not "prativadi", run ${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role prativadi --interval 60 --max-wait 900, then re-read the baton when it returns 0. Before each checkpoint, surface BATON_STATE, findings, verification commands and outcomes, final approval fields, and the final baton contents. Never create a PR.
+/goal You are Dvandva prativadi. Continue the Dvandva walkaway run until .dvandva/baton.json status is "done", "human_question", or "human_decision". If assignee is not "prativadi", run ${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role prativadi --interval 60 --max-wait 900, then re-read the baton when it returns 0. Before each checkpoint, surface BATON_STATE, findings, verification commands and outcomes, final approval fields, and the final baton contents. Never create a PR.
 ```
 
 ## Failure modes
@@ -317,6 +317,6 @@ In `run_mode: "supervised"`, exit after surfacing any baton assigned away from p
 }
 ```
 
-The full state-transition table is in `product.md` Appendix A. Refer to it for any transition not explicitly named in this skill body.
+For the bundled state-transition reference, read `${CLAUDE_SKILL_DIR}/../../references/state-transition-table.md` after resolving `${CLAUDE_SKILL_DIR}` to this skill directory. In standalone development installs where that file is absent, rely on the mode table and inlined baton schema above.
 
 <!-- Skill version: 0.3.0 -->

@@ -6,8 +6,8 @@ Status: rewritten 2026-05-14 for richer flow (spec phase + phased implementation
 
 Dvandva v1 is a pair of agent skills, written to the [agentskills.io](https://agentskills.io) open standard, that encode a disciplined two-agent collaboration protocol:
 
-- `dvandva-vadi` — the proposer/implementer skill. Runs in either Claude Code or Codex. Drives the spec/plan phase using `superpowers:brainstorming` and `superpowers:writing-plans`, then implements the plan phase-by-phase, then reviews any narrow fixups the prativadi makes.
-- `dvandva-prativadi` — the responder/reviewer skill. Runs in either Claude Code or Codex. Q&As during the spec phase, reviews each implementation phase, applies narrow fixups within an allowlist, and reviews the vadi's counter-changes when there is a disagreement.
+- `vadi` — the proposer/implementer skill. Runs in either Claude Code or Codex. Drives the spec/plan phase using `superpowers:brainstorming` and `superpowers:writing-plans`, then implements the plan phase-by-phase, then reviews any narrow fixups the prativadi makes.
+- `prativadi` — the responder/reviewer skill. Runs in either Claude Code or Codex. Q&As during the spec phase, reviews each implementation phase, applies narrow fixups within an allowlist, and reviews the vadi's counter-changes when there is a disagreement.
 
 Both skills share `.dvandva/baton.json` as the coordination channel. The default run mode is `walkaway`: the human gives an initial goal, starts or joins the two agent sessions once, and the skills use a cheap foreground wait helper when the baton assigns work to the other role. `supervised` mode is the serial fallback for one-engine runs: assigned-away agents exit and the human invokes the next role manually.
 
@@ -19,7 +19,7 @@ The flow has three lifecycle segments:
 
 Enforcement in v1 is by agent checklist embedded in each SKILL.md and by `/goal` evaluator transcript-checks. Deterministic schema and transition validation is deferred to v2 (a CLI validator backed by a real JSON Schema file).
 
-The product is the two skills, the baton template, a small wait helper, an install/usage doc, and a pilot case study. No agent launcher, no daemon, no GitHub integration.
+The product is the `dvandva` plugin, two bundled skills, plugin-local baton references, bundled wait helpers, an install/usage doc, and a pilot case study. No agent launcher, no daemon, no GitHub integration.
 
 **PR 353 provenance.** PR 353 proved the need for a durable handoff surface, explicit ack/ownership flips, reviewer findings that can become fixes, and a cheaper alternative to agent-to-agent PR comment traffic. The v1 mutual-review loop, disagreement cap, turn cap, `human_decision` terminal, and baton transition table are product design responses to that evidence; they were not themselves fully exercised as named states in PR 353. The pilot exists to validate those new protocol pieces.
 
@@ -29,10 +29,10 @@ The product is the two skills, the baton template, a small wait helper, an insta
 
 **v1 ships successfully when all five hold:**
 
-1. The repo contains `skills/dvandva-vadi/SKILL.md` and `skills/dvandva-prativadi/SKILL.md` written to the agentskills.io standard, plus a baton template and an install/usage README that covers superpowers prerequisites.
+1. The repo contains `plugins/dvandva/skills/vadi/SKILL.md` and `plugins/dvandva/skills/prativadi/SKILL.md` written to the agentskills.io standard, plus a baton template and an install/usage README that covers superpowers prerequisites.
 2. A teammate can follow the README — including the superpowers install step — and run a Dvandva pilot on a low-risk real PR without DM-ing the owner. Two persistent sessions are the default; one engine playing both roles serially is a fallback.
 3. One pilot is completed: spec phase converges, ≥2 implementation phases run, ≥1 mutual-review loop triggers, and one disagreement-loop event occurs and resolves (or terminates correctly at human escalation). Metrics — turn count per agent, agent-to-agent PR comment count, wall-clock, real issues caught — are written up as `docs/case-studies/pilot-01.md` against the PR 353 baseline.
-4. In the pilot, both skills auto-activate from natural workflow language at least once each. Explicit invocation (`/dvandva-vadi`, `$dvandva-prativadi`) stays as documented fallback.
+4. In the pilot, both skills auto-activate from natural workflow language at least once each. Explicit invocation (`/vadi`, `$prativadi`) stays as documented fallback.
 5. No runaway loops. The disagreement-round cap (default 3) triggers a forced `human_decision` correctly when exercised, and the wait helper wakes/stops cleanly at every baton-state transition.
 
 If criterion #5 fails (any runaway loop observed during pilot), v1 does not ship — the cap mechanism is the operational safety floor and has to work.
@@ -41,12 +41,12 @@ If criterion #5 fails (any runaway loop observed during pilot), v1 does not ship
 
 ### 3.1 In v1
 
-- `skills/dvandva-vadi/SKILL.md` — frontmatter (portable `name` + `description`), body covering the vadi's five modes (spec drafting, spec revision, phase implementation, phase fixing, codex-fixup review), the baton schema, the `/goal` exit conditions, and the disagreement-cap behavior.
-- `skills/dvandva-prativadi/SKILL.md` — same shape, covering prativadi's three modes (spec Q&A, phase review, claude-counter review), narrow-fix allowlist, handback conditions, baton schema, `/goal` exit conditions.
-- `scripts/dvandva-wait.sh` — foreground shell wait helper used by both skills in walkaway mode. It polls `.dvandva/baton.json` cheaply, without spending model turns, until the baton returns to the role or reaches a terminal human/done state.
+- `plugins/dvandva/skills/vadi/SKILL.md` — frontmatter (portable `name` + `description`), body covering the vadi's five modes (spec drafting, spec revision, phase implementation, phase fixing, codex-fixup review), the baton schema, the `/goal` exit conditions, and the disagreement-cap behavior.
+- `plugins/dvandva/skills/prativadi/SKILL.md` — same shape, covering prativadi's three modes (spec Q&A, phase review, claude-counter review), narrow-fix allowlist, handback conditions, baton schema, `/goal` exit conditions.
+- `plugins/dvandva/skills/*/scripts/dvandva-wait.sh` — foreground shell wait helper bundled as a real executable in each runtime skill directory. It polls `.dvandva/baton.json` cheaply, without spending model turns, until the baton returns to the role or reaches a terminal human/done state.
 - `scripts/test-dvandva-wait.sh` — focused shell tests for the helper's exit-code contract.
-- `templates/channel/baton.json` — v1 extended schema seed with all required keys (`run_mode`, `phase`, `total_phases`, `plan_ref`, `master_plan_locked`, `question`, `resume_assignee`, `resume_status`, `disagreement_round`, `disagreement_cap`, `turn_cap`, `review_target`, `current_engine`, final-approval fields, etc.). Already aligned with this spec.
-- `README.md` install section covering: user-level symlink install (primary), project-level install (secondary), and the superpowers prerequisite check for both engines.
+- `plugins/dvandva/references/baton-schema.json` — bundled v1 extended schema seed with all required keys (`run_mode`, `phase`, `total_phases`, `plan_ref`, `master_plan_locked`, `question`, `resume_assignee`, `resume_status`, `disagreement_round`, `disagreement_cap`, `turn_cap`, `review_target`, `current_engine`, final-approval fields, etc.).
+- `README.md` install section covering: marketplace install (primary), development symlink/copy install (fallback), and the superpowers prerequisite check for both engines.
 - One pilot writeup at `docs/case-studies/pilot-01.md` after the workflow ship.
 
 ### 3.2 Out of v1 (non-goals)
@@ -55,8 +55,8 @@ If criterion #5 fails (any runaway loop observed during pilot), v1 does not ship
 - No runner / daemon / process launcher. The user starts the two interactive sessions; in walkaway mode, the skills keep those sessions alive by blocking in the wait helper when assigned away.
 - No GitHub integration. No PR comment posting. Skills tell the agent what to surface in transcript; humans write any PR comments using the baton as source material.
 - No multi-engine enforcement. v1 does not verify which engine is running a given role. The `current_engine` field on the baton records which CLI wrote each checkpoint for traceability, but the protocol does not require a particular pairing. The canonical pairing (vadi=Claude, prativadi=Codex) is documented but not enforced.
-- No separate `dvandva-init` skill. The doer skill scaffolds `.dvandva/` inline on first run.
-- No plugin packaging for distribution. Manual symlink install is the v1 distribution story. Plugin packaging is v2.
+- No separate `dvandva-init` skill. The vadi skill scaffolds `.dvandva/` inline on first run.
+- No official marketplace-directory submission and no npm-first distribution. v1 is a GitHub-hosted plugin marketplace package.
 - No multi-baton-per-repo support. One active baton per worktree. Parallel branches each get their own worktree and own baton.
 - No PR creation. Walkaway mode may commit and push after dual final approval, but it must not raise a PR.
 
@@ -79,14 +79,19 @@ The prativadi skill's preflight refuses to run and surfaces a clear install hint
 ## 5. Repo layout
 
 ```
-skills/
-  dvandva-vadi/
-    SKILL.md
-  dvandva-prativadi/
-    SKILL.md
-templates/
-  channel/
-    baton.json          # to be updated to extended-schema initial seed
+.claude-plugin/
+  marketplace.json
+plugins/
+  dvandva/
+    .claude-plugin/plugin.json
+    .codex-plugin/plugin.json
+    skills/
+      vadi/SKILL.md
+      prativadi/SKILL.md
+    references/
+      baton-schema.json
+      local-baton-channel.md
+      state-transition-table.md
 docs/
   case-studies/
     pr-353.md           # existing baseline
@@ -103,7 +108,7 @@ The existing `templates/prompts/claude-doer-goal.md` and `templates/prompts/code
 
 ## 6. Flow overview
 
-The flow has three segments and an end state. Every arrow in the diagram is a baton write by the active agent. In default walkaway mode, the other persistent session is already blocked in `scripts/dvandva-wait.sh`; the helper returns when the baton assigns that role, and the agent re-enters preflight.
+The flow has three segments and an end state. Every arrow in the diagram is a baton write by the active agent. In default walkaway mode, the other persistent session is already blocked in `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh`; the helper returns when the baton assigns that role, and the agent re-enters preflight.
 
 ```
                   ┌──────────────────────────────────┐
@@ -205,18 +210,18 @@ Three caps the spec enforces operationally:
 - **No phase count cap.** Plans declare `total_phases` during the spec phase; the protocol does not constrain how many phases are reasonable. The spec phase itself is responsible for sane phase scoping.
 - **Planning-question boundary.** Before `master_plan_locked: true`, either agent may route to `human_question`. After the master plan is locked, agents should resolve internally or escalate with `human_decision`.
 
-## 7. dvandva-vadi skill design
+## 7. vadi skill design
 
 ### 7.1 Frontmatter
 
-- `name: dvandva-vadi`
+- `name: vadi`
 - `description:` one paragraph, front-loaded with trigger words: *implement*, *vadi*, *spec*, *plan with review*, *phased implementation*, *hand off for review*, *review the prativadi's fixups*, *review codex's fixups*. Must list both spec-phase triggers and implementation-phase triggers since one skill handles both. Under the 1,536-char listing cap.
 
 No `allowed-tools` reliance (see section 9). Optional Claude-only `argument-hint: "[task description]"` for UX.
 
 ### 7.2 Body sections (target < 500 lines)
 
-1. **Role one-liner** — "You are the Dvandva vadi. You draft plans, implement them phase by phase, and review Codex's narrow fixups."
+1. **Role one-liner** — "You are the Dvandva vadi. You draft plans, implement them phase by phase, and review the prativadi's narrow fixups."
 2. **Preflight (all modes)** — read `AGENTS.md`, read `.dvandva/baton.json` if present. If absent, scaffold `.dvandva/` and write `baton.json` using the canonical schema inlined at the bottom of the SKILL.md (with seed values `run_mode: "walkaway"` by default, or `"supervised"` if the user explicitly requested supervised/single-engine mode; `status: "spec_drafting"`, `assignee: "vadi"`, `phase: "spec"`, `updated_at: <current ISO-8601 UTC>`). This avoids depending on `templates/channel/baton.json`'s filesystem path, so the skill works unchanged when installed in any consumer repo. If the baton is assigned away and `run_mode: "walkaway"`, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role vadi --interval 60 --max-wait 900` and re-read when ready. `${CLAUDE_SKILL_DIR}` is auto-substituted by Claude Code; in Codex resolve it from the SKILL.md's load path. If `run_mode: "supervised"`, exit on assigned-away states so the human can invoke the next role.
 3. **Mode A: spec drafting** — when `phase: "spec", status: "spec_drafting"`. Invoke `superpowers:brainstorming` skill flow. The vadi may ask the user questions if required before the master plan is useful. Produce a gitignored Superpowers plan under `./superpowers/plans/YYYY-MM-DD-<topic>.md` with declared `total_phases` and a per-phase scope list. Use `superpowers:writing-plans` to convert the spec into a phase-by-phase plan. Set `plan_ref`, `total_phases`, and `master_plan_locked: false` on the baton. Write baton with `status: spec_review, assignee: prativadi, review_target: spec`.
 4. **Mode B: spec revision** — when `phase: "spec", status: "spec_revision"`. Read the baton's `findings` array (prativadi's Q&A), respond in the `plan_ref` plan, update affected `total_phases` if scope changed. Always write baton with `status: spec_review, assignee: prativadi, review_target: spec`; the prativadi is the only actor that can advance the spec to phase 1. Follow the stop/wait rule.
@@ -230,11 +235,11 @@ No `allowed-tools` reliance (see section 9). Optional Claude-only `argument-hint
 10. **`/goal` condition** — embedded in the skill body verbatim, centered on continuing until `done`, `human_question`, or `human_decision`; if assigned away, block in the wait helper instead of spending model turns.
 11. **Failure modes** — section 12.
 
-## 8. dvandva-prativadi skill design
+## 8. prativadi skill design
 
 ### 8.1 Frontmatter
 
-- `name: dvandva-prativadi`
+- `name: prativadi`
 - `description:` front-loaded triggers: *review*, *spec Q&A*, *prativadi pass*, *narrow fixups*, *adversarial verification*, *check the baton*, *review the vadi's counter-change*, *review claude's counter-change*. Covers all three prativadi modes.
 
 ### 8.2 Body sections
@@ -242,7 +247,7 @@ No `allowed-tools` reliance (see section 9). Optional Claude-only `argument-hint
 1. **Role one-liner** — "You are the Dvandva prativadi. You Q&A on plans, review implementation phases, apply narrow fixups, and review the vadi's counter-changes."
 2. **Preflight** — read `AGENTS.md`, read `.dvandva/baton.json`. If the baton is assigned away and `run_mode: "walkaway"`, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role prativadi --interval 60 --max-wait 900` and re-read when ready. `${CLAUDE_SKILL_DIR}` is auto-substituted by Claude Code; in Codex resolve it from the SKILL.md's load path. If `run_mode: "supervised"`, exit on assigned-away states so the human can invoke the next role. **Additionally verify `superpowers:brainstorming` is available in the current session** before spec Q&A; if absent, surface install instructions and exit (per section 4 prerequisites). Do not depend on one fixed filesystem path.
 3. **Mode A: spec Q&A** — when `phase: "spec", status: "spec_review", review_target: "spec"`. Invoke `superpowers:brainstorming` skill flow as the questioner. Read the `plan_ref` plan, surface Q&A in the baton's `findings` array, optionally edit the plan directly for narrow improvements (typos, sharper phrasing). The prativadi may ask the user questions if required before the master plan can be approved or handed back. Decide: hand back to vadi (questions remain) or advance. Write baton `status: spec_revision, assignee: vadi` (for more Q&A) or `phase: 1, status: implementing, assignee: vadi, disagreement_round: 0, master_plan_locked: true` (advance to phase 1).
-4. **Mode B: phase implementation review** — when `phase: 1..N, status: "phase_review", review_target: "implementation"`. Read diff vs branch baseline. Cross-check doer's `verification` block (did the commands actually pass? do they cover the changed paths?). Look for bugs, regressions, stale docs, missing tests, claims not matching diff.
+4. **Mode B: phase implementation review** — when `phase: 1..N, status: "phase_review", review_target: "implementation"`. Read diff vs branch baseline. Cross-check the vadi's `verification` block (did the commands actually pass? do they cover the changed paths?). Look for bugs, regressions, stale docs, missing tests, claims not matching diff.
 5. **Narrow-fix allowlist** (verbatim from `docs/workflows/two-mode-agent-workflow.md:41-47`):
    - Typographical and docs mistakes
    - Stale references in docs or audit rows
@@ -278,44 +283,37 @@ Both skills target the agentskills.io open standard. Only the universal frontmat
 - **No `context: fork`.** Skills run in the main session so `/goal` transcript surfacing works (the goal evaluator only sees what's surfaced).
 - **No engine-specific frontmatter extensions.** If forced in a future rev, the SKILL.md forks into engine-specific variants; document the reason explicitly.
 
-**superpowers compatibility note:** both engines must have superpowers installed at runtime. The doer relies on `superpowers:brainstorming` + `superpowers:writing-plans` + `superpowers:test-driven-development`; the reviewer relies on `superpowers:brainstorming`. Skills invoke these via the engine's native `Skill` tool. If superpowers is absent, the reviewer's preflight (section 8.2 step 2) refuses to run; the doer's spec phase fails on the first `Skill` call with a clear error.
+**superpowers compatibility note:** both engines must have superpowers installed at runtime. The vadi relies on `superpowers:brainstorming` + `superpowers:writing-plans` + `superpowers:test-driven-development`; the prativadi relies on `superpowers:brainstorming` for spec Q&A. Skills invoke these via the engine's native skill tool. If superpowers is absent, the prativadi's preflight (section 8.2 step 2) refuses to run; the vadi's spec phase fails on the first skill call with a clear error.
 
 ## 10. Description tuning strategy
 
 Auto-activation depends entirely on `description`. Tuning rules:
 
-- **Front-load trigger phrases.** Vadi description starts: *"Use when the user asks Claude to draft a plan or implement code as part of a Claude+Codex pair via the Dvandva protocol."* Prativadi description starts: *"Use when the user asks Codex to Q&A on a plan, review a Claude implementation, or review Claude's counter-changes via the Dvandva protocol."*
+- **Front-load trigger phrases.** Vadi description starts with draft/implement/phase language. Prativadi description starts with Q&A/review/counter-change language. Both descriptions mention Dvandva and paired-agent context without hardcoding a required engine.
 - **At least three paraphrase variants** per description so partial matches still hit.
 - **Explicit anti-trigger** in each: *"Do not use this skill for solo work not paired with the other agent."*
 - **Calibration during pilot.** If a skill mis-fires or fails to fire, the pilot writeup records user phrasing → activation outcome, and the description gets one edit pass.
 
 ## 11. Distribution and install
 
-### 11.1 Primary install (user level, pilot setup)
+### 11.1 Primary install (marketplace)
 
 ```bash
-# Install both skills into both engines' skill directories.
-# Either engine can host either role; redundant symlinks are harmless.
-mkdir -p ~/.claude/skills ~/.agents/skills
-for engine_dir in ~/.claude/skills ~/.agents/skills; do
-  ln -sf "$(pwd)/skills/dvandva-vadi"      "$engine_dir/dvandva-vadi"
-  ln -sf "$(pwd)/skills/dvandva-prativadi" "$engine_dir/dvandva-prativadi"
-done
+claude plugin marketplace add axatbhardwaj/Dvandva
+claude plugin install dvandva@dvandva
 
-# verify superpowers prerequisites (at least one engine must have it)
-ls ~/.claude/plugins/cache/*/superpowers/ 2>/dev/null || echo "WARNING: superpowers not found on Claude Code"
-test -n "$(find ~/.codex ~/.agents -maxdepth 6 -path '*superpowers*' 2>/dev/null | head -1)" || echo "WARNING: superpowers not found for Codex"
+codex plugin marketplace add axatbhardwaj/Dvandva
 ```
 
-README spells these commands out for macOS / Linux symlink and Windows copy / `mklink /D`. The filesystem check is only a convenience check; the authoritative preflight is whether the current agent session can see and invoke the required Superpowers skills.
+The authoritative preflight is whether the current agent session can see and invoke the required Superpowers skills.
 
-### 11.2 Secondary install (team adoption in consumer repos)
+### 11.2 Development install fallback
 
-Consumer repos check skills under `.claude/skills/` and `.agents/skills/`. Both engines walk from cwd up to repo root. The README includes the trust warning verbatim: *"Project-level skills can carry tool-permission frontmatter. Review the SKILL.md contents the same way you would any other `.claude/` or `.agents/` config the repo ships before trusting it. The in-repo skill bodies are at `skills/dvandva-vadi/SKILL.md` and `skills/dvandva-prativadi/SKILL.md`."*
+For local development against a checkout, symlink or copy `plugins/dvandva/skills/vadi/` and `plugins/dvandva/skills/prativadi/` into the engine skill directories. Remove old pre-plugin `dvandva-*` symlinks first because root `skills/` no longer exists.
 
-### 11.3 Plugin packaging (deferred)
+### 11.3 Project-level adoption
 
-Both engines support plugin distribution ([Claude](https://code.claude.com/docs/en/plugins), [`codex plugin marketplace`](https://developers.openai.com/codex/plugins)). v1 stays at manual symlink. v2 considers publishing dvandva as a marketplace plugin once pilot data informs whether the friction reduction is worth the release surface.
+Consumer repos may check the plugin into their own tree or use project-scoped marketplace declarations. Project-level skills can carry tool-permission frontmatter; review `SKILL.md` the same way you would any other `.claude/` or `.agents/` config.
 
 ## 12. Failure modes the skills must handle
 
@@ -338,7 +336,7 @@ Both engines support plugin distribution ([Claude](https://code.claude.com/docs/
 | Prativadi finds no diff vs baseline (after Claude said implementation done) | Write `findings: ["vadi claimed implementation but produced no diff"]`, route to `human_decision`. |
 | Both agents accidentally started concurrently | v1 cannot detect. Skill body warns in preflight; deterministic detection is v2. |
 | Git working tree dirty before spec phase starts | Doer: surface dirty state in baton `summary`, proceed only if user's prompt indicates intent. |
-| `plan_ref` plan edited by Codex during spec Q&A and `total_phases` changed | Doer's spec-revision mode reads the new `total_phases` from the plan and updates the baton to match. **The plan referenced by `plan_ref` is authoritative during the spec phase; the baton is authoritative during implementation phases.** Once `phase: 1` is set, `total_phases` is frozen on the baton and the plan is treated as reference. |
+| `plan_ref` plan edited during spec Q&A and `total_phases` changed | Vadi spec-revision mode reads the new `total_phases` from the plan and updates the baton to match. **The plan referenced by `plan_ref` is authoritative during the spec phase; the baton is authoritative during implementation phases.** Once `phase: 1` is set, `total_phases` is frozen on the baton and the plan is treated as reference. |
 
 ## 13. Testing strategy
 
@@ -347,7 +345,7 @@ v1 has no automated test surface for skill behavior. What can be tested:
 - **Frontmatter linter** (a small script committed to the repo): parses both SKILL.md files, confirms required frontmatter, checks `description` ≤ 1,536 chars, checks body ≤ 500 lines. Suggested pre-commit hook.
 - **Schema key-presence check** (same script): the inlined `dvandva.baton.v1` JSON in each SKILL.md must parse as valid JSON and contain the required keys from Appendix A. Not a JSON Schema check — that's v2.
 - **Wait-helper tests** (`scripts/test-dvandva-wait.sh`): verifies the foreground helper exits 0 when a role is assigned, 10 on `done`, 11 on `human_decision`, 12 on `human_question` with resume fields, and 20 on timeout.
-- **Smoke test (manual)**: symlink both skills + verify both auto-list in `claude` / `codex` `/skills` menus. Verify the prativadi preflight gate triggers in a clean Codex profile where `superpowers:brainstorming` is not available.
+- **Plugin smoke test** (`scripts/smoke-plugin-install.sh`): copies the plugin into a temp marketplace, validates Claude plugin/marketplace metadata, runs Codex marketplace add with isolated `CODEX_HOME`, verifies both wait helpers, and checks standalone development copies.
 - **Pilot as integration test:** the pilot is the v1 integration test. Success criteria #1–#5 in section 2 are the acceptance gate.
 
 ## 14. Risks and open questions
@@ -382,7 +380,7 @@ In priority order:
 
 - **Deterministic validator script** + real JSON Schema at `templates/channel/baton.schema.json`. Skills invoke it as a pre-write gate. Rejects malformed batons and illegal transitions per the table in Appendix A. Closes the "enforcement is just prompt text" gap.
 - **Runner / launcher.** Optional file watcher that starts fresh agent processes via engine-specific commands. This is not required for v1 walkaway because v1 uses persistent sessions plus the wait helper. A future runner must preserve human visibility and avoid expensive non-interactive loops.
-- **Plugin packaging.** Ship dvandva as Claude Code plugin + Codex plugin with manifests. Install becomes one command instead of two symlinks.
+- **Official marketplace submission.** Submit the GitHub-hosted plugin to official marketplace directories after public install smoke and pilot data.
 - **Generic role abstraction.** Promote `vadi` / `prativadi` to first-class abstract roles with Claude/Codex as canonical instantiations. Largest portability risk currently.
 - **GitHub PR summary integration.** Skill-side helper that turns the final baton state into a one-shot PR summary the human pastes in. Solves attribution if and only if it is the *only* PR comment.
 - **Concurrent-agent detection.** Lock file or PID file with stale-detection so v2 can refuse to start a second agent against a baton already in use.
@@ -391,7 +389,7 @@ In priority order:
 
 ## Appendix A — `dvandva.baton.v1` canonical schema and transitions
 
-This appendix is the spec-level authoritative reference for the schema (including prativadi-only fields) and the v1 state-transition table. The template file at `templates/channel/baton.json` is a v1-aligned reference artifact that mirrors the schema shape but holds only the always-present fields; `dvandva-vadi` does not depend on it at runtime (see section 7.2 preflight), so the template is reference-only for humans inspecting the repo.
+This appendix is the spec-level authoritative reference for the schema (including prativadi-only fields) and the v1 state-transition table. The template file at `templates/channel/baton.json` is a v1-aligned reference artifact that mirrors the schema shape but holds only the always-present fields; `vadi` does not depend on it at runtime (see section 7.2 preflight), so the template is reference-only for humans inspecting the repo.
 
 ### Schema
 
@@ -486,7 +484,7 @@ Filled in for `docs/case-studies/pilot-01.md` after the pilot completes. Compari
 |---|---|---|---|
 | Total commits in the PR | 116 | | |
 | Agent-to-agent PR comments | 186 | | |
-| Wall-clock from first doer turn to `status: done` | (not recorded) | | n/a |
+| Wall-clock from first vadi turn to `status: done` | (not recorded) | | n/a |
 | Doer turns (across all phases) | (not recorded) | | n/a |
 | Reviewer turns (across all phases) | (not recorded) | | n/a |
 | Spec phase rounds (Claude draft + Codex Q&A + revision) | n/a | | n/a |
@@ -494,8 +492,8 @@ Filled in for `docs/case-studies/pilot-01.md` after the pilot completes. Compari
 | Mutual-review loops triggered | n/a | | n/a |
 | Disagreement-cap fires | n/a | | n/a |
 | Real issues caught by reviewer | qualitative (see PR 353 "What Worked") | | |
-| Auto-activation rate (doer) | n/a | X / Y attempts | n/a |
-| Auto-activation rate (reviewer) | n/a | X / Y attempts | n/a |
+| Auto-activation rate (vadi) | n/a | X / Y attempts | n/a |
+| Auto-activation rate (prativadi) | n/a | X / Y attempts | n/a |
 | Description edits required mid-pilot | n/a | | n/a |
 | Runaway loops observed | n/a | should be 0 | |
 

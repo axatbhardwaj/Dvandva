@@ -1,9 +1,9 @@
 ---
-name: dvandva-vadi
+name: vadi
 description: Use when the user asks to draft a plan or implement code as part of a paired Dvandva session. Triggers on phrases like "implement X with codex review", "implement X with claude review", "do the vadi pass", "draft the plan for dvandva", "review the prativadi's fixups", "review codex's fixups", "phase N implementation", "start dvandva", "run the vadi", "fix phase N", "begin dvandva walkaway". Do not use this skill for solo work that is not paired with a prativadi reviewer.
 ---
 
-# dvandva-vadi
+# Dvandva Vadi
 
 You are the Dvandva vadi. You draft plans, implement them phase by phase, and review the prativadi's narrow fixups.
 
@@ -17,7 +17,7 @@ You are the Dvandva vadi. You draft plans, implement them phase by phase, and re
 6. Determine mode from `phase` + `status` + `review_target` (see mode table below).
 7. Surface the parsed baton-state line as: `BATON_STATE: { phase: ..., status: ..., assignee: vadi, run_mode: ..., review_target: ..., disagreement_round: ... }`. The `/goal` evaluator reads this line.
 
-**Note on `${CLAUDE_SKILL_DIR}`:** this is the directory containing this SKILL.md file. Claude Code auto-substitutes it before the LLM sees the prompt. In Codex, resolve it from the path this SKILL.md was loaded from (typically `~/.agents/skills/dvandva-vadi`) before invoking any command that uses it.
+**Note on `${CLAUDE_SKILL_DIR}`:** this is the directory containing this SKILL.md file. Claude Code auto-substitutes it before the LLM sees the prompt. In Codex, resolve it from the path this SKILL.md was loaded from (for example an installed plugin cache or `plugins/dvandva/skills/vadi`) before invoking any command that uses it.
 
 ## Mode table
 
@@ -36,7 +36,7 @@ Trigger: `phase: "spec", status: "spec_drafting"`.
 
 Actions:
 
-1. Invoke `superpowers:brainstorming` to clarify scope with the user. During master planning, questions to the user are allowed and expected when the goal is under-specified, risky, or has multiple valid product directions. If a user answer is required before a useful plan can be written, set `status: "human_question"`, `assignee: "human"`, `question: "<one concrete question>"`, `resume_assignee: "vadi"`, `resume_status: "spec_drafting"`, `next_action: "Human: answer question, then invoke dvandva-vadi; it will resume spec_drafting."`, surface BATON_STATE, and stop.
+1. Invoke `superpowers:brainstorming` to clarify scope with the user. During master planning, questions to the user are allowed and expected when the goal is under-specified, risky, or has multiple valid product directions. If a user answer is required before a useful plan can be written, set `status: "human_question"`, `assignee: "human"`, `question: "<one concrete question>"`, `resume_assignee: "vadi"`, `resume_status: "spec_drafting"`, `next_action: "Human: answer question, then invoke the vadi skill; it will resume spec_drafting."`, surface BATON_STATE, and stop.
 2. Invoke `superpowers:writing-plans` to convert the design into a phase-by-phase implementation plan.
 3. The plan goes to `./superpowers/plans/YYYY-MM-DD-<topic>.md` (gitignored). Record the absolute path.
 4. Read the plan's declared phase count. Set `total_phases` on the baton to that integer.
@@ -65,7 +65,7 @@ Actions:
 
 1. Read the baton's `findings` array. Each finding is a Q&A item or change request from the prativadi.
 2. Verify `plan_ref` is set and the file exists. If `plan_ref` is null or the file is missing, surface "plan_ref unset; spec phase cannot proceed" and write the baton with `status: "human_decision"`, `assignee: "human"`, `blockers: ["plan_ref unset during spec_revision"]`, `next_action: "Human: investigate why plan_ref was never set during Mode A. Restart spec phase if needed."`. Exit.
-3. Open the plan file at `plan_ref`. Address each finding by editing the plan. If the findings reveal a product choice only the user can make, set `status: "human_question"`, `assignee: "human"`, `question: "<one concrete question>"`, `resume_assignee: "vadi"`, `resume_status: "spec_revision"`, keep `master_plan_locked: false`, `next_action: "Human: answer question, then invoke dvandva-vadi; it will resume spec_revision."`, surface BATON_STATE, and stop.
+3. Open the plan file at `plan_ref`. Address each finding by editing the plan. If the findings reveal a product choice only the user can make, set `status: "human_question"`, `assignee: "human"`, `question: "<one concrete question>"`, `resume_assignee: "vadi"`, `resume_status: "spec_revision"`, keep `master_plan_locked: false`, `next_action: "Human: answer question, then invoke the vadi skill; it will resume spec_revision."`, surface BATON_STATE, and stop.
 4. If your edits changed the declared phase count in the plan, also update `total_phases` on the baton.
 
 Baton write before handoff:
@@ -238,7 +238,7 @@ In `run_mode: "supervised"`, exit after surfacing any baton assigned away from v
 ## `/goal` condition (paste into your engine when launching)
 
 ```
-/goal You are dvandva-vadi. Continue the Dvandva walkaway run until .dvandva/baton.json status is "done", "human_question", or "human_decision". If assignee is not "vadi", run ${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role vadi --interval 60 --max-wait 900, then re-read the baton when it returns 0. Before each checkpoint, surface BATON_STATE, changed files, verification commands and outcomes, and final approval fields. Never create a PR. Stop after the baton turn_cap and assign human if still blocked.
+/goal You are Dvandva vadi. Continue the Dvandva walkaway run until .dvandva/baton.json status is "done", "human_question", or "human_decision". If assignee is not "vadi", run ${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role vadi --interval 60 --max-wait 900, then re-read the baton when it returns 0. Before each checkpoint, surface BATON_STATE, changed files, verification commands and outcomes, and final approval fields. Never create a PR. Stop after the baton turn_cap and assign human if still blocked.
 ```
 
 ## Failure modes
@@ -298,6 +298,6 @@ In `run_mode: "supervised"`, exit after surfacing any baton assigned away from v
 }
 ```
 
-The full state-transition table is in `product.md` Appendix A. Refer to it for any transition not explicitly named in this skill body.
+For the bundled state-transition reference, read `${CLAUDE_SKILL_DIR}/../../references/state-transition-table.md` after resolving `${CLAUDE_SKILL_DIR}` to this skill directory. In standalone development installs where that file is absent, rely on the mode table and inlined baton schema above.
 
 <!-- Skill version: 0.3.0 -->

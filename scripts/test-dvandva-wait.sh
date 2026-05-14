@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# Tests for scripts/dvandva-wait.sh.
+# Tests for the bundled Dvandva wait helpers.
 set -u
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SCRIPT="$ROOT_DIR/scripts/dvandva-wait.sh"
+SCRIPT="$ROOT_DIR/plugins/dvandva/skills/vadi/scripts/dvandva-wait.sh"
+PRATIVADI_SCRIPT="$ROOT_DIR/plugins/dvandva/skills/prativadi/scripts/dvandva-wait.sh"
 TMP_DIR="$(mktemp -d)"
 
 cleanup() {
@@ -102,18 +103,35 @@ run_case "returns 20 on timeout while assigned away" 20 \
 run_case "rejects zero interval with positive max wait" 2 \
   "$SCRIPT" --role vadi --file "$BATON_WAIT" --interval 0 --max-wait 1
 
-# Drift check: the canonical helper at scripts/dvandva-wait.sh must be
-# byte-identical to the bundled copies inside each skill dir. When the
-# canonical changes, the maintainer must `cp` it into both skill dirs.
-for copy in skills/dvandva-vadi/scripts/dvandva-wait.sh skills/dvandva-prativadi/scripts/dvandva-wait.sh; do
-  if cmp -s "$SCRIPT" "$ROOT_DIR/$copy"; then
-    echo "PASS: $copy byte-identical to canonical"
+for helper in "$SCRIPT" "$PRATIVADI_SCRIPT"; do
+  if [[ -x "$helper" ]]; then
+    echo "PASS: executable helper exists at ${helper#$ROOT_DIR/}"
   else
-    echo "FAIL: $copy has drifted from canonical scripts/dvandva-wait.sh"
-    echo "  Re-sync with: cp scripts/dvandva-wait.sh $copy"
+    echo "FAIL: helper missing or not executable at ${helper#$ROOT_DIR/}"
     failures=$((failures + 1))
   fi
 done
+
+if cmp -s "$SCRIPT" "$PRATIVADI_SCRIPT"; then
+  echo "PASS: plugin wait helpers are byte-identical"
+else
+  echo "FAIL: plugin wait helpers drifted"
+  failures=$((failures + 1))
+fi
+
+if [[ -d "$ROOT_DIR/skills" ]]; then
+  echo "FAIL: root skills/ directory should be removed after plugin migration"
+  failures=$((failures + 1))
+else
+  echo "PASS: root skills/ directory removed"
+fi
+
+if [[ -f "$ROOT_DIR/scripts/dvandva-wait.sh" ]]; then
+  echo "FAIL: root scripts/dvandva-wait.sh should not remain a runtime helper"
+  failures=$((failures + 1))
+else
+  echo "PASS: no root runtime wait helper remains"
+fi
 
 if [[ "$failures" -gt 0 ]]; then
   exit 1

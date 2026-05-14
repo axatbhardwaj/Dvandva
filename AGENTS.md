@@ -18,7 +18,7 @@ Prefer concise, source-backed docs over speculative architecture. If a workflow 
 
 ## Preferred Workflow Model
 
-Claude is the primary vadi. Codex is the prativadi and narrow fixer.
+Either engine can host either role. The preferred dogfood setup is Claude Code as vadi and Codex as prativadi, but Codex-as-vadi, Claude-as-prativadi, and single-engine supervised runs are valid.
 
 Use PR comments for human-facing milestone summaries only. Use local baton files for agent-to-agent handoff.
 
