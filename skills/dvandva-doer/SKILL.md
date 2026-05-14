@@ -1,6 +1,6 @@
 ---
 name: dvandva-doer
-description: Use when the user asks Claude to draft a plan or implement code as part of a Claude+Codex pair via the Dvandva protocol. Triggers on phrases like "implement X with codex review", "do the doer pass", "draft the plan for dvandva", "review codex's fixups", "phase N implementation". Reads .dvandva/baton.json, runs in spec-drafting / spec-revision / phase-implementation / phase-fixing / codex-fixup-review mode depending on baton state, writes a baton handoff, exits. Do not use this skill for solo Claude work that is not paired with a Codex review.
+description: Use when the user asks Claude to draft a plan or implement code as part of a Claude+Codex pair via the Dvandva protocol. Triggers on phrases like "implement X with codex review", "do the doer pass", "draft the plan for dvandva", "review codex's fixups", "phase N implementation", "start dvandva", "run the doer", "fix phase N", "begin dvandva session". Reads .dvandva/baton.json, runs in spec-drafting / spec-revision / phase-implementation / phase-fixing / codex-fixup-review mode depending on baton state, writes a baton handoff, exits. Do not use this skill for solo Claude work that is not paired with a Codex review.
 ---
 
 # dvandva-doer
@@ -10,7 +10,7 @@ You are the Dvandva doer. You draft plans, implement them phase by phase, and re
 ## Preflight (every invocation)
 
 1. Read `AGENTS.md` at the repo root if present.
-2. Read `.dvandva/baton.json`. If the file does not exist, scaffold it: create `.dvandva/`, copy `templates/channel/baton.json` into it, then re-read.
+2. Read `.dvandva/baton.json`. If the file does not exist, scaffold it: create `.dvandva/`, write `.dvandva/baton.json` using the canonical schema at the bottom of this skill with values `status: "spec_drafting"`, `assignee: "claude"`, `phase: "spec"`, `updated_at: <current ISO-8601 UTC>`, all other fields per the schema defaults. Then re-read.
 3. Verify the baton's `schema` field equals `dvandva.baton.v1`. If not, surface the mismatch and exit without writing.
 4. Verify `assignee == "claude"`. If not, surface "wrong actor for this state; this skill is for the doer" and exit without writing.
 5. Determine mode from `phase` + `status` + `review_target` (see mode table below).
@@ -24,7 +24,7 @@ You are the Dvandva doer. You draft plans, implement them phase by phase, and re
 | `phase: "spec", status: "spec_revision"` | Mode B — spec revision |
 | `phase: 1..N, status: "implementing"` | Mode C — phase implementation |
 | `phase: 1..N, status: "phase_fixing"` | Mode D — phase fixing |
-| `status: "review_of_review", review_target: "codex_fixups"` | Mode E — codex-fixup review |
+| `status: "review_of_review", review_target: "codex_fixups"` (assignee: claude already verified by preflight) | Mode E — codex-fixup review |
 | anything else with `assignee: claude` | exit with "unrecognized state" |
 
 ## Mode A — spec drafting
@@ -48,7 +48,7 @@ Baton write before exit:
 - `total_phases: <integer from plan>`
 - `summary: "Spec drafted. Plan at <plan_ref>. <total_phases> phases declared."`
 - `next_action: "Codex: Q&A on the plan at <plan_ref>. Surface concerns in findings. Approve or hand back for revision."`
-- Update `updated_at` and bump `checkpoint`.
+- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
 
 Surface the new BATON_STATE line. Exit.
 
@@ -59,8 +59,9 @@ Trigger: `phase: "spec", status: "spec_revision"`.
 Actions:
 
 1. Read the baton's `findings` array. Each finding is a Q&A item or change request from Codex.
-2. Open the plan file at `plan_ref`. Address each finding by editing the plan.
-3. If your edits changed the declared phase count in the plan, also update `total_phases` on the baton.
+2. Verify `plan_ref` is set and the file exists. If `plan_ref` is null or the file is missing, surface "plan_ref unset; spec phase cannot proceed" and write the baton with `status: "human_decision"`, `assignee: "human"`, `blockers: ["plan_ref unset during spec_revision"]`, `next_action: "Human: investigate why plan_ref was never set during Mode A. Restart spec phase if needed."`. Exit.
+3. Open the plan file at `plan_ref`. Address each finding by editing the plan.
+4. If your edits changed the declared phase count in the plan, also update `total_phases` on the baton.
 
 Baton write before exit:
 
@@ -71,7 +72,7 @@ Baton write before exit:
 - `findings: []` (clear; Codex will re-populate on the next Q&A pass if needed)
 - `summary: "Addressed Codex Q&A. <N> findings resolved."`
 - `next_action: "Codex: re-Q&A on the updated plan at <plan_ref>. Approve to advance to phase 1, or surface remaining concerns."`
-- Update `updated_at` and bump `checkpoint`.
+- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
 
 Surface BATON_STATE. Exit.
 
@@ -97,7 +98,19 @@ Baton write before exit:
 - `changed_paths: [<files touched>]`
 - `verification: [{command, result, notes}, ...]` populated with the commands you ran
 - `next_action: "Codex: review phase <N> implementation. Apply narrow fixups within the allowlist, or hand back substantive findings."`
-- Update `updated_at` and bump `checkpoint`.
+- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
+
+Baton write if you hit a handback condition (architecture, schema migration, shared infra, dep removal, ambiguous requirement, or out-of-scope decision):
+
+- `phase: <current N>` (unchanged)
+- `status: "human_decision"`
+- `assignee: "human"`
+- `review_target: null`
+- `blockers: ["<one-line description of why this needs a human call>"]`
+- `summary: "Phase <N> implementation blocked: <reason>."`
+- `next_action: "Human: decide how to proceed. Edit baton.assignee to resume."`
+- Do not commit partial changes; leave the working tree as-is and let the baton's `summary` describe how far you got.
+- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
 
 Surface BATON_STATE. Exit.
 
@@ -110,6 +123,7 @@ Actions:
 1. Read the baton's `findings` array — Codex's substantive issues.
 2. Fix only the listed items. Do not opportunistically refactor adjacent code.
 3. Re-run verification on the affected code paths.
+4. If a finding cannot be resolved within the doer's authority (requires architecture change, schema migration, or other handback condition), stop and route to human_decision instead of producing a broken fix.
 
 Baton write before exit:
 
@@ -121,7 +135,18 @@ Baton write before exit:
 - `summary: "Addressed Codex findings for phase <N>. <N> items fixed."`
 - `verification: [...]` updated with the post-fix verification commands
 - `next_action: "Codex: re-review phase <N>. Approve to advance, fix narrowly, or hand back."`
-- Update `updated_at` and bump `checkpoint`.
+- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
+
+Baton write if a finding requires escalation (per action step 4):
+
+- `phase: <current N>` (unchanged)
+- `status: "human_decision"`
+- `assignee: "human"`
+- `review_target: null`
+- `blockers: ["<the unresolvable finding>"]`
+- `summary: "Phase <N> fix blocked: <reason>."`
+- `next_action: "Human: decide whether to accept the finding as-is, change scope, or hand back to Claude with adjusted instructions."`
+- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
 
 Surface BATON_STATE. Exit.
 
@@ -142,12 +167,12 @@ If you approve, baton write:
 
 - `phase: <N+1>` (advance) **or** `phase: <current N>` if N was final and `status: "done"`
 - `status: "implementing"` (advance) **or** `"done"` (terminal)
-- `assignee: "claude"` (advance) **or** unchanged (terminal)
-- `review_target: null` on advance, or null on terminal
-- `disagreement_round: 0` (reset on advance)
+- `assignee: "claude"` (advance) **or** `"human"` (terminal — see fix M4 below)
+- `review_target: null` (both paths)
+- `disagreement_round: 0` (both paths — reset cleanly whether advancing or terminating)
 - `summary: "Approved Codex's narrow fixups for phase <N>. Advancing to phase <N+1>."` or `"...Phase <N> was final; marking done."`
 - `next_action: "Claude: implement phase <N+1> per plan at <plan_ref>."` or `"Human: write PR summary using this baton as source material."`
-- Update `updated_at` and bump `checkpoint`.
+- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
 
 If you disapprove:
 
@@ -162,7 +187,7 @@ If you disapprove:
    - `disagreement_round: <incremented>`
    - `summary: "Disapproved Codex's fixup for phase <N>; wrote counter-change. Round <X>."`
    - `next_action: "Codex: review Claude's counter-change. Approve to advance, or counter-propose."`
-   - Update `updated_at` and bump `checkpoint`.
+   - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
 
 Surface BATON_STATE. Exit.
 
