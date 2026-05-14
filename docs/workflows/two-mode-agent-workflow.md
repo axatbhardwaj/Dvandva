@@ -2,11 +2,11 @@
 
 ## Goal
 
-Create a reusable Claude + Codex workflow that keeps Claude as the doer and Codex as reviewer/fixer, without turning PR comments into a slow agent chat room.
+Create a reusable Claude + Codex workflow that keeps Claude as the vadi and Codex as prativadi/fixer, without turning PR comments into a slow agent chat room.
 
 ## Roles
 
-### Claude: Doer
+### Claude: Vadi
 
 Claude owns implementation.
 
@@ -25,7 +25,7 @@ Claude should not:
 - Push risky infra, schema, dependency removal, or force-push changes without human approval.
 - Keep looping after the baton says Codex owns the next action.
 
-### Codex: Reviewer and Narrow Fixer
+### Codex: Prativadi and Narrow Fixer
 
 Codex owns adversarial verification.
 
@@ -69,10 +69,10 @@ Target shape:
 
 Protocol:
 
-1. Human starts Claude with the doer goal.
+1. Human starts Claude with the vadi goal.
 2. Claude implements until tests pass or it hits a blocker.
 3. Claude writes `.dvandva/baton.json` with `assignee: "codex"`.
-4. Human starts Codex with the reviewer goal.
+4. Human starts Codex with the prativadi goal.
 5. Codex reviews and optionally commits narrow fixups.
 6. Codex writes `.dvandva/baton.json` with one of:
    - `assignee: "claude"` for required implementation follow-up.

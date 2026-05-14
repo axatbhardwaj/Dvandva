@@ -120,18 +120,18 @@ This is the core anti-polling rule:
 
 Use `/goal` around the baton state instead of around a timer.
 
-The canonical v1 goal conditions are embedded in the two skill bodies (`skills/dvandva-doer/SKILL.md` and `skills/dvandva-reviewer/SKILL.md`) under their `/goal condition` sections. Always use the version from the skill file rather than copying from this doc, since the skill version is what the goal evaluator actually parses against.
+The canonical v1 goal conditions are embedded in the two skill bodies (`skills/dvandva-vadi/SKILL.md` and `skills/dvandva-prativadi/SKILL.md`) under their `/goal condition` sections. Always use the version from the skill file rather than copying from this doc, since the skill version is what the goal evaluator actually parses against.
 
-Doer goal (paste into Claude):
-
-```
-/goal You are dvandva-doer. Work until .dvandva/baton.json has assignee not equal to "claude" or status is "done" or "human_decision". Before stopping, surface BATON_STATE, list changed files, list verification commands and outcomes, and do not modify files outside the requested scope. Stop after 20 turns and assign human if still blocked.
-```
-
-Reviewer goal (paste into Codex):
+Vadi goal (paste into Claude):
 
 ```
-/goal You are dvandva-reviewer. Review the branch using .dvandva/baton.json as the handoff. Apply only narrow fixups within the allowlist. Stop when the baton has assignee not equal to "codex" or status is "done" or "human_decision". Before stopping, surface BATON_STATE, findings, verification commands and outcomes, and the final baton contents.
+/goal You are dvandva-vadi. Work until .dvandva/baton.json has assignee not equal to "claude" or status is "done" or "human_decision". Before stopping, surface BATON_STATE, list changed files, list verification commands and outcomes, and do not modify files outside the requested scope. Stop after 20 turns and assign human if still blocked.
+```
+
+Prativadi goal (paste into Codex):
+
+```
+/goal You are dvandva-prativadi. Review the branch using .dvandva/baton.json as the handoff. Apply only narrow fixups within the allowlist. Stop when the baton has assignee not equal to "codex" or status is "done" or "human_decision". Before stopping, surface BATON_STATE, findings, verification commands and outcomes, and the final baton contents.
 ```
 
 Both goals require the agent to surface a structured `BATON_STATE: { ... }` line at every checkpoint. The `/goal` evaluator detects exit conditions by reading that line in the transcript.

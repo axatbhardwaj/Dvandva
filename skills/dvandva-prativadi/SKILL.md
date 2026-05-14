@@ -1,16 +1,16 @@
 ---
-name: dvandva-reviewer
-description: Use when the user asks Codex to Q&A on a plan, review a Claude implementation, or review Claude's counter-changes via the Dvandva protocol. Triggers on phrases like "review the dvandva baton", "do the reviewer pass", "Q&A on the plan", "review claude's counter-change", "check the counter", "adversarial verification of phase N", "review phase N", "start the reviewer", "run the reviewer", "begin reviewer session", "codex review pass". Reads .dvandva/baton.json, runs in spec-Q&A / phase-review / claude-counter-review mode depending on baton state, applies only narrow fixups within the allowlist, writes a baton handoff, exits. Do not use this skill for solo Codex work that is not paired with Claude as the doer.
+name: dvandva-prativadi
+description: Use when the user asks Codex to Q&A on a plan, review a Claude implementation, or review Claude's counter-changes via the Dvandva protocol. Triggers on phrases like "review the dvandva baton", "do the prativadi pass", "Q&A on the plan", "review claude's counter-change", "check the counter", "adversarial verification of phase N", "review phase N", "start the prativadi", "run the prativadi", "begin prativadi session", "codex review pass". Reads .dvandva/baton.json, runs in spec-Q&A / phase-review / claude-counter-review mode depending on baton state, applies only narrow fixups within the allowlist, writes a baton handoff, exits. Do not use this skill for solo Codex work that is not paired with Claude as the vadi.
 ---
 
-# dvandva-reviewer
+# dvandva-prativadi
 
-You are the Dvandva reviewer and narrow fixer. You Q&A on plans, review implementation phases, apply narrow fixups within an allowlist, and review Claude's counter-changes during mutual-review disagreements.
+You are the Dvandva prativadi and narrow fixer. You Q&A on plans, review implementation phases, apply narrow fixups within an allowlist, and review Claude's counter-changes during mutual-review disagreements.
 
 ## Preflight (every invocation)
 
 1. Read `AGENTS.md` at the repo root if present.
-2. Read `.dvandva/baton.json`. If the file does not exist, surface "no baton — doer has not started" and exit without writing.
+2. Read `.dvandva/baton.json`. If the file does not exist, surface "no baton — vadi has not started" and exit without writing.
 3. Verify the baton's `schema` field equals `dvandva.baton.v1`. If not, surface the mismatch and exit.
 4. Verify `assignee == "codex"`. If not, surface "wrong actor for this state" and exit.
 5. Determine mode from `phase` + `status` + `review_target` (see mode table).
@@ -34,7 +34,7 @@ Actions:
 1. **Capability check**: verify `superpowers:brainstorming` is available in this Codex session. Capability check, not a filesystem path — try a no-op Skill invocation or check the `/skills` listing. If absent, surface install instructions referencing `codex plugin marketplace` and exit without writing the baton. Mode B and Mode C do not require this; only Mode A invokes brainstorming.
 2. Invoke `superpowers:brainstorming` as the questioner. Read the plan at `plan_ref`. Ask clarifying questions, surface ambiguity, propose alternatives.
 3. You may edit the plan at `plan_ref` directly for narrow improvements: typos, sharper phrasing, table formatting fixes. Do not restructure the plan unilaterally.
-4. Substantive concerns (scope, architecture, phase boundaries, dep choices) go in `findings` for the doer to address.
+4. Substantive concerns (scope, architecture, phase boundaries, dep choices) go in `findings` for the vadi to address.
 5. Decide: hand back for revision, or advance to phase 1.
 
 If you advance:
@@ -70,7 +70,7 @@ Trigger: `phase: 1..total_phases, status: "phase_review", review_target: "implem
 Actions:
 
 1. Read the diff vs branch baseline: `git diff <baseline>..HEAD`.
-2. Cross-check the doer's `verification` block. Did the listed commands actually pass? Do they cover the changed paths?
+2. Cross-check the vadi's `verification` block. Did the listed commands actually pass? Do they cover the changed paths?
 3. Look for: bugs, regressions, stale docs, missing tests, claims not matching the diff.
 4. Categorize issues as either narrow-fixup-eligible or handback-required.
 
@@ -210,7 +210,7 @@ Do not poll. Do not stay running waiting for Claude.
 ## `/goal` condition (paste into Codex when launching)
 
 ```
-/goal You are dvandva-reviewer. Review the branch using .dvandva/baton.json as the handoff. Apply only narrow fixups within the allowlist. Stop when the baton has assignee not equal to "codex" or status is "done" or "human_decision". Before stopping, surface BATON_STATE, findings, verification commands and outcomes, and the final baton contents.
+/goal You are dvandva-prativadi. Review the branch using .dvandva/baton.json as the handoff. Apply only narrow fixups within the allowlist. Stop when the baton has assignee not equal to "codex" or status is "done" or "human_decision". Before stopping, surface BATON_STATE, findings, verification commands and outcomes, and the final baton contents.
 ```
 
 ## Failure modes
@@ -223,7 +223,7 @@ Do not poll. Do not stay running waiting for Claude.
 | `superpowers:brainstorming` not available (Mode A only) | Surface install hint: `codex plugin marketplace` or upstream symlink install per https://deepwiki.com/obra/superpowers/2.4-installing-on-codex. Exit without writing. Mode B (phase review) and Mode C (counter review) do not require this and proceed even without superpowers. |
 | `plan_ref` missing or referenced file does not exist during phase mode | Surface "spec phase did not complete; cannot review phase implementation". Set `status: "human_decision"`. Exit. |
 | `total_phases` is 0 or unset during phase mode | Surface schema integrity error. Set `status: "human_decision"`. Exit. |
-| Reviewer finds no diff vs baseline after Claude said phase implementation done | Write `findings: ["doer claimed implementation but produced no diff"]`. Set `status: "human_decision"`. |
+| Prativadi finds no diff vs baseline after Claude said phase implementation done | Write `findings: ["vadi claimed implementation but produced no diff"]`. Set `status: "human_decision"`. |
 | `/goal` turn cap hit before exit condition | Surface current baton state. Set `status: "human_decision"`. Exit. |
 
 ## Canonical baton schema (dvandva.baton.v1)

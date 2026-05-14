@@ -18,7 +18,7 @@ Prefer concise, source-backed docs over speculative architecture. If a workflow 
 
 ## Preferred Workflow Model
 
-Claude is the primary doer. Codex is the reviewer and narrow fixer.
+Claude is the primary vadi. Codex is the prativadi and narrow fixer.
 
 Use PR comments for human-facing milestone summaries only. Use local baton files for agent-to-agent handoff.
 

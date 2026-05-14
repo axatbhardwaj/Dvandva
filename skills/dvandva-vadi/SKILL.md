@@ -1,18 +1,18 @@
 ---
-name: dvandva-doer
-description: Use when the user asks Claude to draft a plan or implement code as part of a Claude+Codex pair via the Dvandva protocol. Triggers on phrases like "implement X with codex review", "do the doer pass", "draft the plan for dvandva", "review codex's fixups", "phase N implementation", "start dvandva", "run the doer", "fix phase N", "begin dvandva session". Reads .dvandva/baton.json, runs in spec-drafting / spec-revision / phase-implementation / phase-fixing / codex-fixup-review mode depending on baton state, writes a baton handoff, exits. Do not use this skill for solo Claude work that is not paired with a Codex review.
+name: dvandva-vadi
+description: Use when the user asks Claude to draft a plan or implement code as part of a Claude+Codex pair via the Dvandva protocol. Triggers on phrases like "implement X with codex review", "do the vadi pass", "draft the plan for dvandva", "review codex's fixups", "phase N implementation", "start dvandva", "run the vadi", "fix phase N", "begin dvandva session". Reads .dvandva/baton.json, runs in spec-drafting / spec-revision / phase-implementation / phase-fixing / codex-fixup-review mode depending on baton state, writes a baton handoff, exits. Do not use this skill for solo Claude work that is not paired with a Codex review.
 ---
 
-# dvandva-doer
+# dvandva-vadi
 
-You are the Dvandva doer. You draft plans, implement them phase by phase, and review Codex's narrow fixups.
+You are the Dvandva vadi. You draft plans, implement them phase by phase, and review Codex's narrow fixups.
 
 ## Preflight (every invocation)
 
 1. Read `AGENTS.md` at the repo root if present.
 2. Read `.dvandva/baton.json`. If the file does not exist, scaffold it: create `.dvandva/`, write `.dvandva/baton.json` using the canonical schema at the bottom of this skill with values `status: "spec_drafting"`, `assignee: "claude"`, `phase: "spec"`, `updated_at: <current ISO-8601 UTC>`, all other fields per the schema defaults. Then re-read.
 3. Verify the baton's `schema` field equals `dvandva.baton.v1`. If not, surface the mismatch and exit without writing.
-4. Verify `assignee == "claude"`. If not, surface "wrong actor for this state; this skill is for the doer" and exit without writing.
+4. Verify `assignee == "claude"`. If not, surface "wrong actor for this state; this skill is for the vadi" and exit without writing.
 5. Determine mode from `phase` + `status` + `review_target` (see mode table below).
 6. Surface the parsed baton-state line as: `BATON_STATE: { phase: ..., status: ..., assignee: claude, review_target: ..., disagreement_round: ... }`. The `/goal` evaluator reads this line.
 
@@ -123,7 +123,7 @@ Actions:
 1. Read the baton's `findings` array — Codex's substantive issues.
 2. Fix only the listed items. Do not opportunistically refactor adjacent code.
 3. Re-run verification on the affected code paths.
-4. If a finding cannot be resolved within the doer's authority (requires architecture change, schema migration, or other handback condition), stop and route to human_decision instead of producing a broken fix.
+4. If a finding cannot be resolved within the vadi's authority (requires architecture change, schema migration, or other handback condition), stop and route to human_decision instead of producing a broken fix.
 
 Baton write before exit:
 
@@ -200,7 +200,7 @@ Do not poll. Do not assume Codex silence is approval. Do not keep working past t
 ## `/goal` condition (paste into Claude when launching)
 
 ```
-/goal You are dvandva-doer. Work until .dvandva/baton.json has assignee not equal to "claude" or status is "done" or "human_decision". Before stopping, surface BATON_STATE, list changed files, list verification commands and outcomes, and do not modify files outside the requested scope. Stop after 20 turns and assign human if still blocked.
+/goal You are dvandva-vadi. Work until .dvandva/baton.json has assignee not equal to "claude" or status is "done" or "human_decision". Before stopping, surface BATON_STATE, list changed files, list verification commands and outcomes, and do not modify files outside the requested scope. Stop after 20 turns and assign human if still blocked.
 ```
 
 ## Failure modes

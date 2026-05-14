@@ -1,10 +1,12 @@
 # Dvandva
 
-Dvandva is an orchestration framework for pairing two coding agents (Claude Code as doer, Codex as reviewer) into a disciplined collaboration protocol. Coordination happens through a local baton file; PR comments are reserved for human-facing summaries.
+Dvandva is an orchestration framework for pairing two coding agents (Claude Code as vadi, Codex as prativadi) into a disciplined collaboration protocol. Coordination happens through a local baton file; PR comments are reserved for human-facing summaries.
+
+vadi (वादी) is Sanskrit for "proposer" and prativadi (प्रतिवादी) for "responder" — terms from classical Indian philosophical debate, which is the duo's working metaphor.
 
 ## Current State
 
-v1 ships as a pair of [agentskills.io](https://agentskills.io)-standard skills (`dvandva-doer` for Claude Code, `dvandva-reviewer` for Codex) that encode a phased spec-then-implementation flow with mutual review and a disagreement cap.
+v1 ships as a pair of [agentskills.io](https://agentskills.io)-standard skills (`dvandva-vadi` for Claude Code, `dvandva-prativadi` for Codex) that encode a phased spec-then-implementation flow with mutual review and a disagreement cap.
 
 The full product spec is in `product.md`. A sanitized case study of the internal PR 353 research run that motivated the design lives at `docs/case-studies/pr-353.md`.
 
@@ -30,9 +32,9 @@ All five prerequisites must be in place before the pilot:
 | superpowers plugin on Codex | `codex` then `/skills` lists `superpowers:brainstorming`. Install via `codex plugin marketplace` or upstream symlink per https://deepwiki.com/obra/superpowers/2.4-installing-on-codex |
 | Working directory is a git repo on a feature branch | `git rev-parse --abbrev-ref HEAD` returns something other than `main` / `master` |
 
-The `dvandva-reviewer` skill refuses to run if `superpowers:brainstorming` is not available in the current Codex session (Mode A only — phase reviews and counter reviews proceed without superpowers).
+The `dvandva-prativadi` skill refuses to run if `superpowers:brainstorming` is not available in the current Codex session (Mode A only — phase reviews and counter reviews proceed without superpowers).
 
-The `dvandva-doer` skill's spec phase also requires superpowers — it invokes `superpowers:brainstorming` and `superpowers:writing-plans` and fails immediately if either is unavailable.
+The `dvandva-vadi` skill's spec phase also requires superpowers — it invokes `superpowers:brainstorming` and `superpowers:writing-plans` and fails immediately if either is unavailable.
 
 ## Install
 
@@ -42,26 +44,26 @@ From this repo's root:
 
 ```bash
 mkdir -p ~/.claude/skills ~/.agents/skills
-ln -s "$(pwd)/skills/dvandva-doer"     ~/.claude/skills/dvandva-doer
-ln -s "$(pwd)/skills/dvandva-reviewer" ~/.agents/skills/dvandva-reviewer
+ln -s "$(pwd)/skills/dvandva-vadi"     ~/.claude/skills/dvandva-vadi
+ln -s "$(pwd)/skills/dvandva-prativadi" ~/.agents/skills/dvandva-prativadi
 ```
 
 Then verify:
 
 ```bash
-ls ~/.claude/skills/dvandva-doer/SKILL.md
-ls ~/.agents/skills/dvandva-reviewer/SKILL.md
+ls ~/.claude/skills/dvandva-vadi/SKILL.md
+ls ~/.agents/skills/dvandva-prativadi/SKILL.md
 ```
 
-Open `claude` and run `/skills`. `dvandva-doer` should be listed. Open `codex` and run `/skills`. `dvandva-reviewer` should be listed.
+Open `claude` and run `/skills`. `dvandva-vadi` should be listed. Open `codex` and run `/skills`. `dvandva-prativadi` should be listed.
 
 **On Windows:** use `mklink /D` instead of `ln -s` from PowerShell (run as Administrator). Replace the symlink commands above with:
 
 ```cmd
 mkdir "%USERPROFILE%\.claude\skills" 2>nul
 mkdir "%USERPROFILE%\.agents\skills" 2>nul
-mklink /D "%USERPROFILE%\.claude\skills\dvandva-doer" "<full-path-to-repo>\skills\dvandva-doer"
-mklink /D "%USERPROFILE%\.agents\skills\dvandva-reviewer" "<full-path-to-repo>\skills\dvandva-reviewer"
+mklink /D "%USERPROFILE%\.claude\skills\dvandva-vadi" "<full-path-to-repo>\skills\dvandva-vadi"
+mklink /D "%USERPROFILE%\.agents\skills\dvandva-prativadi" "<full-path-to-repo>\skills\dvandva-prativadi"
 ```
 
 If `mklink` is not available, copy the directories instead.
@@ -70,7 +72,7 @@ If `mklink` is not available, copy the directories instead.
 
 Consumer repos that intentionally adopt Dvandva check the skills under their own `.claude/skills/` and `.agents/skills/`. Both engines walk from cwd up to the repo root looking for these directories.
 
-**Trust warning:** Project-level skills can carry tool-permission frontmatter (Claude `allowed-tools`, Codex skill metadata). Review the `SKILL.md` contents the same way you would any other `.claude/` or `.agents/` config the repo ships before trusting it. The in-repo skill bodies are at `skills/dvandva-doer/SKILL.md` and `skills/dvandva-reviewer/SKILL.md`.
+**Trust warning:** Project-level skills can carry tool-permission frontmatter (Claude `allowed-tools`, Codex skill metadata). Review the `SKILL.md` contents the same way you would any other `.claude/` or `.agents/` config the repo ships before trusting it. The in-repo skill bodies are at `skills/dvandva-vadi/SKILL.md` and `skills/dvandva-prativadi/SKILL.md`.
 
 ## Usage
 
@@ -78,21 +80,21 @@ In a feature-branch worktree, prompt Claude with natural language:
 
 > "Implement the X feature with Codex review. Use dvandva."
 
-`dvandva-doer` auto-activates from the description. It scaffolds `.dvandva/baton.json`, drives the spec phase, and writes a handoff. When the baton's `assignee` flips to `codex`, exit Claude and start Codex:
+`dvandva-vadi` auto-activates from the description. It scaffolds `.dvandva/baton.json`, drives the spec phase, and writes a handoff. When the baton's `assignee` flips to `codex`, exit Claude and start Codex:
 
 > "Review the dvandva baton."
 
-`dvandva-reviewer` auto-activates, Q&As during spec or reviews the implementation, writes a handoff, exits. Repeat the cycle until the baton reaches `status: "done"` or `human_decision`.
+`dvandva-prativadi` auto-activates, Q&As during spec or reviews the implementation, writes a handoff, exits. Repeat the cycle until the baton reaches `status: "done"` or `human_decision`.
 
-Explicit invocation (`/dvandva-doer` in Claude, `$dvandva-reviewer` in Codex) is documented fallback if auto-activation misfires.
+Explicit invocation (`/dvandva-vadi` in Claude, `$dvandva-prativadi` in Codex) is documented fallback if auto-activation misfires.
 
 ## Linting and Validation
 
 A small Bash+jq linter at `scripts/lint-skills.sh` validates SKILL.md frontmatter and the inlined baton schema:
 
 ```bash
-bash scripts/lint-skills.sh skills/dvandva-doer/SKILL.md
-bash scripts/lint-skills.sh skills/dvandva-reviewer/SKILL.md
+bash scripts/lint-skills.sh skills/dvandva-vadi/SKILL.md
+bash scripts/lint-skills.sh skills/dvandva-prativadi/SKILL.md
 ```
 
 A future v2 will add a deterministic baton schema and transition validator (see `product.md` section 16).
