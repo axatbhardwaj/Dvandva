@@ -1,13 +1,13 @@
 {
   "schema": "dvandva.baton.v1",
-  "updated_at": "",
+  "updated_at": null,
   "mode": "feature-pr",
   "phase": "spec",
   "total_phases": 0,
   "status": "spec_drafting",
   "assignee": "claude",
   "review_target": null,
-  "plan_ref": "",
+  "plan_ref": null,
   "disagreement_round": 0,
   "disagreement_cap": 3,
   "turn_cap": 20,
@@ -21,5 +21,5 @@
   "claude_counter": [],
   "deferred": [],
   "blockers": [],
-  "next_action": "dvandva-doer: read AGENTS.md, brainstorm the spec, write plan_ref, hand off to codex."
+  "next_action": "claude: read AGENTS.md, brainstorm the spec, write plan_ref, hand off to codex."
 }
