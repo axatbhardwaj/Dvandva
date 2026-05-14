@@ -6,8 +6,8 @@ Status: rewritten 2026-05-14 for richer flow (spec phase + phased implementation
 
 Dvandva v1 is a pair of agent skills, written to the [agentskills.io](https://agentskills.io) open standard, that encode a disciplined two-agent collaboration protocol:
 
-- `dvandva-vadi` — auto-activates in Claude Code. Drives the spec/plan phase using `superpowers:brainstorming` and `superpowers:writing-plans`, then implements the plan phase-by-phase, then reviews any narrow fixups Codex makes.
-- `dvandva-prativadi` — auto-activates in Codex. Q&As during the spec phase, reviews each implementation phase, applies narrow fixups within an allowlist, and reviews Claude's counter-changes when there is a disagreement.
+- `dvandva-vadi` — the proposer/implementer skill. Runs in either Claude Code or Codex. Drives the spec/plan phase using `superpowers:brainstorming` and `superpowers:writing-plans`, then implements the plan phase-by-phase, then reviews any narrow fixups the prativadi makes.
+- `dvandva-prativadi` — the responder/reviewer skill. Runs in either Claude Code or Codex. Q&As during the spec phase, reviews each implementation phase, applies narrow fixups within an allowlist, and reviews the vadi's counter-changes when there is a disagreement.
 
 Both skills share `.dvandva/baton.json` as the coordination channel. Both agents run autonomously via `/goal` within each invocation, exiting only when the baton-condition transfers ownership to the other agent or to a human.
 
@@ -30,7 +30,7 @@ The product is the two skills, the baton template, an install/usage doc, and a p
 **v1 ships successfully when all five hold:**
 
 1. The repo contains `skills/dvandva-vadi/SKILL.md` and `skills/dvandva-prativadi/SKILL.md` written to the agentskills.io standard, plus a baton template and an install/usage README that covers superpowers prerequisites.
-2. A teammate can follow the README — including the superpowers install step for Codex — and run a Claude+Codex pilot on a low-risk real PR without DM-ing the owner.
+2. A teammate can follow the README — including the superpowers install step — and run a Dvandva pilot (either two engines paired, or one engine playing both roles serially) on a low-risk real PR without DM-ing the owner.
 3. One pilot is completed: spec phase converges, ≥2 implementation phases run, ≥1 mutual-review loop triggers, and one disagreement-loop event occurs and resolves (or terminates correctly at human escalation). Metrics — turn count per agent, agent-to-agent PR comment count, wall-clock, real issues caught — are written up as `docs/case-studies/pilot-01.md` against the PR 353 baseline.
 4. In the pilot, both skills auto-activate from natural workflow language at least once each. Explicit invocation (`/dvandva-vadi`, `$dvandva-prativadi`) stays as documented fallback.
 5. No runaway loops. The disagreement-round cap (default 3) triggers a forced `human_decision` correctly when exercised, and `/goal` exits cleanly at every baton-state transition.
@@ -43,7 +43,7 @@ If criterion #5 fails (any runaway loop observed during pilot), v1 does not ship
 
 - `skills/dvandva-vadi/SKILL.md` — frontmatter (portable `name` + `description`), body covering the vadi's five modes (spec drafting, spec revision, phase implementation, phase fixing, codex-fixup review), the baton schema, the `/goal` exit conditions, and the disagreement-cap behavior.
 - `skills/dvandva-prativadi/SKILL.md` — same shape, covering prativadi's three modes (spec Q&A, phase review, claude-counter review), narrow-fix allowlist, handback conditions, baton schema, `/goal` exit conditions.
-- `templates/channel/baton.json` — v1 extended schema seed with all 23 required keys (`phase`, `total_phases`, `plan_ref`, `disagreement_round`, `disagreement_cap`, `turn_cap`, `review_target`, etc.). Already aligned with this spec.
+- `templates/channel/baton.json` — v1 extended schema seed with all 24 required keys (`phase`, `total_phases`, `plan_ref`, `disagreement_round`, `disagreement_cap`, `turn_cap`, `review_target`, `current_engine`, etc.). Already aligned with this spec.
 - `README.md` install section covering: user-level symlink install (primary), project-level install (secondary), and the superpowers prerequisite check for both engines.
 - One pilot writeup at `docs/case-studies/pilot-01.md` after the workflow ship.
 
@@ -52,24 +52,25 @@ If criterion #5 fails (any runaway loop observed during pilot), v1 does not ship
 - No CLI, no `dvandva` binary, no schema-validator script. v1 enforcement is checklist-gate inside the skill body + `/goal` transcript surfacing. The deterministic validator and the real JSON Schema file are v2.
 - No runner / daemon. Human still starts each agent invocation. Inside the invocation, `/goal` runs many turns autonomously; between invocations, the human types one command. v2 introduces a file watcher.
 - No GitHub integration. No PR comment posting. Skills tell the agent what to surface in transcript; humans write any PR comments using the baton as source material.
-- No generic vadi/prativadi role abstraction. v1 hardcodes `claude` and `codex` in the skill bodies. The baton `assignee` field is an unconstrained string so a third role is not blocked at the schema level.
+- No multi-engine enforcement. v1 does not verify which engine is running a given role. The `current_engine` field on the baton records which CLI wrote each checkpoint for traceability, but the protocol does not require a particular pairing. The canonical pairing (vadi=Claude, prativadi=Codex) is documented but not enforced.
 - No separate `dvandva-init` skill. The doer skill scaffolds `.dvandva/` inline on first run.
 - No plugin packaging for distribution. Manual symlink install is the v1 distribution story. Plugin packaging is v2.
 - No multi-baton-per-repo support. One active baton per worktree. Parallel branches each get their own worktree and own baton.
 
 ## 4. Prerequisites (hard requirement before pilot)
 
-Both prerequisites must be verified by the user before the pilot can run. The skill bodies must check the most-likely-to-fail prerequisite (superpowers on Codex) at preflight.
+At least one prerequisite engine must be verified before the pilot can run. The skill bodies must check the most-likely-to-fail prerequisite (superpowers availability) at preflight.
+
+You need at least one of {Claude Code, Codex} with the superpowers plugin installed. If you have both, the canonical setup pairs them (vadi=Claude Code, prativadi=Codex). If you have only one, both roles run in that one engine sequentially.
 
 | Prerequisite | Why | How to verify |
 |---|---|---|
-| Claude Code installed | Hosts the vadi skill | `which claude && claude --version` |
-| Codex CLI ≥ 0.130 | Hosts the prativadi skill; supports skills + `/goal` | `codex --version` |
-| superpowers plugin installed on Claude Code | vadi uses `superpowers:brainstorming` and `superpowers:writing-plans` in spec phase | `ls ~/.claude/plugins/cache/*/superpowers/` (varies by install method) or `claude` then `/skills` |
-| superpowers plugin installed on Codex | prativadi uses `superpowers:brainstorming` for spec Q&A | Capability check, not a fixed path: Codex must show `superpowers:brainstorming` in its available skills, or the prativadi must be able to invoke it successfully. Local installs may live under `~/.codex/plugins/cache/...` or `~/.agents/skills/...`. |
+| Claude Code installed (optional if using Codex for both roles) | Can host either skill | `which claude && claude --version` |
+| Codex CLI ≥ 0.130 (optional if using Claude Code for both roles) | Can host either skill; supports skills + `/goal` | `codex --version` |
+| superpowers plugin on the engine(s) you will use | vadi uses `superpowers:brainstorming`, `superpowers:writing-plans`; prativadi uses `superpowers:brainstorming` for spec Q&A | On Claude Code: `claude` then `/skills`. On Codex: capability check — Codex must show `superpowers:brainstorming` in its available skills. |
 | Git repo with a feature branch | The dvandva flow assumes a branch | `git rev-parse --abbrev-ref HEAD` returns something other than the main branch |
 
-The prativadi skill's preflight refuses to run and surfaces a clear install hint if `superpowers:brainstorming` is not available to the current Codex session. It must not hardcode a single filesystem path.
+The prativadi skill's preflight refuses to run and surfaces a clear install hint if `superpowers:brainstorming` is not available to the current session. It must not hardcode a single filesystem path.
 
 ## 5. Repo layout
 
@@ -105,21 +106,21 @@ The flow has three segments and an end state. Every arrow in the diagram is a ba
                   │ SPEC PHASE                       │
                   │  phase: "spec"                   │
                   │                                  │
-   start ───▶ Claude (drafting)                       │
+   start ───▶ Vadi (drafting — Claude or Codex)       │
                   │   uses superpowers:brainstorming  │
                   │   + superpowers:writing-plans     │
                   │   writes ./superpowers/plans/...  │
                   │   stores plan_ref on baton        │
                   │   baton → spec_review             │
                   ▼                                  │
-              Codex (Q&A / revision proposals)        │
+              Prativadi (Q&A — Claude or Codex)       │
                   │   uses superpowers:brainstorming  │
                   │   may edit plan_ref plan          │
-                  │   baton → spec_revision (claude)  │
+                  │   baton → spec_revision (vadi)    │
                   │    or → phase 1 implementing      │
                   ▼                                  │
-              Claude (revision)                       │
-                  │   addresses Codex Q&A             │
+              Vadi (revision)                         │
+                  │   addresses prativadi Q&A         │
                   │   baton → spec_review (loop)      │
                   └──┬───────────────────────────────┘
                      │
@@ -129,31 +130,31 @@ The flow has three segments and an end state. Every arrow in the diagram is a ba
                      ▼
    ┌─── PER-PHASE LOOP (for phase N in 1..total_phases) ───┐
    │                                                       │
-   │   Claude (implementing phase N)                       │
+   │   Vadi (implementing phase N)                         │
    │     uses superpowers:test-driven-development          │
    │     baton → phase_review (review_target: impl)        │
    │       ▼                                               │
-   │   Codex (reviewing phase N)                           │
+   │   Prativadi (reviewing phase N)                       │
    │     decides: approve / fix narrowly / hand back       │
    │       │                                               │
    │       ├─ approve, no changes ──▶ phase N+1 (or done)  │
    │       │                                               │
    │       ├─ apply narrow fixup ──▶ MUTUAL REVIEW         │
    │       │     baton → review_of_review                  │
-   │       │     review_target: codex_fixups               │
-   │       │     assignee: claude                          │
+   │       │     review_target: prativadi_fixups           │
+   │       │     assignee: vadi                            │
    │       │       ▼                                       │
-   │       │   Claude (reviewing Codex fixups)             │
+   │       │   Vadi (reviewing prativadi fixups)           │
    │       │       │                                       │
    │       │       ├─ approve ──▶ phase N+1 (or done)      │
    │       │       │                                       │
    │       │       └─ disapprove ──▶ DISAGREEMENT LOOP     │
    │       │             disagreement_round += 1           │
-   │       │             Claude writes counter-change       │
+   │       │             Vadi writes counter-change        │
    │       │             baton → counter_review            │
-   │       │             review_target: claude_counter     │
+   │       │             review_target: vadi_counter       │
    │       │               ▼                               │
-   │       │           Codex reviews counter-change        │
+   │       │           Prativadi reviews counter-change    │
    │       │               │                               │
    │       │               ├─ approve ──▶ phase N+1        │
    │       │               │                               │
@@ -163,13 +164,13 @@ The flow has three segments and an end state. Every arrow in the diagram is a ba
    │       │               └─ disagreement_round ≥ 3 ────┐ │
    │       │                   baton → human_decision   │ │
    │       │                                            │ │
-   │       └─ hand back (substantive issues) ──▶ Claude │ │
+   │       └─ hand back (substantive issues) ──▶ Vadi  │ │
    │             baton → phase_fixing                   │ │
    │             findings array populated                │ │
-   │             Claude fixes, hands back to Codex       │ │
-   │             (re-enters Codex review at top of loop) │ │
+   │             Vadi fixes, hands back to Prativadi     │ │
+   │             (re-enters prativadi review at top)     │ │
    │                                                     │ │
-   └─── on phase N+1 ──▶ Claude (implementing phase N+1) │ │
+   └─── on phase N+1 ──▶ Vadi (implementing phase N+1)  │ │
                                                          │ │
                                                          ▼ ▼
                                                   ┌───────────┐
@@ -184,7 +185,7 @@ The flow has three segments and an end state. Every arrow in the diagram is a ba
    Final phase complete → status: done → cycle ends
 ```
 
-Phase advancement invariant: Claude never advances a phase directly after implementation or fixing. Advancement is legal only when Codex approves Claude's implementation with no changes, Claude approves Codex's narrow fixups, or Codex approves Claude's counter-change in the disagreement loop. The agent writing the first baton for the next phase must set `disagreement_round: 0`.
+Phase advancement invariant: the vadi never advances a phase directly after implementation or fixing. Advancement is legal only when the prativadi approves the vadi's implementation with no changes, the vadi approves the prativadi's narrow fixups, or the prativadi approves the vadi's counter-change in the disagreement loop. The agent writing the first baton for the next phase must set `disagreement_round: 0`.
 
 Three caps the spec enforces operationally:
 
@@ -197,23 +198,23 @@ Three caps the spec enforces operationally:
 ### 7.1 Frontmatter
 
 - `name: dvandva-vadi`
-- `description:` one paragraph, front-loaded with trigger words: *implement*, *vadi*, *spec*, *plan with codex*, *phased implementation*, *hand off for review*, *review codex fixups*. Must list both spec-phase triggers and implementation-phase triggers since one skill handles both. Under the 1,536-char listing cap.
+- `description:` one paragraph, front-loaded with trigger words: *implement*, *vadi*, *spec*, *plan with review*, *phased implementation*, *hand off for review*, *review the prativadi's fixups*, *review codex's fixups*. Must list both spec-phase triggers and implementation-phase triggers since one skill handles both. Under the 1,536-char listing cap.
 
 No `allowed-tools` reliance (see section 9). Optional Claude-only `argument-hint: "[task description]"` for UX.
 
 ### 7.2 Body sections (target < 500 lines)
 
 1. **Role one-liner** — "You are the Dvandva vadi. You draft plans, implement them phase by phase, and review Codex's narrow fixups."
-2. **Preflight (all modes)** — read `AGENTS.md`, read `.dvandva/baton.json` if present. If absent, scaffold `.dvandva/` and write `baton.json` using the canonical schema inlined at the bottom of the SKILL.md (with seed values `status: "spec_drafting"`, `assignee: "claude"`, `phase: "spec"`, `updated_at: <current ISO-8601 UTC>`). This avoids depending on `templates/channel/baton.json`'s filesystem path, so the skill works unchanged when installed in any consumer repo. `templates/channel/baton.json` remains in this repo as a reference artifact. Determine current mode from `phase` + `status` + `review_target`, verify `assignee == claude`, refuse otherwise.
-3. **Mode A: spec drafting** — when `phase: "spec", status: "spec_drafting"`. Invoke `superpowers:brainstorming` skill flow. Produce a gitignored Superpowers plan under `./superpowers/plans/YYYY-MM-DD-<topic>.md` with declared `total_phases` and a per-phase scope list. Use `superpowers:writing-plans` to convert the spec into a phase-by-phase plan. Set `plan_ref` and `total_phases` on the baton. Write baton with `status: spec_review, assignee: codex, review_target: spec`. Exit.
-4. **Mode B: spec revision** — when `phase: "spec", status: "spec_revision"`. Read the baton's `findings` array (Codex's Q&A), respond in the `plan_ref` plan, update affected `total_phases` if scope changed. Always write baton with `status: spec_review, assignee: codex, review_target: spec`; Codex is the only actor that can advance the spec to phase 1. Exit.
-5. **Mode C: phase implementation** — when `phase: 1..N, status: "implementing"`. Read the corresponding phase scope from the `plan_ref` plan. Invoke `superpowers:test-driven-development` when applicable. Implement only the phase scope; do not bleed into adjacent phases. Run motivating tests and cheap checks. Surface all commands + results. Write baton with `status: phase_review, assignee: codex, review_target: implementation`. Exit.
-6. **Mode D: phase fixing** — when `phase: 1..N, status: "phase_fixing"`. Read `findings` from Codex. Fix only listed items. Run verification. Write baton with `status: phase_review, assignee: codex, review_target: implementation` (re-entering Codex review). Exit.
-7. **Mode E: codex-fixup review** — when `status: "review_of_review", review_target: "codex_fixups", assignee: claude`. Read Codex's `narrow_fixups` array and inspect the diff Codex applied. Decide: approve or disapprove.
-   - On approve: write baton with `phase: N+1, status: implementing, assignee: claude, disagreement_round: 0` (advance), or `status: done` if N was the final phase. Exit.
-   - On disapprove: increment `disagreement_round`. If `disagreement_round >= cap`, write baton `status: human_decision, assignee: human`. Otherwise, write counter-changes inline, write baton `status: counter_review, review_target: claude_counter, assignee: codex`. Exit.
-8. **Stop rule (universal)** — exit after writing any baton that assigns away from claude. Inside `/goal`, this happens by the goal evaluator detecting the baton-state surface line and stopping the loop.
-9. **`/goal` condition** — embedded in the skill body verbatim, e.g., *"Work until `.dvandva/baton.json` has `assignee` not equal to `claude` or `status` is `done` or `human_decision`. Before stopping, read the baton back into the transcript, list changed files, list verification commands and outcomes, and do not modify files outside the requested scope."*
+2. **Preflight (all modes)** — read `AGENTS.md`, read `.dvandva/baton.json` if present. If absent, scaffold `.dvandva/` and write `baton.json` using the canonical schema inlined at the bottom of the SKILL.md (with seed values `status: "spec_drafting"`, `assignee: "vadi"`, `phase: "spec"`, `updated_at: <current ISO-8601 UTC>`). This avoids depending on `templates/channel/baton.json`'s filesystem path, so the skill works unchanged when installed in any consumer repo. `templates/channel/baton.json` remains in this repo as a reference artifact. Determine current mode from `phase` + `status` + `review_target`, verify `assignee == "vadi"`, refuse otherwise.
+3. **Mode A: spec drafting** — when `phase: "spec", status: "spec_drafting"`. Invoke `superpowers:brainstorming` skill flow. Produce a gitignored Superpowers plan under `./superpowers/plans/YYYY-MM-DD-<topic>.md` with declared `total_phases` and a per-phase scope list. Use `superpowers:writing-plans` to convert the spec into a phase-by-phase plan. Set `plan_ref` and `total_phases` on the baton. Write baton with `status: spec_review, assignee: prativadi, review_target: spec`. Exit.
+4. **Mode B: spec revision** — when `phase: "spec", status: "spec_revision"`. Read the baton's `findings` array (prativadi's Q&A), respond in the `plan_ref` plan, update affected `total_phases` if scope changed. Always write baton with `status: spec_review, assignee: prativadi, review_target: spec`; the prativadi is the only actor that can advance the spec to phase 1. Exit.
+5. **Mode C: phase implementation** — when `phase: 1..N, status: "implementing"`. Read the corresponding phase scope from the `plan_ref` plan. Invoke `superpowers:test-driven-development` when applicable. Implement only the phase scope; do not bleed into adjacent phases. Run motivating tests and cheap checks. Surface all commands + results. Write baton with `status: phase_review, assignee: prativadi, review_target: implementation`. Exit.
+6. **Mode D: phase fixing** — when `phase: 1..N, status: "phase_fixing"`. Read `findings` from prativadi. Fix only listed items. Run verification. Write baton with `status: phase_review, assignee: prativadi, review_target: implementation` (re-entering prativadi review). Exit.
+7. **Mode E: prativadi-fixup review** — when `status: "review_of_review", review_target: "prativadi_fixups", assignee: vadi`. Read the prativadi's `narrow_fixups` array and inspect the diff the prativadi applied. Decide: approve or disapprove.
+   - On approve: write baton with `phase: N+1, status: implementing, assignee: vadi, disagreement_round: 0` (advance), or `status: done` if N was the final phase. Exit.
+   - On disapprove: increment `disagreement_round`. If `disagreement_round >= cap`, write baton `status: human_decision, assignee: human`. Otherwise, write counter-changes inline, write baton `status: counter_review, review_target: vadi_counter, assignee: prativadi`. Exit.
+8. **Stop rule (universal)** — exit after writing any baton that assigns away from vadi. Inside `/goal`, this happens by the goal evaluator detecting the baton-state surface line and stopping the loop.
+9. **`/goal` condition** — embedded in the skill body verbatim, e.g., *"Work until `.dvandva/baton.json` has `assignee` not equal to `vadi` or `status` is `done` or `human_decision`. Before stopping, read the baton back into the transcript, list changed files, list verification commands and outcomes, and do not modify files outside the requested scope."*
 10. **Failure modes** — section 12.
 
 ## 8. dvandva-prativadi skill design
@@ -221,13 +222,13 @@ No `allowed-tools` reliance (see section 9). Optional Claude-only `argument-hint
 ### 8.1 Frontmatter
 
 - `name: dvandva-prativadi`
-- `description:` front-loaded triggers: *review*, *codex review*, *spec Q&A*, *prativadi pass*, *narrow fixups*, *adversarial verification*, *check the baton*, *review claude counter-changes*. Covers all three prativadi modes.
+- `description:` front-loaded triggers: *review*, *spec Q&A*, *prativadi pass*, *narrow fixups*, *adversarial verification*, *check the baton*, *review the vadi's counter-change*, *review claude's counter-change*. Covers all three prativadi modes.
 
 ### 8.2 Body sections
 
-1. **Role one-liner** — "You are the Dvandva prativadi. You Q&A on plans, review implementation phases, apply narrow fixups, and review Claude's counter-changes."
-2. **Preflight** — read `AGENTS.md`, read `.dvandva/baton.json`, verify `assignee == codex`. Refuse and exit if not. **Additionally verify `superpowers:brainstorming` is available in the current Codex session**; if absent, surface install instructions and exit (per section 4 prerequisites). Do not depend on one fixed filesystem path.
-3. **Mode A: spec Q&A** — when `phase: "spec", status: "spec_review", review_target: "spec"`. Invoke `superpowers:brainstorming` skill flow as the questioner. Read the `plan_ref` plan, surface Q&A in the baton's `findings` array, optionally edit the plan directly for narrow improvements (typos, sharper phrasing). Decide: hand back to Claude (questions remain) or advance. Write baton `status: spec_revision, assignee: claude` (for more Q&A) or `phase: 1, status: implementing, assignee: claude, disagreement_round: 0` (advance to phase 1). Exit.
+1. **Role one-liner** — "You are the Dvandva prativadi. You Q&A on plans, review implementation phases, apply narrow fixups, and review the vadi's counter-changes."
+2. **Preflight** — read `AGENTS.md`, read `.dvandva/baton.json`, verify `assignee == "prativadi"`. Refuse and exit if not. **Additionally verify `superpowers:brainstorming` is available in the current session**; if absent, surface install instructions and exit (per section 4 prerequisites). Do not depend on one fixed filesystem path.
+3. **Mode A: spec Q&A** — when `phase: "spec", status: "spec_review", review_target: "spec"`. Invoke `superpowers:brainstorming` skill flow as the questioner. Read the `plan_ref` plan, surface Q&A in the baton's `findings` array, optionally edit the plan directly for narrow improvements (typos, sharper phrasing). Decide: hand back to vadi (questions remain) or advance. Write baton `status: spec_revision, assignee: vadi` (for more Q&A) or `phase: 1, status: implementing, assignee: vadi, disagreement_round: 0` (advance to phase 1). Exit.
 4. **Mode B: phase implementation review** — when `phase: 1..N, status: "phase_review", review_target: "implementation"`. Read diff vs branch baseline. Cross-check doer's `verification` block (did the commands actually pass? do they cover the changed paths?). Look for bugs, regressions, stale docs, missing tests, claims not matching diff.
 5. **Narrow-fix allowlist** (verbatim from `docs/workflows/two-mode-agent-workflow.md:41-47`):
    - Typographical and docs mistakes
@@ -243,15 +244,15 @@ No `allowed-tools` reliance (see section 9). Optional Claude-only `argument-hint
    - Dependency removals or major dependency additions
    - Ambiguous requirements
 7. **Decision branching (from Mode B)** —
-   - If only handback issues: populate `findings`, write baton `status: phase_fixing, assignee: claude`. Exit.
-   - If narrow fixups apply AND no handback issues: apply fixups inline, run verification, populate `narrow_fixups` array. Write baton `status: review_of_review, review_target: codex_fixups, assignee: claude` (route to mutual review). Exit.
-   - If narrow fixups apply AND handback issues: populate both `findings` and `narrow_fixups`; route to `phase_fixing` first; mutual review of the narrow fix happens on the next Codex pass after Claude's fix.
-   - If approve, no changes: write baton with `phase: N+1, status: implementing, assignee: claude, disagreement_round: 0` or `status: done` if final phase. Exit.
-8. **Mode C: claude-counter review** — when `status: "counter_review", review_target: "claude_counter", assignee: codex`. Read Claude's counter-change diff. Decide:
-   - On approve: write baton `phase: N+1, status: implementing, assignee: claude, disagreement_round: 0` (advance), or `status: done` if final phase. Exit.
-   - On disapprove: increment `disagreement_round`. If `disagreement_round >= cap`, write baton `status: human_decision, assignee: human`. Otherwise, write a new narrow fixup and route back to `review_of_review, review_target: codex_fixups, assignee: claude`. Exit.
+   - If only handback issues: populate `findings`, write baton `status: phase_fixing, assignee: vadi`. Exit.
+   - If narrow fixups apply AND no handback issues: apply fixups inline, run verification, populate `narrow_fixups` array. Write baton `status: review_of_review, review_target: prativadi_fixups, assignee: vadi` (route to mutual review). Exit.
+   - If narrow fixups apply AND handback issues: populate both `findings` and `narrow_fixups`; route to `phase_fixing` first; mutual review of the narrow fix happens on the next prativadi pass after the vadi's fix.
+   - If approve, no changes: write baton with `phase: N+1, status: implementing, assignee: vadi, disagreement_round: 0` or `status: done` if final phase. Exit.
+8. **Mode C: vadi-counter review** — when `status: "counter_review", review_target: "vadi_counter", assignee: prativadi`. Read the vadi's counter-change diff. Decide:
+   - On approve: write baton `phase: N+1, status: implementing, assignee: vadi, disagreement_round: 0` (advance), or `status: done` if final phase. Exit.
+   - On disapprove: increment `disagreement_round`. If `disagreement_round >= cap`, write baton `status: human_decision, assignee: human`. Otherwise, write a new narrow fixup and route back to `review_of_review, review_target: prativadi_fixups, assignee: vadi`. Exit.
 9. **Stop rule** — exit after writing the baton.
-10. **`/goal` condition** — *"Review the branch using `.dvandva/baton.json` as the handoff. Apply only narrow fixups within the allowlist. Stop when the baton has `assignee` not equal to `codex` or `status` is `done` or `human_decision`. Before stopping, surface findings, verification commands and outcomes, the final baton contents."*
+10. **`/goal` condition** — *"Review the branch using `.dvandva/baton.json` as the handoff. Apply only narrow fixups within the allowlist. Stop when the baton has `assignee` not equal to `prativadi` or `status` is `done` or `human_decision`. Before stopping, surface findings, verification commands and outcomes, the final baton contents."*
 11. **Failure modes** — section 12.
 
 ## 9. Cross-engine portability
@@ -279,13 +280,17 @@ Auto-activation depends entirely on `description`. Tuning rules:
 ### 11.1 Primary install (user level, pilot setup)
 
 ```bash
-# from this repo's root
-ln -s "$(pwd)/skills/dvandva-vadi"     ~/.claude/skills/dvandva-vadi
-ln -s "$(pwd)/skills/dvandva-prativadi" ~/.agents/skills/dvandva-prativadi
+# Install both skills into both engines' skill directories.
+# Either engine can host either role; redundant symlinks are harmless.
+mkdir -p ~/.claude/skills ~/.agents/skills
+for engine_dir in ~/.claude/skills ~/.agents/skills; do
+  ln -sf "$(pwd)/skills/dvandva-vadi"      "$engine_dir/dvandva-vadi"
+  ln -sf "$(pwd)/skills/dvandva-prativadi" "$engine_dir/dvandva-prativadi"
+done
 
-# verify superpowers prerequisites
-ls ~/.claude/plugins/cache/*/superpowers/ 2>/dev/null || echo "ERROR: install superpowers on Claude Code first"
-test -n "$(find ~/.codex ~/.agents -maxdepth 6 -path '*superpowers*' 2>/dev/null | head -1)" || echo "ERROR: install superpowers for Codex"
+# verify superpowers prerequisites (at least one engine must have it)
+ls ~/.claude/plugins/cache/*/superpowers/ 2>/dev/null || echo "WARNING: superpowers not found on Claude Code"
+test -n "$(find ~/.codex ~/.agents -maxdepth 6 -path '*superpowers*' 2>/dev/null | head -1)" || echo "WARNING: superpowers not found for Codex"
 ```
 
 README spells these commands out for macOS / Linux symlink and Windows copy / `mklink /D`. The filesystem check is only a convenience check; the authoritative preflight is whether the current agent session can see and invoke the required Superpowers skills.
@@ -334,7 +339,7 @@ Named risks, ordered by severity:
 3. **superpowers parity drift between Claude Code and Codex.** Superpowers is one codebase but ships through two distribution channels (Claude Code plugins, Codex plugin marketplace). Version drift could mean a brainstorming skill that exists on one but not the other. Mitigation: the skill bodies invoke only well-established superpowers skills (brainstorming, writing-plans, test-driven-development); pilot writeup records each agent's superpowers version.
 4. **Human-as-dispatcher cost.** Same as the previous draft: every agent-to-agent transition still requires a human typing the next command. v2 introduces a runner. Accepted for v1.
 5. **The `plan_ref` plan becomes a contested file.** Both agents may write to it during the spec phase. Conflict resolution is currently "whoever writes last wins, baton acknowledges via `summary`." If both agents wanted to edit the same line in a single round, behavior is unspecified. Mitigation: in v1 the spec phase is strictly serial (Claude writes, then Codex Q&As, then Claude revises); concurrent edits should not happen. Document but don't enforce in v1.
-6. **Mutual-review can re-introduce a regression Codex thought it fixed.** Claude disapproves Codex's fix, writes a counter, Codex reviews the counter — but Codex may now be checking against its *own* prior view, not the original Claude implementation. Mitigation: the baton's `narrow_fixups` and `claude_counter` arrays preserve diff context across the loop; reviewer's mode C re-reads from the baton not from session memory.
+6. **Mutual-review can re-introduce a regression the prativadi thought it fixed.** The vadi disapproves the prativadi's fix, writes a counter, the prativadi reviews the counter — but the prativadi may now be checking against its *own* prior view, not the original vadi implementation. Mitigation: the baton's `narrow_fixups` and `vadi_counter` arrays preserve diff context across the loop; the prativadi's Mode C re-reads from the baton not from session memory.
 7. **Same-GitHub-identity attribution unsolved.** PR 353's pain point. v1 stays out of GitHub entirely. Postponed, not solved.
 
 Open questions to revisit after the pilot:
@@ -376,8 +381,9 @@ This appendix is the spec-level authoritative reference for the schema (includin
   "phase": "spec | 1 | 2 | ... | done",
   "total_phases": "integer, set during spec phase, immutable thereafter unless human edits",
   "status": "spec_drafting | spec_review | spec_revision | implementing | phase_review | phase_fixing | review_of_review | counter_review | human_decision | done",
-  "assignee": "non-empty string; v1 conventions are claude | codex | human",
-  "review_target": "spec | implementation | codex_fixups | claude_counter | null",
+  "assignee": "non-empty string; v1 conventions are vadi | prativadi | human",
+  "current_engine": "optional; \"claude\" | \"codex\" | null. Records which CLI wrote the most recent baton; for traceability only, not used for correctness.",
+  "review_target": "spec | implementation | prativadi_fixups | vadi_counter | null",
   "plan_ref": "path to gitignored Superpowers plan file under ./superpowers/plans/, set during spec phase",
   "disagreement_round": "integer, set to 0 by the agent that writes the first baton of each new phase; incremented by the agent that disagrees during mutual review",
   "disagreement_cap": "integer, default 3, optionally set during spec phase",
@@ -391,7 +397,7 @@ This appendix is the spec-level authoritative reference for the schema (includin
   ],
   "findings": ["reviewer or counter-reviewer: bullets describing issues found"],
   "narrow_fixups": ["reviewer: bullets describing narrow fixes applied directly"],
-  "claude_counter": ["doer-as-reviewer: bullets describing counter-changes proposed during mutual review"],
+  "vadi_counter": ["vadi-as-reviewer: bullets describing counter-changes proposed during mutual review"],
   "deferred": ["reviewer: items deferred with one-line rationale and next-recommended-action"],
   "blockers": ["bullets describing what is blocking forward progress"],
   "next_action": "exact one-sentence instruction for the next actor"
@@ -420,17 +426,17 @@ This spec is authoritative for v1 transitions and supersedes `docs/protocol/loca
 | `phase: N, implementing` | `phase: N, status: phase_review, review_target: implementation` | Vadi completes phase, hands to prativadi |
 | `phase: N, implementing` | `human_decision` | Vadi blocked |
 | `phase_review (impl)` | `phase_fixing` | Prativadi hands back substantive findings |
-| `phase_review (impl)` | `review_of_review, review_target: codex_fixups` | Prativadi applied narrow fixups, mutual review owed |
+| `phase_review (impl)` | `review_of_review, review_target: prativadi_fixups` | Prativadi applied narrow fixups, mutual review owed |
 | `phase_review (impl)` | `phase: N+1, status: implementing, disagreement_round: 0` (or final `done`) | Prativadi approves, no changes |
 | `phase_review (impl)` | `human_decision` | Prativadi escalates |
 | `phase_fixing` | `phase_review (impl)` | Vadi addressed findings, re-hands |
 | `phase_fixing` | `human_decision` | Vadi blocked during fix |
-| `review_of_review (codex_fixups)` | `phase: N+1, status: implementing, disagreement_round: 0` (or final `done`) | Vadi approves Codex fixups |
-| `review_of_review (codex_fixups)` | `counter_review, review_target: claude_counter` | Vadi disapproves, writes counter (disagreement_round +=1) |
-| `review_of_review (codex_fixups)` | `human_decision` | disagreement_round ≥ cap |
-| `counter_review (claude_counter)` | `phase: N+1, status: implementing, disagreement_round: 0` (or final `done`) | Prativadi approves counter |
-| `counter_review (claude_counter)` | `review_of_review, review_target: codex_fixups` | Prativadi disapproves counter, applies a different fix (disagreement_round +=1) |
-| `counter_review (claude_counter)` | `human_decision` | disagreement_round ≥ cap |
+| `review_of_review (prativadi_fixups)` | `phase: N+1, status: implementing, disagreement_round: 0` (or final `done`) | Vadi approves prativadi fixups |
+| `review_of_review (prativadi_fixups)` | `counter_review, review_target: vadi_counter` | Vadi disapproves, writes counter (disagreement_round +=1) |
+| `review_of_review (prativadi_fixups)` | `human_decision` | disagreement_round ≥ cap |
+| `counter_review (vadi_counter)` | `phase: N+1, status: implementing, disagreement_round: 0` (or final `done`) | Prativadi approves counter |
+| `counter_review (vadi_counter)` | `review_of_review, review_target: prativadi_fixups` | Prativadi disapproves counter, applies a different fix (disagreement_round +=1) |
+| `counter_review (vadi_counter)` | `human_decision` | disagreement_round ≥ cap |
 | any state | `human_decision` | escalation (`disagreement_round >= cap`, `turn_cap` hit, blocker, malformed input) |
 | `human_decision` | any state | After human edits baton or prompts an agent |
 

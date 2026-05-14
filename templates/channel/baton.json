@@ -5,7 +5,8 @@
   "phase": "spec",
   "total_phases": 0,
   "status": "spec_drafting",
-  "assignee": "claude",
+  "assignee": "vadi",
+  "current_engine": null,
   "review_target": null,
   "plan_ref": null,
   "disagreement_round": 0,
@@ -13,13 +14,13 @@
   "turn_cap": 20,
   "branch": "",
   "checkpoint": 0,
-  "summary": "Initial baton seed. dvandva-doer will overwrite on first run.",
+  "summary": "Initial baton seed. dvandva-vadi will overwrite on first run.",
   "changed_paths": [],
   "verification": [],
   "findings": [],
   "narrow_fixups": [],
-  "claude_counter": [],
+  "vadi_counter": [],
   "deferred": [],
   "blockers": [],
-  "next_action": "claude: read AGENTS.md, brainstorm the spec, write plan_ref, hand off to codex."
+  "next_action": "vadi: read AGENTS.md, brainstorm the spec, write plan_ref, hand off to prativadi."
 }
