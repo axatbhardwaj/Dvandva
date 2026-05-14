@@ -167,7 +167,7 @@ If you approve, baton write:
 
 - `phase: <N+1>` (advance) **or** `phase: <current N>` if N was final and `status: "done"`
 - `status: "implementing"` (advance) **or** `"done"` (terminal)
-- `assignee: "claude"` (advance) **or** `"human"` (terminal — see fix M4 below)
+- `assignee: "claude"` (advance) **or** `"human"` (terminal — the human writes the PR summary)
 - `review_target: null` (both paths)
 - `disagreement_round: 0` (both paths — reset cleanly whether advancing or terminating)
 - `summary: "Approved Codex's narrow fixups for phase <N>. Advancing to phase <N+1>."` or `"...Phase <N> was final; marking done."`
