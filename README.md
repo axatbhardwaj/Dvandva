@@ -4,6 +4,48 @@ Dvandva is an orchestration framework for pairing two coding agents into a disci
 
 vadi (वादी) is Sanskrit for "proposer" and prativadi (प्रतिवादी) for "responder" — terms from classical Indian philosophical debate, which is the duo's working metaphor.
 
+The repo lives at https://github.com/axatbhardwaj/Dvandva.
+
+## Quickstart
+
+Two commands plus one prompt:
+
+```bash
+# Clone and install
+git clone https://github.com/axatbhardwaj/Dvandva.git && cd Dvandva
+mkdir -p ~/.claude/skills ~/.agents/skills
+for engine_dir in ~/.claude/skills ~/.agents/skills; do
+  ln -sf "$(pwd)/skills/dvandva-vadi"      "$engine_dir/dvandva-vadi"
+  ln -sf "$(pwd)/skills/dvandva-prativadi" "$engine_dir/dvandva-prativadi"
+done
+```
+
+Then in any feature-branch worktree, open Claude Code and type:
+
+> *Implement \<small feature\> with codex review. Use dvandva walkaway.*
+
+The vadi skill auto-activates from the description, scaffolds `.dvandva/baton.json`, drafts a plan, and hands off to the prativadi by writing the baton. Open a Codex session in the same worktree:
+
+> *Review the dvandva baton.*
+
+The prativadi skill auto-activates, Q&As during planning or reviews the implementation, hands back to the vadi via the baton, and the cycle repeats until the baton reaches `done`.
+
+If you only have one engine (Claude Code OR Codex), set `run_mode: "supervised"` instead and invoke the two skills serially in the same session — see [Single-engine workflow](#usage) below.
+
+A typical handoff in transcript looks roughly like:
+
+```
+[vadi session — Claude Code]
+> BATON_STATE: { phase: 1, status: phase_review, assignee: prativadi, ... }
+> [vadi blocks in dvandva-wait.sh — no model turns spent here]
+
+[prativadi session — Codex, picks up the baton]
+> BATON_STATE: { phase: 1, status: phase_review, assignee: prativadi, ... }
+> [reviewing diff, running tests, applying narrow fixups]
+> BATON_STATE: { phase: 1, status: review_of_review, assignee: vadi, ... }
+> [prativadi now blocks; vadi wakes from its wait]
+```
+
 ## Current State
 
 v1 ships as a pair of [agentskills.io](https://agentskills.io)-standard skills (`dvandva-vadi` for Claude Code, `dvandva-prativadi` for Codex) plus a small foreground wait helper. The default `run_mode` is `walkaway`: start both sessions once, then let the baton decide which role works next.
@@ -38,7 +80,7 @@ The `dvandva-vadi` skill's spec phase also requires superpowers — it invokes `
 
 ## Install
 
-### Primary: user-level symlink (pilot setup)
+### Primary: user-level symlink
 
 From this repo's root:
 
@@ -78,7 +120,7 @@ If `mklink` is not available, copy the directories instead.
 
 ### Secondary: project-level adoption
 
-Consumer repos that intentionally adopt Dvandva check the skills under their own `.claude/skills/` and `.agents/skills/`. Both engines walk from cwd up to the repo root looking for these directories.
+A **consumer repo** is any repo where you want to use Dvandva for your feature work (i.e., not the Dvandva source repo itself). Consumer repos that intentionally adopt Dvandva can check the skills directly under their own `.claude/skills/` and `.agents/skills/` directories instead of relying on user-level symlinks. Both engines walk from cwd up to the repo root looking for these directories.
 
 **Trust warning:** Project-level skills can carry tool-permission frontmatter (Claude `allowed-tools`, Codex skill metadata). Review the `SKILL.md` contents the same way you would any other `.claude/` or `.agents/` config the repo ships before trusting it. The in-repo skill bodies are at `skills/dvandva-vadi/SKILL.md` and `skills/dvandva-prativadi/SKILL.md`.
 
