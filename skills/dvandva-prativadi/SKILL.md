@@ -241,7 +241,13 @@ The run's intended files are the baton's `changed_paths` union, excluding `.dvan
 
 ## Stop rule (universal)
 
-In `run_mode: "walkaway"`, do not exit merely because the baton assigns work to vadi. After writing any baton assigned away from prativadi, surface BATON_STATE, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role prativadi --interval 60 --max-wait 900` in the foreground, and continue from Preflight when the wait returns 0.
+In `run_mode: "walkaway"`, do not exit merely because the baton assigns work to vadi. After writing any baton assigned away from prativadi:
+
+1. Surface the new BATON_STATE line.
+2. Immediately run `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role prativadi --interval 60 --max-wait 900` in the foreground.
+3. Continue from Preflight when the wait returns 0.
+
+Do not end the turn after an assigned-away BATON_STATE line. The next action is the foreground wait helper, not a final response to the user.
 
 Stop only when the wait reports `done`, `human_question`, or `human_decision`, or when the user interrupts. This is shell polling, not LLM polling: do not spend model turns checking whether vadi has moved.
 
@@ -265,6 +271,7 @@ In `run_mode: "supervised"`, exit after surfacing any baton assigned away from p
 | `plan_ref` missing or referenced file does not exist during phase mode | Surface "spec phase did not complete; cannot review phase implementation". Set `status: "human_decision"`. Exit. |
 | `total_phases` is 0 or unset during phase mode | Surface schema integrity error. Set `status: "human_decision"`. Exit. |
 | Prativadi finds no diff vs baseline after vadi said phase implementation done | Write `findings: ["vadi claimed implementation but produced no diff"]`. Set `status: "human_decision"`. |
+| Agent wrote a baton assigned away from prativadi in `run_mode: "walkaway"` but ended the turn without running the wait helper | Handoff stalled. Recovery: re-invoke this skill; preflight resumes from the current baton. Before any further text-to-user, run the wait helper unless the baton is now assigned to prativadi or is terminal. |
 | `/goal` turn cap hit before exit condition | Surface current baton state. Set `status: "human_decision"`. Exit. |
 
 ## Canonical baton schema (dvandva.baton.v1)
