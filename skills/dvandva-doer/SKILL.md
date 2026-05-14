@@ -177,7 +177,7 @@ If you approve, baton write:
 If you disapprove:
 
 1. Increment `disagreement_round` by 1.
-2. If `disagreement_round >= disagreement_cap` (default 3), set `status: "human_decision", assignee: "human"`, populate `blockers` with "mutual review reached cap without agreement; needs human call". Update `next_action: "Human: decide whether to accept Codex's fixup, Claude's counter, or a third path. Edit baton.assignee to resume."`. Exit.
+2. If `disagreement_round >= disagreement_cap` (default 3), set `status: "human_decision", assignee: "human"`, populate `blockers` with "mutual review reached cap without agreement; needs human call". Update `next_action: "Human: decide whether to accept Codex's fixup, Claude's counter, or a third path. Edit baton.assignee to resume."`. Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Surface BATON_STATE. Exit.
 3. Otherwise, write your counter-changes inline (edit the files Codex's fixup touched). Baton write:
    - `phase: <current N>` (unchanged)
    - `status: "counter_review"`

@@ -1,6 +1,6 @@
 ---
 name: dvandva-reviewer
-description: Use when the user asks Codex to Q&A on a plan, review a Claude implementation, or review Claude's counter-changes via the Dvandva protocol. Triggers on phrases like "review the dvandva baton", "do the reviewer pass", "Q&A on the plan", "review codex's fixups", "check claude's counter-change", "adversarial verification of phase N". Reads .dvandva/baton.json, runs in spec-Q&A / phase-review / claude-counter-review mode depending on baton state, applies only narrow fixups within the allowlist, writes a baton handoff, exits. Do not use this skill for solo Codex work that is not paired with Claude as the doer.
+description: Use when the user asks Codex to Q&A on a plan, review a Claude implementation, or review Claude's counter-changes via the Dvandva protocol. Triggers on phrases like "review the dvandva baton", "do the reviewer pass", "Q&A on the plan", "review claude's counter-change", "check the counter", "adversarial verification of phase N", "review phase N", "start the reviewer", "run the reviewer", "begin reviewer session", "codex review pass". Reads .dvandva/baton.json, runs in spec-Q&A / phase-review / claude-counter-review mode depending on baton state, applies only narrow fixups within the allowlist, writes a baton handoff, exits. Do not use this skill for solo Codex work that is not paired with Claude as the doer.
 ---
 
 # dvandva-reviewer
@@ -13,9 +13,8 @@ You are the Dvandva reviewer and narrow fixer. You Q&A on plans, review implemen
 2. Read `.dvandva/baton.json`. If the file does not exist, surface "no baton — doer has not started" and exit without writing.
 3. Verify the baton's `schema` field equals `dvandva.baton.v1`. If not, surface the mismatch and exit.
 4. Verify `assignee == "codex"`. If not, surface "wrong actor for this state" and exit.
-5. **Capability check**: verify `superpowers:brainstorming` is available in this Codex session. Capability check, not a filesystem path — try a no-op Skill invocation or check the `/skills` listing. If absent, surface install instructions referencing `codex plugin marketplace` and exit.
-6. Determine mode from `phase` + `status` + `review_target` (see mode table).
-7. Surface `BATON_STATE: { phase, status, assignee: codex, review_target, disagreement_round }`.
+5. Determine mode from `phase` + `status` + `review_target` (see mode table).
+6. Surface `BATON_STATE: { phase, status, assignee: codex, review_target, disagreement_round }`.
 
 ## Mode table
 
@@ -32,10 +31,11 @@ Trigger: `phase: "spec", status: "spec_review", review_target: "spec"`.
 
 Actions:
 
-1. Invoke `superpowers:brainstorming` as the questioner. Read the plan at `plan_ref`. Ask clarifying questions, surface ambiguity, propose alternatives.
-2. You may edit the plan at `plan_ref` directly for narrow improvements: typos, sharper phrasing, table formatting fixes. Do not restructure the plan unilaterally.
-3. Substantive concerns (scope, architecture, phase boundaries, dep choices) go in `findings` for the doer to address.
-4. Decide: hand back for revision, or advance to phase 1.
+1. **Capability check**: verify `superpowers:brainstorming` is available in this Codex session. Capability check, not a filesystem path — try a no-op Skill invocation or check the `/skills` listing. If absent, surface install instructions referencing `codex plugin marketplace` and exit without writing the baton. Mode B and Mode C do not require this; only Mode A invokes brainstorming.
+2. Invoke `superpowers:brainstorming` as the questioner. Read the plan at `plan_ref`. Ask clarifying questions, surface ambiguity, propose alternatives.
+3. You may edit the plan at `plan_ref` directly for narrow improvements: typos, sharper phrasing, table formatting fixes. Do not restructure the plan unilaterally.
+4. Substantive concerns (scope, architecture, phase boundaries, dep choices) go in `findings` for the doer to address.
+5. Decide: hand back for revision, or advance to phase 1.
 
 If you advance:
 
@@ -120,7 +120,18 @@ You MUST hand back (not fix) for:
 - `next_action: "Claude: review Codex's narrow fixups for phase <N>. Approve to advance, or counter."`
 - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Surface BATON_STATE. Exit.
 
-**If narrow fixups apply AND handback issues:** populate both `findings` and `narrow_fixups`, but route to `phase_fixing` first. Mutual review of the narrow fixups happens on the next Codex pass after Claude's fix.
+**If narrow fixups apply AND handback issues:** apply the narrow fixups inline first (edit affected files), re-run verification, then route to `phase_fixing` for Claude to address handback issues. Mutual review of the narrow fixups happens on the next Codex pass after Claude's fix.
+
+- `phase: <current N>` (unchanged)
+- `status: "phase_fixing"`
+- `assignee: "claude"`
+- `review_target: null`
+- `findings: [<one bullet per substantive handback issue>]`
+- `narrow_fixups: [<one bullet per narrow fix you applied — carry these forward so mutual review fires after Claude's fix>]`
+- `verification: [<post-fixup commands and results>]`
+- `summary: "Phase <N> has handback issues; <N> narrow fixups applied inline. Routing to fix first; mutual review of the fixups deferred to the next Codex pass."`
+- `next_action: "Claude: address findings. After re-implementation, Codex will also review the narrow fixups already applied."`
+- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Surface BATON_STATE. Exit.
 
 **If approve with no changes:**
 
@@ -165,8 +176,7 @@ If you disapprove:
    - `assignee: "human"`
    - `blockers: ["mutual review reached cap without agreement"]`
    - `next_action: "Human: decide between Codex's fixup, Claude's counter, or a third path. Edit baton.assignee to resume."`
-   - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
-   - Exit.
+   - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Surface BATON_STATE. Exit.
 3. Otherwise, write a new narrow fixup (edit the affected files):
    - `phase: <current N>` (unchanged)
    - `status: "review_of_review"`
@@ -197,7 +207,7 @@ Do not poll. Do not stay running waiting for Claude.
 | `.dvandva/baton.json` malformed JSON | Do not overwrite. Write `.dvandva/baton.broken.json` preserving bytes. Surface parse error. Set in-memory next state to `human_decision`. |
 | `schema` field is not `dvandva.baton.v1` | Refuse to operate. Surface schema mismatch. Exit. |
 | `assignee` is not `codex` | Surface "wrong actor for this state" and exit. |
-| `superpowers:brainstorming` not available in this Codex session | Surface install hint: `codex plugin marketplace` or upstream symlink install per https://deepwiki.com/obra/superpowers/2.4-installing-on-codex. Exit without writing. |
+| `superpowers:brainstorming` not available (Mode A only) | Surface install hint: `codex plugin marketplace` or upstream symlink install per https://deepwiki.com/obra/superpowers/2.4-installing-on-codex. Exit without writing. Mode B (phase review) and Mode C (counter review) do not require this and proceed even without superpowers. |
 | `plan_ref` missing or referenced file does not exist during phase mode | Surface "spec phase did not complete; cannot review phase implementation". Set `status: "human_decision"`. Exit. |
 | `total_phases` is 0 or unset during phase mode | Surface schema integrity error. Set `status: "human_decision"`. Exit. |
 | Reviewer finds no diff vs baseline after Claude said phase implementation done | Write `findings: ["doer claimed implementation but produced no diff"]`. Set `status: "human_decision"`. |
