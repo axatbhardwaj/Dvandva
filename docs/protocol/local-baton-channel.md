@@ -46,26 +46,57 @@ The shareable templates live in `templates/channel/`.
 
 ## State Machine
 
-States:
+> **Authority:** `product.md` Appendix A is authoritative for v1 transitions. This section is reference; if the two diverge, the spec wins. Update this section when the spec changes.
 
-- `claude_working`
-- `codex_review`
-- `claude_fixing`
-- `codex_fixing`
-- `human_decision`
-- `done`
+### States (v1)
 
-Allowed transitions:
+- `spec_drafting` — Claude is writing the plan
+- `spec_review` — Codex is doing Q&A on the plan
+- `spec_revision` — Claude is responding to Codex Q&A
+- `implementing` — Claude is doing the current phase
+- `phase_review` — Codex is reviewing the current phase
+- `phase_fixing` — Claude is fixing per Codex findings
+- `review_of_review` — Claude is reviewing Codex's narrow fixups (mutual review)
+- `counter_review` — Codex is reviewing Claude's counter-change after a disagreement
+- `human_decision` — escalation pending human input
+- `done` — work complete
 
-- `claude_working` -> `codex_review`
-- `codex_review` -> `claude_fixing`
-- `codex_review` -> `codex_fixing`
-- `codex_review` -> `human_decision`
-- `codex_review` -> `done`
-- `codex_fixing` -> `claude_fixing`
-- `codex_fixing` -> `done`
-- `claude_fixing` -> `codex_review`
-- `human_decision` -> any state, after the human edits the baton or prompts an agent
+### Allowed transitions (v1)
+
+**Spec phase:**
+
+- `(no baton)` → `spec_drafting`
+- `spec_drafting` → `spec_review`
+- `spec_review` → `spec_revision` (Codex Q&A)
+- `spec_review` → `phase: 1, implementing` (Codex accepts plan; only Codex can advance the spec)
+- `spec_revision` → `spec_review` (Claude answered Q&A, hands back)
+
+**Implementation phase (per phase N):**
+
+- `phase: N, implementing` → `phase_review (review_target: implementation)`
+- `phase: N, implementing` → `human_decision`
+- `phase_review (impl)` → `phase_fixing` (substantive findings)
+- `phase_review (impl)` → `review_of_review (review_target: codex_fixups)` (narrow fixups applied)
+- `phase_review (impl)` → `phase: N+1, implementing` (approve no changes) **or** terminal `done` if N is final
+- `phase_review (impl)` → `human_decision`
+- `phase_fixing` → `phase_review (impl)`
+- `phase_fixing` → `human_decision`
+
+**Mutual review and disagreement loop:**
+
+- `review_of_review (codex_fixups)` → `phase: N+1, implementing` (Claude approves) or terminal `done`
+- `review_of_review (codex_fixups)` → `counter_review (review_target: claude_counter)` (Claude disapproves; `disagreement_round += 1`)
+- `review_of_review (codex_fixups)` → `human_decision` (when `disagreement_round >= cap`)
+- `counter_review (claude_counter)` → `phase: N+1, implementing` (Codex approves counter) or terminal `done`
+- `counter_review (claude_counter)` → `review_of_review (codex_fixups)` (Codex disapproves counter, writes new fix; `disagreement_round += 1`)
+- `counter_review (claude_counter)` → `human_decision` (when `disagreement_round >= cap`)
+
+**Universal:**
+
+- any state → `human_decision` (escalation)
+- `human_decision` → any state (after human edits baton or prompts an agent)
+
+Any other transition is illegal in v1. The writing agent must reject illegal transitions and route to `human_decision` instead.
 
 ## Handoff Rule
 
