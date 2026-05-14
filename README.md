@@ -20,7 +20,7 @@ Both agents run autonomously via `/goal` within each invocation. The human dispa
 
 ## Prerequisites
 
-Both prerequisites must be in place before the pilot:
+All five prerequisites must be in place before the pilot:
 
 | Prerequisite | Verify |
 |---|---|
@@ -32,6 +32,8 @@ Both prerequisites must be in place before the pilot:
 
 The `dvandva-reviewer` skill refuses to run if `superpowers:brainstorming` is not available in the current Codex session (Mode A only — phase reviews and counter reviews proceed without superpowers).
 
+The `dvandva-doer` skill's spec phase also requires superpowers — it invokes `superpowers:brainstorming` and `superpowers:writing-plans` and fails immediately if either is unavailable.
+
 ## Install
 
 ### Primary: user-level symlink (pilot setup)
@@ -39,6 +41,7 @@ The `dvandva-reviewer` skill refuses to run if `superpowers:brainstorming` is no
 From this repo's root:
 
 ```bash
+mkdir -p ~/.claude/skills ~/.agents/skills
 ln -s "$(pwd)/skills/dvandva-doer"     ~/.claude/skills/dvandva-doer
 ln -s "$(pwd)/skills/dvandva-reviewer" ~/.agents/skills/dvandva-reviewer
 ```
@@ -52,11 +55,22 @@ ls ~/.agents/skills/dvandva-reviewer/SKILL.md
 
 Open `claude` and run `/skills`. `dvandva-doer` should be listed. Open `codex` and run `/skills`. `dvandva-reviewer` should be listed.
 
+**On Windows:** use `mklink /D` instead of `ln -s` from PowerShell (run as Administrator). Replace the symlink commands above with:
+
+```cmd
+mkdir "%USERPROFILE%\.claude\skills" 2>nul
+mkdir "%USERPROFILE%\.agents\skills" 2>nul
+mklink /D "%USERPROFILE%\.claude\skills\dvandva-doer" "<full-path-to-repo>\skills\dvandva-doer"
+mklink /D "%USERPROFILE%\.agents\skills\dvandva-reviewer" "<full-path-to-repo>\skills\dvandva-reviewer"
+```
+
+If `mklink` is not available, copy the directories instead.
+
 ### Secondary: project-level adoption
 
 Consumer repos that intentionally adopt Dvandva check the skills under their own `.claude/skills/` and `.agents/skills/`. Both engines walk from cwd up to the repo root looking for these directories.
 
-**Trust warning:** Project-level skills can carry tool-permission frontmatter (Claude `allowed-tools`, Codex skill metadata). Review the `SKILL.md` contents the same way you would any other `.claude/` or `.agents/` config the repo ships before trusting it.
+**Trust warning:** Project-level skills can carry tool-permission frontmatter (Claude `allowed-tools`, Codex skill metadata). Review the `SKILL.md` contents the same way you would any other `.claude/` or `.agents/` config the repo ships before trusting it. The in-repo skill bodies are at `skills/dvandva-doer/SKILL.md` and `skills/dvandva-reviewer/SKILL.md`.
 
 ## Usage
 
@@ -72,7 +86,7 @@ In a feature-branch worktree, prompt Claude with natural language:
 
 Explicit invocation (`/dvandva-doer` in Claude, `$dvandva-reviewer` in Codex) is documented fallback if auto-activation misfires.
 
-## Linting and validation
+## Linting and Validation
 
 A small Bash+jq linter at `scripts/lint-skills.sh` validates SKILL.md frontmatter and the inlined baton schema:
 
@@ -81,9 +95,9 @@ bash scripts/lint-skills.sh skills/dvandva-doer/SKILL.md
 bash scripts/lint-skills.sh skills/dvandva-reviewer/SKILL.md
 ```
 
-A future v2 will add a deterministic baton-state validator (see `product.md` section 16).
+A future v2 will add a deterministic baton schema and transition validator (see `product.md` section 16).
 
-## Historical templates
+## Historical Templates
 
 The files at `templates/prompts/claude-doer-goal.md` and `templates/prompts/codex-reviewer-goal.md` are the v0 form of the protocol — pre-skill prompt templates pasted into `/goal`. They are kept in-tree as reference but are superseded by the SKILL.md files in `skills/`. Do not use the templates for new work.
 
@@ -95,7 +109,7 @@ The files at `templates/prompts/claude-doer-goal.md` and `templates/prompts/code
 - It does not require both agents to run at the same time.
 - v1 does not include a CLI binary, a daemon, or a GitHub integration. Those are tracked as v2 work in `product.md` section 16.
 
-## Reading order
+## Reading Order
 
 1. `product.md` — v1 product specification (authoritative)
 2. `docs/workflows/two-mode-agent-workflow.md` — Feature PR vs Campaign mode
@@ -110,5 +124,7 @@ The files at `templates/prompts/claude-doer-goal.md` and `templates/prompts/code
 - Claude Code `/goal`: https://code.claude.com/docs/en/goal
 - Codex skills: https://developers.openai.com/codex/skills
 - Codex plugins: https://developers.openai.com/codex/plugins/build
+- Codex AGENTS.md guide: https://developers.openai.com/codex/guides/agents-md
 - agentskills.io open standard: https://agentskills.io
 - Superpowers framework: https://github.com/obra/superpowers
+- Superpowers Codex install guide: https://deepwiki.com/obra/superpowers/2.4-installing-on-codex
