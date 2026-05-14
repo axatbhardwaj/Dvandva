@@ -106,6 +106,7 @@ You MUST hand back (not fix) for:
 - `findings: [<one bullet per substantive issue>]`
 - `summary: "Phase <N> needs implementation work before re-review."`
 - `next_action: "Claude: address findings, then hand back to Codex for re-review."`
+- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Surface BATON_STATE. Exit.
 
 **If narrow fixups apply AND no handback issues:** apply the fixups inline (edit the affected files), re-run verification, then:
 
@@ -117,6 +118,7 @@ You MUST hand back (not fix) for:
 - `verification: [<post-fixup commands and results>]`
 - `summary: "Phase <N> reviewed. Applied <N> narrow fixups. Mutual review owed."`
 - `next_action: "Claude: review Codex's narrow fixups for phase <N>. Approve to advance, or counter."`
+- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Surface BATON_STATE. Exit.
 
 **If narrow fixups apply AND handback issues:** populate both `findings` and `narrow_fixups`, but route to `phase_fixing` first. Mutual review of the narrow fixups happens on the next Codex pass after Claude's fix.
 
@@ -129,8 +131,7 @@ You MUST hand back (not fix) for:
 - `disagreement_round: 0` (both paths — reset cleanly whether advancing or terminating)
 - `summary: "Phase <N> approved with no changes. Advancing."` or `"Phase <N> was final. Marking done."`
 - `next_action: "Claude: implement phase <N+1>."` or `"Human: write PR summary using baton as source."`
-
-Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Surface BATON_STATE. Exit.
+- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Surface BATON_STATE. Exit.
 
 ## Mode C — claude-counter review
 
@@ -154,6 +155,7 @@ If you approve:
 - `disagreement_round: 0` (both paths — reset cleanly whether advancing or terminating)
 - `summary: "Approved Claude's counter-change for phase <N>. Advancing to phase <N+1>."` or `"...Phase <N> was final."`
 - `next_action: "Claude: implement phase <N+1>."` or `"Human: write PR summary."`
+- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Surface BATON_STATE. Exit.
 
 If you disapprove:
 
@@ -174,8 +176,7 @@ If you disapprove:
    - `disagreement_round: <incremented>`
    - `summary: "Disapproved Claude's counter; wrote a different fix. Round <X>."`
    - `next_action: "Claude: review Codex's new fixup. Approve to advance, or counter again."`
-
-Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Surface BATON_STATE. Exit.
+   - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Surface BATON_STATE. Exit.
 
 ## Stop rule (universal)
 
