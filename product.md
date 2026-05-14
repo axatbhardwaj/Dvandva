@@ -43,7 +43,7 @@ If criterion #5 fails (any runaway loop observed during pilot), v1 does not ship
 
 - `skills/dvandva-doer/SKILL.md` — frontmatter (portable `name` + `description`), body covering the doer's five modes (spec drafting, spec revision, phase implementation, phase fixing, codex-fixup review), the baton schema, the `/goal` exit conditions, and the disagreement-cap behavior.
 - `skills/dvandva-reviewer/SKILL.md` — same shape, covering reviewer's three modes (spec Q&A, phase review, claude-counter review), narrow-fix allowlist, handback conditions, baton schema, `/goal` exit conditions.
-- `templates/channel/baton.json` — must be updated from the current v0 seed into the v1 extended schema seed with the new fields (`phase`, `total_phases`, `plan_ref`, `disagreement_round`, `review_target`) before the pilot.
+- `templates/channel/baton.json` — v1 extended schema seed with all 23 required keys (`phase`, `total_phases`, `plan_ref`, `disagreement_round`, `disagreement_cap`, `turn_cap`, `review_target`, etc.). Already aligned with this spec.
 - `README.md` install section covering: user-level symlink install (primary), project-level install (secondary), and the superpowers prerequisite check for both engines.
 - One pilot writeup at `docs/case-studies/pilot-01.md` after the workflow ship.
 
@@ -204,7 +204,7 @@ No `allowed-tools` reliance (see section 9). Optional Claude-only `argument-hint
 ### 7.2 Body sections (target < 500 lines)
 
 1. **Role one-liner** — "You are the Dvandva doer. You draft plans, implement them phase by phase, and review Codex's narrow fixups."
-2. **Preflight (all modes)** — read `AGENTS.md`, read `.dvandva/baton.json` if present (scaffold from template if absent), determine current mode from `phase` + `status` + `review_target`, verify `assignee == claude`, refuse otherwise.
+2. **Preflight (all modes)** — read `AGENTS.md`, read `.dvandva/baton.json` if present. If absent, scaffold `.dvandva/` and write `baton.json` using the canonical schema inlined at the bottom of the SKILL.md (with seed values `status: "spec_drafting"`, `assignee: "claude"`, `phase: "spec"`, `updated_at: <current ISO-8601 UTC>`). This avoids depending on `templates/channel/baton.json`'s filesystem path, so the skill works unchanged when installed in any consumer repo. `templates/channel/baton.json` remains in this repo as a reference artifact. Determine current mode from `phase` + `status` + `review_target`, verify `assignee == claude`, refuse otherwise.
 3. **Mode A: spec drafting** — when `phase: "spec", status: "spec_drafting"`. Invoke `superpowers:brainstorming` skill flow. Produce a gitignored Superpowers plan under `./superpowers/plans/YYYY-MM-DD-<topic>.md` with declared `total_phases` and a per-phase scope list. Use `superpowers:writing-plans` to convert the spec into a phase-by-phase plan. Set `plan_ref` and `total_phases` on the baton. Write baton with `status: spec_review, assignee: codex, review_target: spec`. Exit.
 4. **Mode B: spec revision** — when `phase: "spec", status: "spec_revision"`. Read the baton's `findings` array (Codex's Q&A), respond in the `plan_ref` plan, update affected `total_phases` if scope changed. Always write baton with `status: spec_review, assignee: codex, review_target: spec`; Codex is the only actor that can advance the spec to phase 1. Exit.
 5. **Mode C: phase implementation** — when `phase: 1..N, status: "implementing"`. Read the corresponding phase scope from the `plan_ref` plan. Invoke `superpowers:test-driven-development` when applicable. Implement only the phase scope; do not bleed into adjacent phases. Run motivating tests and cheap checks. Surface all commands + results. Write baton with `status: phase_review, assignee: codex, review_target: implementation`. Exit.
@@ -364,9 +364,7 @@ In priority order:
 
 ## Appendix A — `dvandva.baton.v1` canonical schema and transitions
 
-This appendix is the spec-level authoritative reference for the schema (including reviewer-only fields) and the v1 state-transition table. In v1, the template file at `templates/channel/baton.json` must be a minimal initial baton seed used by `dvandva-doer` on first run; it carries the same schema shape but only the always-present fields.
-
-The current repository template is still the v0 seed until implementation work updates it. That update is required before pilot acceptance; otherwise the doer skill would scaffold a baton that immediately violates this appendix.
+This appendix is the spec-level authoritative reference for the schema (including reviewer-only fields) and the v1 state-transition table. The template file at `templates/channel/baton.json` is a v1-aligned reference artifact that mirrors the schema shape but holds only the always-present fields; `dvandva-doer` does not depend on it at runtime (see section 7.2 preflight), so the template is reference-only for humans inspecting the repo.
 
 ### Schema
 
