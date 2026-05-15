@@ -17,6 +17,11 @@ claude plugin install dvandva@dvandva
 codex plugin marketplace add axatbhardwaj/Dvandva
 ```
 
+For Codex, `marketplace add` registers the marketplace. Then restart Codex,
+open the plugin directory, select the Dvandva marketplace, and install the
+`dvandva` plugin. After install, `/skills` should list `dvandva:vadi` and
+`dvandva:prativadi`.
+
 Then start a feature-branch worktree and open both sessions:
 
 ```text
@@ -46,6 +51,7 @@ v0.1.0 ships as one `dvandva` plugin with:
 - `plugins/dvandva/skills/prativadi/SKILL.md`
 - bundled `dvandva-wait.sh` helpers in both skill directories
 - plugin-local protocol references in `plugins/dvandva/references/`
+- Codex marketplace metadata in `.agents/plugins/marketplace.json`
 - root marketplace metadata in `.claude-plugin/marketplace.json`
 
 The default `run_mode` is `walkaway`: start both sessions once, then let the baton decide which role works next.
@@ -108,13 +114,16 @@ claude plugin validate plugins/dvandva
 claude plugin validate .
 ```
 
-The smoke script builds a temp marketplace, validates the Claude plugin path, adds the marketplace to Codex with an isolated `CODEX_HOME`, runs both bundled wait helpers, and checks standalone development copies.
+The smoke script builds a temp marketplace, validates the Claude plugin path,
+adds and installs the marketplace in Codex with an isolated `CODEX_HOME`, checks
+that Codex renders both Dvandva skills, runs both bundled wait helpers, and
+checks standalone development copies.
 
 ## Release Checklist
 
 1. Bump `.claude-plugin/marketplace.json`, `plugins/dvandva/.claude-plugin/plugin.json`, and `plugins/dvandva/.codex-plugin/plugin.json` together.
 2. Run the validation commands above.
-3. Run `codex plugin marketplace add <repo-or-path>` from an isolated `CODEX_HOME`.
+3. Run `codex plugin marketplace add <repo-or-path>` from an isolated `CODEX_HOME`, then verify app-server plugin install exposes both skills.
 4. Run `claude plugin marketplace add <repo-or-path>` and `claude plugin install dvandva@dvandva` from an isolated `HOME`.
 5. Tag the release, for example `v0.1.0`.
 6. Push the branch and tag only after both Dvandva roles approve the final diff.
