@@ -157,6 +157,18 @@ env \
 grep -q 'dvandva:prativadi' "$CODEX_SKILLS_TXT"
 grep -q 'dvandva:vadi' "$CODEX_SKILLS_TXT"
 
+# Phase 4: verify slash-command files are bundled into the plugin.
+# Codex auto-discovers <plugin-root>/commands/<name>.md per
+# docs/research/2026-05-16-codex-install.md Q4; invocation is
+# /dvandva:vadi and /dvandva:prativadi.
+test -f "$PLUGIN_DIR/commands/vadi.md" || { echo "FAIL: dvandva commands/vadi.md missing from bundled plugin" >&2; exit 1; }
+test -f "$PLUGIN_DIR/commands/prativadi.md" || { echo "FAIL: dvandva commands/prativadi.md missing from bundled plugin" >&2; exit 1; }
+grep -q '^description:' "$PLUGIN_DIR/commands/vadi.md" || { echo "FAIL: vadi.md missing required 'description' frontmatter key" >&2; exit 1; }
+grep -q '^description:' "$PLUGIN_DIR/commands/prativadi.md" || { echo "FAIL: prativadi.md missing required 'description' frontmatter key" >&2; exit 1; }
+grep -q '^/goal You are Dvandva vadi' "$PLUGIN_DIR/commands/vadi.md" || { echo "FAIL: vadi.md body missing /goal block" >&2; exit 1; }
+grep -q '^/goal You are Dvandva prativadi' "$PLUGIN_DIR/commands/prativadi.md" || { echo "FAIL: prativadi.md body missing /goal block" >&2; exit 1; }
+echo "SMOKE: dvandva slash commands bundled correctly"
+
 run jq empty \
   "$MARKETPLACE_ROOT/.agents/plugins/marketplace.json" \
   "$PLUGIN_DIR/.claude-plugin/plugin.json" \

@@ -36,7 +36,16 @@ Claude plugin invocation fallback:
 /dvandva:prativadi
 ```
 
-Codex skill fallback:
+Codex slash commands:
+
+```text
+/dvandva:vadi
+/dvandva:prativadi
+```
+
+Each command starts a walkaway run for that role by injecting the canonical `/goal` block from the corresponding skill. Codex auto-discovers the command files from `plugins/dvandva/commands/<role>.md` — no extra wiring needed.
+
+The `$vadi` / `$prativadi` skill-fallback syntax still works for direct skill invocation when you don't want to start a `/goal` loop:
 
 ```text
 $vadi
