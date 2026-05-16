@@ -103,6 +103,29 @@ run_case "returns 20 on timeout while assigned away" 20 \
 run_case "rejects zero interval with positive max wait" 2 \
   "$SCRIPT" --role vadi --file "$BATON_WAIT" --interval 0 --max-wait 1
 
+# --allow-missing: file appears mid-wait
+BATON_LATE_DIR="$TMP_DIR/late"
+mkdir -p "$BATON_LATE_DIR"
+BATON_LATE="$BATON_LATE_DIR/baton.json"
+( sleep 1 && write_baton "$BATON_LATE" "prativadi" "phase_review" ) &
+late_pid=$!
+run_case "--allow-missing returns 0 when file appears" 0 \
+  "$PRATIVADI_SCRIPT" --role prativadi --file "$BATON_LATE" --allow-missing --interval 1 --max-wait 5
+wait "$late_pid" 2>/dev/null || true
+
+# --allow-missing: file never appears, times out
+BATON_NEVER_DIR="$TMP_DIR/never"
+mkdir -p "$BATON_NEVER_DIR"
+BATON_NEVER="$BATON_NEVER_DIR/baton.json"
+run_case "--allow-missing returns 20 on file-missing timeout" 20 \
+  "$PRATIVADI_SCRIPT" --role prativadi --file "$BATON_NEVER" --allow-missing --interval 1 --max-wait 2
+
+# Supervised-escape path: no --allow-missing → existing exit 21 preserved.
+# This is what the prativadi skill triggers when DVANDVA_NO_WAIT=1 makes
+# it skip the helper-with-flag and surface the missing-baton message.
+run_case "no flag returns 21 on missing baton (supervised-escape path)" 21 \
+  "$PRATIVADI_SCRIPT" --role prativadi --file "$BATON_NEVER" --interval 0 --max-wait 0
+
 for helper in "$SCRIPT" "$PRATIVADI_SCRIPT"; do
   if [[ -x "$helper" ]]; then
     echo "PASS: executable helper exists at ${helper#$ROOT_DIR/}"

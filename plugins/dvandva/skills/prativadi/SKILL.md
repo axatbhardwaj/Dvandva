@@ -10,7 +10,11 @@ You are the Dvandva prativadi and narrow fixer. You Q&A on plans, review impleme
 ## Preflight (every invocation)
 
 1. Read `AGENTS.md` at the repo root if present.
-2. Read `.dvandva/baton.json`. If the file does not exist, surface "no baton — vadi has not started" and exit without writing.
+2. Read `.dvandva/baton.json`. If the file does not exist:
+   - If env var `DVANDVA_NO_WAIT=1` is set, surface "no baton — vadi has not started" and exit without writing. This is the supervised escape: a user running both roles serially in one engine can opt out of waiting.
+   - Otherwise (default), run `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role prativadi --allow-missing --interval 60 --max-wait 900` in the foreground, then re-read the baton when it returns 0. If the helper exits 20 (timeout), surface "vadi did not scaffold a baton within 15 minutes" and exit. If it exits 10/11/12, surface the terminal state and exit.
+
+   *Why default-wait instead of branching on `run_mode`:* the baton is the only source of `run_mode`, so branching on it when no baton exists is a chicken-and-egg. Wait-by-default is safe for walkaway (the dominant case), and the env-var escape keeps supervised users productive without forcing the skill to invent a side-channel for `run_mode`.
 3. Verify the baton's `schema` field equals `dvandva.baton.v1`. If not, surface the mismatch and exit.
 4. If `status == "human_question"`, surface `question`, `resume_assignee`, and `resume_status`. If the user has provided the answer in the current prompt, record the answer in `summary`, set `assignee` to `resume_assignee`, set `status` to `resume_status`, clear `question`, `resume_assignee`, and `resume_status`, increment `checkpoint`, then re-read the baton and continue. If no answer is present, stop.
 5. If `assignee != "prativadi"` and `run_mode == "walkaway"`, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role prativadi --interval 60 --max-wait 900` in the foreground, then re-read the baton when it exits 0. If the wait exits 10 (`done`), 11 (`human_decision`), or 12 (`human_question`), surface the state and stop. If the wait exits 20, surface the still-waiting state and run the wait again unless the user interrupts. If `run_mode` is `supervised`, surface "wrong actor for this state" and exit so the human can invoke the assigned role.
@@ -319,4 +323,4 @@ In `run_mode: "supervised"`, exit after surfacing any baton assigned away from p
 
 For the bundled state-transition reference, read `${CLAUDE_SKILL_DIR}/../../references/state-transition-table.md` after resolving `${CLAUDE_SKILL_DIR}` to this skill directory. In standalone development installs where that file is absent, rely on the mode table and inlined baton schema above.
 
-<!-- Skill version: 0.3.0 -->
+<!-- Skill version: 0.4.0 -->

@@ -23,12 +23,17 @@ ROLE=""
 BATON_FILE=".dvandva/baton.json"
 INTERVAL=60
 MAX_WAIT=900
+ALLOW_MISSING=0
 
 usage() {
   cat >&2 <<'USAGE'
-Usage: dvandva-wait.sh --role <vadi|prativadi> [--file .dvandva/baton.json] [--interval seconds] [--max-wait seconds]
+Usage: dvandva-wait.sh --role <vadi|prativadi> [--file .dvandva/baton.json] [--interval seconds] [--max-wait seconds] [--allow-missing]
 
 Defaults: --interval 60 --max-wait 900
+
+With --allow-missing, a missing baton file does not exit 21 immediately;
+the helper instead sleeps INTERVAL and retries until the file appears
+or --max-wait elapses (returns 20 on timeout).
 USAGE
 }
 
@@ -53,6 +58,10 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { usage; exit 2; }
       MAX_WAIT="$2"
       shift 2
+      ;;
+    --allow-missing)
+      ALLOW_MISSING=1
+      shift 1
       ;;
     -h|--help)
       usage
@@ -84,6 +93,15 @@ elapsed=0
 
 while true; do
   if [[ ! -f "$BATON_FILE" ]]; then
+    if [[ "$ALLOW_MISSING" -eq 1 ]]; then
+      if [[ "$elapsed" -ge "$MAX_WAIT" ]]; then
+        echo "DVANDVA_WAIT timeout role=$ROLE waiting_for=baton file=$BATON_FILE elapsed=${elapsed}s"
+        exit 20
+      fi
+      sleep "$INTERVAL"
+      elapsed=$((elapsed + INTERVAL))
+      continue
+    fi
     echo "DVANDVA_WAIT missing file=$BATON_FILE"
     exit 21
   fi

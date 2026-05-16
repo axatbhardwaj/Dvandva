@@ -76,7 +76,9 @@ ${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role <vadi|prativadi> --interval 6
 
 That is shell waiting, not model polling. The agent resumes when the baton assigns its role again, or stops if the baton reaches `done`, `human_question`, or `human_decision`.
 
-For one-engine use, set `run_mode: "supervised"` in `.dvandva/baton.json` and invoke `vadi` and `prativadi` serially in that engine. Supervised mode exits on assigned-away states so one CLI session cannot deadlock itself.
+The prativadi can also be launched *before* the vadi has scaffolded the baton. Its preflight detects the missing baton, runs the wait helper with `--allow-missing`, and resumes once the vadi writes the file (or exits 20 after `--max-wait` if the vadi never appears). Simultaneous-launch dogfooding is therefore safe — no need to order the two starts.
+
+For one-engine use, set `run_mode: "supervised"` in `.dvandva/baton.json` and invoke `vadi` and `prativadi` serially in that engine. Supervised mode exits on assigned-away states so one CLI session cannot deadlock itself. Setting `DVANDVA_NO_WAIT=1` in the prativadi's environment also opts out of the missing-baton wait so a serial-supervised user gets the original "no baton — vadi has not started" message immediately.
 
 Agents may commit and push only after both `vadi_final_approval` and `prativadi_final_approval` are true. Dvandva must never create a PR.
 
