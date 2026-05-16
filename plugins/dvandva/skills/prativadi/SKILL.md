@@ -229,7 +229,7 @@ If you disapprove:
    - `blockers: ["mutual review reached cap without agreement"]`
    - `next_action: "Human: decide between prativadi's fixup, the vadi's counter, or a third path. Edit baton.assignee to resume."`
    - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
-- After writing the baton, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record the checkpoint into `.dvandva/history/` (and an auto-named terminal archive on done/human_decision/human_question). Surface BATON_STATE, then follow the Stop rule.
+   - After writing the baton, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record the checkpoint into `.dvandva/history/` (and an auto-named terminal archive on done/human_decision/human_question). Surface BATON_STATE, then follow the Stop rule.
 3. Otherwise, write a new narrow fixup (edit the affected files):
    - `phase: <current N>` (unchanged)
    - `status: "review_of_review"`
@@ -241,7 +241,7 @@ If you disapprove:
    - `summary: "Disapproved vadi's counter; wrote a different fix. Round <X>."`
    - `next_action: "Vadi: review prativadi's new fixup. Approve to advance, or counter again."`
    - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
-- After writing the baton, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record the checkpoint into `.dvandva/history/` (and an auto-named terminal archive on done/human_decision/human_question). Surface BATON_STATE, then follow the Stop rule.
+   - After writing the baton, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record the checkpoint into `.dvandva/history/` (and an auto-named terminal archive on done/human_decision/human_question). Surface BATON_STATE, then follow the Stop rule.
 
 ## Final ship rule
 
