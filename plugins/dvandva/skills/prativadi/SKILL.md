@@ -62,6 +62,7 @@ If you advance:
 - `summary: "Spec approved. Advancing to phase 1 implementation. <total_phases> phases planned."`
 - `next_action: "Vadi: implement phase 1 per plan at <plan_ref>. Use superpowers:test-driven-development."`
 - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
+- After writing the baton, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record the checkpoint into `.dvandva/history/` (and an auto-named terminal archive on done/human_decision/human_question).
 
 If you hand back for revision:
 
@@ -78,6 +79,7 @@ If you hand back for revision:
 - `summary: "Spec needs revision. <N> findings raised."`
 - `next_action: "Vadi: address findings in <plan_ref>, then hand back to prativadi for re-Q&A."`
 - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
+- After writing the baton, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record the checkpoint into `.dvandva/history/` (and an auto-named terminal archive on done/human_decision/human_question).
 
 Surface BATON_STATE, then follow the Stop rule.
 
@@ -125,7 +127,8 @@ You MUST hand back (not fix) for:
 - `findings: [<one bullet per substantive issue>]`
 - `summary: "Phase <N> needs implementation work before re-review."`
 - `next_action: "Vadi: address findings, then hand back to prativadi for re-review."`
-- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Surface BATON_STATE, then follow the Stop rule.
+- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
+- After writing the baton, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record the checkpoint into `.dvandva/history/` (and an auto-named terminal archive on done/human_decision/human_question). Surface BATON_STATE, then follow the Stop rule.
 
 **If narrow fixups apply AND no handback issues:** apply the fixups inline (edit the affected files), re-run verification, then:
 
@@ -140,7 +143,8 @@ You MUST hand back (not fix) for:
 - `summary: "Phase <N> reviewed. Applied <N> narrow fixups. Mutual review owed."`
 - `next_action: "Vadi: review prativadi's narrow fixups for phase <N>. Approve to advance, or counter."`
 - If `<current N> == total_phases`, set `prativadi_final_approval: true`; the vadi must review the final fixups before commit/push.
-- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Surface BATON_STATE, then follow the Stop rule.
+- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
+- After writing the baton, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record the checkpoint into `.dvandva/history/` (and an auto-named terminal archive on done/human_decision/human_question). Surface BATON_STATE, then follow the Stop rule.
 
 **If narrow fixups apply AND handback issues:** apply the narrow fixups inline first (edit affected files), re-run verification, then route to `phase_fixing` for the vadi to address handback issues. Mutual review of the narrow fixups happens on the next prativadi pass after the vadi's fix.
 
@@ -156,7 +160,8 @@ You MUST hand back (not fix) for:
 - `summary: "Phase <N> has handback issues; <N> narrow fixups applied inline. Routing to fix first; mutual review of the fixups deferred to the next prativadi pass."`
 - `next_action: "Vadi: address findings. After re-implementation, prativadi will also review the narrow fixups already applied."`
 - If `<current N> == total_phases`, keep `prativadi_final_approval: false`; final approval is not valid while handback findings remain.
-- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Surface BATON_STATE, then follow the Stop rule.
+- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
+- After writing the baton, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record the checkpoint into `.dvandva/history/` (and an auto-named terminal archive on done/human_decision/human_question). Surface BATON_STATE, then follow the Stop rule.
 
 **If approve with no changes:**
 
@@ -170,7 +175,8 @@ First check the incoming baton's `narrow_fixups` array. If it is **non-empty**, 
 - `narrow_fixups: [<existing array, carried forward unchanged>]`
 - `summary: "Phase <N> handback addressed by vadi. Mutual review of carried-forward narrow fixups now owed."`
 - `next_action: "Vadi: review prativadi's narrow fixups for phase <N> (carried forward from the earlier review pass). Approve to advance, or counter."`
-- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Surface BATON_STATE, then follow the Stop rule.
+- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
+- After writing the baton, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record the checkpoint into `.dvandva/history/` (and an auto-named terminal archive on done/human_decision/human_question). Surface BATON_STATE, then follow the Stop rule.
 
 Otherwise (incoming `narrow_fixups` is empty — normal happy-path approval):
 
@@ -183,7 +189,8 @@ Otherwise (incoming `narrow_fixups` is empty — normal happy-path approval):
 - `summary: "Phase <N> approved with no changes. Advancing."` or `"Phase <N> was final. Marking done."`
 - `next_action: "Vadi: implement phase <N+1>."` or `"Run complete. Inspect final_commit and pushed_ref; no PR was created."`
 - If `<current N> == total_phases`, set `prativadi_final_approval: true`. If `vadi_final_approval == true`, follow the Final ship rule before writing terminal `done`; otherwise set `status: "human_decision"` because the final diff lacks vadi approval.
-- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Surface BATON_STATE, then follow the Stop rule.
+- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
+- After writing the baton, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record the checkpoint into `.dvandva/history/` (and an auto-named terminal archive on done/human_decision/human_question). Surface BATON_STATE, then follow the Stop rule.
 
 ## Mode C — vadi-counter review
 
@@ -209,7 +216,8 @@ If you approve:
 - `summary: "Approved vadi's counter-change for phase <N>. Advancing to phase <N+1>."` or `"...Phase <N> was final."`
 - `next_action: "Vadi: implement phase <N+1>."` or `"Run complete. Inspect final_commit and pushed_ref; no PR was created."`
 - If `<current N> == total_phases`, set `prativadi_final_approval: true`. If `vadi_final_approval == true`, follow the Final ship rule before writing terminal `done`; otherwise set `status: "human_decision"` because the final diff lacks vadi approval.
-- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Surface BATON_STATE, then follow the Stop rule.
+- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
+- After writing the baton, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record the checkpoint into `.dvandva/history/` (and an auto-named terminal archive on done/human_decision/human_question). Surface BATON_STATE, then follow the Stop rule.
 
 If you disapprove:
 
@@ -220,7 +228,8 @@ If you disapprove:
    - `current_engine`: set to `"claude"` if you are Claude Code, or `"codex"` if you are Codex. This is for traceability only.
    - `blockers: ["mutual review reached cap without agreement"]`
    - `next_action: "Human: decide between prativadi's fixup, the vadi's counter, or a third path. Edit baton.assignee to resume."`
-   - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Surface BATON_STATE, then follow the Stop rule.
+   - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
+- After writing the baton, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record the checkpoint into `.dvandva/history/` (and an auto-named terminal archive on done/human_decision/human_question). Surface BATON_STATE, then follow the Stop rule.
 3. Otherwise, write a new narrow fixup (edit the affected files):
    - `phase: <current N>` (unchanged)
    - `status: "review_of_review"`
@@ -231,7 +240,8 @@ If you disapprove:
    - `disagreement_round: <incremented>`
    - `summary: "Disapproved vadi's counter; wrote a different fix. Round <X>."`
    - `next_action: "Vadi: review prativadi's new fixup. Approve to advance, or counter again."`
-   - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Surface BATON_STATE, then follow the Stop rule.
+   - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
+- After writing the baton, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record the checkpoint into `.dvandva/history/` (and an auto-named terminal archive on done/human_decision/human_question). Surface BATON_STATE, then follow the Stop rule.
 
 ## Final ship rule
 

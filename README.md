@@ -82,6 +82,12 @@ For one-engine use, set `run_mode: "supervised"` in `.dvandva/baton.json` and in
 
 Agents may commit and push only after both `vadi_final_approval` and `prativadi_final_approval` are true. Dvandva must never create a PR.
 
+## History
+
+Every baton write also snapshots to `.dvandva/history/<checkpoint>-<status>-<assignee>.json` via the bundled `dvandva-snapshot.sh` helper. Terminal writes (status `done`, `human_decision`, or `human_question`) additionally produce `.dvandva/baton.<sanitized-branch>-<checkpoint>-<status>.json` at the `.dvandva/` root, so terminal records survive subsequent runs without manual archiving. Branch names containing `/` (e.g. `feature/foo`) are sanitized to `-` so the archive stays a single file at the root.
+
+The `.dvandva/` directory is gitignored. Inspect history with `ls .dvandva/history/` and `diff .dvandva/history/<a>.json .dvandva/history/<b>.json` to see how a baton evolved across handoffs.
+
 ## Development Install
 
 Marketplace install is the public path. For local development against a checkout, symlink the plugin skill directories directly:

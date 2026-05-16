@@ -13,6 +13,8 @@ You are the Dvandva vadi. You draft plans, implement them phase by phase, and re
 2. Read `.dvandva/baton.json`. If the file does not exist, scaffold it: create `.dvandva/`, write `.dvandva/baton.json` using the canonical schema at the bottom of this skill with values `status: "spec_drafting"`, `assignee: "vadi"`, `phase: "spec"`, `updated_at: <current ISO-8601 UTC>`, `run_mode: "supervised"` if the user explicitly asked for supervised/single-engine mode, otherwise `run_mode: "walkaway"`, all other fields per the schema defaults. Then re-read.
 
    *Asymmetry note:* the vadi scaffolds on missing-baton; the prativadi waits on missing-baton via the wait helper's `--allow-missing` flag (see prativadi SKILL.md preflight step 2). Either engine can host either role, but the missing-baton response differs by role because only the vadi has authority to create the spec.
+
+   After scaffolding, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record checkpoint 0 into `.dvandva/history/`. This captures the very first baton state.
 3. Verify the baton's `schema` field equals `dvandva.baton.v1`. If not, surface the mismatch and exit without writing.
 4. If `status == "human_question"`, surface `question`, `resume_assignee`, and `resume_status`. If the user has provided the answer in the current prompt, record the answer in `summary`, set `assignee` to `resume_assignee`, set `status` to `resume_status`, clear `question`, `resume_assignee`, and `resume_status`, increment `checkpoint`, then re-read the baton and continue. If no answer is present, stop.
 5. If `assignee != "vadi"` and `run_mode == "walkaway"`, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role vadi --interval 60 --max-wait 900` in the foreground, then re-read the baton when it exits 0. If the wait exits 10 (`done`), 11 (`human_decision`), or 12 (`human_question`), surface the state and stop. If the wait exits 20, surface the still-waiting state and run the wait again unless the user interrupts. If `run_mode` is `supervised`, surface "wrong actor for this state; this skill is for the vadi" and exit without writing so the human can invoke the assigned role.
@@ -56,6 +58,7 @@ Baton write before handoff:
 - `summary: "Spec drafted. Plan at <plan_ref>. <total_phases> phases declared."`
 - `next_action: "Prativadi: Q&A on the plan at <plan_ref>. Surface concerns in findings. Approve or hand back for revision."`
 - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
+- After writing the baton, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record the checkpoint into `.dvandva/history/` (and an auto-named terminal archive on done/human_decision/human_question).
 
 Surface the new BATON_STATE line, then follow the Stop rule.
 
@@ -85,6 +88,7 @@ Baton write before handoff:
 - `summary: "Addressed prativadi Q&A. <N> findings resolved."`
 - `next_action: "Prativadi: re-Q&A on the updated plan at <plan_ref>. Approve to advance to phase 1, or surface remaining concerns."`
 - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
+- After writing the baton, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record the checkpoint into `.dvandva/history/` (and an auto-named terminal archive on done/human_decision/human_question).
 
 Surface BATON_STATE, then follow the Stop rule.
 
@@ -113,6 +117,7 @@ Baton write before handoff:
 - `next_action: "Prativadi: review phase <N> implementation. Apply narrow fixups within the allowlist, or hand back substantive findings."`
 - If `<current N> == total_phases`, set `vadi_final_approval: true`, `prativadi_final_approval: false`, and make `next_action` request final prativadi approval.
 - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
+- After writing the baton, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record the checkpoint into `.dvandva/history/` (and an auto-named terminal archive on done/human_decision/human_question).
 
 Baton write if you hit a handback condition (architecture, schema migration, shared infra, dep removal, ambiguous requirement, or out-of-scope decision):
 
@@ -126,6 +131,7 @@ Baton write if you hit a handback condition (architecture, schema migration, sha
 - `next_action: "Human: decide how to proceed. Edit baton.assignee to resume."`
 - Do not commit partial changes; leave the working tree as-is and let the baton's `summary` describe how far you got.
 - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
+- After writing the baton, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record the checkpoint into `.dvandva/history/` (and an auto-named terminal archive on done/human_decision/human_question).
 
 Surface BATON_STATE, then follow the Stop rule.
 
@@ -154,6 +160,7 @@ Baton write before handoff:
 - `next_action: "Prativadi: re-review phase <N>. Approve to advance, fix narrowly, or hand back."`
 - If `<current N> == total_phases`, set `vadi_final_approval: true`, `prativadi_final_approval: false`, and make `next_action` request final prativadi approval.
 - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
+- After writing the baton, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record the checkpoint into `.dvandva/history/` (and an auto-named terminal archive on done/human_decision/human_question).
 
 Baton write if a finding requires escalation (per action step 4):
 
@@ -166,6 +173,7 @@ Baton write if a finding requires escalation (per action step 4):
 - `summary: "Phase <N> fix blocked: <reason>."`
 - `next_action: "Human: decide whether to accept the finding as-is, change scope, or hand back to the vadi with adjusted instructions."`
 - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
+- After writing the baton, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record the checkpoint into `.dvandva/history/` (and an auto-named terminal archive on done/human_decision/human_question).
 
 Surface BATON_STATE, then follow the Stop rule.
 
@@ -194,6 +202,7 @@ If you approve, baton write:
 - `next_action: "Vadi: implement phase <N+1> per plan at <plan_ref>."` or `"Run complete. Inspect final_commit and pushed_ref; no PR was created."`
 - If `<current N> == total_phases`, set `vadi_final_approval: true`. If `prativadi_final_approval == true`, follow the Final ship rule before writing terminal `done`; otherwise set `status: "human_decision"` because the final diff lacks prativadi approval.
 - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
+- After writing the baton, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record the checkpoint into `.dvandva/history/` (and an auto-named terminal archive on done/human_decision/human_question).
 
 If you disapprove:
 
@@ -210,6 +219,7 @@ If you disapprove:
    - `summary: "Disapproved prativadi's fixup for phase <N>; wrote counter-change. Round <X>."`
    - `next_action: "Prativadi: review the vadi's counter-change. Approve to advance, or counter-propose."`
    - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
+- After writing the baton, run `${CLAUDE_SKILL_DIR}/scripts/dvandva-snapshot.sh .dvandva/baton.json` to record the checkpoint into `.dvandva/history/` (and an auto-named terminal archive on done/human_decision/human_question).
 
 Surface BATON_STATE, then follow the Stop rule.
 
