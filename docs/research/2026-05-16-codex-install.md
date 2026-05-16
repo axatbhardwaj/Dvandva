@@ -1,11 +1,20 @@
 # Codex Plugin Install Discovery
 
 **Date:** 2026-05-16
-**Context:** Dvandva protocol-ergonomics run (Phase 1 of 5). Informs Phase 4 (Codex slash commands) and Phase 5 (Codex install one-liner). Verified against `codex --version` 0.62.x on Linux.
+**Context:** Dvandva protocol-ergonomics run (Phase 1 of 5). Informs Phase 4 (Codex slash commands) and Phase 5 (Codex install one-liner). Verified against `codex-cli 0.130.0` on Linux.
 
 ## Q1: What does `codex plugin marketplace add <path>` write to disk?
 
-It writes a `[[mcp_servers.marketplaces]]`-style entry into `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`). The smoke script at `scripts/smoke-plugin-install.sh:44-45` exercises this:
+It writes a `[marketplaces.<name>]` table into `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`). A local smoke with `CODEX_HOME=<tmp>` produced this shape:
+
+```toml
+[marketplaces.dvandva]
+last_updated = "2026-05-16T13:21:22Z"
+source_type = "local"
+source = "/home/xzat/personal/Dvandva"
+```
+
+The smoke script at `scripts/smoke-plugin-install.sh:44-45` exercises the same config write:
 
 ```bash
 run env CODEX_HOME="$TMP_DIR/codex-home" codex plugin marketplace add "$MARKETPLACE_ROOT"
