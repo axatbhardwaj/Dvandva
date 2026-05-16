@@ -28,23 +28,39 @@ fi
 echo "Step 1: registering marketplace '$MARKETPLACE'..."
 codex plugin marketplace add "$MARKETPLACE"
 
-# If a local-path marketplace was given, resolve to the absolute marketplace.json path
-# the app-server expects. For remote repos, the marketplace.json lives under the
-# registered location's standard layout.
+# Resolve the marketplace.json path the app-server expects. Even for remote
+# repos, prefer marketplacePath over remoteMarketplaceName: remoteMarketplaceName
+# asks the app-server to read the hosted catalog and can require ChatGPT auth,
+# while marketplacePath uses the checkout that `marketplace add` just cached.
 if [[ -d "$MARKETPLACE" ]]; then
   MARKETPLACE_PATH="$(cd "$MARKETPLACE" && pwd)/.agents/plugins/marketplace.json"
 else
-  # Remote marketplace: the marketplace.json path inside the codex_home isn't trivially
-  # exposed. Fall back to letting the RPC resolve by remote-marketplace name (the second
-  # plugin/install param shape). We pass remoteMarketplaceName instead of marketplacePath.
-  MARKETPLACE_PATH=""
+  CODEX_HOME_DIR="${CODEX_HOME:-$HOME/.codex}"
+  MARKETPLACE_NAME="$(basename "${MARKETPLACE%.git}")"
+  MARKETPLACE_NAME="$(printf '%s' "$MARKETPLACE_NAME" | tr '[:upper:]' '[:lower:]')"
+  MARKETPLACE_PATH="$CODEX_HOME_DIR/.tmp/marketplaces/$MARKETPLACE_NAME/.agents/plugins/marketplace.json"
+  if [[ ! -f "$MARKETPLACE_PATH" ]]; then
+    MARKETPLACE_PATH="$(
+      find "$CODEX_HOME_DIR/.tmp/marketplaces" -path '*/.agents/plugins/marketplace.json' -type f -print 2>/dev/null \
+        | while IFS= read -r candidate; do
+            if grep -q '"name"[[:space:]]*:[[:space:]]*"dvandva"' "$candidate"; then
+              printf '%s\n' "$candidate"
+              break
+            fi
+          done
+    )"
+  fi
+fi
+
+if [[ -z "${MARKETPLACE_PATH:-}" || ! -f "$MARKETPLACE_PATH" ]]; then
+  echo "ERROR: could not find Dvandva marketplace.json after marketplace registration" >&2
+  exit 1
 fi
 
 echo "Step 2: installing dvandva plugin via app-server RPC..."
 python3 - "$MARKETPLACE" "$MARKETPLACE_PATH" <<'PY'
 import json, os, select, subprocess, sys, time
 
-REMOTE_NAME = sys.argv[1]
 MARKETPLACE_PATH = sys.argv[2]
 
 def send(proc, request_id, method, params=None):
@@ -84,18 +100,11 @@ try:
     read_response(proc, 1)
     notify(proc, "initialized")
 
-    if MARKETPLACE_PATH:
-        params = {
-            "marketplacePath": MARKETPLACE_PATH,
-            "pluginName": "dvandva",
-            "remoteMarketplaceName": None,
-        }
-    else:
-        params = {
-            "marketplacePath": None,
-            "pluginName": "dvandva",
-            "remoteMarketplaceName": REMOTE_NAME,
-        }
+    params = {
+        "marketplacePath": MARKETPLACE_PATH,
+        "pluginName": "dvandva",
+        "remoteMarketplaceName": None,
+    }
     send(proc, 2, "plugin/install", params)
     response = read_response(proc, 2)
     if response.get("error"):
