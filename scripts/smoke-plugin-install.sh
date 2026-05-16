@@ -169,6 +169,15 @@ grep -q '^/goal You are Dvandva vadi' "$PLUGIN_DIR/commands/vadi.md" || { echo "
 grep -q '^/goal You are Dvandva prativadi' "$PLUGIN_DIR/commands/prativadi.md" || { echo "FAIL: prativadi.md body missing /goal block" >&2; exit 1; }
 echo "SMOKE: dvandva slash commands bundled correctly"
 
+# Phase 5: re-install via scripts/install-codex.sh into a fresh CODEX_HOME
+# to confirm the user-facing one-liner works end-to-end.
+SCRIPT_CODEX_HOME="$TMP_DIR/codex-home-via-script"
+SCRIPT_USER_HOME="$TMP_DIR/codex-user-home-via-script"
+mkdir -p "$SCRIPT_CODEX_HOME" "$SCRIPT_USER_HOME"
+run env CODEX_HOME="$SCRIPT_CODEX_HOME" HOME="$SCRIPT_USER_HOME" \
+  bash "$ROOT_DIR/scripts/install-codex.sh" "$MARKETPLACE_ROOT"
+echo "SMOKE: install-codex.sh end-to-end install passed"
+
 run jq empty \
   "$MARKETPLACE_ROOT/.agents/plugins/marketplace.json" \
   "$PLUGIN_DIR/.claude-plugin/plugin.json" \

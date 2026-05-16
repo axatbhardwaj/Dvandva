@@ -14,13 +14,24 @@ Install the marketplace in each engine you want to use:
 claude plugin marketplace add axatbhardwaj/Dvandva
 claude plugin install dvandva@dvandva
 
-codex plugin marketplace add axatbhardwaj/Dvandva
+bash scripts/install-codex.sh
 ```
 
-For Codex, `marketplace add` registers the marketplace. Then restart Codex,
-open the plugin directory, select the Dvandva marketplace, and install the
-`dvandva` plugin. After install, `/skills` should list `dvandva:vadi` and
-`dvandva:prativadi`.
+For Codex, `scripts/install-codex.sh` registers the marketplace and then
+drives Codex's app-server JSON-RPC `plugin/install` method to install the
+plugin non-interactively — no TUI navigation required. The script accepts
+an optional local-path argument for development against a checkout:
+
+```bash
+bash scripts/install-codex.sh /path/to/your/Dvandva
+```
+
+See `docs/research/2026-05-16-codex-install.md` for the underlying
+mechanism (no `codex plugin install <name>` CLI exists today; the
+RPC backend is the supported non-interactive path).
+
+After install, `/skills` should list `dvandva:vadi` and `dvandva:prativadi`,
+and `/dvandva:vadi` / `/dvandva:prativadi` should appear as slash commands.
 
 Then start a feature-branch worktree and open both sessions:
 
