@@ -177,6 +177,8 @@ fi
 BATON_DIR="$(dirname "$BATON_FILE")"
 mkdir -p "$BATON_DIR"
 # Sweep tmp files orphaned by a killed writer; inert to readers but clutter.
+# Note: the glob would also hit a LIVE concurrent writer's tmp — acceptable
+# because the protocol's assignee field makes writes single-owner by design.
 rm -f "$BATON_DIR"/.baton.json.tmp.* 2>/dev/null
 TMP_FILE="$BATON_DIR/.baton.json.tmp.$$"
 

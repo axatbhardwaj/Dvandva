@@ -254,6 +254,21 @@ else
   failures=$((failures + 1))
 fi
 
+# --- install failure (read-only baton dir) exits 26, baton unchanged ---
+
+BOX="$(new_box install-fail)"
+make_baton "$BOX/baton.next.json" "spec_drafting" "vadi" 0
+chmod a-w "$BOX"
+run_case "read-only baton dir exits 26" 26 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+chmod u+w "$BOX"
+if [[ ! -f "$BOX/baton.json" ]]; then
+  echo "PASS: failed install left no baton behind"
+else
+  echo "FAIL: failed install created a baton"
+  failures=$((failures + 1))
+fi
+
 # --- snapshot failure after install exits 30, baton IS installed ---
 
 LONELY_DIR="$TMP_DIR/lonely-bin"
