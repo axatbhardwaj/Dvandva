@@ -2,6 +2,8 @@
 
 This is the plugin-local reference for `dvandva.baton.v1`. The skill bodies carry the operational checklist; this file is the bundled transition reference available after plugin install.
 
+The bundled `dvandva-write.sh` helper enforces this table deterministically at write time; `scripts/test-dvandva-write.sh` asserts every edge below.
+
 ## Schema Fields
 
 ```json

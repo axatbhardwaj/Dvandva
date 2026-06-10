@@ -13,6 +13,7 @@ The default local runtime directory is `.dvandva/`, which is gitignored.
 Recommended files:
 
 - `.dvandva/baton.json` - current state and next assignee.
+- `.dvandva/baton.next.json` - candidate the active agent writes; installed by the bundled `dvandva-write.sh`.
 - `.dvandva/events.jsonl` - append-only event log.
 - `.dvandva/claude-handoff.md` - latest Claude handoff.
 - `.dvandva/codex-review.md` - latest Codex review.
@@ -126,11 +127,13 @@ Any other transition is illegal in v1. The writing agent must reject illegal tra
 
 The active agent must stop doing LLM work after writing a baton that assigns the next action to another actor. In default `run_mode: "walkaway"`, it then blocks in the foreground wait helper instead of exiting the overall run.
 
+Every baton write goes through `${CLAUDE_SKILL_DIR}/scripts/dvandva-write.sh`, which validates the v1 transition, installs atomically, and snapshots the checkpoint.
+
 This is the core anti-token-polling rule:
 
 - The vadi does not spend model turns asking whether the prativadi moved.
 - The prativadi does not spend model turns asking whether the vadi moved.
-- In walkaway mode, the assigned-away agent runs `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role <vadi|prativadi> --interval 60 --max-wait 900`.
+- In walkaway mode, the assigned-away agent runs `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role <vadi|prativadi> --interval 60 --max-wait 540`.
 - In supervised mode, the assigned-away agent exits and the human invokes the next role manually.
 - When the helper exits 0, the agent re-reads the baton and resumes.
 - When the helper exits 10, 11, or 12, the agent surfaces `done`, `human_decision`, or `human_question` and stops. For `human_question`, the helper also prints `question`, `resume_assignee`, and `resume_status`.
@@ -144,13 +147,13 @@ The canonical v1 goal conditions are embedded in the two skill bodies (`plugins/
 Vadi goal (paste into your engine):
 
 ```
-/goal You are Dvandva vadi. Continue the Dvandva walkaway run until .dvandva/baton.json status is "done", "human_question", or "human_decision". If assignee is not "vadi", run ${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role vadi --interval 60 --max-wait 900, then re-read the baton when it returns 0. Before each checkpoint, surface BATON_STATE, changed files, verification commands and outcomes, and final approval fields. Never create a PR. Stop after the baton turn_cap and assign human if still blocked.
+/goal You are Dvandva vadi. Continue the Dvandva walkaway run until .dvandva/baton.json status is "done", "human_question", or "human_decision". If assignee is not "vadi", run ${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role vadi --interval 60 --max-wait 540, then re-read the baton when it returns 0. Before each checkpoint, surface BATON_STATE, changed files, verification commands and outcomes, and final approval fields. Never create a PR. Stop after the baton turn_cap and assign human if still blocked.
 ```
 
 Prativadi goal (paste into your engine):
 
 ```
-/goal You are Dvandva prativadi. Continue the Dvandva walkaway run until .dvandva/baton.json status is "done", "human_question", or "human_decision". If assignee is not "prativadi", run ${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role prativadi --interval 60 --max-wait 900, then re-read the baton when it returns 0. Before each checkpoint, surface BATON_STATE, findings, verification commands and outcomes, final approval fields, and the final baton contents. Never create a PR.
+/goal You are Dvandva prativadi. Continue the Dvandva walkaway run until .dvandva/baton.json status is "done", "human_question", or "human_decision". If assignee is not "prativadi", run ${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role prativadi --interval 60 --max-wait 540, then re-read the baton when it returns 0. Before each checkpoint, surface BATON_STATE, findings, verification commands and outcomes, final approval fields, and the final baton contents. Never create a PR.
 ```
 
 Both goals require the agent to surface a structured `BATON_STATE: { ... }` line at every checkpoint. The `/goal` evaluator detects exit conditions by reading that line in the transcript.

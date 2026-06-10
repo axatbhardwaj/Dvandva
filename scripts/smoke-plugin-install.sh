@@ -198,6 +198,20 @@ run "$PLUGIN_DIR/skills/prativadi/scripts/dvandva-wait.sh" \
   --interval 0 \
   --max-wait 0
 
+# Exercise both bundled write helpers: scaffold then one legal transition.
+WRITE_BOX="$TMP_DIR/write-helper"
+mkdir -p "$WRITE_BOX"
+jq '.status = "spec_drafting" | .assignee = "vadi" | .checkpoint = 0 | .master_plan_locked = false | .question = null | .resume_assignee = null | .resume_status = null' \
+  "$PLUGIN_DIR/references/baton-schema.json" > "$WRITE_BOX/baton.next.json"
+run "$PLUGIN_DIR/skills/vadi/scripts/dvandva-write.sh" \
+  "$WRITE_BOX/baton.json" "$WRITE_BOX/baton.next.json"
+jq '.status = "spec_review" | .assignee = "prativadi" | .review_target = "spec" | .checkpoint = 1' \
+  "$WRITE_BOX/baton.json" > "$WRITE_BOX/baton.next.json"
+run "$PLUGIN_DIR/skills/prativadi/scripts/dvandva-write.sh" \
+  "$WRITE_BOX/baton.json" "$WRITE_BOX/baton.next.json"
+test -f "$WRITE_BOX/history/0-spec_drafting-vadi.json" || { echo "FAIL: write helper did not snapshot checkpoint 0" >&2; exit 1; }
+test -f "$WRITE_BOX/history/1-spec_review-prativadi.json" || { echo "FAIL: write helper did not snapshot checkpoint 1" >&2; exit 1; }
+
 DEV_HOME="$TMP_DIR/dev-home"
 mkdir -p "$DEV_HOME/.claude/skills" "$DEV_HOME/.agents/skills"
 cp -R "$PLUGIN_DIR/skills/vadi" "$DEV_HOME/.claude/skills/vadi"

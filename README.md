@@ -85,16 +85,19 @@ The default `run_mode` is `walkaway`: start both sessions once, then let the bat
 | superpowers plugin on the engine(s) used for planning | `/skills` lists `superpowers:brainstorming` |
 | Work happens on a feature branch | `git branch --show-current` is not `main` or `master` |
 | `jq` installed | `jq --version` |
+| inotify-tools, optional — instant wake on baton handoff instead of interval polling | `inotifywait --help` |
 
 ## Usage
 
 In walkaway mode, the assigned-away session blocks in:
 
 ```bash
-${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role <vadi|prativadi> --interval 60 --max-wait 900
+${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role <vadi|prativadi> --interval 60 --max-wait 540
 ```
 
 That is shell waiting, not model polling. The agent resumes when the baton assigns its role again, or stops if the baton reaches `done`, `human_question`, or `human_decision`.
+
+On Claude Code, invoke the helper with an explicit 600000 ms Bash-tool timeout; the 540 s default max-wait fits the 600 s tool maximum. When `inotifywait` is installed the helper wakes the moment the baton changes instead of sleeping the full interval.
 
 The prativadi can also be launched *before* the vadi has scaffolded the baton. Its preflight detects the missing baton, runs the wait helper with `--allow-missing`, and resumes once the vadi writes the file (or exits 20 after `--max-wait` if the vadi never appears). Simultaneous-launch dogfooding is therefore safe — no need to order the two starts.
 
@@ -104,7 +107,7 @@ Agents may commit and push only after both `vadi_final_approval` and `prativadi_
 
 ## History
 
-Every baton write also snapshots to `.dvandva/history/<checkpoint>-<status>-<assignee>.json` via the bundled `dvandva-snapshot.sh` helper. Terminal writes (status `done`, `human_decision`, or `human_question`) additionally produce `.dvandva/baton.<sanitized-branch>-<checkpoint>-<status>.json` at the `.dvandva/` root, so terminal records survive subsequent runs without manual archiving. Branch names containing `/` (e.g. `feature/foo`) are sanitized to `-` so the archive stays a single file at the root.
+Every baton write is installed by the bundled `dvandva-write.sh` helper (validated, atomic), which also snapshots to `.dvandva/history/<checkpoint>-<status>-<assignee>.json` via `dvandva-snapshot.sh`. Terminal writes (status `done`, `human_decision`, or `human_question`) additionally produce `.dvandva/baton.<sanitized-branch>-<checkpoint>-<status>.json` at the `.dvandva/` root, so terminal records survive subsequent runs without manual archiving. Branch names containing `/` (e.g. `feature/foo`) are sanitized to `-` so the archive stays a single file at the root.
 
 The `.dvandva/` directory is gitignored. Inspect history with `ls .dvandva/history/` and `diff .dvandva/history/<a>.json .dvandva/history/<b>.json` to see how a baton evolved across handoffs.
 
@@ -137,6 +140,8 @@ Old pre-plugin installs used `dvandva-vadi` and `dvandva-prativadi` symlinks. Re
 bash scripts/lint-skills.sh plugins/dvandva/skills/vadi/SKILL.md
 bash scripts/lint-skills.sh plugins/dvandva/skills/prativadi/SKILL.md
 bash scripts/test-dvandva-wait.sh
+bash scripts/test-dvandva-write.sh
+bash scripts/test-dvandva-snapshot.sh
 bash scripts/smoke-plugin-install.sh
 claude plugin validate plugins/dvandva
 claude plugin validate .

@@ -29,7 +29,7 @@ Codex should review when the baton assigns its current role and block in the wai
 Recommended condition:
 
 ```text
-/goal Continue the Dvandva walkaway run until .dvandva/baton.json status is "done", "human_question", or "human_decision". If assignee is not your current role, run ${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role <role> --interval 60 --max-wait 900, then re-read the baton when it returns 0. Before each checkpoint, surface BATON_STATE, verification commands and outcomes, findings, and final approval fields. Never create a PR.
+/goal Continue the Dvandva walkaway run until .dvandva/baton.json status is "done", "human_question", or "human_decision". If assignee is not your current role, run ${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role <role> --interval 60 --max-wait 540, then re-read the baton when it returns 0. Before each checkpoint, surface BATON_STATE, verification commands and outcomes, findings, and final approval fields. Never create a PR.
 ```
 
 ## Fix Permissions
