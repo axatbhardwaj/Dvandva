@@ -126,6 +126,36 @@ run_case "--allow-missing returns 20 on file-missing timeout" 20 \
 run_case "no flag returns 21 on missing baton (supervised-escape path)" 21 \
   "$PRATIVADI_SCRIPT" --role prativadi --file "$BATON_NEVER" --interval 0 --max-wait 0
 
+# Torn-read tolerance: persistently invalid JSON still exits 22 (after one retry).
+BATON_BAD="$TMP_DIR/bad.json"
+printf '{"schema": "dvandva.baton.v1", "assignee": ' > "$BATON_BAD"
+run_case "persistently invalid baton exits 22 after retry" 22 \
+  "$SCRIPT" --role vadi --file "$BATON_BAD" --interval 0 --max-wait 0
+
+# A torn read that heals before the 1s retry exits 0.
+BATON_HEAL="$TMP_DIR/heal.json"
+printf '{"schema": "dvandva.baton.v1", "assignee": ' > "$BATON_HEAL"
+# Healer fires at 0.3s; the helper's retry happens at ~1s — 0.7s margin.
+( sleep 0.3 && write_baton "$BATON_HEAL" "vadi" "implementing" ) &
+heal_pid=$!
+run_case "torn read healed by retry exits 0" 0 \
+  "$SCRIPT" --role vadi --file "$BATON_HEAL" --interval 0 --max-wait 0
+wait "$heal_pid" 2>/dev/null || true
+
+# Usage advertises the 540 default (one invocation fits Claude Code's 600s Bash-tool cap).
+help_output="$("$SCRIPT" --help 2>&1)"
+help_exit=$?
+if [[ "$help_exit" -ne 0 ]]; then
+  echo "FAIL: --help exited $help_exit, expected 0"
+  failures=$((failures + 1))
+elif ! grep -q -- '--max-wait 540' <<< "$help_output"; then
+  echo "FAIL: usage does not advertise 540 default"
+  echo "$help_output"
+  failures=$((failures + 1))
+else
+  echo "PASS: usage advertises 540 default and --help exits 0"
+fi
+
 for helper in "$SCRIPT" "$PRATIVADI_SCRIPT"; do
   if [[ -x "$helper" ]]; then
     echo "PASS: executable helper exists at ${helper#$ROOT_DIR/}"
