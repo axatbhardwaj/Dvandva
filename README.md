@@ -1,10 +1,10 @@
 # Dvandva
 
-Dvandva packages a two-agent coding workflow as an installable plugin. One role, `vadi`, proposes plans and implements phases. The other, `prativadi`, reviews, applies narrow fixups, and hands control back through a local `.dvandva/baton.json` file.
+Dvandva is a coordination protocol for paired AI coding agents — not an orchestrator. There is no daemon, no launcher, and no process that owns the control loop. Two independently running agent sessions follow a shared state machine through a local `.dvandva/baton.json` file (choreography rather than orchestration): one role, `vadi`, proposes plans and implements phases; the other, `prativadi`, adversarially reviews, applies narrow fixups from a strict allowlist, and hands control back through the baton.
 
-The canonical dogfood setup is Claude Code as vadi and Codex as prativadi, but either engine can host either role. Single-engine supervised runs are supported; full walkaway mode needs two persistent sessions.
+Because the protocol is just files and shell helpers, it needs zero infrastructure, is crash-tolerant by construction (all state lives on disk, so either session can be killed and rejoin at preflight), and is engine-agnostic. The canonical dogfood setup is Claude Code as vadi and Codex as prativadi — the cross-vendor pairing is the point: different models have systematically different blind spots, so the reviewer catches what the implementer cannot see. Either engine can host either role. Single-engine supervised runs are supported; full walkaway mode needs two persistent sessions.
 
-The repo lives at https://github.com/axatbhardwaj/Dvandva.
+Dvandva ships as an installable plugin for both engines. The repo lives at https://github.com/axatbhardwaj/Dvandva.
 
 ## Quickstart
 
