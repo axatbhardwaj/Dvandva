@@ -53,6 +53,24 @@ else
   failures=$((failures + 1))
 fi
 
+RUNS_ROOT="$TMP_DIR/case2-runs/.dvandva/runs"
+ALPHA_DIR="$RUNS_ROOT/alpha"
+BETA_DIR="$RUNS_ROOT/beta"
+write_baton "$ALPHA_DIR/baton.json" "human" "done" 12 "alpha-branch"
+write_baton "$BETA_DIR/baton.json" "human" "done" 13 "beta-branch"
+"$SCRIPT" "$ALPHA_DIR/baton.json"
+"$SCRIPT" "$BETA_DIR/baton.json"
+if [[ -f "$ALPHA_DIR/history/12-done-human.json" \
+  && -f "$ALPHA_DIR/baton.alpha-branch-12-done.json" \
+  && -f "$BETA_DIR/history/13-done-human.json" \
+  && -f "$BETA_DIR/baton.beta-branch-13-done.json" \
+  && ! -e "$TMP_DIR/case2-runs/.dvandva/history" ]]; then
+  echo "PASS: named-run snapshots and archives stay under each run parent"
+else
+  echo "FAIL: named-run snapshot isolation broken"
+  failures=$((failures + 1))
+fi
+
 # Case 2b: branch with '/' is sanitized in archive filename
 DVANDVA_DIR2b="$TMP_DIR/case2b/.dvandva"
 mkdir -p "$DVANDVA_DIR2b"
@@ -88,6 +106,21 @@ else
 fi
 
 # Case 4: byte-identical copies of the helper
+DVANDVA_DIR4="$TMP_DIR/case4/.dvandva"
+mkdir -p "$DVANDVA_DIR4"
+write_baton "$DVANDVA_DIR4/baton.json" "vadi" "implementing" 5
+touch "$DVANDVA_DIR4/history"
+snapshot_failure_output="$("$SCRIPT" "$DVANDVA_DIR4/baton.json" 2>&1)"
+snapshot_failure_exit=$?
+if [[ "$snapshot_failure_exit" -eq 23 ]] && [[ "$snapshot_failure_output" == *"DVANDVA_SNAPSHOT write_failed"* ]]; then
+  echo "PASS: snapshot write failure exits 23"
+else
+  echo "FAIL: snapshot write failure expected exit 23 with write_failed, got $snapshot_failure_exit"
+  echo "$snapshot_failure_output"
+  failures=$((failures + 1))
+fi
+
+# Case 5: byte-identical copies of the helper
 if cmp -s "$SCRIPT" "$PRATIVADI_SCRIPT"; then
   echo "PASS: plugin snapshot helpers are byte-identical"
 else

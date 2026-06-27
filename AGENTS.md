@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This repo researches practical agent-to-agent coordination between Claude Code and Codex. Dvandva is a baton-passing protocol, deliberately not an orchestrator: no daemon, launcher, or central control loop.
+This repo researches practical agent-to-agent coordination between Claude Code and Codex. Dvandva is a baton-passing protocol-level orchestrator: the baton coordinates roles, phases, review gates, and subagent work, but there is still no daemon, launcher, or hidden central control loop.
 
 Prefer concise, source-backed docs over speculative architecture. If a workflow claim depends on a tool feature, cite the relevant docs or record the local command used to verify it.
 

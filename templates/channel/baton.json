@@ -16,7 +16,7 @@
   "resume_status": null,
   "disagreement_round": 0,
   "disagreement_cap": 3,
-  "turn_cap": 20,
+  "turn_cap": 60,
   "branch": "",
   "checkpoint": 0,
   "allow_commit": true,

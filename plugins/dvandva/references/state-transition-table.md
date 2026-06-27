@@ -1,8 +1,44 @@
 # Dvandva Baton State Transitions
 
-This is the plugin-local reference for `dvandva.baton.v1`. The skill bodies carry the operational checklist; this file is the bundled transition reference available after plugin install.
+This is the plugin-local reference for `dvandva.baton.v1` and the v2 design
+contract. The skill bodies carry the operational checklist; this file is the
+bundled transition reference available after plugin install.
 
-The bundled `dvandva-write.sh` helper enforces this table deterministically at write time; `scripts/test-dvandva-write.sh` asserts every edge below.
+The bundled `dvandva-write.sh` helper enforces v1 and v2 transition subsets deterministically at write time; `scripts/test-dvandva-write.sh` asserts every documented v1 edge plus the v2 research/test/review/deslop edges below.
+
+## v2 Additions
+
+`dvandva.baton.v2` is the run-scoped schema for named runs at
+`.dvandva/runs/<run_id>/baton.json`. `<run_id>` must be one safe path segment:
+letters, numbers, dot, underscore, or dash; no slash, backslash, or `..`. v2
+adds:
+
+- `run_id`: stable non-empty safe identifier shared by both role sessions.
+- `original_ask`: the user's original request, surfaced in preflight so long
+  goal loops do not drift.
+- `research_ref`: path to the generated user-facing HTML research artifact.
+- `work_split`: planned ownership map for vadi, prativadi, human, or subagents; records phase, owner, scope, paths, status, and artifact refs.
+- `verification_matrix`: planned evidence map from claims and risks to checks, owners, expected results, command or inspection, result, evidence refs, and the 100% test coverage target for new behavior.
+- `turn_cap`: default `60`; passive shell wait heartbeats do not count as
+  active model-work turns.
+- `dvandva-wait.sh --persist`: treats `--max-wait` as the heartbeat interval.
+  Optional `--persist-max <seconds>` is a total wall-clock cap. The
+  wait-helper persist cap exit 23 means that cap was reached. Claude-hosted
+  sessions should keep the cap below the Bash-tool limit or use finite
+  540-second re-loops; Codex-hosted sessions can use unbounded persistent waits
+  when the shell budget supports it.
+- `dvandva-write.sh`: the write-helper validation exit 23 means a baton
+  candidate failed schema, required-key, safe-run-id, status-owner, status, or
+  enum validation. Fix the candidate and rerun the helper; do not edit the
+  installed baton directly.
+
+Legacy `.dvandva/baton.json` may continue using `dvandva.baton.v1`. Phase 6
+adds live v2 write-helper enforcement: v2 writers require safe `run_id`,
+`original_ask`, `work_split`, and `verification_matrix`; they also require a
+non-empty `research_ref` before advancing beyond the initial research draft,
+except that `human_question` and `human_decision` remain legal early-escalation
+targets before `research_ref` exists. Existing batons cannot change schema
+mid-run.
 
 ## Schema Fields
 
@@ -14,18 +50,21 @@ The bundled `dvandva-write.sh` helper enforces this table deterministically at w
   "run_mode": "walkaway | supervised",
   "phase": "spec | 1 | 2 | ... | done",
   "total_phases": "integer, set during spec phase, immutable thereafter unless human edits",
-  "status": "spec_drafting | spec_review | spec_revision | human_question | implementing | phase_review | phase_fixing | review_of_review | counter_review | human_decision | done",
-  "assignee": "non-empty string; v1 conventions are vadi | prativadi | human",
+  "status": "spec_drafting | spec_review | spec_revision | human_question | implementing | test_creation | deep_review | deslop | phase_review | phase_fixing | review_of_review | counter_review | human_decision | done",
+  "assignee": "non-empty string; v1 conventions are vadi | prativadi | human; v2 status-owner pairs are enforced",
   "current_engine": "optional; claude | codex | null. Records which CLI wrote the most recent baton; traceability only.",
   "review_target": "spec | implementation | prativadi_fixups | vadi_counter | null",
-  "plan_ref": "path to gitignored Superpowers plan file under ./superpowers/plans/, set during spec phase",
+  "research_ref": "v2 path to gitignored generated HTML research file under ./superpowers/research/, set during research phase",
+  "plan_ref": "path to gitignored generated HTML plan file under ./superpowers/plans/, set during spec phase",
+  "work_split": "v2 array/object describing planned ownership by phase, owner, scope, paths, status, and artifact refs",
+  "verification_matrix": "v2 array/object mapping claims and risks to planned checks, owners, expected evidence, result, and evidence_ref",
   "master_plan_locked": "boolean; false during planning, true once prativadi advances to phase 1",
   "question": "string | null; one concrete user question when status is human_question",
   "resume_assignee": "vadi | prativadi | null; role to resume after a human_question answer",
   "resume_status": "spec_drafting | spec_review | spec_revision | null; status to restore after a human_question answer",
   "disagreement_round": "integer, reset to 0 by the agent that writes the first baton of each new phase",
   "disagreement_cap": "integer, default 3, optionally set during spec phase",
-  "turn_cap": "integer, default 20, applied to each /goal invocation",
+  "turn_cap": "integer, default 60; passive shell wait heartbeats do not count",
   "branch": "git branch name",
   "checkpoint": "integer, bumped by the writer",
   "allow_commit": "boolean; default true in walkaway mode",
@@ -62,11 +101,30 @@ The bundled `dvandva-write.sh` helper enforces this table deterministically at w
 | `human_question` | `resume_status` with `assignee: resume_assignee` | Human answers and the receiving skill clears question fields |
 | any spec state | `human_decision` | Either agent escalates |
 
+## Research Phase (v2)
+
+| From | To | Trigger |
+|---|---|---|
+| no named-run baton | `phase: "research", status: "research_drafting"` | Vadi first run for a v2 named run |
+| `research_drafting` | `research_review` | Vadi writes `research_ref` and hands to prativadi |
+| `research_review` | `research_revision` | Prativadi surfaces research findings back to vadi |
+| `research_revision` | `research_review` | Vadi addresses research findings and hands back |
+| `research_review` | `phase: "spec", status: "spec_drafting"` | Prativadi accepts research and starts spec drafting |
+| any research state while `master_plan_locked: false` | `human_question` | Either agent needs one human answer before spec lock |
+| any research state | `human_decision` | Either agent escalates |
+
 ## Implementation Phase
 
 | From | To | Trigger |
 |---|---|---|
 | `phase: N, implementing` | `phase: N, status: phase_review, review_target: implementation` | Vadi completes phase, hands to prativadi |
+| `phase: N, implementing` | `test_creation` | v2: Vadi completes implementation and starts separate test creation |
+| `test_creation` | `deep_review` | v2: Vadi records tests, 100% test coverage evidence for new behavior, and verification results |
+| `deep_review` | `phase_fixing` | v2: Prativadi finds bugs, missing tests, verification gaps, or substantive review issues |
+| `deep_review` | `deslop` | v2: Prativadi accepts behavior and tests, then routes cleanup |
+| `deslop` | `phase_fixing` | v2: Cleanup finds behavior, test, or review blockers |
+| `deslop` | `phase: N+1, status: implementing, disagreement_round: 0` | v2: no nits, low/minor bugs, stale wording, or unclear instructions remain except explicitly accepted `deferred` items |
+| `deslop` | final `done` | v2: final phase passed implementation, test_creation, deep_review, deslop, and dual approval |
 | `phase: N, implementing` | `human_decision` | Vadi blocked |
 | `phase_review (impl)` | `phase_fixing` | Prativadi hands back substantive findings |
 | `phase_review (impl)` | `review_of_review, review_target: prativadi_fixups` | Prativadi applied narrow fixups, mutual review owed |
@@ -96,4 +154,19 @@ The bundled `dvandva-write.sh` helper enforces this table deterministically at w
 | any state | `human_decision` | Escalation, cap hit, blocker, malformed input, or unsafe dirty tree |
 | `human_decision` | any state | Human edits baton or prompts an agent with a decision |
 
-Any other transition is illegal in v1 and must be rejected by the writing agent.
+## v2 Assignee Ownership
+
+The v2 helper validates the next candidate's `assignee` against the status it
+writes:
+
+- Vadi-owned: `research_drafting`, `research_revision`, `spec_drafting`,
+  `spec_revision`, `implementing`, `test_creation`, `deslop`, `phase_fixing`,
+  `review_of_review`.
+- Prativadi-owned: `research_review`, `spec_review`, `deep_review`,
+  `phase_review`, `counter_review`.
+- Human-owned: `human_question`, `human_decision`.
+- Terminal `done` is accepted as terminal regardless of assignee; wait helpers
+  stop on `done`.
+
+Any other transition is illegal in v1 or v2 and must be rejected by the writing
+agent.

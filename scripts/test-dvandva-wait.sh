@@ -47,6 +47,29 @@ write_question_baton() {
 JSON
 }
 
+write_observed_baton() {
+  local file="$1"
+  local assignee="$2"
+  local status="$3"
+  local updated_at="$4"
+  local current_engine="$5"
+  mkdir -p "$(dirname "$file")"
+  cat > "$file" <<JSON
+{
+  "schema": "dvandva.baton.v1",
+  "assignee": "$assignee",
+  "status": "$status",
+  "phase": 2,
+  "checkpoint": 8,
+  "question": null,
+  "resume_assignee": null,
+  "resume_status": null,
+  "updated_at": "$updated_at",
+  "current_engine": "$current_engine"
+}
+JSON
+}
+
 run_case() {
   local name="$1"
   local expected_exit="$2"
@@ -102,6 +125,80 @@ run_case "returns 20 on timeout while assigned away" 20 \
 
 run_case "rejects zero interval with positive max wait" 2 \
   "$SCRIPT" --role vadi --file "$BATON_WAIT" --interval 0 --max-wait 1
+
+BATON_HEARTBEAT="$TMP_DIR/heartbeat-content.json"
+write_observed_baton "$BATON_HEARTBEAT" "prativadi" "phase_review" "2026-06-27T14:09:08Z" "codex"
+heartbeat_output="$(timeout 3 "$SCRIPT" --role vadi --file "$BATON_HEARTBEAT" --persist --interval 1 --max-wait 1 2>&1)"
+heartbeat_exit=$?
+if [[ "$heartbeat_exit" -ne 124 ]]; then
+  echo "FAIL: --persist heartbeat content expected timeout exit 124, got $heartbeat_exit"
+  echo "$heartbeat_output"
+  failures=$((failures + 1))
+elif [[ "$heartbeat_output" != *"last_seen_engine=codex"* || "$heartbeat_output" != *"updated_at=2026-06-27T14:09:08Z"* ]]; then
+  echo "FAIL: --persist heartbeat content missing last-seen metadata"
+  echo "$heartbeat_output"
+  failures=$((failures + 1))
+else
+  echo "PASS: --persist heartbeat includes last-seen metadata"
+fi
+
+persist_max_output="$("$SCRIPT" --role vadi --file "$BATON_WAIT" --persist --persist-max 1 --interval 1 --max-wait 1 2>&1)"
+persist_max_exit=$?
+if [[ "$persist_max_exit" -ne 23 ]]; then
+  echo "FAIL: --persist-max caps total wall-clock wait expected exit 23, got $persist_max_exit"
+  echo "$persist_max_output"
+  failures=$((failures + 1))
+elif [[ "$persist_max_output" != *"DVANDVA_WAIT persist_max"* || "$persist_max_output" != *"persist_max=1s"* ]]; then
+  echo "FAIL: --persist-max output missing persist_max markers"
+  echo "$persist_max_output"
+  failures=$((failures + 1))
+else
+  echo "PASS: --persist-max caps total wall-clock wait"
+fi
+
+# Run-scoped default path resolution: DVANDVA_BATON_FILE wins.
+BATON_ENV_FILE_DIR="$TMP_DIR/env-file"
+BATON_ENV_FILE="$BATON_ENV_FILE_DIR/custom-baton.json"
+mkdir -p "$TMP_DIR/no-default-baton-here"
+write_baton "$BATON_ENV_FILE" "vadi" "implementing"
+run_case "DVANDVA_BATON_FILE sets default baton path" 0 \
+  env DVANDVA_BATON_FILE="$BATON_ENV_FILE" bash -c 'cd "$1" && "$2" --role vadi --interval 0 --max-wait 0' _ "$TMP_DIR/no-default-baton-here" "$SCRIPT"
+
+# Run-scoped default path resolution: DVANDVA_RUN_ID maps to .dvandva/runs/<id>/baton.json.
+RUN_BOX="$TMP_DIR/run-box"
+write_baton "$RUN_BOX/.dvandva/runs/alpha/baton.json" "vadi" "implementing"
+run_case "DVANDVA_RUN_ID sets run-scoped default baton path" 0 \
+  env DVANDVA_RUN_ID="alpha" bash -c 'cd "$1" && "$2" --role vadi --interval 0 --max-wait 0' _ "$RUN_BOX" "$SCRIPT"
+
+run_case "DVANDVA_RUN_ID rejects parent traversal" 2 \
+  env DVANDVA_RUN_ID="../escape" bash -c 'cd "$1" && "$2" --role vadi --interval 0 --max-wait 0' _ "$RUN_BOX" "$SCRIPT"
+
+run_case "DVANDVA_RUN_ID rejects nested path" 2 \
+  env DVANDVA_RUN_ID="alpha/beta" bash -c 'cd "$1" && "$2" --role vadi --interval 0 --max-wait 0' _ "$RUN_BOX" "$SCRIPT"
+
+RUN_ISOLATION_BOX="$TMP_DIR/run-isolation-box"
+write_baton "$RUN_ISOLATION_BOX/.dvandva/runs/alpha/baton.json" "vadi" "implementing"
+write_baton "$RUN_ISOLATION_BOX/.dvandva/runs/beta/baton.json" "prativadi" "phase_review"
+run_case "DVANDVA_RUN_ID alpha does not read beta for prativadi" 20 \
+  env DVANDVA_RUN_ID="alpha" bash -c 'cd "$1" && "$2" --role prativadi --interval 0 --max-wait 0' _ "$RUN_ISOLATION_BOX" "$PRATIVADI_SCRIPT"
+run_case "DVANDVA_RUN_ID beta resolves independent prativadi baton" 0 \
+  env DVANDVA_RUN_ID="beta" bash -c 'cd "$1" && "$2" --role prativadi --interval 0 --max-wait 0' _ "$RUN_ISOLATION_BOX" "$PRATIVADI_SCRIPT"
+
+# Run-scoped default path resolution: DVANDVA_RUN_DIR maps directly to <dir>/baton.json.
+RUN_DIR_BOX="$TMP_DIR/run-dir-box/custom-run"
+write_baton "$RUN_DIR_BOX/baton.json" "vadi" "implementing"
+run_case "DVANDVA_RUN_DIR sets run directory default baton path" 0 \
+  env DVANDVA_RUN_DIR="$RUN_DIR_BOX" bash -c 'cd "$1" && "$2" --role vadi --interval 0 --max-wait 0' _ "$TMP_DIR/no-default-baton-here" "$SCRIPT"
+
+# --persist: helper does not return 20 on a missing run-scoped baton heartbeat;
+# it keeps waiting inside the shell process until the baton appears.
+PERSIST_BOX="$TMP_DIR/persist-box"
+mkdir -p "$PERSIST_BOX/.dvandva/runs/persist"
+( sleep 1 && write_baton "$PERSIST_BOX/.dvandva/runs/persist/baton.json" "prativadi" "phase_review" ) &
+persist_pid=$!
+run_case "--persist waits across missing-baton heartbeat until ready" 0 \
+  env DVANDVA_RUN_ID="persist" bash -c 'cd "$1" && "$2" --role prativadi --allow-missing --persist --interval 1 --max-wait 1' _ "$PERSIST_BOX" "$PRATIVADI_SCRIPT"
+wait "$persist_pid" 2>/dev/null || true
 
 # --allow-missing: file appears mid-wait
 BATON_LATE_DIR="$TMP_DIR/late"

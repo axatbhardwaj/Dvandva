@@ -1,0 +1,108 @@
+{
+  "schema": "dvandva.baton.v2",
+  "updated_at": null,
+  "mode": "feature-pr",
+  "run_mode": "walkaway",
+  "run_id": "",
+  "original_ask": "",
+  "phase": "research",
+  "total_phases": 0,
+  "status": "research_drafting",
+  "assignee": "vadi",
+  "current_engine": null,
+  "review_target": null,
+  "research_ref": null,
+  "plan_ref": null,
+  "work_split": [
+    {
+      "id": "research-codebase",
+      "phase": "research",
+      "owner": "vadi",
+      "scope": "Map relevant files, scripts, tests, and conventions before spec drafting.",
+      "paths": [],
+      "status": "planned",
+      "artifact_refs": []
+    },
+    {
+      "id": "test_creation",
+      "phase": "1",
+      "owner": "vadi",
+      "scope": "Create or update tests for every new behavior before review.",
+      "paths": [],
+      "status": "planned",
+      "artifact_refs": []
+    },
+    {
+      "id": "deep_review",
+      "phase": "1",
+      "owner": "prativadi",
+      "scope": "Perform independent deep review after implementation and test creation.",
+      "paths": [],
+      "status": "planned",
+      "artifact_refs": []
+    },
+    {
+      "id": "deslop",
+      "phase": "final",
+      "owner": "vadi",
+      "scope": "Remove stale wording, fuzzy instructions, duplicated guidance, and low-quality residue before final approval.",
+      "paths": [],
+      "status": "planned",
+      "artifact_refs": []
+    }
+  ],
+  "verification_matrix": [
+    {
+      "id": "verify-research-coverage",
+      "phase": "research",
+      "owner": "prativadi",
+      "covers": [
+        "original_ask",
+        "research_ref",
+        "work_split"
+      ],
+      "command": null,
+      "expected": "Independent research review confirms the artifact is source-backed and sufficient for spec drafting.",
+      "result": "pending",
+      "evidence_ref": null
+    },
+    {
+      "id": "verify-100-percent-test-coverage",
+      "phase": "1",
+      "owner": "vadi",
+      "covers": [
+        "test_creation",
+        "new behavior"
+      ],
+      "command": null,
+      "expected": "100% test coverage for newly created behavior, or a documented non-executable coverage rationale for source-only docs.",
+      "result": "pending",
+      "evidence_ref": null
+    }
+  ],
+  "master_plan_locked": false,
+  "question": null,
+  "resume_assignee": null,
+  "resume_status": null,
+  "disagreement_round": 0,
+  "disagreement_cap": 3,
+  "turn_cap": 60,
+  "branch": "",
+  "checkpoint": 0,
+  "allow_commit": true,
+  "allow_push": true,
+  "allow_pr": false,
+  "vadi_final_approval": false,
+  "prativadi_final_approval": false,
+  "final_commit": null,
+  "pushed_ref": null,
+  "summary": "Initial v2 run-scoped baton seed. The vadi skill fills run_id, original_ask, and research_ref.",
+  "changed_paths": [],
+  "verification": [],
+  "findings": [],
+  "narrow_fixups": [],
+  "vadi_counter": [],
+  "deferred": [],
+  "blockers": [],
+  "next_action": "vadi: run research_drafting, write research_ref, then hand off to prativadi for research_review."
+}

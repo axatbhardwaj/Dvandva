@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Lint a SKILL.md file: validate frontmatter, body length, and inlined dvandva.baton.v1 schema.
+# Lint a SKILL.md file: validate frontmatter/body length, and require the
+# inlined dvandva.baton.v1 schema only for vadi/prativadi role skills.
 # Usage: scripts/lint-skills.sh <path/to/SKILL.md>
 # Example: scripts/lint-skills.sh plugins/dvandva/skills/vadi/SKILL.md
 # Exit codes: 0 = ok; 1 = lint failure; 2 = usage error.
@@ -51,11 +52,18 @@ if [[ $DESC_LEN -gt 1536 ]]; then
   exit 1
 fi
 
+NAME=$(grep -E '^name: ' <<< "$FRONTMATTER" | head -n 1 | sed 's/^name: //')
+
 # Body length: count lines after the second '---'
 BODY_LINES=$(awk '/^---$/{c++; next} c>=2{n++} END{print n+0}' "$FILE")
 if [[ $BODY_LINES -gt 500 ]]; then
   echo "FAIL: body is $BODY_LINES lines (max 500) in $FILE" >&2
   exit 1
+fi
+
+if [[ "$NAME" != "vadi" && "$NAME" != "prativadi" ]]; then
+  echo "OK: $FILE"
+  exit 0
 fi
 
 # Inlined schema check: find a fenced JSON block whose first key is "schema"

@@ -1,8 +1,10 @@
 # Dvandva
 
-Dvandva is a coordination protocol for paired AI coding agents — not an orchestrator. There is no daemon, no launcher, and no process that owns the control loop. Two independently running agent sessions follow a shared state machine through a local `.dvandva/baton.json` file (choreography rather than orchestration): one role, `vadi`, proposes plans and implements phases; the other, `prativadi`, adversarially reviews, applies narrow fixups from a strict allowlist, and hands control back through the baton.
+Dvandva is a coordination protocol and protocol-level orchestrator for paired AI coding agents. There is no daemon, no launcher, and no hidden process that owns the control loop. Two independently running agent sessions follow a shared state machine through a local baton file: one role, `vadi`, proposes plans and implements phases; the other, `prativadi`, adversarially reviews, applies narrow fixups from a strict allowlist, and hands control back through the baton. Legacy runs use `.dvandva/baton.json`; named runs can use `.dvandva/runs/<run_id>/baton.json` so multiple Dvandva runs can coexist in one worktree. `run_id` must be one safe path segment: letters, numbers, dot, underscore, or dash; no slash, backslash, or `..`.
 
 Because the protocol is just files and shell helpers, it needs zero infrastructure, is crash-tolerant by construction (all state lives on disk, so either session can be killed and rejoin at preflight), and is engine-agnostic. The canonical dogfood setup is Claude Code as vadi and Codex as prativadi — the cross-vendor pairing is the point: different models have systematically different blind spots, so the reviewer catches what the implementer cannot see. Either engine can host either role. Single-engine supervised runs are supported; full walkaway mode needs two persistent sessions.
+
+Superpowers is a hard runtime dependency. Dvandva owns baton state, role handoff, phase gates, and cross-agent review; Superpowers owns the active-work discipline inside each turn: using skills before action, brainstorming before design, TDD before implementation, verification before completion, skill-writing discipline when skills change, and subagent-driven execution when parallel tracks are available. If the engine running a Dvandva role cannot see the Superpowers skills, that role must stop and surface setup instructions instead of continuing with a weakened workflow.
 
 Dvandva ships as an installable plugin for both engines. The repo lives at https://github.com/axatbhardwaj/Dvandva.
 
@@ -82,7 +84,7 @@ The default `run_mode` is `walkaway`: start both sessions once, then let the bat
 |---|---|
 | Claude Code, if using Claude | `claude --version` |
 | Codex CLI, if using Codex | `codex --version` |
-| superpowers plugin on the engine(s) used for planning | `/skills` lists `superpowers:brainstorming` |
+| Superpowers plugin on every engine running a Dvandva role, hard runtime dependency | `/skills` lists `superpowers:using-superpowers`, `superpowers:brainstorming`, `superpowers:test-driven-development`, and `superpowers:verification-before-completion` |
 | Work happens on a feature branch | `git branch --show-current` is not `main` or `master` |
 | `jq` installed | `jq --version` |
 | inotify-tools, optional — instant wake on baton handoff instead of interval polling | `inotifywait --help` |
@@ -92,24 +94,26 @@ The default `run_mode` is `walkaway`: start both sessions once, then let the bat
 In walkaway mode, the assigned-away session blocks in:
 
 ```bash
-${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role <vadi|prativadi> --interval 60 --max-wait 540
+${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role <vadi|prativadi> --file "$BATON_FILE" --interval 60 --max-wait 540
 ```
+
+The active baton is selected in this order: `DVANDVA_BATON_FILE`, then `DVANDVA_RUN_DIR/baton.json`, then safe `DVANDVA_RUN_ID` mapped to `.dvandva/runs/<run_id>/baton.json`, then legacy `.dvandva/baton.json`. Set the same safe `DVANDVA_RUN_ID` in both sessions to run more than one Dvandva loop in one worktree.
 
 That is shell waiting, not model polling. The agent resumes when the baton assigns its role again, or stops if the baton reaches `done`, `human_question`, or `human_decision`.
 
-On Claude Code, invoke the helper with an explicit 600000 ms Bash-tool timeout; the 540 s default max-wait fits the 600 s tool maximum. When `inotifywait` is installed the helper wakes the moment the baton changes instead of sleeping the full interval.
+On Claude Code, invoke the helper with an explicit 600000 ms Bash-tool timeout; the 540 s default max-wait fits the 600 s tool maximum, and exit 20 is just a heartbeat to re-run unless interrupted. Codex-hosted sessions can use `--persist` so the shell keeps waiting across heartbeat intervals; `--persist-max <seconds>` adds a total wall-clock cap and exits 23 when reached. When `inotifywait` is installed the helper wakes the moment the baton changes instead of sleeping the full interval.
 
 The prativadi can also be launched *before* the vadi has scaffolded the baton. Its preflight detects the missing baton, runs the wait helper with `--allow-missing`, and resumes once the vadi writes the file (or exits 20 after `--max-wait` if the vadi never appears). Simultaneous-launch dogfooding is therefore safe — no need to order the two starts.
 
-For one-engine use, set `run_mode: "supervised"` in `.dvandva/baton.json` and invoke `vadi` and `prativadi` serially in that engine. Supervised mode exits on assigned-away states so one CLI session cannot deadlock itself. Setting `DVANDVA_NO_WAIT=1` in the prativadi's environment also opts out of the missing-baton wait so a serial-supervised user gets the original "no baton — vadi has not started" message immediately.
+For one-engine use, set `run_mode: "supervised"` in the active baton and invoke `vadi` and `prativadi` serially in that engine. Supervised mode exits on assigned-away states so one CLI session cannot deadlock itself. Setting `DVANDVA_NO_WAIT=1` in the prativadi's environment also opts out of the missing-baton wait so a serial-supervised user gets the original "no baton — vadi has not started" message immediately.
 
-Agents may commit and push only after both `vadi_final_approval` and `prativadi_final_approval` are true. Dvandva must never create a PR.
+Agents should make regular local checkpoint commits after a verified logical slice when `allow_commit` is true and the dirty paths match the baton's `changed_paths` union. Checkpoint commits are local only: pushing waits until both `vadi_final_approval` and `prativadi_final_approval` are true and `allow_push` is true. Dvandva must never create a PR.
 
 ## History
 
-Every baton write is installed by the bundled `dvandva-write.sh` helper (validated, atomic), which also snapshots to `.dvandva/history/<checkpoint>-<status>-<assignee>.json` via `dvandva-snapshot.sh`. Terminal writes (status `done`, `human_decision`, or `human_question`) additionally produce `.dvandva/baton.<sanitized-branch>-<checkpoint>-<status>.json` at the `.dvandva/` root, so terminal records survive subsequent runs without manual archiving. Branch names containing `/` (e.g. `feature/foo`) are sanitized to `-` so the archive stays a single file at the root.
+Every baton write is installed by the bundled `dvandva-write.sh` helper (validated, atomic), which also snapshots to `<baton-dir>/history/<checkpoint>-<status>-<assignee>.json` via `dvandva-snapshot.sh`. Terminal writes (status `done`, `human_decision`, or `human_question`) additionally produce `baton.<sanitized-branch>-<checkpoint>-<status>.json` beside the active baton, so terminal records survive subsequent runs without manual archiving. Branch names containing `/` (e.g. `feature/foo`) are sanitized to `-` so the archive stays a single file.
 
-The `.dvandva/` directory is gitignored. Inspect history with `ls .dvandva/history/` and `diff .dvandva/history/<a>.json .dvandva/history/<b>.json` to see how a baton evolved across handoffs.
+The `.dvandva/` directory is gitignored. Inspect history with `ls <baton-dir>/history/` and `diff <baton-dir>/history/<a>.json <baton-dir>/history/<b>.json` to see how a baton evolved across handoffs.
 
 ## Development Install
 
@@ -137,8 +141,15 @@ Old pre-plugin installs used `dvandva-vadi` and `dvandva-prativadi` symlinks. Re
 ## Validation
 
 ```bash
-bash scripts/lint-skills.sh plugins/dvandva/skills/vadi/SKILL.md
-bash scripts/lint-skills.sh plugins/dvandva/skills/prativadi/SKILL.md
+bash scripts/lint-protocol-phase1.sh
+bash scripts/lint-skill-phase3.sh
+bash scripts/lint-phase4-research.sh
+bash scripts/lint-artifacts.sh
+bash scripts/test-lint-artifacts.sh
+bash scripts/test-lint-skills.sh
+for skill in vadi prativadi research testing understanding worktree-setup; do
+  bash scripts/lint-skills.sh "plugins/dvandva/skills/$skill/SKILL.md"
+done
 bash scripts/test-dvandva-wait.sh
 bash scripts/test-dvandva-write.sh
 bash scripts/test-dvandva-snapshot.sh
@@ -170,7 +181,7 @@ checks standalone development copies.
 
 ## Non-Goals
 
-- No daemon or process launcher in v0.1.0.
+- No runtime daemon, hidden central process, or process launcher.
 - No GitHub API integration.
 - No PR creation.
 - No npm-first distribution path.

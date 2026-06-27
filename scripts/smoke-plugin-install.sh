@@ -182,7 +182,11 @@ run jq empty \
   "$MARKETPLACE_ROOT/.agents/plugins/marketplace.json" \
   "$PLUGIN_DIR/.claude-plugin/plugin.json" \
   "$PLUGIN_DIR/.codex-plugin/plugin.json" \
-  "$PLUGIN_DIR/references/baton-schema.json"
+  "$PLUGIN_DIR/references/baton-schema.json" \
+  "$PLUGIN_DIR/references/baton-schema-v2.json"
+
+jq -e '.turn_cap == 60' "$PLUGIN_DIR/references/baton-schema.json" >/dev/null
+jq -e '.turn_cap == 60' "$PLUGIN_DIR/references/baton-schema-v2.json" >/dev/null
 
 run "$PLUGIN_DIR/skills/vadi/scripts/dvandva-wait.sh" \
   --role vadi \
@@ -211,6 +215,26 @@ run "$PLUGIN_DIR/skills/prativadi/scripts/dvandva-write.sh" \
   "$WRITE_BOX/baton.json" "$WRITE_BOX/baton.next.json"
 test -f "$WRITE_BOX/history/0-spec_drafting-vadi.json" || { echo "FAIL: write helper did not snapshot checkpoint 0" >&2; exit 1; }
 test -f "$WRITE_BOX/history/1-spec_review-prativadi.json" || { echo "FAIL: write helper did not snapshot checkpoint 1" >&2; exit 1; }
+
+V2_WRITE_BOX="$TMP_DIR/write-helper-v2/.dvandva/runs/smoke"
+mkdir -p "$V2_WRITE_BOX"
+jq '.updated_at = "2026-06-27T00:00:00Z"
+  | .run_id = "smoke"
+  | .original_ask = "Smoke v2 helper"
+  | .research_ref = "./superpowers/research/smoke.html"
+  | .current_engine = "codex"
+  | .branch = "smoke"
+  | .status = "research_drafting"
+  | .assignee = "vadi"
+  | .checkpoint = 0
+  | .master_plan_locked = false
+  | .question = null
+  | .resume_assignee = null
+  | .resume_status = null' \
+  "$PLUGIN_DIR/references/baton-schema-v2.json" > "$V2_WRITE_BOX/baton.next.json"
+run "$PLUGIN_DIR/skills/vadi/scripts/dvandva-write.sh" \
+  "$V2_WRITE_BOX/baton.json" "$V2_WRITE_BOX/baton.next.json"
+test -f "$V2_WRITE_BOX/history/0-research_drafting-vadi.json" || { echo "FAIL: v2 write helper did not snapshot research scaffold" >&2; exit 1; }
 
 DEV_HOME="$TMP_DIR/dev-home"
 mkdir -p "$DEV_HOME/.claude/skills" "$DEV_HOME/.agents/skills"

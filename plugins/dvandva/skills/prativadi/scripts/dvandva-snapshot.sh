@@ -15,6 +15,7 @@
 #   2  usage error
 #   21 baton file missing
 #   22 baton JSON invalid
+#   23 snapshot write failed
 set -u
 
 if [[ $# -ne 1 ]]; then
@@ -43,7 +44,6 @@ sanitized_branch="${branch//\//-}"
 
 PARENT_DIR="$(dirname "$BATON_FILE")"
 HISTORY_DIR="$PARENT_DIR/history"
-mkdir -p "$HISTORY_DIR"
 
 HISTORY_TARGET="$HISTORY_DIR/${checkpoint}-${status}-${assignee}.json"
 
@@ -56,19 +56,32 @@ write_with_no_clobber() {
     local ts
     ts="$(date +%s%N)"
     local dup="${target%.json}.dup-${ts}.json"
-    cp "$BATON_FILE" "$dup"
+    if ! cp "$BATON_FILE" "$dup"; then
+      return 1
+    fi
     echo "DVANDVA_SNAPSHOT no_clobber wrote=$dup" >&2
     return 0
   fi
   cp "$BATON_FILE" "$target"
 }
 
-write_with_no_clobber "$HISTORY_TARGET"
+if ! mkdir -p "$HISTORY_DIR"; then
+  echo "DVANDVA_SNAPSHOT write_failed target=$HISTORY_DIR" >&2
+  exit 23
+fi
+
+if ! write_with_no_clobber "$HISTORY_TARGET"; then
+  echo "DVANDVA_SNAPSHOT write_failed target=$HISTORY_TARGET" >&2
+  exit 23
+fi
 
 case "$status" in
   done|human_decision|human_question)
     ARCHIVE_TARGET="$PARENT_DIR/baton.${sanitized_branch}-${checkpoint}-${status}.json"
-    write_with_no_clobber "$ARCHIVE_TARGET"
+    if ! write_with_no_clobber "$ARCHIVE_TARGET"; then
+      echo "DVANDVA_SNAPSHOT write_failed target=$ARCHIVE_TARGET" >&2
+      exit 23
+    fi
     ;;
 esac
 
