@@ -13,6 +13,7 @@
   "review_target": null,
   "research_ref": null,
   "plan_ref": null,
+  "run_explainer_ref": null,
   "work_split": [
     {
       "id": "research-codebase",
@@ -20,6 +21,9 @@
       "owner": "vadi",
       "scope": "Map relevant files, scripts, tests, and conventions before spec drafting.",
       "paths": [],
+      "can_parallelize": true,
+      "parallel_rationale": "Codebase exploration can run beside docs research and risk review when subagent tooling is available.",
+      "depends_on": [],
       "status": "planned",
       "artifact_refs": []
     },
@@ -29,6 +33,11 @@
       "owner": "vadi",
       "scope": "Create or update tests for every new behavior before review.",
       "paths": [],
+      "can_parallelize": false,
+      "parallel_rationale": "Test creation follows the specific implementation surface selected for the phase.",
+      "depends_on": [
+        "phase-implementation"
+      ],
       "status": "planned",
       "artifact_refs": []
     },
@@ -38,6 +47,11 @@
       "owner": "prativadi",
       "scope": "Perform independent deep review after implementation and test creation.",
       "paths": [],
+      "can_parallelize": true,
+      "parallel_rationale": "Deep review splits across independent review angles when subagent tooling is available.",
+      "depends_on": [
+        "test_creation"
+      ],
       "status": "planned",
       "artifact_refs": []
     },
@@ -47,8 +61,28 @@
       "owner": "vadi",
       "scope": "Remove stale wording, fuzzy instructions, duplicated guidance, and low-quality residue before final approval.",
       "paths": [],
+      "can_parallelize": true,
+      "parallel_rationale": "Deslop can split style, protocol consistency, and artifact integrity checks when paths do not overlap.",
+      "depends_on": [
+        "deep_review"
+      ],
       "status": "planned",
       "artifact_refs": []
+    }
+  ],
+  "subagent_tracks": [
+    {
+      "id": "startup-controller",
+      "phase": "research",
+      "status": "planned",
+      "track": "controller",
+      "owner": "vadi",
+      "parallelized": false,
+      "rationale": "Initial run scaffold; record concrete subagent tracks as each phase begins.",
+      "inputs": [],
+      "outputs": [],
+      "evidence_refs": [],
+      "result": "pending"
     }
   ],
   "verification_matrix": [

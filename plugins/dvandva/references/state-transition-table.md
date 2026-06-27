@@ -17,7 +17,9 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
 - `original_ask`: the user's original request, surfaced in preflight so long
   goal loops do not drift.
 - `research_ref`: path to the generated user-facing HTML research artifact.
-- `work_split`: planned ownership map for vadi, prativadi, human, or subagents; records phase, owner, scope, paths, status, and artifact refs.
+- `run_explainer_ref`: path to the final run explainer HTML under `./superpowers/run-reports/`, required before terminal `done`.
+- `work_split`: planned ownership map for vadi, prativadi, human, or subagents; records phase, owner, scope, paths, status, artifact refs, parallelism rationale, and dependencies.
+- `subagent_tracks`: actual conditional parallelism record. Parallelize only genuinely disjoint tracks; record what was not parallelized and why when direct execution is safer or when subagent tooling is unavailable.
 - `verification_matrix`: planned evidence map from claims and risks to checks, owners, expected results, command or inspection, result, evidence refs, and the 100% test coverage target for new behavior.
 - `turn_cap`: default `60`; passive shell wait heartbeats do not count as
   active model-work turns.
@@ -34,11 +36,11 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
 
 Legacy `.dvandva/baton.json` may continue using `dvandva.baton.v1`. Phase 6
 adds live v2 write-helper enforcement: v2 writers require safe `run_id`,
-`original_ask`, `work_split`, and `verification_matrix`; they also require a
+`original_ask`, `run_explainer_ref`, `work_split`, `subagent_tracks`, and `verification_matrix`; they also require a
 non-empty `research_ref` before advancing beyond the initial research draft,
 except that `human_question` and `human_decision` remain legal early-escalation
 targets before `research_ref` exists. Existing batons cannot change schema or v2
-`run_id` mid-run.
+`run_id` mid-run. Terminal `done` requires `run_explainer_ref` to point to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`.
 
 ## Schema Fields
 
@@ -55,8 +57,10 @@ targets before `research_ref` exists. Existing batons cannot change schema or v2
   "current_engine": "optional; claude | codex | null. Records which CLI wrote the most recent baton; traceability only.",
   "review_target": "spec | implementation | prativadi_fixups | vadi_counter | null",
   "research_ref": "v2 path to gitignored generated HTML research file under ./superpowers/research/, set during research phase",
+  "run_explainer_ref": "v2 path to gitignored final run explainer HTML under ./superpowers/run-reports/, required before terminal done",
   "plan_ref": "path to gitignored generated HTML plan file under ./superpowers/plans/, set during spec phase",
   "work_split": "v2 array/object describing planned ownership by phase, owner, scope, paths, status, and artifact refs",
+  "subagent_tracks": "v2 array recording actual conditional parallelism tracks, owner, evidence refs, fallback rationale, and result",
   "verification_matrix": "v2 array/object mapping claims and risks to planned checks, owners, expected evidence, result, and evidence_ref",
   "master_plan_locked": "boolean; false during planning, true once prativadi advances to phase 1",
   "question": "string | null; one concrete user question when status is human_question",
@@ -92,7 +96,7 @@ targets before `research_ref` exists. Existing batons cannot change schema or v2
 
 | From | To | Trigger |
 |---|---|---|
-| no baton | `phase: "spec", status: "spec_drafting"` | Vadi first run |
+| no legacy baton, legacy explicitly selected | `phase: "spec", status: "spec_drafting"` | Vadi first run on the legacy v1 fallback only |
 | `spec_drafting` | `spec_review` | Vadi hands plan to prativadi for Q&A |
 | `spec_review` | `spec_revision` | Prativadi surfaces Q&A back to vadi |
 | `spec_review` | `phase: 1, status: implementing` | Prativadi accepts plan and freezes `total_phases` on the baton |
@@ -117,20 +121,20 @@ targets before `research_ref` exists. Existing batons cannot change schema or v2
 
 | From | To | Trigger |
 |---|---|---|
-| `phase: N, implementing` | `phase: N, status: phase_review, review_target: implementation` | Vadi completes phase, hands to prativadi |
+| `phase: N, implementing` | `phase: N, status: phase_review, review_target: implementation` | Legacy v1 direct review path only |
 | `phase: N, implementing` | `test_creation` | v2: Vadi completes implementation and starts separate test creation |
 | `test_creation` | `deep_review` | v2: Vadi records tests, 100% test coverage evidence for new behavior, and verification results |
 | `deep_review` | `phase_fixing` | v2: Prativadi finds bugs, missing tests, verification gaps, or substantive review issues |
-| `deep_review` | `deslop` | v2: Prativadi accepts behavior and tests, then routes cleanup |
+| `deep_review` | `deslop` | v2: Prativadi accepts behavior and tests after at least three angle-specific reviewers/tracks in `subagent_tracks` (`correctness-regression`, `test-evidence`, `protocol-handoff`), then routes cleanup |
 | `phase_fixing` | `test_creation` | v2: Vadi fixed behavior, tests, or verification gaps and must refresh test evidence before review |
 | `deslop` | `phase_fixing` | v2: Cleanup finds behavior, test, or review blockers |
 | `deslop` | `phase: N+1, status: implementing, disagreement_round: 0` | v2: no nits, low/minor bugs, stale wording, or unclear instructions remain except explicitly accepted `deferred` items |
-| `deslop` | final `done` | v2: final phase passed implementation, test_creation, deep_review, deslop, and dual approval |
+| `deslop` | final `done` | v2: final phase passed implementation, test_creation, deep_review, deslop, dual approval, and `run_explainer_ref` points to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html` |
 | `phase: N, implementing` | `human_decision` | Vadi blocked |
 | `phase_review (impl)` | `phase_fixing` | Prativadi hands back substantive findings |
 | `phase_review (impl)` | `review_of_review, review_target: prativadi_fixups` | Prativadi applied narrow fixups, mutual review owed |
 | `phase_review (impl)` | `phase: N+1, status: implementing, disagreement_round: 0` | Prativadi approves, no changes |
-| `phase_review (impl)` | final `done` | Final phase approved by both roles; optional commit/push complete; PR creation remains false |
+| `phase_review (impl)` | final `done` | Legacy v1 final phase approved by both roles; optional commit/push complete; PR creation remains false |
 | `phase_review (impl)` | `human_decision` | Prativadi escalates |
 | `phase_fixing` | `phase_review (impl)` | Vadi addressed findings, re-hands |
 | `phase_fixing` | `human_decision` | Vadi blocked during fix |

@@ -83,10 +83,10 @@ The prativadi performs independent research review. Do not rely solely on the va
 2. Open `research_ref`.
 3. Independently inspect relevant code, docs, tests, and local commands.
 4. Use parallel subagents when available.
-5. Compare independent findings against `research_ref`, `work_split`, and `verification_matrix`.
+5. Compare independent findings against `research_ref`, `work_split`, `subagent_tracks`, and `verification_matrix`.
 6. Confirm test creation is separate from review and that new code/behavior has a 100% test coverage plan or an explicit documented reason why executable coverage is impossible.
 7. If gaps remain, write `findings` and route to `research_revision`.
-8. If research is sufficient, advance to `phase: "spec", status: "spec_drafting"`, `assignee: "vadi"`.
+8. If research is sufficient, advance to `phase: "spec", status: "spec_drafting"`, `assignee: "vadi"`, preserving `research_ref`, `run_explainer_ref`, `work_split`, `subagent_tracks`, `verification_matrix`, and `plan_ref`.
 
 ### research_revision
 
@@ -94,7 +94,7 @@ The vadi addresses prativadi research findings:
 
 1. Read every finding.
 2. Re-run targeted research tracks or subagents as needed.
-3. Update the HTML artifact, `work_split`, and `verification_matrix`.
+3. Update the HTML artifact, `work_split`, `subagent_tracks`, and `verification_matrix`.
 4. Clear resolved findings and hand back to `research_review`.
 
 ## Common Mistakes

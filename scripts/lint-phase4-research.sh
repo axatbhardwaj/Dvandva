@@ -105,6 +105,10 @@ for role in vadi prativadi; do
   require_text "$skill" "wait-helper persist cap exit 23" "$role disambiguates wait exit 23"
   require_text "$skill" 'dvandva.baton.v1` or `dvandva.baton.v2' "$role accepts supported v1/v2 baton schemas"
   require_text "$skill" "Regular checkpoint commits" "$role documents regular checkpoint commits"
+  require_text "$skill" "conditional parallelism" "$role documents conditional parallelism"
+  require_text "$skill" "parallelize only genuinely disjoint tracks" "$role avoids fake subagent parallelism"
+  require_text "$skill" "record what was not parallelized and why" "$role records non-parallelized work"
+  require_text "$skill" "subagent_tracks" "$role records subagent tracks in baton evidence"
   reject_text "$skill" "until the v2 write-helper phase lands" "$role does not reference dangling v2 phase"
   reject_text "$skill" "equals \`dvandva.baton.v1\` in this helper version" "$role does not reject live v2 schema"
   reject_text "$skill" "Phase 6 includes v2 write-helper enforcement; until then" "$role does not describe v2 enforcement as future-only"
@@ -115,6 +119,10 @@ done
 
 vadi_skill="$ROOT_DIR/plugins/dvandva/skills/vadi/SKILL.md"
 require_text "$vadi_skill" "BATON_BROKEN_FILE" "vadi defines broken-baton path symmetrically"
+require_text "$vadi_skill" "Existing baton discovery" "vadi documents existing-baton discovery"
+require_text "$vadi_skill" ".dvandva/runs/*/baton.json" "vadi scans named run batons"
+require_text "$vadi_skill" "auto-create a new named run" "vadi auto-creates new run when only terminal batons exist"
+require_text "$vadi_skill" "ask the user whether to continue" "vadi asks before reusing active batons"
 reject_text "$vadi_skill" 'Write `$BATON_DIR/baton.broken.json`' "vadi avoids hardcoded broken-baton path"
 
 for command in "$ROOT_DIR/plugins/dvandva/commands/vadi.md" "$ROOT_DIR/plugins/dvandva/commands/prativadi.md"; do
@@ -126,6 +134,8 @@ for command in "$ROOT_DIR/plugins/dvandva/commands/vadi.md" "$ROOT_DIR/plugins/d
   require_text "$command" "deep_review" "$name goal includes deep review"
   require_text "$command" "deslop" "$name goal includes de-slop pass"
   require_text "$command" "parallel subagents" "$name goal includes subagent parallelism"
+  require_text "$command" "conditional parallelism" "$name goal includes conditional parallelism"
+  require_text "$command" "subagent_tracks" "$name goal records subagent tracks"
   require_text "$command" "Invoke \`dvandva:research\`" "$name goal invokes research skill"
   require_text "$command" "regular local checkpoint commits" "$name goal includes regular checkpoint commits"
 done
@@ -143,6 +153,9 @@ for file in \
   require_text "$file" "deep_review" "$name documents deep review loop"
   require_text "$file" "deslop" "$name documents de-slop pass"
   require_text "$file" "Regular checkpoint commits" "$name documents regular checkpoint commits"
+  require_text "$file" "conditional parallelism" "$name documents conditional parallelism"
+  require_text "$file" "subagent_tracks" "$name documents subagent track evidence"
+  require_text "$file" "run_explainer_ref" "$name documents final run explainer"
   require_text "$file" "v2 write-helper enforcement" "$name documents v2 enforcement"
   require_text "$file" "wait-helper persist cap exit 23" "$name disambiguates wait exit 23"
   require_text "$file" "write-helper validation exit 23" "$name disambiguates write exit 23"
@@ -172,6 +185,7 @@ done
 schema="$ROOT_DIR/plugins/dvandva/references/baton-schema-v2.json"
 require_text "$schema" '"work_split"' "v2 schema includes work_split"
 require_text "$schema" '"verification_matrix"' "v2 schema includes verification_matrix"
+require_text "$schema" '"run_explainer_ref"' "v2 schema includes final explainer ref"
 require_text "$schema" '"test_creation"' "v2 schema includes test creation status"
 require_text "$schema" '"deep_review"' "v2 schema includes deep review status"
 require_text "$schema" '"deslop"' "v2 schema includes de-slop status"
@@ -199,6 +213,8 @@ require_text "$agent_dir/deslopper.md" "tools: Read, Glob, Grep, Bash, Edit, Mul
 require_text "$ROOT_DIR/product.md" "GSD-style fresh-context subagents" "product cites GSD-style subagent pattern"
 require_text "$ROOT_DIR/product.md" "OMO-style team roles" "product cites OMO-style team role pattern"
 require_text "$ROOT_DIR/product.md" "canonical Dvandva subagent roster" "product declares canonical Dvandva agent roster"
+require_text "$ROOT_DIR/product.md" "at least three angle-specific reviewers" "product requires multi-angle deep review"
+require_text "$ROOT_DIR/product.md" "./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html" "product documents final explainer path"
 require_text "$research_skill" "canonical Dvandva subagent roster" "research skill declares canonical Dvandva agent roster"
 
 for absorbed in testing understanding worktree-setup; do

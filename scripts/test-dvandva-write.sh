@@ -33,10 +33,20 @@ make_baton() {
 make_baton_v2() {
   local file="$1" status="$2" assignee="$3" checkpoint="$4"
   shift 4
+  local phase_json='"research"'
+  case "$status" in
+    spec_drafting|spec_review|spec_revision)
+      phase_json='"spec"'
+      ;;
+    implementing|test_creation|deep_review|deslop|phase_review|phase_fixing|review_of_review|counter_review|done)
+      phase_json='1'
+      ;;
+  esac
   local prog='.updated_at = "2026-06-27T00:00:00Z"
     | .status = $s
     | .assignee = $a
     | .checkpoint = $c
+    | .phase = $p
     | .run_id = "run-a"
     | .original_ask = "Original user ask for v2 enforcement"
     | .research_ref = "./superpowers/research/run-a.html"
@@ -51,7 +61,7 @@ make_baton_v2() {
     prog="$prog | $extra"
   done
   mkdir -p "$(dirname "$file")"
-  jq --arg s "$status" --arg a "$assignee" --argjson c "$checkpoint" "$prog" "$V2_SCHEMA_SEED" > "$file"
+  jq --arg s "$status" --arg a "$assignee" --argjson c "$checkpoint" --argjson p "$phase_json" "$prog" "$V2_SCHEMA_SEED" > "$file"
 }
 
 v2_status_owner() {
@@ -69,6 +79,52 @@ v2_status_owner() {
       echo "vadi"
       ;;
   esac
+}
+
+v2_review_angles_filter() {
+  cat <<'JQ'
+.subagent_tracks += [
+  {
+    "id": "review-correctness",
+    "phase": "deep_review",
+    "status": "completed",
+    "track": "correctness-regression",
+    "owner": "dvandva-review-correctness",
+    "parallelized": true,
+    "rationale": "Independent correctness and regression review can run without editing shared files.",
+    "inputs": ["candidate diff"],
+    "outputs": ["No correctness or regression blockers found."],
+    "evidence_refs": ["subagent:review-correctness"],
+    "result": "passed"
+  },
+  {
+    "id": "review-tests",
+    "phase": "deep_review",
+    "status": "completed",
+    "track": "test-evidence",
+    "owner": "dvandva-review-tests",
+    "parallelized": true,
+    "rationale": "Independent test evidence review can run beside correctness and protocol review.",
+    "inputs": ["verification output"],
+    "outputs": ["Coverage and motivating tests accepted."],
+    "evidence_refs": ["subagent:review-tests"],
+    "result": "passed"
+  },
+  {
+    "id": "review-protocol",
+    "phase": "deep_review",
+    "status": "completed",
+    "track": "protocol-handoff",
+    "owner": "dvandva-review-protocol",
+    "parallelized": true,
+    "rationale": "Independent protocol handoff review checks baton and docs without editing code.",
+    "inputs": ["baton candidate"],
+    "outputs": ["Handoff state accepted."],
+    "evidence_refs": ["subagent:review-protocol"],
+    "result": "passed"
+  }
+]
+JQ
 }
 
 run_case() {
@@ -260,6 +316,35 @@ make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 '.verification
 run_case_contains "v2 empty verification_matrix exits 23" 23 "DVANDVA_WRITE bad_verification_matrix" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+BOX="$(new_box v2-missing-run-explainer)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 'del(.run_explainer_ref)'
+run_case_contains "v2 missing run_explainer_ref exits 23" 23 "DVANDVA_WRITE missing_key key=run_explainer_ref" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-empty-subagent-tracks)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 '.subagent_tracks = []'
+run_case_contains "v2 empty subagent_tracks exits 23" 23 "DVANDVA_WRITE bad_subagent_tracks" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-malformed-subagent-tracks)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 'del(.subagent_tracks[0].owner)'
+run_case_contains "v2 malformed subagent_tracks exits 23" 23 "DVANDVA_WRITE bad_subagent_tracks" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-fake-parallel-subagent-track)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  '.subagent_tracks[0].parallelized = true' \
+  '.subagent_tracks[0].owner = "vadi"' \
+  '.subagent_tracks[0].outputs = []' \
+  '.subagent_tracks[0].evidence_refs = []'
+run_case_contains "v2 fake parallel subagent track exits 23" 23 "DVANDVA_WRITE bad_subagent_tracks" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-phase-status-mismatch)"
+make_baton_v2 "$BOX/baton.next.json" "implementing" "vadi" 0 '.phase = "research"'
+run_case_contains "v2 implementation status rejects research phase" 23 "DVANDVA_WRITE bad_phase_status" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
 BOX="$(new_box v2-missing-research-ref-after-draft)"
 make_baton_v2 "$BOX/baton.next.json" "research_review" "prativadi" 0 '.research_ref = null'
 run_case_contains "v2 missing research_ref after draft exits 23" 23 "DVANDVA_WRITE bad_research_ref" \
@@ -302,8 +387,15 @@ for edge in $V2_EDGES; do
   cur="${edge%%:*}"
   new="${edge##*:}"
   BOX="$(new_box "v2-edge-$i")"
+  extras=()
+  if [[ "$edge" == "deep_review:deslop" ]]; then
+    extras+=("$(v2_review_angles_filter)")
+  fi
+  if [[ "$edge" == "deslop:done" ]]; then
+    extras+=('.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"')
+  fi
   make_baton_v2 "$BOX/baton.json" "$cur" "$(v2_status_owner "$cur")" 4
-  make_baton_v2 "$BOX/baton.next.json" "$new" "$(v2_status_owner "$new")" 5
+  make_baton_v2 "$BOX/baton.next.json" "$new" "$(v2_status_owner "$new")" 5 "${extras[@]}"
   run_case "v2 edge $edge is legal" 0 \
     "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 done
@@ -354,6 +446,60 @@ BOX="$(new_box v2-wrong-owner-deslop)"
 make_baton_v2 "$BOX/baton.json" "deep_review" "prativadi" 4
 make_baton_v2 "$BOX/baton.next.json" "deslop" "prativadi" 5
 run_case_contains "v2 deslop requires vadi assignee" 23 "bad_assignee_owner" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-done-missing-run-explainer)"
+make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 '.run_explainer_ref = null'
+run_case_contains "v2 done requires run_explainer_ref" 23 "bad_run_explainer_ref" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-done-invalid-run-explainer-path)"
+make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 '.run_explainer_ref = "../run-a-explainer.html"'
+run_case_contains "v2 done rejects invalid run_explainer_ref path" 23 "bad_run_explainer_ref" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-done-mismatched-run-explainer)"
+make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4 '.run_id = "alpha"'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
+  '.run_id = "alpha"' \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-beta-explainer.html"'
+run_case_contains "v2 done rejects run_explainer_ref for different run_id" 23 "bad_run_explainer_ref" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-done-valid-run-explainer)"
+make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"'
+run_case "v2 done accepts valid run_explainer_ref path" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-deep-review-missing-angles)"
+make_baton_v2 "$BOX/baton.json" "deep_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "deslop" "vadi" 5
+run_case_contains "v2 deep_review->deslop requires three review angles" 24 "three completed review-angle subagent_tracks" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-deep-review-stale-angles)"
+make_baton_v2 "$BOX/baton.json" "deep_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "deslop" "vadi" 5 \
+  "$(v2_review_angles_filter)" \
+  '.subagent_tracks |= map(if (.track == "correctness-regression" or .track == "test-evidence" or .track == "protocol-handoff") then .phase = "research" else . end)'
+run_case_contains "v2 deep_review->deslop rejects stale review angles from another phase" 24 "three completed review-angle subagent_tracks" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-deep-review-empty-evidence)"
+make_baton_v2 "$BOX/baton.json" "deep_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "deslop" "vadi" 5 \
+  "$(v2_review_angles_filter)" \
+  '.subagent_tracks |= map(if (.track == "correctness-regression" or .track == "test-evidence" or .track == "protocol-handoff") then .parallelized = false | .owner = "prativadi" | .inputs = [] | .outputs = [] | .evidence_refs = [] else . end)'
+run_case_contains "v2 deep_review->deslop rejects empty review evidence" 24 "three completed review-angle subagent_tracks" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-deep-review-with-angles)"
+make_baton_v2 "$BOX/baton.json" "deep_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "deslop" "vadi" 5 "$(v2_review_angles_filter)"
+run_case "v2 deep_review->deslop accepts three review angles" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-illegal-skip)"

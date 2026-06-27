@@ -83,7 +83,7 @@ esac
 
 REQUIRED_KEYS=(schema updated_at mode run_mode phase total_phases status assignee current_engine review_target plan_ref master_plan_locked question resume_assignee resume_status disagreement_round disagreement_cap turn_cap branch checkpoint allow_commit allow_push allow_pr vadi_final_approval prativadi_final_approval final_commit pushed_ref summary changed_paths verification findings narrow_fixups vadi_counter deferred blockers next_action)
 if [[ "$schema" == "dvandva.baton.v2" ]]; then
-  REQUIRED_KEYS+=(run_id original_ask research_ref work_split verification_matrix)
+  REQUIRED_KEYS+=(run_id original_ask research_ref run_explainer_ref work_split subagent_tracks verification_matrix)
 fi
 
 for key in "${REQUIRED_KEYS[@]}"; do
@@ -114,10 +114,55 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
     echo "DVANDVA_WRITE bad_verification_matrix candidate=$CANDIDATE_FILE" >&2
     exit 23
   fi
+  if ! jq -e '
+    ((.subagent_tracks | type) == "array") and
+    (.subagent_tracks | length) > 0 and
+    all(.subagent_tracks[];
+      ((.id | type) == "string" and (.id | length) > 0) and
+      ((.phase | tostring | length) > 0) and
+      ((.status | type) == "string" and (.status | length) > 0) and
+      ((.track | type) == "string" and (.track | length) > 0) and
+      ((.owner | type) == "string" and (.owner | length) > 0) and
+      ((.parallelized | type) == "boolean") and
+      ((.rationale | type) == "string" and (.rationale | length) > 0) and
+      ((.inputs | type) == "array") and
+      ((.outputs | type) == "array") and
+      ((.evidence_refs | type) == "array") and
+      ((.result | type) == "string" and (.result | length) > 0)
+    )
+  ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+    echo "DVANDVA_WRITE bad_subagent_tracks candidate=$CANDIDATE_FILE" >&2
+    exit 23
+  fi
+  if ! jq -e '
+    all(.subagent_tracks[];
+      if .parallelized then
+        ((.owner | test("^dvandva-")) and (((.outputs | length) > 0) or ((.evidence_refs | length) > 0)))
+      else
+        true
+      end
+    )
+  ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+    echo "DVANDVA_WRITE bad_subagent_tracks candidate=$CANDIDATE_FILE" >&2
+    exit 23
+  fi
   if [[ "$new_status" != "research_drafting" && "$new_status" != "human_question" && "$new_status" != "human_decision" ]] \
     && ! jq -e '(.research_ref | type) == "string" and (.research_ref | length) > 0' "$CANDIDATE_FILE" >/dev/null 2>&1; then
     echo "DVANDVA_WRITE bad_research_ref candidate=$CANDIDATE_FILE" >&2
     exit 23
+  fi
+  if [[ "$new_status" == "done" ]] \
+    && ! jq -e '(.run_explainer_ref | type) == "string" and (.run_explainer_ref | test("^\\./superpowers/run-reports/[0-9]{4}-[0-9]{2}-[0-9]{2}-[A-Za-z0-9._-]+-explainer\\.html$"))' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+    echo "DVANDVA_WRITE bad_run_explainer_ref candidate=$CANDIDATE_FILE" >&2
+    exit 23
+  fi
+  if [[ "$new_status" == "done" ]]; then
+    explainer_ref="$(jq -r '.run_explainer_ref' "$CANDIDATE_FILE")"
+    explainer_run_id="$(printf '%s\n' "$explainer_ref" | sed -E 's#^\./superpowers/run-reports/[0-9]{4}-[0-9]{2}-[0-9]{2}-(.*)-explainer\.html$#\1#')"
+    if [[ "$explainer_run_id" != "$new_run_id" ]]; then
+      echo "DVANDVA_WRITE bad_run_explainer_ref candidate=$CANDIDATE_FILE" >&2
+      exit 23
+    fi
   fi
 fi
 
@@ -139,6 +184,29 @@ case "$schema:$new_status" in
     exit 23
     ;;
 esac
+
+if [[ "$schema" == "dvandva.baton.v2" ]]; then
+  case "$new_status" in
+    research_drafting|research_review|research_revision)
+      if ! jq -e '.phase == "research"' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+        echo "DVANDVA_WRITE bad_phase_status status=$new_status candidate=$CANDIDATE_FILE" >&2
+        exit 23
+      fi
+      ;;
+    spec_drafting|spec_review|spec_revision)
+      if ! jq -e '.phase == "spec"' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+        echo "DVANDVA_WRITE bad_phase_status status=$new_status candidate=$CANDIDATE_FILE" >&2
+        exit 23
+      fi
+      ;;
+    implementing|test_creation|deep_review|deslop|phase_review|phase_fixing|review_of_review|counter_review|done)
+      if ! jq -e '(.phase | type) == "number"' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+        echo "DVANDVA_WRITE bad_phase_status status=$new_status candidate=$CANDIDATE_FILE" >&2
+        exit 23
+      fi
+      ;;
+  esac
+fi
 
 if [[ -z "$new_assignee" || "$new_assignee" == "null" ]]; then
   echo "DVANDVA_WRITE bad_assignee candidate=$CANDIDATE_FILE" >&2
@@ -252,6 +320,28 @@ else
       review_of_review:implementing|review_of_review:done|review_of_review:counter_review|counter_review:implementing|counter_review:done|counter_review:review_of_review) legal=1 ;;
       *) reason="no legal edge ${cur_status}->${new_status}" ;;
     esac
+  fi
+
+  if [[ "$legal" -eq 1 && "$schema" == "dvandva.baton.v2" && "$cur_status" == "deep_review" && "$new_status" == "deslop" ]]; then
+    if ! jq -e '
+      def done_angle($name):
+        any(.subagent_tracks[];
+          (
+            .phase == "deep_review" and
+            .track == $name and
+            .status == "completed" and
+            (.result == "passed" or .result == "approved") and
+            ((.outputs | length) > 0) and
+            ((.evidence_refs | length) > 0)
+          )
+        );
+      done_angle("correctness-regression") and
+      done_angle("test-evidence") and
+      done_angle("protocol-handoff")
+    ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+      legal=0
+      reason="deep_review->deslop requires three completed review-angle subagent_tracks"
+    fi
   fi
 fi
 

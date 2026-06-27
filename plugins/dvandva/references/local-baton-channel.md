@@ -35,7 +35,7 @@ and the write helper applies the same check to v2 baton candidates.
 such as research reports, implementation plans, evaluations, reviews, pilot
 write-ups, and run reports live under gitignored `./superpowers/**/*.html` as
 dark, self-contained HTML and are referenced from baton fields such as
-`research_ref` and `plan_ref`. Source/platform Markdown files such as
+`research_ref`, `plan_ref`, and `run_explainer_ref`. Source/platform Markdown files such as
 `SKILL.md`, command files, README/source docs, and prompt templates remain in
 their native format.
 
@@ -43,7 +43,7 @@ The shareable templates live in `templates/channel/`.
 
 ## Baton Schema (v2)
 
-This shows a v2 run-scoped baton. Legacy v1 batons use `schema: "dvandva.baton.v1"`, omit the v2-only fields `run_id`, `original_ask`, `research_ref`, `work_split`, and `verification_matrix`, and default `turn_cap` to 60. The live v2 write-helper enforcement covers v2-only fields, safe `run_id` values, schema continuity for existing runs, v2 status-owner pairs, and v2 lifecycle transitions.
+This shows a v2 run-scoped baton. Legacy v1 batons use `schema: "dvandva.baton.v1"`, omit the v2-only fields `run_id`, `original_ask`, `research_ref`, `run_explainer_ref`, `work_split`, `subagent_tracks`, and `verification_matrix`, and default `turn_cap` to 60. The live v2 write-helper enforcement covers v2-only fields, safe `run_id` values, schema continuity for existing runs, v2 status-owner pairs, honest `subagent_tracks`, the terminal `run_explainer_ref` invariant, and v2 lifecycle transitions.
 
 ```json
 {
@@ -61,6 +61,7 @@ This shows a v2 run-scoped baton. Legacy v1 batons use `schema: "dvandva.baton.v
   "original_ask": "Implement the example feature with Dvandva review.",
   "research_ref": "./superpowers/research/2026-05-13-example-feature.html",
   "plan_ref": "./superpowers/plans/2026-05-13-example-feature.html",
+  "run_explainer_ref": null,
   "work_split": [
     {
       "id": "phase-1-code",
@@ -68,8 +69,26 @@ This shows a v2 run-scoped baton. Legacy v1 batons use `schema: "dvandva.baton.v
       "owner": "vadi",
       "scope": "Implement feature scaffolding and tests.",
       "paths": ["src/example.ts", "test/example.test.ts"],
+      "can_parallelize": false,
+      "parallel_rationale": "Implementation owns the selected files; split only if plan assigns disjoint paths.",
+      "depends_on": ["research-codebase"],
       "status": "complete",
       "artifact_refs": ["./superpowers/research/2026-05-13-example-feature.html"]
+    }
+  ],
+  "subagent_tracks": [
+    {
+      "id": "review-correctness",
+      "phase": "deep_review",
+      "status": "completed",
+      "track": "correctness-regression",
+      "owner": "dvandva-deep-reviewer",
+      "parallelized": true,
+      "rationale": "Independent correctness review did not edit shared files.",
+      "inputs": ["git diff"],
+      "outputs": ["No correctness blocker found."],
+      "evidence_refs": ["subagent:review-correctness"],
+      "result": "passed"
     }
   ],
   "verification_matrix": [
@@ -134,11 +153,11 @@ This shows a v2 run-scoped baton. Legacy v1 batons use `schema: "dvandva.baton.v
 
 ### States (v2 research)
 
-- `research_drafting` — vadi invokes `dvandva:research`, uses parallel subagents when available, writes `research_ref`, and records `work_split` plus `verification_matrix`
+- `research_drafting` — vadi invokes `dvandva:research`, uses conditional parallelism when available, writes `research_ref`, and records `work_split`, `subagent_tracks`, plus `verification_matrix`
 - `research_review` — prativadi performs independent research review and does not rely solely on the vadi artifact
 - `research_revision` — vadi responds to research findings and updates the generated HTML artifact plus baton fields
 - `test_creation` — vadi creates or updates tests after implementation; new behavior targets 100% test coverage or records a source-only rationale
-- `deep_review` — prativadi performs review after test creation; review is separate from test creation
+- `deep_review` — prativadi performs review after test creation; review is separate from test creation and must record at least three angle-specific reviewers/tracks (`correctness-regression`, `test-evidence`, `protocol-handoff`) before approving to deslop
 - `deslop` — cleanup loop for nits, low/minor bugs, stale wording, vague instructions, duplication, and generated-looking clutter
 
 ### Allowed transitions (v1)
@@ -168,10 +187,10 @@ This shows a v2 run-scoped baton. Legacy v1 batons use `schema: "dvandva.baton.v
 - `phase: N, implementing` → `phase_review (impl)`
 - v2: `phase: N, implementing` → `test_creation`
 - v2: `test_creation` → `deep_review (impl)` after tests and coverage evidence are recorded
-- v2: `deep_review (impl)` → `deslop` when implementation and tests are substantively accepted
+- v2: `deep_review (impl)` → `deslop` when implementation and tests are substantively accepted and `subagent_tracks` contains the three completed review angles
 - v2: `deep_review (impl)` → `phase_fixing` when bugs, missing tests, or verification gaps remain
 - v2: `phase_fixing` → `test_creation` when fixes changed behavior, tests, or verification evidence
-- v2: `deslop` → `phase: N+1, implementing` or terminal `done` when no nits, low/minor bugs, stale wording, or unclear instructions remain except explicitly accepted `deferred` items
+- v2: `deslop` → `phase: N+1, implementing` or terminal `done` when no nits, low/minor bugs, stale wording, or unclear instructions remain except explicitly accepted `deferred` items; terminal `done` also requires `run_explainer_ref` pointing to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`
 - v2: `deslop` → `phase_fixing` when cleanup finds behavior, test, or review blockers
 - `phase: N, implementing` → `human_decision`
 - `phase_review (impl)` → `phase_fixing` (substantive findings)
@@ -215,7 +234,7 @@ illegal transitions and route to `human_decision` instead.
 
 The active agent must stop doing LLM work after writing a baton that assigns the next action to another actor. In default `run_mode: "walkaway"`, it then blocks in the foreground wait helper instead of exiting the overall run.
 
-Every baton write goes through `${CLAUDE_SKILL_DIR}/scripts/dvandva-write.sh`, which validates the v1 or v2 transition, installs atomically, and snapshots the checkpoint. The live v2 write-helper enforcement covers named-run research transitions, v2-only fields, safe run IDs, schema continuity, and status-owner pairs.
+Every baton write goes through `${CLAUDE_SKILL_DIR}/scripts/dvandva-write.sh`, which validates the v1 or v2 transition, installs atomically, and snapshots the checkpoint. The live v2 write-helper enforcement covers named-run research transitions, v2-only fields, safe run IDs, schema continuity, status-owner pairs, `subagent_tracks`, the three-angle `deep_review -> deslop` gate, and final `run_explainer_ref`.
 
 ## Regular checkpoint commits
 
@@ -249,19 +268,7 @@ This is the core anti-token-polling rule:
 
 Use `/goal` around the baton state instead of around a timer.
 
-The canonical v1 goal conditions are embedded in the two skill bodies (`plugins/dvandva/skills/vadi/SKILL.md` and `plugins/dvandva/skills/prativadi/SKILL.md`) under their `/goal condition` sections. Always use the version from the skill file rather than copying from this doc, since the skill version is what the goal evaluator actually parses against.
-
-Vadi goal (paste into your engine):
-
-```
-/goal You are Dvandva vadi. Resolve the active Dvandva baton before every read: DVANDVA_BATON_FILE, else DVANDVA_RUN_DIR/baton.json, else safe DVANDVA_RUN_ID as .dvandva/runs/<run_id>/baton.json, else legacy .dvandva/baton.json. Continue the walkaway run until the resolved Dvandva baton status is "done", "human_question", or "human_decision". If assignee is not "vadi", wait on the resolved baton with ${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role vadi --file "$BATON_FILE" --interval 60 --max-wait 540; Claude uses finite wait re-loops, while Codex may add --persist when the shell budget supports it. Before each checkpoint, surface BATON_STATE including DVANDVA_RUN_ID/run_id, original_ask, research_ref, plan_ref, turn_cap, changed files, verification commands and outcomes, and final approval fields; do not count shell wait heartbeats as turns. Never create a PR. Stop after turn_cap active model-work turns and assign human if still blocked.
-```
-
-Prativadi goal (paste into your engine):
-
-```
-/goal You are Dvandva prativadi. Resolve the active Dvandva baton before every read: DVANDVA_BATON_FILE, else DVANDVA_RUN_DIR/baton.json, else safe DVANDVA_RUN_ID as .dvandva/runs/<run_id>/baton.json, else legacy .dvandva/baton.json. Continue the walkaway run until the resolved Dvandva baton status is "done", "human_question", or "human_decision". If assignee is not "prativadi", wait on the resolved baton with ${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role prativadi --file "$BATON_FILE" --interval 60 --max-wait 540; Claude uses finite wait re-loops, while Codex may add --persist when the shell budget supports it. Before each checkpoint, surface BATON_STATE including DVANDVA_RUN_ID/run_id, original_ask, research_ref, plan_ref, turn_cap, findings, verification commands and outcomes, final approval fields, and the final baton contents; do not count shell wait heartbeats as turns. Never create a PR. Stop after turn_cap active model-work turns and assign human if still blocked.
-```
+Do not paste goal text from this reference. Use the role skill bodies or engine command files as the canonical source, because they include current Existing baton discovery, conditional parallelism, `subagent_tracks`, `run_explainer_ref`, and terminal explainer gates. This reference intentionally avoids duplicating those long strings so it cannot drift into a stale legacy fallback.
 
 Both goals require the agent to surface a structured `BATON_STATE: { ... }` line at every checkpoint. The `/goal` evaluator detects exit conditions by reading that line in the transcript.
 

@@ -53,6 +53,28 @@ ${body}
 HTML
 }
 
+write_run_explainer() {
+  local file="$1"
+  local body="$2"
+  mkdir -p "$(dirname "$file")"
+  cat > "$file" <<HTML
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Run explainer</title>
+  <style>:root{color-scheme: dark;--bg:#090b10}body{background:var(--bg);color:#eef3f8}</style>
+</head>
+<body>
+${body}
+<script type="application/json" id="dvandva-artifact-meta">
+{"schema":"dvandva.artifact.run_explainer.v1","artifact_type":"run_explainer","run_id":"run-a","baton_ref":".dvandva/runs/run-a/baton.json","final_commit":null,"sections":["decisions","development","architecture","verification","diagrams"]}
+</script>
+</body>
+</html>
+HTML
+}
+
 GOOD_PROSE="$TMP_DIR/good-prose"
 write_artifact "$GOOD_PROSE/report.html" '<p>Source inventory: https://github.com/axatbhardwaj/Dvandva</p>'
 run_case "prose source URL is allowed" 0 bash "$LINTER" "$GOOD_PROSE"
@@ -81,6 +103,72 @@ BAD_MD="$TMP_DIR/bad-md"
 mkdir -p "$BAD_MD/plans"
 printf '# generated markdown artifact\n' > "$BAD_MD/plans/generated.md"
 run_case "generated markdown artifact is rejected" 1 bash "$LINTER" "$BAD_MD"
+
+GOOD_RUN="$TMP_DIR/good-run"
+write_run_explainer "$GOOD_RUN/run-reports/2026-06-28-run-a-explainer.html" '
+  <main>
+    <section id="decisions"><h2>Decisions</h2></section>
+    <section id="development"><h2>Development</h2></section>
+    <section id="architecture"><h2>Architecture</h2></section>
+    <section id="verification"><h2>Verification</h2></section>
+    <section id="diagrams"><h2>Diagrams</h2><svg viewBox="0 0 10 10"><path d="M1 1h8v8H1z"/></svg></section>
+  </main>'
+run_case "run explainer artifact is accepted" 0 bash "$LINTER" "$GOOD_RUN"
+
+BAD_RUN_PATH="$TMP_DIR/bad-run-path"
+write_run_explainer "$BAD_RUN_PATH/report.html" '
+  <section id="decisions"></section>
+  <section id="development"></section>
+  <section id="architecture"></section>
+  <section id="verification"></section>
+  <section id="diagrams"><svg viewBox="0 0 10 10"></svg></section>'
+run_case "run explainer outside run-reports is rejected" 1 bash "$LINTER" "$BAD_RUN_PATH"
+
+BAD_RUN_SECTION="$TMP_DIR/bad-run-section"
+write_run_explainer "$BAD_RUN_SECTION/run-reports/2026-06-28-run-a-explainer.html" '
+  <section id="decisions"></section>
+  <section id="development"></section>
+  <section id="architecture"></section>
+  <section id="verification"></section>
+  <section id="diagram"><svg viewBox="0 0 10 10"></svg></section>'
+run_case "run explainer missing required section is rejected" 1 bash "$LINTER" "$BAD_RUN_SECTION"
+
+BAD_RUN_VERIFICATION="$TMP_DIR/bad-run-verification"
+write_run_explainer "$BAD_RUN_VERIFICATION/run-reports/2026-06-28-run-a-explainer.html" '
+  <section id="decisions"></section>
+  <section id="development"></section>
+  <section id="architecture"></section>
+  <section id="diagrams"><svg viewBox="0 0 10 10"></svg></section>'
+run_case "run explainer missing verification section is rejected" 1 bash "$LINTER" "$BAD_RUN_VERIFICATION"
+
+BAD_RUN_SVG="$TMP_DIR/bad-run-svg"
+write_run_explainer "$BAD_RUN_SVG/run-reports/2026-06-28-run-a-explainer.html" '
+  <section id="decisions"></section>
+  <section id="development"></section>
+  <section id="architecture"></section>
+  <section id="verification"></section>
+  <section id="diagrams"></section>'
+run_case "run explainer missing inline SVG is rejected" 1 bash "$LINTER" "$BAD_RUN_SVG"
+
+BAD_RUN_META="$TMP_DIR/bad-run-meta"
+write_run_explainer "$BAD_RUN_META/run-reports/2026-06-28-run-a-explainer.html" '
+  <section id="decisions"></section>
+  <section id="development"></section>
+  <section id="architecture"></section>
+  <section id="verification"></section>
+  <section id="diagrams"><svg viewBox="0 0 10 10"></svg></section>'
+sed -i 's/"sections":\["decisions","development","architecture","verification","diagrams"\]/"sections":["decisions","development","architecture"]/' "$BAD_RUN_META/run-reports/2026-06-28-run-a-explainer.html"
+run_case "run explainer metadata missing sections is rejected" 1 bash "$LINTER" "$BAD_RUN_META"
+
+BAD_RUN_META_ID="$TMP_DIR/bad-run-meta-id"
+write_run_explainer "$BAD_RUN_META_ID/run-reports/2026-06-28-run-a-explainer.html" '
+  <section id="decisions"></section>
+  <section id="development"></section>
+  <section id="architecture"></section>
+  <section id="verification"></section>
+  <section id="diagrams"><svg viewBox="0 0 10 10"></svg></section>'
+sed -i 's/"run_id":"run-a"/"run_id":"other-run"/' "$BAD_RUN_META_ID/run-reports/2026-06-28-run-a-explainer.html"
+run_case "run explainer metadata run_id must match filename" 1 bash "$LINTER" "$BAD_RUN_META_ID"
 
 if [[ "$failures" -gt 0 ]]; then
   exit 1

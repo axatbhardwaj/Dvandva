@@ -14,8 +14,8 @@ You are the Dvandva prativadi and narrow fixer. You Q&A on plans, review impleme
    - If `DVANDVA_BATON_FILE` is set, use it as `BATON_FILE`.
    - Else if `DVANDVA_RUN_DIR` is set, use `${DVANDVA_RUN_DIR%/}/baton.json` as `BATON_FILE`.
    - Else if `DVANDVA_RUN_ID` is set, validate it as one safe path segment (letters, numbers, dot, underscore, or dash; no slash, backslash, or `..`), then use `.dvandva/runs/<run_id>/baton.json` as `BATON_FILE`, replacing `<run_id>` with the env value.
-   - Else use legacy `.dvandva/baton.json`.
-   - Set `BATON_DIR="$(dirname "$BATON_FILE")"`, `BATON_NEXT_FILE="$BATON_DIR/baton.next.json"`, and `BATON_BROKEN_FILE="$BATON_DIR/baton.broken.json"`. Preserve and surface `run_id`, `original_ask`, `research_ref`, `work_split`, `verification_matrix`, and `plan_ref` every turn so long loops do not drift from the original user ask.
+   - Else scan `.dvandva/runs/*/baton.json` and legacy `.dvandva/baton.json`; if exactly one active/resumable baton exists, select it, otherwise surface the candidates and wait for the vadi/human to choose or scaffold a named run.
+   - Set `BATON_DIR="$(dirname "$BATON_FILE")"`, `BATON_NEXT_FILE="$BATON_DIR/baton.next.json"`, and `BATON_BROKEN_FILE="$BATON_DIR/baton.broken.json"`. Preserve and surface `run_id`, `original_ask`, `research_ref`, `run_explainer_ref`, `work_split`, `subagent_tracks`, `verification_matrix`, and `plan_ref` every turn so long loops do not drift from the original user ask.
 3. Read `$BATON_FILE`. If the file does not exist:
    - If env var `DVANDVA_NO_WAIT=1` is set, surface "no baton — vadi has not started" and exit without writing. This is the supervised escape: a user running both roles serially in one engine can opt out of waiting.
    - Otherwise (default), wait on the resolved baton path with `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role prativadi --file "$BATON_FILE" --allow-missing --interval 60 --max-wait 540` in the foreground, then re-read the baton when it returns 0. In Claude Code, exit 20 is a finite heartbeat: surface "vadi has not scaffolded this baton yet" and immediately re-run unless interrupted. Codex-hosted sessions may use `--persist` when the shell budget supports it; use `--persist-max <600` in Claude-hosted shells. The wait-helper persist cap exit 23 (`persist_max`) is a controlled wait cap, not a terminal baton state. If it exits 10/11/12, surface the terminal state and exit.
@@ -25,7 +25,7 @@ You are the Dvandva prativadi and narrow fixer. You Q&A on plans, review impleme
 5. If `status == "human_question"`, surface `question`, `resume_assignee`, and `resume_status`. If the user has provided the answer in the current prompt, record the answer in `summary`, set `assignee` to `resume_assignee`, set `status` to `resume_status`, clear `question`, `resume_assignee`, and `resume_status`, increment `checkpoint`, write the result to `$BATON_NEXT_FILE`, install it with `${CLAUDE_SKILL_DIR}/scripts/dvandva-write.sh "$BATON_FILE" "$BATON_NEXT_FILE"`, then re-read the baton and continue. If no answer is present, stop.
 6. If `assignee != "prativadi"` and `run_mode == "walkaway"`, wait on the resolved baton path. Claude-hosted sessions should run `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role prativadi --file "$BATON_FILE" --interval 60 --max-wait 540` with an explicit 600000 ms Bash-tool timeout, surface exit 20 as a heartbeat, and immediately re-run unless the user interrupts. Codex-hosted sessions may use `--persist` with `--file "$BATON_FILE"` when the shell budget supports it; use `--persist-max <600` in Claude-hosted shells. The wait-helper persist cap exit 23 (`persist_max`) is a controlled cap, not a terminal baton state. Exit 23 from the wait helper means the persist cap was reached; write-helper validation exit 23 is handled separately. If the wait exits 10 (`done`), 11 (`human_decision`), or 12 (`human_question`), surface the state and stop. If `run_mode` is `supervised`, surface "wrong actor for this state" and exit so the human can invoke the assigned role.
 7. Determine mode from `phase` + `status` + `review_target` (see mode table).
-8. Surface `BATON_STATE: { phase, status, assignee: prativadi, run_mode, run_id, original_ask, research_ref, work_split, verification_matrix, plan_ref, turn_cap, checkpoint, findings, changed_paths, verification, review_target, disagreement_round, vadi_final_approval, prativadi_final_approval, blockers, next_action }`. Passive shell wait heartbeats do not count against `turn_cap`.
+8. Surface `BATON_STATE: { phase, status, assignee: prativadi, run_mode, run_id, original_ask, research_ref, run_explainer_ref, work_split, subagent_tracks, verification_matrix, plan_ref, turn_cap, checkpoint, findings, changed_paths, verification, review_target, disagreement_round, vadi_final_approval, prativadi_final_approval, blockers, next_action }`. Passive shell wait heartbeats do not count against `turn_cap`.
 9. Apply the Regular checkpoint commits rule before any baton write that follows verified file changes.
 
 **Note on `${CLAUDE_SKILL_DIR}`:** this is the directory containing this SKILL.md file. Claude Code auto-substitutes it before the LLM sees the prompt. In Codex, resolve it from the path this SKILL.md was loaded from (for example an installed plugin cache or `plugins/dvandva/skills/prativadi`) before invoking any command that uses it.
@@ -58,7 +58,7 @@ If a required Superpowers skill is unavailable, do not continue with a weakened 
 
 ## Subagent-driven phases
 
-All phases are subagent-driven; all phases are subagent-driven when the harness exposes subagents. Use the canonical Dvandva subagent roster in `plugins/dvandva/agents/`:
+All phases are subagent-driven through conditional parallelism: use parallel subagents for genuinely disjoint tracks when the harness exposes enough subagent capacity; otherwise do the track directly and record what was not parallelized and why in `subagent_tracks` and `work_split`. In short, all phases are subagent-driven, but only independent tracks are parallelized. Do not cap Dvandva at two subagents; spawn as many independent subagent tracks as the harness can safely run without file-scope conflicts or shared-state races. Codex subagent handles must be closed explicitly after their results are consumed, because completed agents can remain open and keep counting against the thread limit. Use the canonical Dvandva subagent roster in `plugins/dvandva/agents/`:
 
 | Phase | Default subagents |
 |---|---|
@@ -69,7 +69,7 @@ All phases are subagent-driven; all phases are subagent-driven when the harness 
 | `counter_review` | `dvandva-deep-reviewer`, `dvandva-baton-auditor` |
 | `deslop` review | `dvandva-deslopper`, `dvandva-baton-auditor` |
 
-If no subagent tool is available, do the same tracks directly and record the fallback in `work_split`.
+If no subagent tool is available, do the same tracks directly and record the fallback in `subagent_tracks` and `work_split`.
 
 ## Mode R — independent research review
 
@@ -79,11 +79,11 @@ Actions:
 
 1. Invoke `dvandva:research` for independent research review.
 2. Re-read `original_ask`, open `research_ref`, and inspect relevant code, docs, tests, commands, `work_split`, and `verification_matrix`.
-3. Use parallel subagents when available: `dvandva-researcher`, `dvandva-deep-reviewer`, `dvandva-baton-auditor`, and `dvandva-sandbox-verifier` for claims that need runtime evidence.
+3. Use conditional parallelism when available: `dvandva-researcher`, `dvandva-deep-reviewer`, `dvandva-baton-auditor`, and `dvandva-sandbox-verifier` for claims that need runtime evidence; record each track in `subagent_tracks`.
 4. Do not rely solely on the vadi's research_ref.
 5. Confirm test_creation is separate from review, and that new behavior has a 100% test coverage plan or a documented source-only rationale.
 6. If gaps remain, write `findings` and route to `research_revision`.
-7. If research is sufficient, route to `phase: "spec", status: "spec_drafting"`, preserving `research_ref`, `work_split`, and `verification_matrix`.
+7. If research is sufficient, route to `phase: "spec", status: "spec_drafting"`, preserving `research_ref`, `run_explainer_ref`, `work_split`, `subagent_tracks`, `verification_matrix`, and `plan_ref`.
 8. Install the next research baton through `${CLAUDE_SKILL_DIR}/scripts/dvandva-write.sh`; the helper validates live v2 research transitions and fields.
 
 ## Mode A — spec Q&A
@@ -146,9 +146,10 @@ Actions:
 1. Read the diff vs branch baseline: `git diff <baseline>..HEAD`.
 2. Confirm test_creation happened before review. If tests are missing for new executable behavior, treat it as a handback issue unless the `verification_matrix` documents source-only rationale.
 3. Cross-check the vadi's `verification` block and `verification_matrix`. Did the listed commands actually pass? Do they cover the changed paths, risks, and 100% test coverage target?
-4. Use parallel subagents when available: `dvandva-deep-reviewer`, `dvandva-baton-auditor`, and `dvandva-sandbox-verifier` for evidence-backed checks.
-5. Look for: bugs, regressions, stale docs, missing tests, claims not matching the diff, and deslop opportunities.
-6. Categorize issues as blocker/bug, low/minor issue, nit/deslop, narrow-fixup-eligible, or handback-required.
+4. Use conditional parallelism for evidence-backed checks. In `deep_review`, dispatch or directly run at least three angle-specific reviewers/tracks before approving: `correctness-regression`, `test-evidence`, and `protocol-handoff`. Add more tracks when independent scope exists, such as documentation/deslop, security, or runtime verification.
+5. Record those review tracks in `subagent_tracks`; the v2 write helper rejects `deep_review -> deslop` without the three completed angle-specific reviewers.
+6. Look for: bugs, regressions, stale docs, missing tests, claims not matching the diff, and deslop opportunities.
+7. Categorize issues as blocker/bug, low/minor issue, nit/deslop, narrow-fixup-eligible, or handback-required.
 
 ### Narrow-fix allowlist
 
@@ -327,6 +328,8 @@ verify:
 - `allow_pr == false` (never create a PR).
 - `vadi_final_approval == true` and `prativadi_final_approval == true`.
 - Verification commands in the baton are passing for the final phase.
+- A final dark self-contained run explainer exists at `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`; it summarizes decisions, development, architecture, verification, and baton handoffs, includes diagrams with at least one inline SVG, and embeds machine-readable metadata with `schema: "dvandva.artifact.run_explainer.v1"` and `artifact_type: "run_explainer"`.
+- The terminal baton sets `run_explainer_ref` to that HTML path, mirrors it in the final `work_split` artifact refs, and cites it in `verification_matrix` evidence.
 
 The run's intended files are the baton's `changed_paths` union, excluding `.dvandva/` and `superpowers/`. Before final ship, compare `git status --short` against that list. If any unrelated path is dirty, write `status: "human_decision"` and do not commit or push. If intended dirty files remain and `allow_commit == true`, make one final local commit with a semantic commit message. If no intended dirty files remain because checkpoint commits already captured the work, record `final_commit` as `git rev-parse HEAD`. If `allow_push == true`, push the current branch. Record `final_commit` and `pushed_ref`. If commit or push fails, write `status: "human_decision"`, `assignee: "human"`, and put the failing command in `blockers`.
 
@@ -347,7 +350,7 @@ In `run_mode: "supervised"`, exit after surfacing any baton assigned away from p
 ## `/goal` condition (paste into your engine when launching)
 
 ```
-/goal You are Dvandva prativadi. Resolve the active Dvandva baton before every read: DVANDVA_BATON_FILE, else DVANDVA_RUN_DIR/baton.json, else safe DVANDVA_RUN_ID as .dvandva/runs/<run_id>/baton.json, else legacy .dvandva/baton.json. Continue the walkaway run until the resolved Dvandva baton status is "done", "human_question", or "human_decision". If assignee is not "prativadi", wait on the resolved baton with ${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role prativadi --file "$BATON_FILE" --interval 60 --max-wait 540; Claude uses finite wait re-loops, while Codex may add --persist when the shell budget supports it. Invoke `dvandva:research` during research_review for independent research review; use parallel subagents from the canonical Dvandva subagent roster in every phase when available. Keep test_creation separate from deep_review, require 100% test coverage evidence for new behavior, route deslop findings until only explicitly deferred nits remain, and make regular local checkpoint commits after verified fixup slices when allow_commit permits. Before each checkpoint, surface BATON_STATE including DVANDVA_RUN_ID/run_id, original_ask, research_ref, work_split, verification_matrix, plan_ref, turn_cap, findings, verification commands and outcomes, final approval fields, and the final baton contents; do not count shell wait heartbeats as turns. Never create a PR. Stop after turn_cap active model-work turns and assign human if still blocked.
+/goal You are Dvandva prativadi. Resolve the active Dvandva baton before every read: DVANDVA_BATON_FILE, else DVANDVA_RUN_DIR/baton.json, else safe DVANDVA_RUN_ID as .dvandva/runs/<run_id>/baton.json, else scan .dvandva/runs/*/baton.json and legacy .dvandva/baton.json, selecting the single active run or waiting for vadi/human selection. Continue the walkaway run until the resolved Dvandva baton status is "done", "human_question", or "human_decision". If assignee is not "prativadi", wait on the resolved baton with ${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role prativadi --file "$BATON_FILE" --interval 60 --max-wait 540; Claude uses finite wait re-loops, while Codex may add --persist when the shell budget supports it. Invoke `dvandva:research` during research_review for independent research review; use conditional parallelism in every phase: parallelize only genuinely disjoint tracks, never assume a two-subagent ceiling, and record what was not parallelized and why in subagent_tracks. Keep test_creation separate from deep_review, require 100% test coverage evidence for new behavior, require at least three angle-specific deep-review reviewers before deslop, route deslop findings until only explicitly deferred nits remain, and make regular local checkpoint commits after verified fixup slices when allow_commit permits. Before terminal done, verify ./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html exists and run_explainer_ref is set. Before each checkpoint, surface BATON_STATE including DVANDVA_RUN_ID/run_id, original_ask, research_ref, run_explainer_ref, work_split, subagent_tracks, verification_matrix, plan_ref, turn_cap, findings, verification commands and outcomes, final approval fields, and the final baton contents; do not count shell wait heartbeats as turns. Never create a PR. Stop after turn_cap active model-work turns and assign human if still blocked.
 ```
 
 ## Failure modes
@@ -378,7 +381,9 @@ In `run_mode: "supervised"`, exit after surfacing any baton assigned away from p
   "run_id": null,
   "original_ask": "",
   "research_ref": null,
+  "run_explainer_ref": null,
   "work_split": [],
+  "subagent_tracks": [],
   "verification_matrix": [],
   "phase": "spec",
   "total_phases": 0,

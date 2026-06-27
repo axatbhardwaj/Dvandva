@@ -4,7 +4,7 @@ Dvandva is a coordination protocol and protocol-level orchestrator for paired AI
 
 Because the protocol is just files and shell helpers, it needs zero infrastructure, is crash-tolerant by construction (all state lives on disk, so either session can be killed and rejoin at preflight), and is engine-agnostic. The canonical dogfood setup is Claude Code as vadi and Codex as prativadi — the cross-vendor pairing is the point: different models have systematically different blind spots, so the reviewer catches what the implementer cannot see. Either engine can host either role. Single-engine supervised runs are supported; full walkaway mode needs two persistent sessions.
 
-Superpowers is a hard runtime dependency. Dvandva owns baton state, role handoff, phase gates, and cross-agent review; Superpowers owns the active-work discipline inside each turn: using skills before action, brainstorming before design, TDD before implementation, verification before completion, skill-writing discipline when skills change, and subagent-driven execution when parallel tracks are available. If the engine running a Dvandva role cannot see the Superpowers skills, that role must stop and surface setup instructions instead of continuing with a weakened workflow.
+Superpowers is a hard runtime dependency. Dvandva owns baton state, role handoff, phase gates, and cross-agent review; Superpowers owns the active-work discipline inside each turn: using skills before action, brainstorming before design, TDD before implementation, verification before completion, skill-writing discipline when skills change, and subagent-driven execution when parallel tracks are available. Dvandva uses conditional parallelism: parallelize only genuinely disjoint tracks, record actual work in `subagent_tracks`, and record what was not parallelized and why when a direct pass is safer. Codex subagent handles must be closed explicitly after their results are consumed, because completed agents can remain open and keep counting against the thread limit. If the engine running a Dvandva role cannot see the Superpowers skills, that role must stop and surface setup instructions instead of continuing with a weakened workflow.
 
 Dvandva ships as an installable plugin for both engines. The repo lives at https://github.com/axatbhardwaj/Dvandva.
 
@@ -99,7 +99,7 @@ In walkaway mode, the assigned-away session blocks in:
 ${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role <vadi|prativadi> --file "$BATON_FILE" --interval 60 --max-wait 540
 ```
 
-The active baton is selected in this order: `DVANDVA_BATON_FILE`, then `DVANDVA_RUN_DIR/baton.json`, then safe `DVANDVA_RUN_ID` mapped to `.dvandva/runs/<run_id>/baton.json`, then legacy `.dvandva/baton.json`. Set the same safe `DVANDVA_RUN_ID` in both sessions to run more than one Dvandva loop in one worktree.
+The active baton is selected in this order: `DVANDVA_BATON_FILE`, then `DVANDVA_RUN_DIR/baton.json`, then safe `DVANDVA_RUN_ID` mapped to `.dvandva/runs/<run_id>/baton.json`, then Existing baton discovery over `.dvandva/runs/*/baton.json` and legacy `.dvandva/baton.json`. If an active baton exists and the prompt does not choose one, the vadi asks whether to continue or start a new named run. If only terminal batons exist, the vadi auto-creates a new named run instead of overwriting old state. Set the same safe `DVANDVA_RUN_ID` in both sessions to run more than one Dvandva loop in one worktree.
 
 That is shell waiting, not model polling. The agent resumes when the baton assigns its role again, or stops if the baton reaches `done`, `human_question`, or `human_decision`.
 
@@ -110,6 +110,8 @@ The prativadi can also be launched *before* the vadi has scaffolded the baton. I
 For one-engine use, set `run_mode: "supervised"` in the active baton and invoke `vadi` and `prativadi` serially in that engine. Supervised mode exits on assigned-away states so one CLI session cannot deadlock itself. Setting `DVANDVA_NO_WAIT=1` in the prativadi's environment also opts out of the missing-baton wait so a serial-supervised user gets the original "no baton — vadi has not started" message immediately.
 
 Agents should make regular local checkpoint commits after a verified logical slice when `allow_commit` is true and the dirty paths match the baton's `changed_paths` union. Checkpoint commits are local only: pushing waits until both `vadi_final_approval` and `prativadi_final_approval` are true and `allow_push` is true. Dvandva must never create a PR.
+
+Before terminal `done`, a v2 run must write a dark self-contained explainer report at `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html` and set `run_explainer_ref` on the baton. The report captures decisions, development, architecture, verification, and diagrams for the completed run.
 
 ## History
 
