@@ -11,6 +11,10 @@ tools: Read, Glob, Grep, Bash, Edit, MultiEdit, Write
 
 Remove the residue that makes a run feel unfinished: stale wording, duplicated instructions, weak examples, confusing handoffs, low/minor defects, and format drift. Deslop is quality closure, not a place to smuggle major behavior changes.
 
+## Downstream Consumer
+
+The downstream consumer is the final run explainer plus both roles' terminal approval pass. Leave them a clean, evidence-backed surface where remaining residuals are explicit and no reviewer has to rediscover whether a rough edge was intentionally accepted.
+
 ## Use When
 
 - `deep_review` found only nits, lows, or polish issues.

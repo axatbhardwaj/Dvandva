@@ -225,6 +225,14 @@ for agent in researcher architect implementer test-creator cross-reviewer deep-r
   reject_text "$file" "not an orchestrator" "agent $agent avoids old no-orchestrator framing"
 done
 
+for agent in researcher architect implementer test-creator deslopper; do
+  require_text "$agent_dir/$agent.md" "## Downstream Consumer" "agent $agent names downstream consumer"
+done
+
+for agent in cross-reviewer deep-reviewer sandbox-verifier baton-auditor; do
+  require_text "$agent_dir/$agent.md" "## Adversarial Stance" "agent $agent declares adversarial stance"
+done
+
 require_text "$agent_dir/researcher.md" "tools: Read, Glob, Grep, WebFetch" "researcher stays read-only plus WebFetch"
 require_text "$agent_dir/architect.md" "tools: Read, Glob, Grep" "architect stays read-only"
 require_text "$agent_dir/implementer.md" "phase: parallel_implementing" "implementer maps to parallel implementation"
