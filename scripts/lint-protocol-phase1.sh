@@ -46,12 +46,15 @@ require_rg 'original_ask' product.md 'product spec defines original_ask'
 require_rg 'research_ref' product.md 'product spec defines research_ref'
 require_rg 'research_drafting|research_review|research_revision' product.md 'product spec defines research states'
 require_rg 'dvandva-wait\.sh --persist|--persist' product.md 'product spec defines persistent shell wait'
+require_rg 'Continuous polling is the hard rule' product.md 'product spec makes continuous polling mandatory'
 require_rg 'generated user-facing artifacts.*HTML|HTML.*generated user-facing artifacts' product.md 'product spec scopes HTML migration to generated user-facing artifacts'
 reject_rg 'No multi-baton-per-repo support|One active baton per worktree' product.md 'product spec no longer excludes multi-run support'
 
 for file in docs/protocol/local-baton-channel.md plugins/dvandva/references/local-baton-channel.md; do
   require_rg 'runs/<run_id>|runs/\$|DVANDVA_RUN_ID|run_id' "$file" "$file documents run-scoped baton paths"
   require_rg 'generated user-facing artifacts|HTML' "$file" "$file documents HTML generated artifact policy"
+  require_rg 'Continuous polling is the hard rule' "$file" "$file makes continuous polling mandatory"
+  require_rg 'Phase convention: implementation-chunk' "$file" "$file documents subagent track phase convention"
 done
 
 require_rg '"schema": "dvandva\.baton\.v2"' plugins/dvandva/references/baton-schema-v2.json 'v2 schema seed declares dvandva.baton.v2'

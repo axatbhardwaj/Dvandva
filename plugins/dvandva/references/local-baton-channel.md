@@ -45,7 +45,7 @@ The shareable templates live in `templates/channel/`.
 
 This shows a v2 run-scoped baton. Legacy v1 batons use `schema: "dvandva.baton.v1"`, omit the v2-only fields `run_id`, `original_ask`, `research_ref`, `run_explainer_ref`, `active_roles`, `work_split`, `subagent_tracks`, and `verification_matrix`, and default `turn_cap` to 60. The live v2 write-helper enforcement covers v2-only fields, safe `run_id` values, schema continuity for existing runs, v2 status-owner pairs, honest `subagent_tracks`, the terminal `run_explainer_ref` invariant, and v2 lifecycle transitions.
 
-implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; the `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. `test_creation` routes to `cross_review`, `cross_review` may route to `cross_fixing`, and only completed cross-review evidence for both roles can advance to `deep_review`.
+implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; the `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. `test_creation` routes to `cross_review`, `cross_review` may route to `cross_fixing`, and only completed cross-review evidence for both roles can advance to `deep_review`. Phase convention: implementation-chunk tracks use the numeric implementation phase, while cross-review and deep-review gate tracks use the status-name phase such as `phase: "cross_review"` or `phase: "deep_review"`.
 
 ```json
 {
@@ -270,9 +270,10 @@ This is the core anti-token-polling rule:
 - The vadi does not spend model turns asking whether the prativadi moved.
 - The prativadi does not spend model turns asking whether the vadi moved.
 - In walkaway mode, the assigned-away agent runs `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role <vadi|prativadi> --interval 60 --max-wait 540`.
-- In v2 persistent mode, the assigned-away agent may run the same helper with `--persist`. In that mode `--max-wait` is the heartbeat interval, and `--persist-max <seconds>` is the optional total wall-clock cap. The wait-helper persist cap exit 23 means the persistent cap was reached; it is a controlled wait stop, not proof the peer is done.
+- Continuous polling is the hard rule: `--max-wait` is a heartbeat interval, not a stop condition, and the helper keeps polling until this role owns the baton, the baton reaches `done`/`human_question`/`human_decision`, or the user interrupts.
+- `--persist` is accepted for older call sites and is now redundant. `--persist-max <seconds>` is the optional total wall-clock cap; the wait-helper persist cap exit 23 means the cap was reached, not that the peer is done. Re-enter the wait unless the user interrupts. Explicit `--finite` compatibility mode is the only path to timeout exit 20 and is not valid for normal walkaway loops.
 - The write-helper validation exit 23 means a baton candidate failed schema, required-key, safe-run-id, v2 status-owner, status, or enum validation. Fix the candidate and rerun the write helper; do not edit the installed baton directly.
-- Claude Code has a Bash-tool wall-clock cap around 600 seconds, so Claude-hosted sessions must use finite `--max-wait 540` re-loops or `--persist --persist-max <600`. Codex-hosted sessions may use unbounded `--persist` when the shell budget supports it.
+- Claude Code has a Bash-tool wall-clock cap around 600 seconds, so Claude-hosted sessions must relaunch the wait if a harness cap stops the shell before a terminal baton state. Codex-hosted sessions may use unbounded default continuous polling or pass `--persist` for older snippets.
 - In supervised mode, the assigned-away agent exits and the human invokes the next role manually.
 - When the helper exits 0, the agent re-reads the baton and resumes.
 - When the helper exits 10, 11, or 12, the agent surfaces `done`, `human_decision`, or `human_question` and stops. For `human_question`, the helper also prints `question`, `resume_assignee`, and `resume_status`.

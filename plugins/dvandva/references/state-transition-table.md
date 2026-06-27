@@ -24,12 +24,13 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
 - `verification_matrix`: planned evidence map from claims and risks to checks, owners, expected results, command or inspection, result, evidence refs, and the 100% test coverage target for new behavior.
 - `turn_cap`: default `60`; passive shell wait heartbeats do not count as
   active model-work turns.
-- `dvandva-wait.sh --persist`: treats `--max-wait` as the heartbeat interval.
-  Optional `--persist-max <seconds>` is a total wall-clock cap. The
-  wait-helper persist cap exit 23 means that cap was reached. Claude-hosted
-  sessions should keep the cap below the Bash-tool limit or use finite
-  540-second re-loops; Codex-hosted sessions can use unbounded persistent waits
-  when the shell budget supports it.
+- `dvandva-wait.sh`: continuous polling is the hard rule. `--max-wait` is the
+  heartbeat interval by default, and the helper keeps polling until role
+  ownership, `done`, `human_question`, `human_decision`, or user interrupt.
+  `--persist` is accepted for older snippets and is redundant. Optional
+  `--persist-max <seconds>` is a total wall-clock cap; the wait-helper persist cap exit 23 is not a terminal baton state and must re-enter wait unless the
+  user interrupts. Explicit `--finite` compatibility mode is the only path to
+  exit 20 and is not valid for normal walkaway loops.
 - `dvandva-write.sh`: the write-helper validation exit 23 means a baton
   candidate failed schema, required-key, safe-run-id, status-owner, status, or
   enum validation. Fix the candidate and rerun the helper; do not edit the
@@ -43,7 +44,7 @@ except that `human_question` and `human_decision` remain legal early-escalation
 targets before `research_ref` exists. Existing batons cannot change schema or v2
 `run_id` mid-run. Terminal `done` requires `run_explainer_ref` to point to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`.
 
-implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. After `test_creation`, the baton enters `cross_review`; `cross_review` may route to `cross_fixing`, and only completed cross-review evidence for both roles can advance to `deep_review`.
+implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. After `test_creation`, the baton enters `cross_review`; `cross_review` may route to `cross_fixing`, and only completed cross-review evidence for both roles can advance to `deep_review`. Phase convention: implementation-chunk tracks use the numeric implementation phase, while cross-review and deep-review gate tracks use the status-name phase such as `phase: "cross_review"` or `phase: "deep_review"`.
 
 ## Schema Fields
 

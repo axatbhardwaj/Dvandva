@@ -146,7 +146,15 @@ fi
 BATON_WAIT="$TMP_DIR/wait.json"
 write_baton "$BATON_WAIT" "prativadi" "phase_review"
 run_case "returns 20 on timeout while assigned away" 20 \
-  "$SCRIPT" --role vadi --file "$BATON_WAIT" --interval 0 --max-wait 0
+  "$SCRIPT" --role vadi --file "$BATON_WAIT" --interval 0 --max-wait 0 --finite
+
+BATON_CONTINUOUS="$TMP_DIR/continuous.json"
+write_baton "$BATON_CONTINUOUS" "prativadi" "phase_review"
+( sleep 2 && write_baton "$BATON_CONTINUOUS" "vadi" "implementing" ) &
+continuous_pid=$!
+run_case "default walkaway wait survives heartbeat until role returns" 0 \
+  "$SCRIPT" --role vadi --file "$BATON_CONTINUOUS" --interval 1 --max-wait 1
+wait "$continuous_pid" 2>/dev/null || true
 
 run_case "rejects zero interval with positive max wait" 2 \
   "$SCRIPT" --role vadi --file "$BATON_WAIT" --interval 0 --max-wait 1
@@ -205,7 +213,7 @@ RUN_ISOLATION_BOX="$TMP_DIR/run-isolation-box"
 write_baton "$RUN_ISOLATION_BOX/.dvandva/runs/alpha/baton.json" "vadi" "implementing"
 write_baton "$RUN_ISOLATION_BOX/.dvandva/runs/beta/baton.json" "prativadi" "phase_review"
 run_case "DVANDVA_RUN_ID alpha does not read beta for prativadi" 20 \
-  env DVANDVA_RUN_ID="alpha" bash -c 'cd "$1" && "$2" --role prativadi --interval 0 --max-wait 0' _ "$RUN_ISOLATION_BOX" "$PRATIVADI_SCRIPT"
+  env DVANDVA_RUN_ID="alpha" bash -c 'cd "$1" && "$2" --role prativadi --interval 0 --max-wait 0 --finite' _ "$RUN_ISOLATION_BOX" "$PRATIVADI_SCRIPT"
 run_case "DVANDVA_RUN_ID beta resolves independent prativadi baton" 0 \
   env DVANDVA_RUN_ID="beta" bash -c 'cd "$1" && "$2" --role prativadi --interval 0 --max-wait 0' _ "$RUN_ISOLATION_BOX" "$PRATIVADI_SCRIPT"
 
@@ -240,7 +248,7 @@ BATON_NEVER_DIR="$TMP_DIR/never"
 mkdir -p "$BATON_NEVER_DIR"
 BATON_NEVER="$BATON_NEVER_DIR/baton.json"
 run_case "--allow-missing returns 20 on file-missing timeout" 20 \
-  "$PRATIVADI_SCRIPT" --role prativadi --file "$BATON_NEVER" --allow-missing --interval 1 --max-wait 2
+  "$PRATIVADI_SCRIPT" --role prativadi --file "$BATON_NEVER" --allow-missing --interval 1 --max-wait 2 --finite
 
 # Supervised-escape path: no --allow-missing → existing exit 21 preserved.
 # This is what the prativadi skill triggers when DVANDVA_NO_WAIT=1 makes

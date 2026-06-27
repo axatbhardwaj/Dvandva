@@ -32,4 +32,6 @@ Each agent handoff must answer:
 - Who owns the next action?
 - What exact command or prompt should the next agent run?
 
-No silent handoffs. No indefinite polling.
+No silent handoffs. No model-turn polling. In walkaway mode, foreground shell
+polling is continuous and stops only when the baton reaches `done`,
+`human_question`, or `human_decision`, or when the user interrupts.

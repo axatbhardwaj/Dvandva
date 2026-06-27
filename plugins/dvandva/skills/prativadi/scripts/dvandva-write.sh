@@ -425,7 +425,7 @@ else
       done_cross("vadi") and done_cross("prativadi")
     ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
       legal=0
-      reason="cross_review->deep_review requires completed cross-review subagent_tracks for both roles"
+      reason="cross_review->deep_review requires completed cross-review subagent_tracks for both roles with phase=\"cross_review\""
     fi
   fi
 

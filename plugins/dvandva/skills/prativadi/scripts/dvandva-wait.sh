@@ -2,8 +2,10 @@
 # Cheap foreground wait for Dvandva baton ownership.
 #
 # Wakes early on baton-directory inotify events when inotifywait is
-# available; otherwise sleeps INTERVAL between checks. The 540s default
-# max-wait keeps one invocation inside Claude Code's 600s Bash-tool cap.
+# available; otherwise sleeps INTERVAL between checks. By default it keeps
+# waiting across heartbeat intervals until the role is assigned, the baton
+# reaches a terminal state, or the user interrupts. Use --finite only for
+# compatibility tests or harnesses that must cap one helper invocation.
 #
 # This helper is bundled as a real executable inside each runtime skill:
 #   plugins/dvandva/skills/vadi/scripts/dvandva-wait.sh
@@ -17,7 +19,7 @@
 #   10 baton status is done
 #   11 baton status is human_decision
 #   12 baton status is human_question
-#   20 timed out while another actor owns the baton (finite mode heartbeat)
+#   20 timed out while another actor owns the baton (--finite heartbeat)
 #   21 baton file missing
 #   22 baton JSON invalid
 #   23 persistent wait exceeded --persist-max
@@ -46,12 +48,12 @@ fi
 INTERVAL=60
 MAX_WAIT=540
 ALLOW_MISSING=0
-PERSIST=0
+PERSIST=1
 PERSIST_MAX=0
 
 usage() {
   cat >&2 <<'USAGE'
-Usage: dvandva-wait.sh --role <vadi|prativadi> [--file .dvandva/baton.json] [--interval seconds] [--max-wait seconds] [--allow-missing] [--persist] [--persist-max seconds]
+Usage: dvandva-wait.sh --role <vadi|prativadi> [--file .dvandva/baton.json] [--interval seconds] [--max-wait seconds] [--allow-missing] [--persist] [--persist-max seconds] [--finite]
 
 Defaults: --interval 60 --max-wait 540
 Default file resolution: --file wins; otherwise DVANDVA_BATON_FILE,
@@ -61,17 +63,18 @@ DVANDVA_RUN_ID must be one safe path segment: letters, numbers, dot,
 underscore, or dash; no slash or '..'.
 
 Wakes early on baton-directory changes when inotifywait is available;
-otherwise sleeps INTERVAL between checks. 540 keeps one invocation
-inside Claude Code's 600s Bash-tool maximum.
+otherwise sleeps INTERVAL between checks. The default mode is continuous:
+--max-wait is a heartbeat interval, not a stop condition, and the helper
+keeps polling until this role owns the baton, the baton reaches done /
+human_question / human_decision, or the user interrupts.
 
 With --allow-missing, a missing baton file does not exit 21 immediately;
 the helper instead sleeps INTERVAL and retries until the file appears
-or --max-wait elapses (returns 20 on timeout).
+or --finite --max-wait elapses (returns 20 on timeout).
 
-With --persist, --max-wait is a heartbeat interval: the helper prints a
-DVANDVA_WAIT heartbeat line and continues waiting in the same shell process.
-Use --persist-max to set a total wall-clock cap for persistent waits; 0 means
-no cap.
+--persist is accepted for older call sites and is now the default behavior.
+Use --persist-max to set a total wall-clock cap for continuous waits; 0 means
+no cap. Use --finite to restore the old single-heartbeat exit-20 behavior.
 USAGE
 }
 
@@ -111,6 +114,10 @@ while [[ $# -gt 0 ]]; do
       PERSIST_MAX="$2"
       shift 2
       ;;
+    --finite)
+      PERSIST=0
+      shift 1
+      ;;
     -h|--help)
       usage
       exit 0
@@ -137,13 +144,8 @@ if [[ "$INTERVAL" -eq 0 && "$MAX_WAIT" -gt 0 ]]; then
   exit 2
 fi
 
-if [[ "$PERSIST" -eq 1 && "$INTERVAL" -eq 0 ]]; then
-  echo "ERROR: --persist requires --interval > 0" >&2
-  exit 2
-fi
-
 if [[ "$PERSIST" -ne 1 && "$PERSIST_MAX" -gt 0 ]]; then
-  echo "ERROR: --persist-max requires --persist" >&2
+  echo "ERROR: --persist-max requires continuous wait mode; remove --finite" >&2
   exit 2
 fi
 
@@ -198,6 +200,10 @@ while true; do
     if [[ "$ALLOW_MISSING" -eq 1 ]]; then
       if [[ "$elapsed" -ge "$MAX_WAIT" ]]; then
         if [[ "$PERSIST" -eq 1 ]]; then
+          if [[ "$INTERVAL" -eq 0 ]]; then
+            echo "ERROR: continuous wait mode requires --interval > 0 when the baton is not ready; use --finite for an immediate heartbeat" >&2
+            exit 2
+          fi
           echo "DVANDVA_WAIT heartbeat role=$ROLE waiting_for=baton file=$BATON_FILE elapsed=${elapsed}s"
           elapsed=0
           wait_one_interval
@@ -254,6 +260,10 @@ while true; do
 
   if [[ "$elapsed" -ge "$MAX_WAIT" ]]; then
     if [[ "$PERSIST" -eq 1 ]]; then
+      if [[ "$INTERVAL" -eq 0 ]]; then
+        echo "ERROR: continuous wait mode requires --interval > 0 when the baton is not ready; use --finite for an immediate heartbeat" >&2
+        exit 2
+      fi
       updated_at="$(jq -r '.updated_at // ""' "$BATON_FILE" 2>/dev/null || true)"
       current_engine="$(jq -r '.current_engine // ""' "$BATON_FILE" 2>/dev/null || true)"
       echo "DVANDVA_WAIT heartbeat role=$ROLE waiting_on=$assignee phase=$phase status=$status checkpoint=$checkpoint active_roles=$active_roles elapsed=${elapsed}s last_seen_engine=$current_engine updated_at=$updated_at"

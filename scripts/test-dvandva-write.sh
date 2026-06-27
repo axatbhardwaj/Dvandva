@@ -727,6 +727,48 @@ make_baton_v2 "$BOX/baton.next.json" "deep_review" "prativadi" 5
 run_case_contains "v2 test_creation->deep_review requires cross_review first" 24 "no legal edge test_creation->deep_review" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+BOX="$(new_box v2-parallel-test-creation-missing-impl-evidence)"
+make_baton_v2 "$BOX/baton.json" "parallel_implementing" "team" 4 \
+  "$(v2_parallel_chunks_filter)"
+make_baton_v2 "$BOX/baton.next.json" "test_creation" "vadi" 5 \
+  "$(v2_parallel_chunks_filter)" \
+  '.active_roles = []'
+run_case_contains "v2 parallel_implementing->test_creation rejects missing implementation evidence" 24 "completed implementation-chunk subagent_tracks for both roles" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-parallel-test-creation-single-role-evidence)"
+make_baton_v2 "$BOX/baton.json" "parallel_implementing" "team" 4 \
+  "$(v2_parallel_chunks_filter)"
+make_baton_v2 "$BOX/baton.next.json" "test_creation" "vadi" 5 \
+  "$(v2_parallel_chunks_filter)" \
+  '.active_roles = []' \
+  "$(v2_implementation_tracks_filter)" \
+  '.subagent_tracks |= map(if .track == "implementation-chunk" then .owner_role = "vadi" else . end)'
+run_case_contains "v2 parallel_implementing->test_creation requires both implementation roles" 24 "completed implementation-chunk subagent_tracks for both roles" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-cross-review-deep-review-missing-evidence)"
+make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "deep_review" "prativadi" 5
+run_case_contains "v2 cross_review->deep_review rejects missing cross-review evidence" 24 "completed cross-review subagent_tracks for both roles" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-cross-review-deep-review-single-role-evidence)"
+make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "deep_review" "prativadi" 5 \
+  "$(v2_cross_review_tracks_filter)" \
+  '.subagent_tracks |= map(if .track == "cross-review" then .owner_role = "vadi" else . end)'
+run_case_contains "v2 cross_review->deep_review requires both cross-review roles" 24 "completed cross-review subagent_tracks for both roles" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-cross-review-deep-review-numeric-phase-evidence)"
+make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "deep_review" "prativadi" 5 \
+  "$(v2_cross_review_tracks_filter)" \
+  '.subagent_tracks |= map(if .track == "cross-review" then .phase = 1 else . end)'
+run_case_contains "v2 cross_review tracks must use status-name phase" 24 "completed cross-review subagent_tracks for both roles" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
 BOX="$(new_box v2-reject-legacy-phase-review-done)"
 make_baton_v2 "$BOX/baton.json" "phase_review" "prativadi" 4
 make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"'

@@ -72,7 +72,7 @@ Audit whether the baton can safely drive the next loop. You verify schema fields
 ## Guardrails
 
 - Do not alter source code.
-- Do not rewrite the baton unless explicitly assigned as the active role.
+- Do not edit baton files directly; installed baton updates must go through the role skill and write helper.
 - Do not accept `done` from one role while the other is active.
 - Do not ignore named run paths under `.dvandva/runs/*/baton.json`.
 

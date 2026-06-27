@@ -54,6 +54,8 @@ for role in vadi prativadi; do
   require_text "$skill" "--persist-max <600" "$role skill documents Claude wait cap"
   require_text "$skill" 'Codex-hosted sessions may use `--persist`' "$role skill documents Codex persistent wait"
   require_text "$skill" "Exit 23" "$role skill documents persistent cap exit"
+  require_text "$skill" "Continuous polling is the hard rule" "$role skill makes continuous polling mandatory"
+  require_text "$skill" "Phase convention: implementation-chunk" "$role skill documents subagent track phase convention"
 done
 
 vadi_skill="$ROOT_DIR/plugins/dvandva/skills/vadi/SKILL.md"
@@ -67,6 +69,7 @@ for command in "$ROOT_DIR/plugins/dvandva/commands/vadi.md" "$ROOT_DIR/plugins/d
   require_text "$command" "DVANDVA_RUN_ID" "$name goal mentions run id"
   require_text "$command" "turn_cap" "$name goal keeps active turn cap"
   require_text "$command" "do not count shell wait heartbeats as turns" "$name goal separates waits from active turns"
+  require_text "$command" "continuous polling is the hard rule" "$name goal makes continuous polling mandatory"
 done
 
 if [[ "$failures" -gt 0 ]]; then
