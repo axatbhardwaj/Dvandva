@@ -1,6 +1,7 @@
 ---
 name: dvandva-implementer
 description: Use for bounded Dvandva implementation chunks assigned through work_split during parallel_implementing or phase_fixing.
+model: sonnet
 phase: parallel_implementing
 tools: Read, Glob, Grep, Bash, Edit, MultiEdit, Write
 ---

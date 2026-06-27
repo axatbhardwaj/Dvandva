@@ -1,6 +1,7 @@
 ---
 name: dvandva-adversarial-analyst
 description: Use for Dvandva deep_review or cross_review when a run needs structured attack hypotheses against requirements, baton claims, state transitions, edge cases, or verification gaps.
+model: opus
 phase: deep_review
 tools: Read, Glob, Grep, Bash
 ---

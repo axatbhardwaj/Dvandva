@@ -131,6 +131,54 @@
       "artifact_refs": []
     },
     {
+      "id": "deep_review-security",
+      "phase": "1",
+      "owner": "prativadi",
+      "owner_role": "prativadi",
+      "suggested_agent": "dvandva-security-auditor",
+      "scope": "Security-focused deep review angle: authn/authz boundaries, injection vectors, secrets handling, supply-chain, and unsafe shell/path operations.",
+      "paths": [],
+      "can_parallelize": true,
+      "parallel_rationale": "Security review angle runs independently of other deep_review angles.",
+      "depends_on": [
+        "cross_review"
+      ],
+      "status": "planned",
+      "artifact_refs": []
+    },
+    {
+      "id": "deep_review-integration",
+      "phase": "1",
+      "owner": "prativadi",
+      "owner_role": "prativadi",
+      "suggested_agent": "dvandva-integration-checker",
+      "scope": "Cross-chunk wiring angle: verify imports, exports, and end-to-end data flow across parallel-built vadi and prativadi chunks.",
+      "paths": [],
+      "can_parallelize": true,
+      "parallel_rationale": "Integration check angle runs independently of other deep_review angles.",
+      "depends_on": [
+        "cross_review"
+      ],
+      "status": "planned",
+      "artifact_refs": []
+    },
+    {
+      "id": "phase_fixing-debug",
+      "phase": "1",
+      "owner": "vadi",
+      "owner_role": "vadi",
+      "suggested_agent": "dvandva-debugger",
+      "scope": "Root-cause diagnosis before fix: reproduce the failure, form ranked hypotheses, isolate, confirm root cause.",
+      "paths": [],
+      "can_parallelize": false,
+      "parallel_rationale": "Debugging is sequential: confirm root cause before writing a fix.",
+      "depends_on": [
+        "deep_review"
+      ],
+      "status": "planned",
+      "artifact_refs": []
+    },
+    {
       "id": "deslop",
       "phase": "final",
       "owner": "vadi",

@@ -1,6 +1,7 @@
 ---
 name: dvandva-deslopper
 description: Use for Dvandva deslop cleanup after deep_review finds nits, low issues, stale wording, or generated-looking clutter.
+model: sonnet
 phase: deslop
 tools: Read, Glob, Grep, Bash, Edit, MultiEdit, Write
 ---

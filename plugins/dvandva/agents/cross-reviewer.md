@@ -1,6 +1,7 @@
 ---
 name: dvandva-cross-reviewer
 description: Use for Dvandva cross-review of another role's implementation chunk before holistic deep_review.
+model: sonnet
 phase: cross_review
 tools: Read, Glob, Grep, Bash
 ---

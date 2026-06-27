@@ -205,7 +205,7 @@ require_text "$schema" '"deep_review"' "v2 schema includes deep review status"
 require_text "$schema" '"deslop"' "v2 schema includes de-slop status"
 
 agent_dir="$ROOT_DIR/plugins/dvandva/agents"
-for agent in researcher architect implementer test-creator cross-reviewer adversarial-analyst deep-reviewer deslopper sandbox-verifier baton-auditor; do
+for agent in researcher architect implementer test-creator cross-reviewer adversarial-analyst deep-reviewer deslopper sandbox-verifier baton-auditor security-auditor integration-checker debugger; do
   file="$agent_dir/$agent.md"
   require_text "$file" "name: dvandva-$agent" "agent $agent has Dvandva name"
   require_text "$file" "description: Use" "agent $agent has trigger-focused description"
@@ -229,7 +229,7 @@ for agent in researcher architect implementer test-creator deslopper; do
   require_text "$agent_dir/$agent.md" "## Downstream Consumer" "agent $agent names downstream consumer"
 done
 
-for agent in cross-reviewer adversarial-analyst deep-reviewer sandbox-verifier baton-auditor; do
+for agent in cross-reviewer adversarial-analyst deep-reviewer sandbox-verifier baton-auditor security-auditor integration-checker; do
   require_text "$agent_dir/$agent.md" "## Adversarial Stance" "agent $agent declares adversarial stance"
   require_text "$agent_dir/$agent.md" "If you cannot verify a claim" "agent $agent uses correct proof standard"
   reject_text "$agent_dir/$agent.md" "If you cannot disprove a claim" "agent $agent avoids inverted proof standard"
@@ -255,6 +255,16 @@ require_text "$agent_dir/architect.md" "cross-review" "architect plans cross-rev
 require_text "$agent_dir/adversarial-analyst.md" "Attack Hypothesis" "adversarial analyst emits attack hypotheses"
 require_text "$agent_dir/deep-reviewer.md" "at least three angle-specific reviewers" "deep reviewer requires multi-angle review"
 require_text "$agent_dir/baton-auditor.md" "active_roles" "baton auditor checks active_roles"
+
+require_text "$agent_dir/security-auditor.md" "tools: Read, Glob, Grep, Bash" "security auditor can verify without editing"
+require_text "$agent_dir/security-auditor.md" "phase: deep_review" "security auditor maps to deep_review"
+require_text "$agent_dir/security-auditor.md" "threat_category" "security auditor classifies by threat category"
+require_text "$agent_dir/integration-checker.md" "tools: Read, Glob, Grep, Bash" "integration checker can verify without editing"
+require_text "$agent_dir/integration-checker.md" "phase: deep_review" "integration checker maps to deep_review"
+require_text "$agent_dir/integration-checker.md" "chunk_boundaries_reviewed" "integration checker reviews chunk boundaries"
+require_text "$agent_dir/debugger.md" "tools: Read, Glob, Grep, Bash" "debugger can inspect without editing"
+require_text "$agent_dir/debugger.md" "phase: phase_fixing" "debugger maps to phase_fixing"
+require_text "$agent_dir/debugger.md" "root_cause_confirmed" "debugger confirms root cause"
 
 require_text "$ROOT_DIR/product.md" "GSD-style fresh-context subagents" "product cites GSD-style subagent pattern"
 require_text "$ROOT_DIR/product.md" "OMO-style team roles" "product cites OMO-style team role pattern"

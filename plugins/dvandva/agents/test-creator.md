@@ -1,6 +1,7 @@
 ---
 name: dvandva-test-creator
 description: Use for Dvandva test_creation work, coverage gap closure, and executable proof for newly changed behavior.
+model: sonnet
 phase: test_creation
 tools: Read, Glob, Grep, Bash, Edit, MultiEdit, Write
 ---
