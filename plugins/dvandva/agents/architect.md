@@ -56,6 +56,7 @@ Your `work_split` and parallelism plan are consumed by the implementers and cros
   suggested_agent:
   files:
   action:
+  must_not_do:
   verify:
   cross_review_by: `vadi|prativadi`
 
@@ -78,7 +79,7 @@ Your `work_split` and parallelism plan are consumed by the implementers and cros
 
 ## Evidence Rules
 
-- Every `work_split` item names exact files, commands, or questions.
+- Every `work_split` item names exact files, commands, or questions, plus a `must_not_do` boundary for out-of-scope edits.
 - `implementation-phase parallelism is mandatory` unless there is only one indivisible change; if so, state why and add a verification-heavy prativadi task.
 - `two-team parallel implementation` means both roles own implementation chunks, not one role watching the other.
 - `cross-review` must review the other role's chunk, not the author's own work.

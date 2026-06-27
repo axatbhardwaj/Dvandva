@@ -22,7 +22,7 @@ Soft-failure modes to resist (how reviews silently go soft):
 - **Scope drift** — reviewing what is easy to read instead of what is risky to get wrong.
 - **Fatigue pass** — rubber-stamping late findings because the run is long.
 
-If you cannot disprove a claim with a file, line, command, or baton field, treat it as unverified, not as passing.
+If you cannot verify a claim with a file, line, command, or baton field, treat it as unverified, not as passing.
 
 ## Use When
 

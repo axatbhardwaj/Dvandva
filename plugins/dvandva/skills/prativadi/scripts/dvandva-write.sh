@@ -189,6 +189,7 @@ if ! jq -e '(.checkpoint | type) == "number"' "$CANDIDATE_FILE" >/dev/null 2>&1;
   exit 23
 fi
 new_checkpoint="$(jq -r '.checkpoint' "$CANDIDATE_FILE")"
+new_phase="$(jq -r '.phase' "$CANDIDATE_FILE")"
 
 case "$schema:$new_status" in
   dvandva.baton.v1:spec_drafting|dvandva.baton.v1:spec_review|dvandva.baton.v1:spec_revision|dvandva.baton.v1:human_question|dvandva.baton.v1:implementing|dvandva.baton.v1:phase_review|dvandva.baton.v1:phase_fixing|dvandva.baton.v1:review_of_review|dvandva.baton.v1:counter_review|dvandva.baton.v1:human_decision|dvandva.baton.v1:done) ;;
@@ -282,11 +283,11 @@ else
 
   # Use a non-whitespace delimiter: bash collapses adjacent IFS whitespace,
   # which would shift run_id when resume fields are empty.
-  if ! cur="$(jq -r '[.schema // "", .status // "", (.checkpoint // -1 | tostring), (.master_plan_locked // false | tostring), .resume_assignee // "", .resume_status // "", .run_id // ""] | join("\u001f")' "$BATON_FILE" 2>/dev/null)"; then
+  if ! cur="$(jq -r '[.schema // "", .status // "", (.checkpoint // -1 | tostring), (.master_plan_locked // false | tostring), .resume_assignee // "", .resume_status // "", .run_id // "", (.phase | tostring)] | join("\u001f")' "$BATON_FILE" 2>/dev/null)"; then
     echo "DVANDVA_WRITE current_baton_unparseable file=$BATON_FILE refusing_to_overwrite=true" >&2
     exit 25
   fi
-  IFS=$'\x1f' read -r cur_schema cur_status cur_checkpoint cur_locked cur_resume_assignee cur_resume_status cur_run_id <<< "$cur"
+  IFS=$'\x1f' read -r cur_schema cur_status cur_checkpoint cur_locked cur_resume_assignee cur_resume_status cur_run_id cur_phase <<< "$cur"
 
   case "$cur_schema" in
     dvandva.baton.v1|dvandva.baton.v2) ;;
@@ -322,7 +323,9 @@ else
     if [[ "$schema" == "dvandva.baton.v2" ]]; then
       case "$new_status" in
         parallel_implementing|cross_review|cross_fixing)
-          if jq -e '
+          if [[ "$new_phase" != "$cur_phase" ]]; then
+            reason="same-status team sync cannot change phase current=$cur_phase candidate=$new_phase"
+          elif jq -e '
             (.assignee == "team") and
             ((.active_roles | sort) == ["prativadi", "vadi"]) and
             ((.summary | type) == "string" and (.summary | length) > 0) and
@@ -503,6 +506,5 @@ if ! "$SCRIPT_DIR/dvandva-snapshot.sh" "$BATON_FILE"; then
   exit 30
 fi
 
-new_phase="$(jq -r '.phase' "$CANDIDATE_FILE")"
 echo "DVANDVA_WRITE ok status=$new_status assignee=$new_assignee phase=$new_phase checkpoint=$new_checkpoint"
 exit 0

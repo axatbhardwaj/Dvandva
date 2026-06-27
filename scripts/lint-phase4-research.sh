@@ -231,10 +231,13 @@ done
 
 for agent in cross-reviewer deep-reviewer sandbox-verifier baton-auditor; do
   require_text "$agent_dir/$agent.md" "## Adversarial Stance" "agent $agent declares adversarial stance"
+  require_text "$agent_dir/$agent.md" "If you cannot verify a claim" "agent $agent uses correct proof standard"
+  reject_text "$agent_dir/$agent.md" "If you cannot disprove a claim" "agent $agent avoids inverted proof standard"
 done
 
 require_text "$agent_dir/researcher.md" "tools: Read, Glob, Grep, WebFetch" "researcher stays read-only plus WebFetch"
 require_text "$agent_dir/architect.md" "tools: Read, Glob, Grep" "architect stays read-only"
+require_text "$agent_dir/architect.md" "must_not_do:" "architect work split carries must-not-do boundary"
 require_text "$agent_dir/implementer.md" "phase: parallel_implementing" "implementer maps to parallel implementation"
 require_text "$agent_dir/cross-reviewer.md" "phase: cross_review" "cross reviewer maps to cross_review"
 require_text "$agent_dir/deep-reviewer.md" "tools: Read, Glob, Grep, Bash" "deep reviewer can verify without editing"

@@ -796,6 +796,16 @@ make_baton_v2 "$BOX/baton.next.json" "cross_fixing" "team" 5 \
 run_case "v2 team cross_fixing accepts same-status sync checkpoint" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+BOX="$(new_box v2-team-cross-review-sync-phase-mutation)"
+make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "cross_review" "team" 5 \
+  '.phase = 2' \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Team sync: attempted phase mutation."' \
+  '.next_action = "Team: this must be rejected because sync checkpoints cannot advance phases."'
+run_case_contains "v2 team same-status sync cannot change phase" 24 "same-status team sync cannot change phase" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
 BOX="$(new_box v2-non-team-same-status-still-rejected)"
 make_baton_v2 "$BOX/baton.json" "test_creation" "vadi" 4
 make_baton_v2 "$BOX/baton.next.json" "test_creation" "vadi" 5
