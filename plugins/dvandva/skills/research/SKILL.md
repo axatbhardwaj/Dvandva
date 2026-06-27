@@ -56,8 +56,9 @@ Use the canonical Dvandva subagent roster under `plugins/dvandva/agents/` when t
 |---|---|
 | `research_drafting` | `dvandva-researcher`, `dvandva-architect`, `dvandva-baton-auditor` |
 | `spec_drafting` | `dvandva-architect`, `dvandva-baton-auditor` |
-| `implementing` | `dvandva-implementer`, optionally `dvandva-sandbox-verifier` |
+| `parallel_implementing` / `implementing` | `dvandva-implementer`, optionally `dvandva-sandbox-verifier` |
 | `test_creation` | `dvandva-test-creator`, `dvandva-sandbox-verifier` |
+| `cross_review` / `cross_fixing` | `dvandva-cross-reviewer`, `dvandva-baton-auditor`, `dvandva-sandbox-verifier` |
 | `deep_review` | `dvandva-deep-reviewer`, `dvandva-baton-auditor`, optionally `dvandva-sandbox-verifier` |
 | `deslop` | `dvandva-deslopper`, `dvandva-baton-auditor` |
 

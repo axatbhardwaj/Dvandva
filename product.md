@@ -27,6 +27,8 @@ The v2 flow has seven lifecycle segments:
 6. **De-slop phase** — vadi/prativadi loop on nits, low/minor bugs, stale wording, vague instructions, duplicated logic, and generated-looking clutter until no findings remain except items explicitly accepted in `deferred`.
 7. **Phase advancement or completion** — on agreement, make a regular local checkpoint commit for the verified logical slice when `allow_commit` permits it, then advance to phase N+1. On completion of the final phase, write `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`, set `run_explainer_ref`, require both final approvals, optionally push, then transition to `done`.
 
+implementation-phase parallelism is mandatory in v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; the phase `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation. Every implementation chunk names reciprocal `cross_review_by`, and `test_creation` routes to `cross_review` before `deep_review`. If cross-review finds peer-chunk defects, the phase routes through `cross_fixing` and then back to `test_creation` before review continues.
+
 Legacy enforcement starts with the agent checklist embedded in each SKILL.md and `/goal` evaluator transcript checks. The bundled write helper now enforces the supported v1/v2 schema strings, required fields, checkpoint arithmetic, safe run IDs, v2 status-owner pairs, and transition subset. A future standalone CLI validator backed by a full JSON Schema file can replace the remaining checklist-only validation.
 
 The product is the `dvandva` plugin, its bundled protocol/orchestration skills, plugin-local baton references, bundled wait helpers, an install/usage doc, and a pilot case study. It coordinates work through baton state and skill checklists; it does not add an agent launcher, daemon, or GitHub integration.
@@ -124,6 +126,7 @@ plugins/
       architect.md
       implementer.md
       test-creator.md
+      cross-reviewer.md
       deep-reviewer.md
       deslopper.md
       sandbox-verifier.md

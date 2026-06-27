@@ -18,6 +18,7 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
   goal loops do not drift.
 - `research_ref`: path to the generated user-facing HTML research artifact.
 - `run_explainer_ref`: path to the final run explainer HTML under `./superpowers/run-reports/`, required before terminal `done`.
+- `active_roles`: v2 concurrent role list. Team-owned statuses use `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; scalar statuses use an empty array.
 - `work_split`: planned ownership map for vadi, prativadi, human, or subagents; records phase, owner, scope, paths, status, artifact refs, parallelism rationale, and dependencies.
 - `subagent_tracks`: actual conditional parallelism record. Parallelize only genuinely disjoint tracks; record what was not parallelized and why when direct execution is safer or when subagent tooling is unavailable.
 - `verification_matrix`: planned evidence map from claims and risks to checks, owners, expected results, command or inspection, result, evidence refs, and the 100% test coverage target for new behavior.
@@ -34,13 +35,15 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
   enum validation. Fix the candidate and rerun the helper; do not edit the
   installed baton directly.
 
-Legacy `.dvandva/baton.json` may continue using `dvandva.baton.v1`. Phase 6
-adds live v2 write-helper enforcement: v2 writers require safe `run_id`,
-`original_ask`, `run_explainer_ref`, `work_split`, `subagent_tracks`, and `verification_matrix`; they also require a
+Legacy `.dvandva/baton.json` may continue using `dvandva.baton.v1`. The live
+v2 write-helper enforcement requires safe `run_id`, `original_ask`,
+`run_explainer_ref`, `active_roles`, `work_split`, `subagent_tracks`, and `verification_matrix`; it also requires a
 non-empty `research_ref` before advancing beyond the initial research draft,
 except that `human_question` and `human_decision` remain legal early-escalation
 targets before `research_ref` exists. Existing batons cannot change schema or v2
 `run_id` mid-run. Terminal `done` requires `run_explainer_ref` to point to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`.
+
+implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. After `test_creation`, the baton enters `cross_review`; `cross_review` may route to `cross_fixing`, and only completed cross-review evidence for both roles can advance to `deep_review`.
 
 ## Schema Fields
 
@@ -52,8 +55,9 @@ targets before `research_ref` exists. Existing batons cannot change schema or v2
   "run_mode": "walkaway | supervised",
   "phase": "spec | 1 | 2 | ... | done",
   "total_phases": "integer, set during spec phase, immutable thereafter unless human edits",
-  "status": "spec_drafting | spec_review | spec_revision | human_question | implementing | test_creation | deep_review | deslop | phase_review | phase_fixing | review_of_review | counter_review | human_decision | done",
-  "assignee": "non-empty string; v1 conventions are vadi | prativadi | human; v2 status-owner pairs are enforced",
+  "status": "spec_drafting | spec_review | spec_revision | human_question | implementing | parallel_implementing | test_creation | cross_review | cross_fixing | deep_review | deslop | phase_review | phase_fixing | review_of_review | counter_review | human_decision | done",
+  "assignee": "non-empty string; v1 conventions are vadi | prativadi | human; v2 status-owner pairs include team for concurrent states",
+  "active_roles": "v2 concurrent roles array, usually [] or [\"vadi\", \"prativadi\"]",
   "current_engine": "optional; claude | codex | null. Records which CLI wrote the most recent baton; traceability only.",
   "review_target": "spec | implementation | prativadi_fixups | vadi_counter | null",
   "research_ref": "v2 path to gitignored generated HTML research file under ./superpowers/research/, set during research phase",
@@ -99,7 +103,8 @@ targets before `research_ref` exists. Existing batons cannot change schema or v2
 | no legacy baton, legacy explicitly selected | `phase: "spec", status: "spec_drafting"` | Vadi first run on the legacy v1 fallback only |
 | `spec_drafting` | `spec_review` | Vadi hands plan to prativadi for Q&A |
 | `spec_review` | `spec_revision` | Prativadi surfaces Q&A back to vadi |
-| `spec_review` | `phase: 1, status: implementing` | Prativadi accepts plan and freezes `total_phases` on the baton |
+| `spec_review` | `phase: 1, status: implementing` | Legacy v1 path: prativadi accepts plan and freezes `total_phases` on the baton |
+| `spec_review` | `phase: 1, status: parallel_implementing` | v2 path: prativadi accepts plan, freezes `total_phases`, and activates both roles |
 | `spec_revision` | `spec_review` | Vadi answers Q&A, hands back |
 | any spec state while `master_plan_locked: false` | `human_question` | Either agent needs one human answer before master plan lock |
 | `human_question` | `resume_status` with `assignee: resume_assignee` | Human answers and the receiving skill clears question fields |
@@ -122,13 +127,16 @@ targets before `research_ref` exists. Existing batons cannot change schema or v2
 | From | To | Trigger |
 |---|---|---|
 | `phase: N, implementing` | `phase: N, status: phase_review, review_target: implementation` | Legacy v1 direct review path only |
-| `phase: N, implementing` | `test_creation` | v2: Vadi completes implementation and starts separate test creation |
-| `test_creation` | `deep_review` | v2: Vadi records tests, 100% test coverage evidence for new behavior, and verification results |
+| `phase: N, parallel_implementing` | `test_creation` | v2: both roles completed implementation chunks and recorded implementation-chunk subagent evidence |
+| `test_creation` | `cross_review` | v2: Vadi records tests, 100% test coverage evidence for new behavior, and verification results |
+| `cross_review` | `cross_fixing` | v2: one or both reciprocal cross-review tracks found peer-owned chunk defects |
+| `cross_fixing` | `test_creation` | v2: cross-review findings were fixed and tests must be refreshed |
+| `cross_review` | `deep_review` | v2: both roles recorded completed cross-review tracks for peer-owned chunks |
 | `deep_review` | `phase_fixing` | v2: Prativadi finds bugs, missing tests, verification gaps, or substantive review issues |
 | `deep_review` | `deslop` | v2: Prativadi accepts behavior and tests after at least three angle-specific reviewers/tracks in `subagent_tracks` (`correctness-regression`, `test-evidence`, `protocol-handoff`), then routes cleanup |
 | `phase_fixing` | `test_creation` | v2: Vadi fixed behavior, tests, or verification gaps and must refresh test evidence before review |
 | `deslop` | `phase_fixing` | v2: Cleanup finds behavior, test, or review blockers |
-| `deslop` | `phase: N+1, status: implementing, disagreement_round: 0` | v2: no nits, low/minor bugs, stale wording, or unclear instructions remain except explicitly accepted `deferred` items |
+| `deslop` | `phase: N+1, status: parallel_implementing, disagreement_round: 0` | v2: no nits, low/minor bugs, stale wording, or unclear instructions remain except explicitly accepted `deferred` items |
 | `deslop` | final `done` | v2: final phase passed implementation, test_creation, deep_review, deslop, dual approval, and `run_explainer_ref` points to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html` |
 | `phase: N, implementing` | `human_decision` | Vadi blocked |
 | `phase_review (impl)` | `phase_fixing` | Prativadi hands back substantive findings |
@@ -176,6 +184,8 @@ writes:
 - Vadi-owned: `research_drafting`, `research_revision`, `spec_drafting`,
   `spec_revision`, `implementing`, `test_creation`, `deslop`, `phase_fixing`,
   `review_of_review`.
+- Team-owned: `parallel_implementing`, `cross_review`, `cross_fixing`; these
+  require `active_roles: ["vadi", "prativadi"]`.
 - Prativadi-owned: `research_review`, `spec_review`, `deep_review`,
   `phase_review`, `counter_review`.
 - Human-owned: `human_question`, `human_decision`.

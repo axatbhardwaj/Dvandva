@@ -38,7 +38,7 @@ make_baton_v2() {
     spec_drafting|spec_review|spec_revision)
       phase_json='"spec"'
       ;;
-    implementing|test_creation|deep_review|deslop|phase_review|phase_fixing|review_of_review|counter_review|done)
+    implementing|parallel_implementing|test_creation|cross_review|cross_fixing|deep_review|deslop|phase_review|phase_fixing|review_of_review|counter_review|done)
       phase_json='1'
       ;;
   esac
@@ -69,6 +69,9 @@ v2_status_owner() {
     research_drafting|research_revision|spec_drafting|spec_revision|implementing|test_creation|deslop|phase_fixing|review_of_review)
       echo "vadi"
       ;;
+    parallel_implementing|cross_review|cross_fixing)
+      echo "team"
+      ;;
     research_review|spec_review|deep_review|phase_review|counter_review)
       echo "prativadi"
       ;;
@@ -89,7 +92,7 @@ v2_review_angles_filter() {
     "phase": "deep_review",
     "status": "completed",
     "track": "correctness-regression",
-    "owner": "dvandva-review-correctness",
+	    "owner": "dvandva-deep-reviewer",
     "parallelized": true,
     "rationale": "Independent correctness and regression review can run without editing shared files.",
     "inputs": ["candidate diff"],
@@ -102,7 +105,7 @@ v2_review_angles_filter() {
     "phase": "deep_review",
     "status": "completed",
     "track": "test-evidence",
-    "owner": "dvandva-review-tests",
+	    "owner": "dvandva-deep-reviewer",
     "parallelized": true,
     "rationale": "Independent test evidence review can run beside correctness and protocol review.",
     "inputs": ["verification output"],
@@ -115,13 +118,213 @@ v2_review_angles_filter() {
     "phase": "deep_review",
     "status": "completed",
     "track": "protocol-handoff",
-    "owner": "dvandva-review-protocol",
+	    "owner": "dvandva-baton-auditor",
     "parallelized": true,
     "rationale": "Independent protocol handoff review checks baton and docs without editing code.",
     "inputs": ["baton candidate"],
     "outputs": ["Handoff state accepted."],
     "evidence_refs": ["subagent:review-protocol"],
     "result": "passed"
+  }
+]
+JQ
+}
+
+v2_parallel_chunks_filter() {
+  cat <<'JQ'
+.active_roles = ["vadi", "prativadi"]
+| .work_split += [
+  {
+    "id": "implementation-chunk-a",
+    "phase": "1",
+    "chunk_type": "implementation",
+    "owner": "vadi",
+    "owner_role": "vadi",
+    "suggested_agent": "dvandva-implementer",
+    "scope": "Vadi-owned implementation chunk A.",
+    "paths": ["src/a.ts"],
+    "cross_review_by": "prativadi",
+    "can_parallelize": true,
+    "parallel_rationale": "Independent file.",
+    "depends_on": [],
+    "status": "planned",
+    "artifact_refs": []
+  },
+  {
+    "id": "implementation-chunk-b",
+    "phase": "1",
+    "chunk_type": "implementation",
+    "owner": "vadi",
+    "owner_role": "vadi",
+    "suggested_agent": "dvandva-implementer",
+    "scope": "Vadi-owned implementation chunk B.",
+    "paths": ["src/b.ts"],
+    "cross_review_by": "prativadi",
+    "can_parallelize": true,
+    "parallel_rationale": "Independent file.",
+    "depends_on": [],
+    "status": "planned",
+    "artifact_refs": []
+  },
+  {
+    "id": "implementation-chunk-c",
+    "phase": "1",
+    "chunk_type": "implementation",
+    "owner": "prativadi",
+    "owner_role": "prativadi",
+    "suggested_agent": "dvandva-implementer",
+    "scope": "Prativadi-owned implementation chunk C.",
+    "paths": ["src/c.ts"],
+    "cross_review_by": "vadi",
+    "can_parallelize": true,
+    "parallel_rationale": "Independent file.",
+    "depends_on": [],
+    "status": "planned",
+    "artifact_refs": []
+  },
+  {
+    "id": "implementation-chunk-d",
+    "phase": "1",
+    "chunk_type": "implementation",
+    "owner": "prativadi",
+    "owner_role": "prativadi",
+    "suggested_agent": "dvandva-implementer",
+    "scope": "Prativadi-owned implementation chunk D.",
+    "paths": ["src/d.ts"],
+    "cross_review_by": "vadi",
+    "can_parallelize": true,
+    "parallel_rationale": "Independent file.",
+    "depends_on": [],
+    "status": "planned",
+    "artifact_refs": []
+  },
+  {
+    "id": "implementation-chunk-e",
+    "phase": "1",
+    "chunk_type": "implementation",
+    "owner": "vadi",
+    "owner_role": "vadi",
+    "suggested_agent": "dvandva-implementer",
+    "scope": "Vadi-owned integration chunk E.",
+    "paths": ["src/e.ts"],
+    "cross_review_by": "prativadi",
+    "can_parallelize": true,
+    "parallel_rationale": "Independent file.",
+    "depends_on": [],
+    "status": "planned",
+    "artifact_refs": []
+  }
+]
+JQ
+}
+
+v2_implementation_tracks_filter() {
+  cat <<'JQ'
+.subagent_tracks += [
+  {
+    "id": "impl-a",
+    "phase": 1,
+    "status": "completed",
+    "track": "implementation-chunk",
+    "owner": "dvandva-implementer",
+    "owner_role": "vadi",
+    "parallelized": true,
+    "rationale": "Vadi implementation chunk completed in parallel.",
+    "inputs": ["implementation-chunk-a"],
+    "outputs": ["Chunk A implemented."],
+    "evidence_refs": ["subagent:impl-a"],
+    "result": "passed"
+  },
+  {
+    "id": "impl-b",
+    "phase": 1,
+    "status": "completed",
+    "track": "implementation-chunk",
+    "owner": "dvandva-implementer",
+    "owner_role": "vadi",
+    "parallelized": true,
+    "rationale": "Vadi implementation chunk completed in parallel.",
+    "inputs": ["implementation-chunk-b"],
+    "outputs": ["Chunk B implemented."],
+    "evidence_refs": ["subagent:impl-b"],
+    "result": "passed"
+  },
+  {
+    "id": "impl-c",
+    "phase": 1,
+    "status": "completed",
+    "track": "implementation-chunk",
+    "owner": "dvandva-implementer",
+    "owner_role": "prativadi",
+    "parallelized": true,
+    "rationale": "Prativadi implementation chunk completed in parallel.",
+    "inputs": ["implementation-chunk-c"],
+    "outputs": ["Chunk C implemented."],
+    "evidence_refs": ["subagent:impl-c"],
+    "result": "passed"
+  },
+  {
+    "id": "impl-d",
+    "phase": 1,
+    "status": "completed",
+    "track": "implementation-chunk",
+    "owner": "dvandva-implementer",
+    "owner_role": "prativadi",
+    "parallelized": true,
+    "rationale": "Prativadi implementation chunk completed in parallel.",
+    "inputs": ["implementation-chunk-d"],
+    "outputs": ["Chunk D implemented."],
+    "evidence_refs": ["subagent:impl-d"],
+    "result": "passed"
+  },
+  {
+    "id": "impl-e",
+    "phase": 1,
+    "status": "completed",
+    "track": "implementation-chunk",
+    "owner": "dvandva-implementer",
+    "owner_role": "vadi",
+    "parallelized": true,
+    "rationale": "Vadi integration chunk completed in parallel.",
+    "inputs": ["implementation-chunk-e"],
+    "outputs": ["Chunk E implemented."],
+    "evidence_refs": ["subagent:impl-e"],
+    "result": "passed"
+  }
+]
+JQ
+}
+
+v2_cross_review_tracks_filter() {
+  cat <<'JQ'
+.subagent_tracks += [
+  {
+    "id": "cross-vadi",
+    "phase": "cross_review",
+    "status": "completed",
+    "track": "cross-review",
+    "owner": "dvandva-cross-reviewer",
+    "owner_role": "vadi",
+    "parallelized": true,
+    "rationale": "Vadi cross-reviewed prativadi-owned chunks.",
+    "inputs": ["implementation-chunk-c", "implementation-chunk-d"],
+    "outputs": ["Peer chunks accepted."],
+    "evidence_refs": ["subagent:cross-vadi"],
+    "result": "approved"
+  },
+  {
+    "id": "cross-prativadi",
+    "phase": "cross_review",
+    "status": "completed",
+    "track": "cross-review",
+    "owner": "dvandva-cross-reviewer",
+    "owner_role": "prativadi",
+    "parallelized": true,
+    "rationale": "Prativadi cross-reviewed vadi-owned chunks.",
+    "inputs": ["implementation-chunk-a", "implementation-chunk-b", "implementation-chunk-e"],
+    "outputs": ["Peer chunks accepted."],
+    "evidence_refs": ["subagent:cross-prativadi"],
+    "result": "approved"
   }
 ]
 JQ
@@ -321,6 +524,16 @@ make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 'del(.run_expl
 run_case_contains "v2 missing run_explainer_ref exits 23" 23 "DVANDVA_WRITE missing_key key=run_explainer_ref" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+BOX="$(new_box v2-missing-active-roles)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 'del(.active_roles)'
+run_case_contains "v2 missing active_roles exits 23" 23 "DVANDVA_WRITE missing_key key=active_roles" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-bad-active-roles)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 '.active_roles = ["vadi", "vadi"]'
+run_case_contains "v2 duplicate active_roles exits 23" 23 "DVANDVA_WRITE bad_active_roles" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
 BOX="$(new_box v2-empty-subagent-tracks)"
 make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 '.subagent_tracks = []'
 run_case_contains "v2 empty subagent_tracks exits 23" 23 "DVANDVA_WRITE bad_subagent_tracks" \
@@ -331,6 +544,11 @@ make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 'del(.subagent
 run_case_contains "v2 malformed subagent_tracks exits 23" 23 "DVANDVA_WRITE bad_subagent_tracks" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+BOX="$(new_box v2-null-subagent-track-phase)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 '.subagent_tracks[0].phase = null'
+run_case_contains "v2 null subagent track phase exits 23" 23 "DVANDVA_WRITE bad_subagent_tracks" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
 BOX="$(new_box v2-fake-parallel-subagent-track)"
 make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
   '.subagent_tracks[0].parallelized = true' \
@@ -338,6 +556,15 @@ make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
   '.subagent_tracks[0].outputs = []' \
   '.subagent_tracks[0].evidence_refs = []'
 run_case_contains "v2 fake parallel subagent track exits 23" 23 "DVANDVA_WRITE bad_subagent_tracks" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-standalone-parallel-subagent-owner)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  '.subagent_tracks[0].parallelized = true' \
+  '.subagent_tracks[0].owner = "adversarial-analyst"' \
+  '.subagent_tracks[0].outputs = ["Independent review completed."]' \
+  '.subagent_tracks[0].evidence_refs = ["subagent:adversarial-analyst"]'
+run_case "v2 standalone parallel subagent owner is accepted" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-phase-status-mismatch)"
@@ -380,7 +607,7 @@ done
 
 # --- transitions: documented v2 edges are legal ---
 
-V2_EDGES="research_drafting:research_review research_review:research_revision research_revision:research_review research_review:spec_drafting implementing:test_creation test_creation:deep_review deep_review:phase_fixing deep_review:deslop phase_fixing:test_creation deslop:phase_fixing deslop:implementing deslop:done"
+V2_EDGES="research_drafting:research_review research_review:research_revision research_revision:research_review research_review:spec_drafting spec_drafting:spec_review spec_review:spec_revision spec_review:parallel_implementing spec_revision:spec_review parallel_implementing:test_creation test_creation:cross_review cross_review:cross_fixing cross_fixing:test_creation cross_review:deep_review deep_review:phase_fixing deep_review:deslop phase_fixing:test_creation deslop:phase_fixing deslop:parallel_implementing deslop:done"
 i=0
 for edge in $V2_EDGES; do
   i=$((i + 1))
@@ -390,6 +617,20 @@ for edge in $V2_EDGES; do
   extras=()
   if [[ "$edge" == "deep_review:deslop" ]]; then
     extras+=("$(v2_review_angles_filter)")
+  fi
+  if [[ "$new" == "parallel_implementing" ]]; then
+    extras+=("$(v2_parallel_chunks_filter)")
+  fi
+  if [[ "$new" == "cross_review" || "$new" == "cross_fixing" ]]; then
+    extras+=('.active_roles = ["vadi", "prativadi"]')
+  fi
+  if [[ "$edge" == "parallel_implementing:test_creation" ]]; then
+    extras+=("$(v2_parallel_chunks_filter)")
+    extras+=('.active_roles = []')
+    extras+=("$(v2_implementation_tracks_filter)")
+  fi
+  if [[ "$edge" == "cross_review:deep_review" ]]; then
+    extras+=("$(v2_cross_review_tracks_filter)")
   fi
   if [[ "$edge" == "deslop:done" ]]; then
     extras+=('.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"')
@@ -446,6 +687,62 @@ BOX="$(new_box v2-wrong-owner-deslop)"
 make_baton_v2 "$BOX/baton.json" "deep_review" "prativadi" 4
 make_baton_v2 "$BOX/baton.next.json" "deslop" "prativadi" 5
 run_case_contains "v2 deslop requires vadi assignee" 23 "bad_assignee_owner" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-wrong-owner-parallel-implementing)"
+make_baton_v2 "$BOX/baton.json" "spec_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "parallel_implementing" "vadi" 5 "$(v2_parallel_chunks_filter)"
+run_case_contains "v2 parallel_implementing requires team assignee" 23 "bad_assignee_owner" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-parallel-missing-prativadi-role)"
+make_baton_v2 "$BOX/baton.json" "spec_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "parallel_implementing" "team" 5 \
+  "$(v2_parallel_chunks_filter)" \
+  '.active_roles = ["vadi"]'
+run_case_contains "v2 parallel_implementing requires both active roles" 23 "bad_active_roles" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-parallel-missing-work-split)"
+make_baton_v2 "$BOX/baton.json" "spec_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "parallel_implementing" "team" 5 '.active_roles = ["vadi", "prativadi"]'
+run_case_contains "v2 parallel_implementing requires two-team chunks" 23 "bad_parallel_work_split" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-reject-legacy-impl-review)"
+make_baton_v2 "$BOX/baton.json" "implementing" "vadi" 4
+make_baton_v2 "$BOX/baton.next.json" "phase_review" "prativadi" 5
+run_case_contains "v2 implementing->phase_review rejects legacy direct review" 24 "no legal edge implementing->phase_review" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-reject-spec-review-implementing)"
+make_baton_v2 "$BOX/baton.json" "spec_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "implementing" "vadi" 5
+run_case_contains "v2 spec_review->implementing rejects sequential implementation" 24 "no legal edge spec_review->implementing" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-reject-test-creation-deep-review)"
+make_baton_v2 "$BOX/baton.json" "test_creation" "vadi" 4
+make_baton_v2 "$BOX/baton.next.json" "deep_review" "prativadi" 5
+run_case_contains "v2 test_creation->deep_review requires cross_review first" 24 "no legal edge test_creation->deep_review" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-reject-legacy-phase-review-done)"
+make_baton_v2 "$BOX/baton.json" "phase_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"'
+run_case_contains "v2 phase_review->done rejects legacy terminal review" 24 "no legal edge phase_review->done" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-reject-legacy-review-of-review-done)"
+make_baton_v2 "$BOX/baton.json" "review_of_review" "vadi" 4
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"'
+run_case_contains "v2 review_of_review->done rejects legacy terminal review" 24 "no legal edge review_of_review->done" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-reject-legacy-counter-review-done)"
+make_baton_v2 "$BOX/baton.json" "counter_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"'
+run_case_contains "v2 counter_review->done rejects legacy terminal review" 24 "no legal edge counter_review->done" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-done-missing-run-explainer)"

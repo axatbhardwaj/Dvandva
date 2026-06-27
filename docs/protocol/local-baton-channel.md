@@ -43,7 +43,9 @@ The shareable templates live in `templates/channel/`.
 
 ## Baton Schema (v2)
 
-This shows a v2 run-scoped baton. Legacy v1 batons use `schema: "dvandva.baton.v1"`, omit the v2-only fields `run_id`, `original_ask`, `research_ref`, `run_explainer_ref`, `work_split`, `subagent_tracks`, and `verification_matrix`, and default `turn_cap` to 60. The live v2 write-helper enforcement covers v2-only fields, safe `run_id` values, schema continuity for existing runs, v2 status-owner pairs, honest `subagent_tracks`, the terminal `run_explainer_ref` invariant, and v2 lifecycle transitions.
+This shows a v2 run-scoped baton. Legacy v1 batons use `schema: "dvandva.baton.v1"`, omit the v2-only fields `run_id`, `original_ask`, `research_ref`, `run_explainer_ref`, `active_roles`, `work_split`, `subagent_tracks`, and `verification_matrix`, and default `turn_cap` to 60. The live v2 write-helper enforcement covers v2-only fields, safe `run_id` values, schema continuity for existing runs, v2 status-owner pairs, honest `subagent_tracks`, the terminal `run_explainer_ref` invariant, and v2 lifecycle transitions.
+
+implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; the `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. `test_creation` routes to `cross_review`, `cross_review` may route to `cross_fixing`, and only completed cross-review evidence for both roles can advance to `deep_review`.
 
 ```json
 {
@@ -54,8 +56,9 @@ This shows a v2 run-scoped baton. Legacy v1 batons use `schema: "dvandva.baton.v
   "run_id": "example-feature",
   "phase": 1,
   "total_phases": 3,
-  "status": "phase_review",
-  "assignee": "prativadi",
+  "status": "parallel_implementing",
+  "assignee": "team",
+  "active_roles": ["vadi", "prativadi"],
   "current_engine": "codex",
   "review_target": "implementation",
   "original_ask": "Implement the example feature with Dvandva review.",
@@ -64,13 +67,16 @@ This shows a v2 run-scoped baton. Legacy v1 batons use `schema: "dvandva.baton.v
   "run_explainer_ref": null,
   "work_split": [
     {
-      "id": "phase-1-code",
+      "id": "implementation-chunk-1",
       "phase": 1,
+      "chunk_type": "implementation",
       "owner": "vadi",
-      "scope": "Implement feature scaffolding and tests.",
-      "paths": ["src/example.ts", "test/example.test.ts"],
-      "can_parallelize": false,
-      "parallel_rationale": "Implementation owns the selected files; split only if plan assigns disjoint paths.",
+      "owner_role": "vadi",
+      "scope": "Implement feature scaffolding.",
+      "paths": ["src/example.ts"],
+      "cross_review_by": "prativadi",
+      "can_parallelize": true,
+      "parallel_rationale": "Independent implementation chunk in the two-team plan.",
       "depends_on": ["research-codebase"],
       "status": "complete",
       "artifact_refs": ["./superpowers/research/2026-05-13-example-feature.html"]
@@ -156,7 +162,10 @@ This shows a v2 run-scoped baton. Legacy v1 batons use `schema: "dvandva.baton.v
 - `research_drafting` — vadi invokes `dvandva:research`, uses conditional parallelism when available, writes `research_ref`, and records `work_split`, `subagent_tracks`, plus `verification_matrix`
 - `research_review` — prativadi performs independent research review and does not rely solely on the vadi artifact
 - `research_revision` — vadi responds to research findings and updates the generated HTML artifact plus baton fields
+- `parallel_implementing` — v2 team-owned implementation state; both roles are listed in `active_roles` and implement assigned chunks from `work_split`
 - `test_creation` — vadi creates or updates tests after implementation; new behavior targets 100% test coverage or records a source-only rationale
+- `cross_review` — both roles review the other role's implementation chunks before holistic review
+- `cross_fixing` — both roles address cross-review findings and then return through test_creation
 - `deep_review` — prativadi performs review after test creation; review is separate from test creation and must record at least three angle-specific reviewers/tracks (`correctness-regression`, `test-evidence`, `protocol-handoff`) before approving to deslop
 - `deslop` — cleanup loop for nits, low/minor bugs, stale wording, vague instructions, duplication, and generated-looking clutter
 
@@ -185,8 +194,12 @@ This shows a v2 run-scoped baton. Legacy v1 batons use `schema: "dvandva.baton.v
 **Implementation phase (per phase N):** `(impl)` below is shorthand for `review_target: implementation`.
 
 - `phase: N, implementing` → `phase_review (impl)`
-- v2: `phase: N, implementing` → `test_creation`
-- v2: `test_creation` → `deep_review (impl)` after tests and coverage evidence are recorded
+- v2: `spec_review` → `phase: N, status: parallel_implementing` after prativadi approves the plan; the candidate uses `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`
+- v2: `phase: N, parallel_implementing` → `test_creation` after implementation-chunk `subagent_tracks` exist for both roles
+- v2: `test_creation` → `cross_review` after tests and coverage evidence are recorded
+- v2: `cross_review` → `cross_fixing` when peer-owned chunks need fixes
+- v2: `cross_fixing` → `test_creation` after cross-review findings are fixed
+- v2: `cross_review` → `deep_review (impl)` after cross-review tracks for both roles approve the peer-owned chunks
 - v2: `deep_review (impl)` → `deslop` when implementation and tests are substantively accepted and `subagent_tracks` contains the three completed review angles
 - v2: `deep_review (impl)` → `phase_fixing` when bugs, missing tests, or verification gaps remain
 - v2: `phase_fixing` → `test_creation` when fixes changed behavior, tests, or verification evidence

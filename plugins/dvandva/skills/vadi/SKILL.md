@@ -55,8 +55,11 @@ If a required Superpowers skill is unavailable, do not continue with a weakened 
 | `phase: "research", status: "research_review"` | prativadi-owned independent research review; wait unless supervised |
 | `phase: "spec", status: "spec_drafting"` | Mode A — spec drafting |
 | `phase: "spec", status: "spec_revision"` | Mode B — spec revision |
-| `phase: 1..N, status: "implementing"` | Mode C — phase implementation |
+| `phase: 1..N, status: "parallel_implementing"` | Mode C — v2 two-team parallel implementation |
+| `phase: 1..N, status: "implementing"` | Mode C — legacy v1 phase implementation |
 | `phase: 1..N, status: "test_creation"` | Mode T — v2 test creation |
+| `phase: 1..N, status: "cross_review"` | Mode X — v2 cross-review participation |
+| `phase: 1..N, status: "cross_fixing"` | Mode D — v2 cross-review fixing |
 | `phase: 1..N, status: "deslop"` | Mode S — v2 de-slop |
 | `phase: 1..N, status: "phase_fixing"` | Mode D — phase fixing |
 | `status: "review_of_review", review_target: "prativadi_fixups"` (assignee: vadi already verified by preflight) | Mode E — prativadi-fixup review |
@@ -66,12 +69,15 @@ If a required Superpowers skill is unavailable, do not continue with a weakened 
 
 All phases are subagent-driven through conditional parallelism: use parallel subagents for genuinely disjoint tracks when the harness exposes enough subagent capacity; otherwise do the track directly and record what was not parallelized and why in `subagent_tracks` and `work_split`. In short, all phases are subagent-driven, but only independent tracks are parallelized. Do not cap Dvandva at two subagents; spawn as many independent subagent tracks as the harness can safely run without file-scope conflicts or shared-state races. Codex subagent handles must be closed explicitly after their results are consumed, because completed agents can remain open and keep counting against the thread limit. Use the canonical Dvandva subagent roster in `plugins/dvandva/agents/`:
 
+For v2 phase work, implementation-phase parallelism is mandatory. A spec-approved phase enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; the `work_split` must contain at least five implementation chunks distributed across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. After tests, the phase enters `cross_review` so each role reviews the other role's chunks before `deep_review`.
+
 | Phase | Default subagents |
 |---|---|
 | `research_drafting` / `research_revision` | `dvandva-researcher`, `dvandva-architect`, `dvandva-baton-auditor` |
 | `spec_drafting` / `spec_revision` | `dvandva-architect`, `dvandva-baton-auditor` |
-| `implementing` | `dvandva-implementer`, `dvandva-sandbox-verifier` when runtime evidence helps |
+| `parallel_implementing` / `implementing` | `dvandva-implementer`, `dvandva-sandbox-verifier` when runtime evidence helps |
 | `test_creation` | `dvandva-test-creator`, `dvandva-sandbox-verifier` |
+| `cross_review` / `cross_fixing` | `dvandva-cross-reviewer`, `dvandva-baton-auditor`, `dvandva-sandbox-verifier` |
 | `phase_fixing` | `dvandva-implementer`, `dvandva-test-creator` if behavior changes |
 | `deslop` | `dvandva-deslopper`, `dvandva-baton-auditor` |
 | `review_of_review` / `counter_review` | `dvandva-deep-reviewer`, `dvandva-baton-auditor` |
@@ -164,13 +170,13 @@ Surface BATON_STATE, then follow the Stop rule.
 
 ## Mode C — phase implementation
 
-Trigger: `phase: 1..total_phases, status: "implementing"`.
+Trigger: `phase: 1..total_phases, status: "parallel_implementing"` for v2, or `status: "implementing"` for the legacy v1 path.
 
 Actions:
 
 1. Read the plan at `plan_ref`. Find the section for the current `phase` integer.
 2. Read the phase's `work_split` and `verification_matrix` entries.
-3. Implement only the scope listed for that phase. Do not bleed into adjacent phases.
+3. Implement only the scope listed for that phase. In v2, dispatch or directly run the assigned `dvandva-implementer` chunks for both roles in parallel where the harness permits; if you cannot use subagents, record the fallback in `subagent_tracks` and keep the same two-team parallel implementation chunk boundaries.
 4. Invoke `superpowers:test-driven-development` before code changes. Test creation is separate from review: create or update tests before asking prativadi to review.
 5. For every new behavior, helper, schema path, or generated workflow, record a 100% test coverage target in `verification_matrix` and run the motivating tests. Source-only docs/skills require lint/review coverage with a written rationale.
 6. Run cheap relevant checks (lint, type-check). Surface each command and its result in the transcript — the `/goal` evaluator only sees what is surfaced.
@@ -179,15 +185,15 @@ Actions:
 Baton write before handoff:
 
 - `phase: <current N>` (unchanged)
-- `status: "phase_review"` for the current v1 helper. In v2, use `status: "test_creation"` first, then `status: "deep_review"` after tests are created.
-- `assignee: "prativadi"`
+- `status: "phase_review"` for the legacy v1 helper. In v2, use `status: "test_creation"` first, then `status: "cross_review"` after tests are created, then `status: "deep_review"` only after cross-review evidence exists.
+- `assignee: "prativadi"` for v1, or `"vadi"` for v2 `test_creation`
 - `current_engine`: set to `"claude"` if you are Claude Code, or `"codex"` if you are Codex. This is for traceability only.
 - `review_target: "implementation"`
 - `summary: "<one paragraph describing what was implemented in phase <N>>"`
 - `changed_paths: [<run-level union of intended files touched so far>]`
 - `verification: [{command, result, notes}, ...]` populated with the commands you ran
 - `verification_matrix` updated with test_creation evidence and any remaining coverage gaps
-- `next_action: "Prativadi: perform deep_review for phase <N> after implementation and test_creation. Apply narrow fixups within the allowlist, route deslop findings, or hand back substantive issues."`
+- `next_action: "Vadi: perform test_creation for phase <N>; then both roles perform cross-review before prativadi deep_review."`
 - If `<current N> == total_phases`, set `vadi_final_approval: true`, `prativadi_final_approval: false`, and make `next_action` request final prativadi approval.
 - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
 - Write the complete next baton to `"$BATON_NEXT_FILE"`, then install it with `${CLAUDE_SKILL_DIR}/scripts/dvandva-write.sh "$BATON_FILE" "$BATON_NEXT_FILE"` — it validates the transition, installs atomically, and snapshots the checkpoint into `"$BATON_DIR/history/"` (and an auto-named terminal archive on done/human_decision/human_question). On non-zero exit do not edit `"$BATON_FILE"` directly: fix the candidate per the exit code and re-run. Exit 30 means installed-but-snapshot-failed — surface it and continue.
@@ -217,7 +223,18 @@ Actions:
 1. Create or update tests for every new behavior from the implementation mode.
 2. Run the tests and record evidence in `verification`.
 3. Update `verification_matrix` with 100% test coverage for newly created behavior, or document why the artifact is source-only and covered by lint/review instead.
-4. Write the next baton as `status: "deep_review"`, `assignee: "prativadi"`, and `review_target: "implementation"`; `dvandva-write.sh` validates this live v2 transition.
+4. Write the next baton as `status: "cross_review"`, `assignee: "team"`, `active_roles: ["vadi", "prativadi"]`, and `review_target: "implementation"`; `dvandva-write.sh` validates this live v2 transition.
+
+## Mode X — cross-review participation
+
+Trigger: `phase: 1..total_phases, status: "cross_review"` with `active_roles` containing `vadi`.
+
+Actions:
+
+1. Use `dvandva-cross-reviewer` or direct review to inspect prativadi-owned implementation chunks; do not review your own chunks.
+2. Record vadi's cross-review result in `subagent_tracks` with `track: "cross-review"`, `owner_role: "vadi"`, non-empty `outputs`, and non-empty `evidence_refs`.
+3. If peer-owned chunks need fixes, write `status: "cross_fixing"`, `assignee: "team"`, `active_roles: ["vadi", "prativadi"]`, and route exact findings.
+4. If both vadi and prativadi cross-review tracks are completed and approved, write `status: "deep_review"`, `assignee: "prativadi"`, `active_roles: []`, and `review_target: "implementation"`.
 
 ## Mode D — phase fixing
 
@@ -234,7 +251,7 @@ Actions:
 Baton write before handoff:
 
 - `phase: <current N>` (unchanged)
-- `status: "phase_review"` for current v1 helper compatibility; v2 should route through `test_creation` before `deep_review`.
+- `status: "phase_review"` for current v1 helper compatibility; v2 must route through `test_creation`, then `cross_review`, before `deep_review`.
 - `assignee: "prativadi"`
 - `current_engine`: set to `"claude"` if you are Claude Code, or `"codex"` if you are Codex. This is for traceability only.
 - `review_target: "implementation"`

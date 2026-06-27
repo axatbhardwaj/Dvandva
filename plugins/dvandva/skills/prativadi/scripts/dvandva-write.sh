@@ -50,6 +50,9 @@ v2_expected_assignee() {
     research_drafting|research_revision|spec_drafting|spec_revision|implementing|test_creation|deslop|phase_fixing|review_of_review)
       echo "vadi"
       ;;
+    parallel_implementing|cross_review|cross_fixing)
+      echo "team"
+      ;;
     research_review|spec_review|deep_review|phase_review|counter_review)
       echo "prativadi"
       ;;
@@ -83,7 +86,7 @@ esac
 
 REQUIRED_KEYS=(schema updated_at mode run_mode phase total_phases status assignee current_engine review_target plan_ref master_plan_locked question resume_assignee resume_status disagreement_round disagreement_cap turn_cap branch checkpoint allow_commit allow_push allow_pr vadi_final_approval prativadi_final_approval final_commit pushed_ref summary changed_paths verification findings narrow_fixups vadi_counter deferred blockers next_action)
 if [[ "$schema" == "dvandva.baton.v2" ]]; then
-  REQUIRED_KEYS+=(run_id original_ask research_ref run_explainer_ref work_split subagent_tracks verification_matrix)
+  REQUIRED_KEYS+=(run_id original_ask research_ref run_explainer_ref active_roles work_split subagent_tracks verification_matrix)
 fi
 
 for key in "${REQUIRED_KEYS[@]}"; do
@@ -106,6 +109,14 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
     echo "DVANDVA_WRITE bad_original_ask candidate=$CANDIDATE_FILE" >&2
     exit 23
   fi
+  if ! jq -e '
+    (.active_roles | type) == "array" and
+    all(.active_roles[]; . == "vadi" or . == "prativadi") and
+    ((.active_roles | unique | length) == (.active_roles | length))
+  ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+    echo "DVANDVA_WRITE bad_active_roles candidate=$CANDIDATE_FILE" >&2
+    exit 23
+  fi
   if ! jq -e '((.work_split | type) == "array" or (.work_split | type) == "object") and (.work_split | length) > 0' "$CANDIDATE_FILE" >/dev/null 2>&1; then
     echo "DVANDVA_WRITE bad_work_split candidate=$CANDIDATE_FILE" >&2
     exit 23
@@ -119,6 +130,7 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
     (.subagent_tracks | length) > 0 and
     all(.subagent_tracks[];
       ((.id | type) == "string" and (.id | length) > 0) and
+      ((.phase | type) == "string" or (.phase | type) == "number") and
       ((.phase | tostring | length) > 0) and
       ((.status | type) == "string" and (.status | length) > 0) and
       ((.track | type) == "string" and (.track | length) > 0) and
@@ -137,7 +149,9 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
   if ! jq -e '
     all(.subagent_tracks[];
       if .parallelized then
-        ((.owner | test("^dvandva-")) and (((.outputs | length) > 0) or ((.evidence_refs | length) > 0)))
+        (((.owner | test("^dvandva-(researcher|architect|implementer|test-creator|cross-reviewer|deep-reviewer|deslopper|sandbox-verifier|baton-auditor)$")) or
+          (.owner | test("^(adversarial-analyst|quality-reviewer|sandbox-executor|architect|developer)$"))) and
+          (((.outputs | length) > 0) or ((.evidence_refs | length) > 0)))
       else
         true
       end
@@ -178,7 +192,7 @@ new_checkpoint="$(jq -r '.checkpoint' "$CANDIDATE_FILE")"
 
 case "$schema:$new_status" in
   dvandva.baton.v1:spec_drafting|dvandva.baton.v1:spec_review|dvandva.baton.v1:spec_revision|dvandva.baton.v1:human_question|dvandva.baton.v1:implementing|dvandva.baton.v1:phase_review|dvandva.baton.v1:phase_fixing|dvandva.baton.v1:review_of_review|dvandva.baton.v1:counter_review|dvandva.baton.v1:human_decision|dvandva.baton.v1:done) ;;
-  dvandva.baton.v2:research_drafting|dvandva.baton.v2:research_review|dvandva.baton.v2:research_revision|dvandva.baton.v2:spec_drafting|dvandva.baton.v2:spec_review|dvandva.baton.v2:spec_revision|dvandva.baton.v2:human_question|dvandva.baton.v2:implementing|dvandva.baton.v2:test_creation|dvandva.baton.v2:deep_review|dvandva.baton.v2:deslop|dvandva.baton.v2:phase_review|dvandva.baton.v2:phase_fixing|dvandva.baton.v2:review_of_review|dvandva.baton.v2:counter_review|dvandva.baton.v2:human_decision|dvandva.baton.v2:done) ;;
+  dvandva.baton.v2:research_drafting|dvandva.baton.v2:research_review|dvandva.baton.v2:research_revision|dvandva.baton.v2:spec_drafting|dvandva.baton.v2:spec_review|dvandva.baton.v2:spec_revision|dvandva.baton.v2:human_question|dvandva.baton.v2:implementing|dvandva.baton.v2:parallel_implementing|dvandva.baton.v2:test_creation|dvandva.baton.v2:cross_review|dvandva.baton.v2:cross_fixing|dvandva.baton.v2:deep_review|dvandva.baton.v2:deslop|dvandva.baton.v2:phase_review|dvandva.baton.v2:phase_fixing|dvandva.baton.v2:review_of_review|dvandva.baton.v2:counter_review|dvandva.baton.v2:human_decision|dvandva.baton.v2:done) ;;
   *)
     echo "DVANDVA_WRITE bad_status status=$new_status candidate=$CANDIDATE_FILE" >&2
     exit 23
@@ -199,7 +213,7 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
         exit 23
       fi
       ;;
-    implementing|test_creation|deep_review|deslop|phase_review|phase_fixing|review_of_review|counter_review|done)
+    implementing|parallel_implementing|test_creation|cross_review|cross_fixing|deep_review|deslop|phase_review|phase_fixing|review_of_review|counter_review|done)
       if ! jq -e '(.phase | type) == "number"' "$CANDIDATE_FILE" >/dev/null 2>&1; then
         echo "DVANDVA_WRITE bad_phase_status status=$new_status candidate=$CANDIDATE_FILE" >&2
         exit 23
@@ -219,6 +233,23 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
     echo "DVANDVA_WRITE bad_assignee_owner status=$new_status want=$expected_assignee got=$new_assignee candidate=$CANDIDATE_FILE" >&2
     exit 23
   fi
+  case "$new_status" in
+    parallel_implementing|cross_review|cross_fixing)
+      if ! jq -e '
+        (.assignee == "team") and
+        ((.active_roles | sort) == ["prativadi", "vadi"])
+      ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+        echo "DVANDVA_WRITE bad_active_roles status=$new_status candidate=$CANDIDATE_FILE" >&2
+        exit 23
+      fi
+      ;;
+    *)
+      if ! jq -e '(.active_roles | length) == 0' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+        echo "DVANDVA_WRITE bad_active_roles status=$new_status candidate=$CANDIDATE_FILE" >&2
+        exit 23
+      fi
+      ;;
+  esac
 fi
 
 if ! [[ "$new_checkpoint" =~ ^[0-9]+$ ]]; then
@@ -312,14 +343,90 @@ else
       legal=1
     fi
   else
-    case "${cur_status}:${new_status}" in
-      research_drafting:research_review|research_review:research_revision|research_revision:research_review|research_review:spec_drafting) legal=1 ;;
-      spec_drafting:spec_review|spec_review:spec_revision|spec_review:implementing|spec_revision:spec_review) legal=1 ;;
-      implementing:test_creation|test_creation:deep_review|deep_review:phase_fixing|deep_review:deslop|phase_fixing:test_creation|deslop:phase_fixing|deslop:implementing|deslop:done) legal=1 ;;
-      implementing:phase_review|phase_review:phase_fixing|phase_review:review_of_review|phase_review:implementing|phase_review:done|phase_fixing:phase_review) legal=1 ;;
-      review_of_review:implementing|review_of_review:done|review_of_review:counter_review|counter_review:implementing|counter_review:done|counter_review:review_of_review) legal=1 ;;
-      *) reason="no legal edge ${cur_status}->${new_status}" ;;
+    case "$schema" in
+      dvandva.baton.v1)
+        case "${cur_status}:${new_status}" in
+          spec_drafting:spec_review|spec_review:spec_revision|spec_review:implementing|spec_revision:spec_review) legal=1 ;;
+          implementing:phase_review|phase_review:phase_fixing|phase_review:review_of_review|phase_review:implementing|phase_review:done|phase_fixing:phase_review) legal=1 ;;
+          review_of_review:implementing|review_of_review:done|review_of_review:counter_review|counter_review:implementing|counter_review:done|counter_review:review_of_review) legal=1 ;;
+          *) reason="no legal edge ${cur_status}->${new_status}" ;;
+        esac
+        ;;
+      dvandva.baton.v2)
+        case "${cur_status}:${new_status}" in
+          research_drafting:research_review|research_review:research_revision|research_revision:research_review|research_review:spec_drafting) legal=1 ;;
+          spec_drafting:spec_review|spec_review:spec_revision|spec_review:parallel_implementing|spec_revision:spec_review) legal=1 ;;
+          parallel_implementing:test_creation|test_creation:cross_review|cross_review:cross_fixing|cross_fixing:test_creation|cross_review:deep_review) legal=1 ;;
+          deep_review:phase_fixing|deep_review:deslop|phase_fixing:test_creation|deslop:phase_fixing|deslop:parallel_implementing|deslop:done) legal=1 ;;
+          *) reason="no legal edge ${cur_status}->${new_status}" ;;
+        esac
+        ;;
     esac
+  fi
+
+  if [[ "$legal" -eq 1 && "$schema" == "dvandva.baton.v2" && "$new_status" == "parallel_implementing" ]]; then
+    if ! jq -e '
+      . as $root |
+      [
+        $root.work_split[]? |
+        select((.phase | tostring) == ($root.phase | tostring)) |
+        select((.chunk_type // .type // "implementation") == "implementation") |
+        select(((.owner_role // .owner // "") == "vadi") or ((.owner_role // .owner // "") == "prativadi")) |
+        select(((.cross_review_by // "") == "vadi") or ((.cross_review_by // "") == "prativadi")) |
+        select((.cross_review_by // "") != (.owner_role // .owner // "")) |
+        select((.paths | type) == "array")
+      ] as $chunks |
+      ($chunks | length) >= 5 and
+      any($chunks[]; (.owner_role // .owner // "") == "vadi") and
+      any($chunks[]; (.owner_role // .owner // "") == "prativadi")
+    ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+      legal=0
+      reason="parallel_implementing requires at least five two-team implementation work_split chunks with reciprocal cross_review_by"
+      echo "DVANDVA_WRITE bad_parallel_work_split candidate=$CANDIDATE_FILE" >&2
+      exit 23
+    fi
+  fi
+
+  if [[ "$legal" -eq 1 && "$schema" == "dvandva.baton.v2" && "$cur_status" == "parallel_implementing" && "$new_status" == "test_creation" ]]; then
+    if ! jq -e '
+      . as $root |
+      [
+        $root.subagent_tracks[]? |
+        select((.phase | tostring) == ($root.phase | tostring)) |
+        select(.track == "implementation-chunk") |
+        select(.status == "completed") |
+        select(.result == "passed" or .result == "approved") |
+        select(((.owner_role // .role // "") == "vadi") or ((.owner_role // .role // "") == "prativadi")) |
+        select(((.outputs | length) > 0) and ((.evidence_refs | length) > 0))
+      ] as $tracks |
+      ($tracks | length) >= 5 and
+      any($tracks[]; (.owner_role // .role // "") == "vadi") and
+      any($tracks[]; (.owner_role // .role // "") == "prativadi")
+    ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+      legal=0
+      reason="parallel_implementing->test_creation requires completed implementation-chunk subagent_tracks for both roles"
+    fi
+  fi
+
+  if [[ "$legal" -eq 1 && "$schema" == "dvandva.baton.v2" && "$cur_status" == "cross_review" && "$new_status" == "deep_review" ]]; then
+    if ! jq -e '
+      def done_cross($role):
+        any(.subagent_tracks[];
+          (
+            .phase == "cross_review" and
+            .track == "cross-review" and
+            (.owner_role // .role // "") == $role and
+            .status == "completed" and
+            (.result == "passed" or .result == "approved") and
+            ((.outputs | length) > 0) and
+            ((.evidence_refs | length) > 0)
+          )
+        );
+      done_cross("vadi") and done_cross("prativadi")
+    ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+      legal=0
+      reason="cross_review->deep_review requires completed cross-review subagent_tracks for both roles"
+    fi
   fi
 
   if [[ "$legal" -eq 1 && "$schema" == "dvandva.baton.v2" && "$cur_status" == "deep_review" && "$new_status" == "deslop" ]]; then

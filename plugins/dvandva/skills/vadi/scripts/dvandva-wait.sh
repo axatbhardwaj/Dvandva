@@ -215,7 +215,7 @@ while true; do
     exit 21
   fi
 
-  JQ_STATE='[.assignee // "", .status // "", .phase // "", (.checkpoint // 0 | tostring), .question // "", .resume_assignee // "", .resume_status // ""] | @tsv'
+  JQ_STATE='[.assignee // "", .status // "", .phase // "", (.checkpoint // 0 | tostring), .question // "", .resume_assignee // "", .resume_status // "", ((.active_roles // []) | join(","))] | join("\u001f")'
   if ! state="$(jq -r "$JQ_STATE" "$BATON_FILE" 2>/dev/null)"; then
     # Torn-read tolerance: a concurrent writer may be mid-replace. One retry.
     sleep 1
@@ -225,7 +225,7 @@ while true; do
     fi
   fi
 
-  IFS=$'\t' read -r assignee status phase checkpoint question resume_assignee resume_status <<< "$state"
+  IFS=$'\x1f' read -r assignee status phase checkpoint question resume_assignee resume_status active_roles <<< "$state"
 
   case "$status" in
     done)
@@ -247,17 +247,22 @@ while true; do
     exit 0
   fi
 
+  if [[ ",$active_roles," == *",$ROLE,"* ]]; then
+    echo "DVANDVA_WAIT ready role=$ROLE phase=$phase status=$status checkpoint=$checkpoint assignee=$assignee active_roles=$active_roles"
+    exit 0
+  fi
+
   if [[ "$elapsed" -ge "$MAX_WAIT" ]]; then
     if [[ "$PERSIST" -eq 1 ]]; then
       updated_at="$(jq -r '.updated_at // ""' "$BATON_FILE" 2>/dev/null || true)"
       current_engine="$(jq -r '.current_engine // ""' "$BATON_FILE" 2>/dev/null || true)"
-      echo "DVANDVA_WAIT heartbeat role=$ROLE waiting_on=$assignee phase=$phase status=$status checkpoint=$checkpoint elapsed=${elapsed}s last_seen_engine=$current_engine updated_at=$updated_at"
+      echo "DVANDVA_WAIT heartbeat role=$ROLE waiting_on=$assignee phase=$phase status=$status checkpoint=$checkpoint active_roles=$active_roles elapsed=${elapsed}s last_seen_engine=$current_engine updated_at=$updated_at"
       elapsed=0
       wait_one_interval
       record_wait_elapsed
       continue
     fi
-    echo "DVANDVA_WAIT timeout role=$ROLE waiting_on=$assignee phase=$phase status=$status checkpoint=$checkpoint elapsed=${elapsed}s"
+    echo "DVANDVA_WAIT timeout role=$ROLE waiting_on=$assignee phase=$phase status=$status checkpoint=$checkpoint active_roles=$active_roles elapsed=${elapsed}s"
     exit 20
   fi
 

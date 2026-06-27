@@ -70,6 +70,24 @@ write_observed_baton() {
 JSON
 }
 
+write_active_roles_baton() {
+  local file="$1"
+  mkdir -p "$(dirname "$file")"
+  cat > "$file" <<JSON
+{
+  "schema": "dvandva.baton.v2",
+  "assignee": "team",
+  "active_roles": ["vadi", "prativadi"],
+  "status": "parallel_implementing",
+  "phase": 1,
+  "checkpoint": 9,
+  "question": null,
+  "resume_assignee": null,
+  "resume_status": null
+}
+JSON
+}
+
 run_case() {
   local name="$1"
   local expected_exit="$2"
@@ -91,6 +109,13 @@ BATON_READY="$TMP_DIR/ready.json"
 write_baton "$BATON_READY" "vadi" "implementing"
 run_case "returns 0 when role is assigned" 0 \
   "$SCRIPT" --role vadi --file "$BATON_READY" --interval 0 --max-wait 0
+
+BATON_ACTIVE_ROLES="$TMP_DIR/active-roles.json"
+write_active_roles_baton "$BATON_ACTIVE_ROLES"
+run_case "returns 0 for vadi active_roles concurrent baton" 0 \
+  "$SCRIPT" --role vadi --file "$BATON_ACTIVE_ROLES" --interval 0 --max-wait 0
+run_case "returns 0 for prativadi active_roles concurrent baton" 0 \
+  "$PRATIVADI_SCRIPT" --role prativadi --file "$BATON_ACTIVE_ROLES" --interval 0 --max-wait 0
 
 BATON_DONE="$TMP_DIR/done.json"
 write_baton "$BATON_DONE" "human" "done"
