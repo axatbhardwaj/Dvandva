@@ -328,8 +328,8 @@ else
           elif jq -e '
             (.assignee == "team") and
             ((.active_roles | sort) == ["prativadi", "vadi"]) and
-            ((.summary | type) == "string" and (.summary | length) > 0) and
-            ((.next_action | type) == "string" and (.next_action | length) > 0)
+            ((.summary | type) == "string" and (.summary | test("[^[:space:]]"))) and
+            ((.next_action | type) == "string" and (.next_action | test("[^[:space:]]")))
           ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
             legal=1
           else
@@ -397,7 +397,7 @@ else
         select(((.owner_role // .owner // "") == "vadi") or ((.owner_role // .owner // "") == "prativadi")) |
         select(((.cross_review_by // "") == "vadi") or ((.cross_review_by // "") == "prativadi")) |
         select((.cross_review_by // "") != (.owner_role // .owner // "")) |
-        select((.paths | type) == "array")
+        select((.paths | type) == "array" and (.paths | length) > 0)
       ] as $chunks |
       ($chunks | length) >= 5 and
       any($chunks[]; (.owner_role // .owner // "") == "vadi") and
@@ -428,6 +428,44 @@ else
     ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
       legal=0
       reason="parallel_implementing->test_creation requires completed implementation-chunk subagent_tracks for both roles"
+    fi
+  fi
+
+  if [[ "$legal" -eq 1 && "$schema" == "dvandva.baton.v2" && "$cur_status" == "test_creation" && "$new_status" == "cross_review" ]]; then
+    if ! jq -e '
+      any(.subagent_tracks[];
+        (
+          .phase == "test_creation" and
+          .track == "test-creation" and
+          .owner == "dvandva-test-creator" and
+          .status == "completed" and
+          (.result == "passed" or .result == "approved") and
+          ((.outputs | length) > 0) and
+          ((.evidence_refs | length) > 0)
+        )
+      )
+    ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+      legal=0
+      reason="test_creation->cross_review requires completed test-creation subagent_track from dvandva-test-creator"
+    fi
+  fi
+
+  if [[ "$legal" -eq 1 && "$schema" == "dvandva.baton.v2" && "$cur_status" == "cross_review" && "$new_status" == "cross_fixing" ]]; then
+    if ! jq -e '
+      any(.subagent_tracks[];
+        (
+          .phase == "cross_review" and
+          .track == "cross-review" and
+          (((.owner_role // .role // "") == "vadi") or ((.owner_role // .role // "") == "prativadi")) and
+          .status == "completed" and
+          (.result != "passed" and .result != "approved") and
+          ((.outputs | length) > 0) and
+          ((.evidence_refs | length) > 0)
+        )
+      )
+    ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+      legal=0
+      reason="cross_review->cross_fixing requires completed cross-review subagent_tracks with non-approval evidence"
     fi
   fi
 

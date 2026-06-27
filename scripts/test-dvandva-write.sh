@@ -295,6 +295,27 @@ v2_implementation_tracks_filter() {
 JQ
 }
 
+v2_test_creation_track_filter() {
+  cat <<'JQ'
+.subagent_tracks += [
+  {
+    "id": "test-creation-evidence",
+    "phase": "test_creation",
+    "status": "completed",
+    "track": "test-creation",
+    "owner": "dvandva-test-creator",
+    "owner_role": "vadi",
+    "parallelized": false,
+    "rationale": "Vadi test_creation recorded coverage evidence before cross-review.",
+    "inputs": ["implementation evidence"],
+    "outputs": ["Motivating tests and coverage evidence recorded."],
+    "evidence_refs": ["bash scripts/test-dvandva-write.sh PASS"],
+    "result": "passed"
+  }
+]
+JQ
+}
+
 v2_cross_review_tracks_filter() {
   cat <<'JQ'
 .subagent_tracks += [
@@ -325,6 +346,27 @@ v2_cross_review_tracks_filter() {
     "outputs": ["Peer chunks accepted."],
     "evidence_refs": ["subagent:cross-prativadi"],
     "result": "approved"
+  }
+]
+JQ
+}
+
+v2_cross_review_finding_filter() {
+  cat <<'JQ'
+.subagent_tracks += [
+  {
+    "id": "cross-prativadi-finding",
+    "phase": "cross_review",
+    "status": "completed",
+    "track": "cross-review",
+    "owner": "dvandva-cross-reviewer",
+    "owner_role": "prativadi",
+    "parallelized": true,
+    "rationale": "Prativadi cross-reviewed vadi-owned chunks and found fix-required evidence.",
+    "inputs": ["implementation-chunk-a"],
+    "outputs": ["changes-requested: vadi-owned chunk needs a fix."],
+    "evidence_refs": ["subagent:cross-prativadi-finding"],
+    "result": "changes-requested"
   }
 ]
 JQ
@@ -633,6 +675,12 @@ for edge in $V2_EDGES; do
   if [[ "$new" == "cross_review" || "$new" == "cross_fixing" ]]; then
     extras+=('.active_roles = ["vadi", "prativadi"]')
   fi
+  if [[ "$edge" == "test_creation:cross_review" ]]; then
+    extras+=("$(v2_test_creation_track_filter)")
+  fi
+  if [[ "$edge" == "cross_review:cross_fixing" ]]; then
+    extras+=("$(v2_cross_review_finding_filter)")
+  fi
   if [[ "$edge" == "parallel_implementing:test_creation" ]]; then
     extras+=("$(v2_parallel_chunks_filter)")
     extras+=('.active_roles = []')
@@ -718,6 +766,14 @@ make_baton_v2 "$BOX/baton.next.json" "parallel_implementing" "team" 5 '.active_r
 run_case_contains "v2 parallel_implementing requires two-team chunks" 23 "bad_parallel_work_split" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+BOX="$(new_box v2-parallel-empty-path-chunks)"
+make_baton_v2 "$BOX/baton.json" "spec_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "parallel_implementing" "team" 5 \
+  "$(v2_parallel_chunks_filter)" \
+  '.work_split |= map(if (.chunk_type // .type // "") == "implementation" then .paths = [] else . end)'
+run_case_contains "v2 parallel_implementing rejects empty-path chunks" 23 "bad_parallel_work_split" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
 BOX="$(new_box v2-reject-legacy-impl-review)"
 make_baton_v2 "$BOX/baton.json" "implementing" "vadi" 4
 make_baton_v2 "$BOX/baton.next.json" "phase_review" "prativadi" 5
@@ -734,6 +790,12 @@ BOX="$(new_box v2-reject-test-creation-deep-review)"
 make_baton_v2 "$BOX/baton.json" "test_creation" "vadi" 4
 make_baton_v2 "$BOX/baton.next.json" "deep_review" "prativadi" 5
 run_case_contains "v2 test_creation->deep_review requires cross_review first" 24 "no legal edge test_creation->deep_review" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-test-creation-cross-review-missing-test-evidence)"
+make_baton_v2 "$BOX/baton.json" "test_creation" "vadi" 4
+make_baton_v2 "$BOX/baton.next.json" "cross_review" "team" 5 '.active_roles = ["vadi", "prativadi"]'
+run_case_contains "v2 test_creation->cross_review rejects missing test evidence" 24 "completed test-creation subagent_track" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-parallel-test-creation-missing-impl-evidence)"
@@ -760,6 +822,12 @@ BOX="$(new_box v2-cross-review-deep-review-missing-evidence)"
 make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 '.active_roles = ["vadi", "prativadi"]'
 make_baton_v2 "$BOX/baton.next.json" "deep_review" "prativadi" 5
 run_case_contains "v2 cross_review->deep_review rejects missing cross-review evidence" 24 "completed cross-review subagent_tracks for both roles" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-cross-review-cross-fixing-missing-evidence)"
+make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "cross_fixing" "team" 5 '.active_roles = ["vadi", "prativadi"]'
+run_case_contains "v2 cross_review->cross_fixing rejects missing cross-review evidence" 24 "completed cross-review subagent_tracks" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-cross-review-deep-review-single-role-evidence)"
@@ -813,6 +881,24 @@ make_baton_v2 "$BOX/baton.next.json" "cross_review" "team" 5 \
   '.summary = "Team sync: attempted phase mutation."' \
   '.next_action = "Team: this must be rejected because sync checkpoints cannot advance phases."'
 run_case_contains "v2 team same-status sync cannot change phase" 24 "same-status team sync cannot change phase" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-team-cross-review-sync-whitespace-summary)"
+make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "cross_review" "team" 5 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "   \t  "' \
+  '.next_action = "Team: valid next action."'
+run_case_contains "v2 team sync rejects whitespace summary" 24 "same-status team sync requires team assignee, both active_roles, summary, and next_action" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-team-cross-review-sync-whitespace-next-action)"
+make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "cross_review" "team" 5 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Team sync: valid summary."' \
+  '.next_action = "   \t  "'
+run_case_contains "v2 team sync rejects whitespace next_action" 24 "same-status team sync requires team assignee, both active_roles, summary, and next_action" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-non-team-same-status-still-rejected)"
