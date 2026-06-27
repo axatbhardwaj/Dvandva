@@ -26,7 +26,8 @@ Recommended files:
 - `.dvandva/runs/<run_id>/events.jsonl` - optional append-only event log.
 
 `run_id` must be one safe path segment: letters, numbers, dot, underscore, or
-dash; no slash, backslash, or `..`. The wait helper rejects unsafe
+dash; no slash, backslash, or `..`. Once a v2 baton exists, its `run_id` is
+immutable for that run. The wait helper rejects unsafe
 `DVANDVA_RUN_ID` values before resolving `.dvandva/runs/<run_id>/baton.json`,
 and the write helper applies the same check to v2 baton candidates.
 
@@ -204,7 +205,7 @@ For v2 candidates, `assignee` is status-owned: vadi owns
 `review_of_review`; prativadi owns `research_review`, `spec_review`,
 `deep_review`, `phase_review`, and `counter_review`; human owns
 `human_question` and `human_decision`. Terminal `done` is terminal regardless of
-assignee. Existing batons cannot change schema mid-run.
+assignee. Existing batons cannot change schema or v2 `run_id` mid-run.
 
 Any other transition is illegal in v1 or v2. The writing agent must reject
 illegal transitions and route to `human_decision` instead.

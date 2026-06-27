@@ -10,8 +10,8 @@ The bundled `dvandva-write.sh` helper enforces v1 and v2 transition subsets dete
 
 `dvandva.baton.v2` is the run-scoped schema for named runs at
 `.dvandva/runs/<run_id>/baton.json`. `<run_id>` must be one safe path segment:
-letters, numbers, dot, underscore, or dash; no slash, backslash, or `..`. v2
-adds:
+letters, numbers, dot, underscore, or dash; no slash, backslash, or `..`; once a
+v2 baton exists, its `run_id` is immutable for that run. v2 adds:
 
 - `run_id`: stable non-empty safe identifier shared by both role sessions.
 - `original_ask`: the user's original request, surfaced in preflight so long
@@ -37,8 +37,8 @@ adds live v2 write-helper enforcement: v2 writers require safe `run_id`,
 `original_ask`, `work_split`, and `verification_matrix`; they also require a
 non-empty `research_ref` before advancing beyond the initial research draft,
 except that `human_question` and `human_decision` remain legal early-escalation
-targets before `research_ref` exists. Existing batons cannot change schema
-mid-run.
+targets before `research_ref` exists. Existing batons cannot change schema or v2
+`run_id` mid-run.
 
 ## Schema Fields
 

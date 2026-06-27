@@ -181,11 +181,13 @@ else
     exit 25
   fi
 
-  if ! cur="$(jq -r '[.schema // "", .status // "", (.checkpoint // -1 | tostring), (.master_plan_locked // false | tostring), .resume_assignee // "", .resume_status // ""] | @tsv' "$BATON_FILE" 2>/dev/null)"; then
+  # Use a non-whitespace delimiter: bash collapses adjacent IFS whitespace,
+  # which would shift run_id when resume fields are empty.
+  if ! cur="$(jq -r '[.schema // "", .status // "", (.checkpoint // -1 | tostring), (.master_plan_locked // false | tostring), .resume_assignee // "", .resume_status // "", .run_id // ""] | join("\u001f")' "$BATON_FILE" 2>/dev/null)"; then
     echo "DVANDVA_WRITE current_baton_unparseable file=$BATON_FILE refusing_to_overwrite=true" >&2
     exit 25
   fi
-  IFS=$'\t' read -r cur_schema cur_status cur_checkpoint cur_locked cur_resume_assignee cur_resume_status <<< "$cur"
+  IFS=$'\x1f' read -r cur_schema cur_status cur_checkpoint cur_locked cur_resume_assignee cur_resume_status cur_run_id <<< "$cur"
 
   case "$cur_schema" in
     dvandva.baton.v1|dvandva.baton.v2) ;;
@@ -200,6 +202,11 @@ else
     exit 25
   fi
 
+  if [[ "$cur_schema" == "dvandva.baton.v2" ]] && ! is_safe_run_id "$cur_run_id"; then
+    echo "DVANDVA_WRITE current_baton_unparseable file=$BATON_FILE bad_run_id=$cur_run_id" >&2
+    exit 25
+  fi
+
   # Precedence is load-bearing — do not reorder:
   #   1. checkpoint+1   2. same-status ban   3. from-human_question
   #   4. to-human_decision (universal)   5. from-human_decision
@@ -208,6 +215,8 @@ else
   # legalize human_decision->human_decision rewrites.
   if [[ "$cur_schema" != "$schema" ]]; then
     reason="schema_change current=$cur_schema candidate=$schema"
+  elif [[ "$schema" == "dvandva.baton.v2" && "$cur_run_id" != "$new_run_id" ]]; then
+    reason="run_id_change current=$cur_run_id candidate=$new_run_id"
   elif [[ "$new_checkpoint" -ne $((cur_checkpoint + 1)) ]]; then
     reason="checkpoint must be $((cur_checkpoint + 1)), got $new_checkpoint"
   elif [[ "$new_status" == "$cur_status" ]]; then

@@ -326,6 +326,18 @@ make_baton_v2 "$BOX/baton.next.json" "spec_review" "prativadi" 5
 run_case_contains "v1 current cannot silently upgrade to v2 candidate" 24 "schema_change" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+BOX="$(new_box v2-run-id-mutation)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 '.run_id = "alpha"'
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 '.run_id = "beta"'
+run_case_contains "v2 current cannot change run_id mid-run" 24 "run_id_change" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-current-missing-run-id)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 'del(.run_id)'
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5
+run_case_contains "v2 current missing run_id exits 25" 25 "bad_run_id" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
 BOX="$(new_box v2-wrong-owner-revision)"
 make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4
 make_baton_v2 "$BOX/baton.next.json" "research_revision" "prativadi" 5
