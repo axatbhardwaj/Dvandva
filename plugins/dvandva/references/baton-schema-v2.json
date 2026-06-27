@@ -47,6 +47,19 @@
       "artifact_refs": []
     },
     {
+      "id": "research-pattern-mapping",
+      "phase": "research",
+      "owner": "vadi",
+      "scope": "Map existing codebase patterns so implementers copy proven structure instead of inventing. Delivers exact file paths and line ranges for the closest analog to each planned implementation chunk.",
+      "suggested_agent": "dvandva-pattern-mapper",
+      "paths": [],
+      "can_parallelize": true,
+      "parallel_rationale": "Pattern mapping can run beside codebase exploration and docs research when search paths do not overlap.",
+      "depends_on": [],
+      "status": "planned",
+      "artifact_refs": []
+    },
+    {
       "id": "implementation-chunk-1",
       "phase": "1",
       "chunk_type": "implementation",
@@ -156,6 +169,22 @@
       "paths": [],
       "can_parallelize": true,
       "parallel_rationale": "Integration check angle runs independently of other deep_review angles.",
+      "depends_on": [
+        "cross_review"
+      ],
+      "status": "planned",
+      "artifact_refs": []
+    },
+    {
+      "id": "deep_review-doc-verification",
+      "phase": "1",
+      "owner": "prativadi",
+      "owner_role": "prativadi",
+      "suggested_agent": "dvandva-doc-verifier",
+      "scope": "Documentation verification angle: confirm that run-explainer HTML, skill docs, READMEs, and baton summaries match what the code actually does. Flags doc-drift and unsupported claims.",
+      "paths": [],
+      "can_parallelize": true,
+      "parallel_rationale": "Doc verification angle runs independently of other deep_review angles.",
       "depends_on": [
         "cross_review"
       ],

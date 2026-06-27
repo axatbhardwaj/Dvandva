@@ -149,7 +149,7 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
   if ! jq -e '
     all(.subagent_tracks[];
       if .parallelized then
-        (((.owner | test("^dvandva-(researcher|architect|implementer|test-creator|cross-reviewer|adversarial-analyst|deep-reviewer|deslopper|sandbox-verifier|baton-auditor|security-auditor|integration-checker|debugger)$")) or
+        (((.owner | test("^dvandva-(researcher|architect|implementer|test-creator|cross-reviewer|adversarial-analyst|deep-reviewer|deslopper|sandbox-verifier|baton-auditor|security-auditor|integration-checker|debugger|doc-verifier|pattern-mapper)$")) or
           (.owner | test("^(adversarial-analyst|quality-reviewer|sandbox-executor|architect|developer)$"))) and
           (((.outputs | length) > 0) or ((.evidence_refs | length) > 0)))
       else

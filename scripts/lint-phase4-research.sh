@@ -205,7 +205,7 @@ require_text "$schema" '"deep_review"' "v2 schema includes deep review status"
 require_text "$schema" '"deslop"' "v2 schema includes de-slop status"
 
 agent_dir="$ROOT_DIR/plugins/dvandva/agents"
-for agent in researcher architect implementer test-creator cross-reviewer adversarial-analyst deep-reviewer deslopper sandbox-verifier baton-auditor security-auditor integration-checker debugger; do
+for agent in researcher architect implementer test-creator cross-reviewer adversarial-analyst deep-reviewer deslopper sandbox-verifier baton-auditor security-auditor integration-checker debugger doc-verifier pattern-mapper; do
   file="$agent_dir/$agent.md"
   require_text "$file" "name: dvandva-$agent" "agent $agent has Dvandva name"
   require_text "$file" "description: Use" "agent $agent has trigger-focused description"
@@ -225,11 +225,11 @@ for agent in researcher architect implementer test-creator cross-reviewer advers
   reject_text "$file" "not an orchestrator" "agent $agent avoids old no-orchestrator framing"
 done
 
-for agent in researcher architect implementer test-creator deslopper; do
+for agent in researcher architect implementer test-creator deslopper pattern-mapper; do
   require_text "$agent_dir/$agent.md" "## Downstream Consumer" "agent $agent names downstream consumer"
 done
 
-for agent in cross-reviewer adversarial-analyst deep-reviewer sandbox-verifier baton-auditor security-auditor integration-checker; do
+for agent in cross-reviewer adversarial-analyst deep-reviewer sandbox-verifier baton-auditor security-auditor integration-checker doc-verifier; do
   require_text "$agent_dir/$agent.md" "## Adversarial Stance" "agent $agent declares adversarial stance"
   require_text "$agent_dir/$agent.md" "If you cannot verify a claim" "agent $agent uses correct proof standard"
   reject_text "$agent_dir/$agent.md" "If you cannot disprove a claim" "agent $agent avoids inverted proof standard"
