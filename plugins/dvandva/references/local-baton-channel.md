@@ -170,6 +170,7 @@ This shows a v2 run-scoped baton. Legacy v1 batons use `schema: "dvandva.baton.v
 - v2: `test_creation` → `deep_review (impl)` after tests and coverage evidence are recorded
 - v2: `deep_review (impl)` → `deslop` when implementation and tests are substantively accepted
 - v2: `deep_review (impl)` → `phase_fixing` when bugs, missing tests, or verification gaps remain
+- v2: `phase_fixing` → `test_creation` when fixes changed behavior, tests, or verification evidence
 - v2: `deslop` → `phase: N+1, implementing` or terminal `done` when no nits, low/minor bugs, stale wording, or unclear instructions remain except explicitly accepted `deferred` items
 - v2: `deslop` → `phase_fixing` when cleanup finds behavior, test, or review blockers
 - `phase: N, implementing` → `human_decision`

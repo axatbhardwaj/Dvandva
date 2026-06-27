@@ -247,7 +247,7 @@ else
     case "${cur_status}:${new_status}" in
       research_drafting:research_review|research_review:research_revision|research_revision:research_review|research_review:spec_drafting) legal=1 ;;
       spec_drafting:spec_review|spec_review:spec_revision|spec_review:implementing|spec_revision:spec_review) legal=1 ;;
-      implementing:test_creation|test_creation:deep_review|deep_review:phase_fixing|deep_review:deslop|deslop:phase_fixing|deslop:implementing|deslop:done) legal=1 ;;
+      implementing:test_creation|test_creation:deep_review|deep_review:phase_fixing|deep_review:deslop|phase_fixing:test_creation|deslop:phase_fixing|deslop:implementing|deslop:done) legal=1 ;;
       implementing:phase_review|phase_review:phase_fixing|phase_review:review_of_review|phase_review:implementing|phase_review:done|phase_fixing:phase_review) legal=1 ;;
       review_of_review:implementing|review_of_review:done|review_of_review:counter_review|counter_review:implementing|counter_review:done|counter_review:review_of_review) legal=1 ;;
       *) reason="no legal edge ${cur_status}->${new_status}" ;;

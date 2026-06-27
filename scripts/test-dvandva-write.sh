@@ -295,7 +295,7 @@ done
 
 # --- transitions: documented v2 edges are legal ---
 
-V2_EDGES="research_drafting:research_review research_review:research_revision research_revision:research_review research_review:spec_drafting implementing:test_creation test_creation:deep_review deep_review:phase_fixing deep_review:deslop deslop:phase_fixing deslop:implementing deslop:done"
+V2_EDGES="research_drafting:research_review research_review:research_revision research_revision:research_review research_review:spec_drafting implementing:test_creation test_creation:deep_review deep_review:phase_fixing deep_review:deslop phase_fixing:test_creation deslop:phase_fixing deslop:implementing deslop:done"
 i=0
 for edge in $V2_EDGES; do
   i=$((i + 1))

@@ -122,6 +122,7 @@ targets before `research_ref` exists. Existing batons cannot change schema or v2
 | `test_creation` | `deep_review` | v2: Vadi records tests, 100% test coverage evidence for new behavior, and verification results |
 | `deep_review` | `phase_fixing` | v2: Prativadi finds bugs, missing tests, verification gaps, or substantive review issues |
 | `deep_review` | `deslop` | v2: Prativadi accepts behavior and tests, then routes cleanup |
+| `phase_fixing` | `test_creation` | v2: Vadi fixed behavior, tests, or verification gaps and must refresh test evidence before review |
 | `deslop` | `phase_fixing` | v2: Cleanup finds behavior, test, or review blockers |
 | `deslop` | `phase: N+1, status: implementing, disagreement_round: 0` | v2: no nits, low/minor bugs, stale wording, or unclear instructions remain except explicitly accepted `deferred` items |
 | `deslop` | final `done` | v2: final phase passed implementation, test_creation, deep_review, deslop, and dual approval |

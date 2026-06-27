@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Focused tests for the user-facing Codex installer wrapper.
-set -u
+set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-TMP_DIR="$(mktemp -d)"
+TMP_DIR=""
 
 cleanup() {
-  rm -rf "$TMP_DIR"
+  if [[ -n "$TMP_DIR" && -d "$TMP_DIR" ]]; then
+    rm -rf "$TMP_DIR"
+  fi
 }
 trap cleanup EXIT
 
@@ -14,6 +16,16 @@ fail() {
   echo "FAIL: $*" >&2
   exit 1
 }
+
+TMP_PARENT="${TMPDIR:-/tmp}"
+TMP_PARENT="${TMP_PARENT%/}"
+TMP_DIR="$(mktemp -d "$TMP_PARENT/dvandva-test-install-codex.XXXXXX")"
+case "$TMP_DIR" in
+  "$TMP_PARENT"/dvandva-test-install-codex.*) ;;
+  *)
+    fail "mktemp returned an unexpected path: $TMP_DIR"
+    ;;
+esac
 
 FAKE_BIN="$TMP_DIR/bin"
 FAKE_MARKETPLACE="$TMP_DIR/marketplace"
@@ -37,10 +49,18 @@ Usage: codex plugin add [OPTIONS] <PLUGIN[@MARKETPLACE]>
 HELP
     ;;
   plugin\ marketplace\ add\ *)
+    if [[ "${CODEX_FAKE_ALREADY:-0}" == "1" ]]; then
+      echo "Marketplace 'dvandva' already added" >&2
+      exit 1
+    fi
     mkdir -p "$CODEX_HOME/.tmp/marketplaces/dvandva/.agents/plugins"
     printf '{"name":"dvandva","plugins":[{"name":"dvandva"}]}\n' > "$CODEX_HOME/.tmp/marketplaces/dvandva/.agents/plugins/marketplace.json"
     ;;
   "plugin add dvandva@dvandva")
+    if [[ "${CODEX_FAKE_ALREADY:-0}" == "1" ]]; then
+      echo "Plugin 'dvandva@dvandva' already installed" >&2
+      exit 1
+    fi
     printf '{"id":"dvandva@dvandva","installed":true}\n'
     ;;
   app-server\ *)
@@ -76,4 +96,76 @@ fi
 grep -q "codex plugin add dvandva@dvandva" "$OUTPUT" \
   || fail "installer output should explain the current Codex install command"
 
-echo "PASS: install-codex.sh prefers codex plugin add"
+ALREADY_LOG="$TMP_DIR/codex-already.log"
+ALREADY_OUTPUT="$TMP_DIR/codex-already.out"
+if ! PATH="$FAKE_BIN:$PATH" \
+  CODEX_HOME="$TMP_DIR/codex-home-already" \
+  HOME="$TMP_DIR/home-already" \
+  CODEX_FAKE_LOG="$ALREADY_LOG" \
+  CODEX_FAKE_ALREADY=1 \
+  bash "$ROOT_DIR/scripts/install-codex.sh" "$FAKE_MARKETPLACE" > "$ALREADY_OUTPUT" 2>&1; then
+  cat "$ALREADY_OUTPUT" >&2
+  fail "install-codex.sh should tolerate already-registered marketplaces and plugins"
+fi
+
+grep -q "Codex marketplace already present; continuing." "$ALREADY_OUTPUT" \
+  || fail "already-present Codex marketplace should be reported and tolerated"
+grep -q "Codex plugin already present; continuing." "$ALREADY_OUTPUT" \
+  || fail "already-present Codex plugin should be reported and tolerated"
+
+FALLBACK_BIN="$TMP_DIR/fallback-bin"
+FALLBACK_LOG="$TMP_DIR/codex-fallback.log"
+mkdir -p "$FALLBACK_BIN"
+cat > "$FALLBACK_BIN/codex" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%s\n' "$*" >> "$CODEX_FAKE_LOG"
+
+case "$*" in
+  "plugin add --help")
+    echo "unknown command: plugin add" >&2
+    exit 1
+    ;;
+  plugin\ marketplace\ add\ *)
+    ;;
+  "app-server --listen stdio://")
+    while IFS= read -r line; do
+      case "$line" in
+        *'"id": 1'*|*'"id":1'*)
+          printf '{"id":1,"result":{}}\n'
+          ;;
+        *'"method": "plugin/install"'*|*'"method":"plugin/install"'*)
+          printf '{"id":2,"result":{"pluginId":"dvandva@dvandva","installed":true}}\n'
+          ;;
+      esac
+    done
+    ;;
+  "plugin add dvandva@dvandva")
+    echo "modern plugin add path should not run in fallback fixture" >&2
+    exit 42
+    ;;
+  *)
+    echo "unexpected fallback fake codex invocation: $*" >&2
+    exit 64
+    ;;
+esac
+SH
+chmod +x "$FALLBACK_BIN/codex"
+
+FALLBACK_OUTPUT="$TMP_DIR/codex-fallback.out"
+if ! PATH="$FALLBACK_BIN:$PATH" \
+  CODEX_HOME="$TMP_DIR/codex-home-fallback" \
+  HOME="$TMP_DIR/home-fallback" \
+  CODEX_FAKE_LOG="$FALLBACK_LOG" \
+  bash "$ROOT_DIR/scripts/install-codex.sh" "$FAKE_MARKETPLACE" > "$FALLBACK_OUTPUT" 2>&1; then
+  cat "$FALLBACK_OUTPUT" >&2
+  fail "install-codex.sh should exercise the legacy app-server fallback when plugin add is unavailable"
+fi
+
+grep -q "app-server --listen stdio://" "$FALLBACK_LOG" \
+  || fail "fallback fixture did not invoke codex app-server"
+grep -q "OK: dvandva@dvandva installed via app-server RPC" "$FALLBACK_OUTPUT" \
+  || fail "fallback output should report app-server RPC success"
+
+echo "PASS: install-codex.sh prefers codex plugin add and covers legacy fallback"

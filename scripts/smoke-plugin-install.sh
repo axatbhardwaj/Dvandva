@@ -84,8 +84,25 @@ grep -q '^/goal You are Dvandva vadi' "$PLUGIN_DIR/commands/vadi.md" || { echo "
 grep -q '^/goal You are Dvandva prativadi' "$PLUGIN_DIR/commands/prativadi.md" || { echo "FAIL: prativadi.md body missing /goal block" >&2; exit 1; }
 echo "SMOKE: dvandva slash commands bundled correctly"
 
-# Phase 5: re-install via scripts/install-codex.sh into a fresh CODEX_HOME
-# to confirm the user-facing one-liner works end-to-end.
+# Phase 5: re-install via scripts/install.sh into fresh Claude/Codex homes
+# to confirm the user-facing dual-engine one-liner works end-to-end.
+SCRIPT_BOTH_CODEX_HOME="$TMP_DIR/codex-home-via-dual-script"
+SCRIPT_BOTH_USER_HOME="$TMP_DIR/user-home-via-dual-script"
+mkdir -p "$SCRIPT_BOTH_CODEX_HOME" "$SCRIPT_BOTH_USER_HOME"
+run env CODEX_HOME="$SCRIPT_BOTH_CODEX_HOME" HOME="$SCRIPT_BOTH_USER_HOME" \
+  bash "$ROOT_DIR/scripts/install.sh" "$MARKETPLACE_ROOT"
+CODEX_DUAL_SKILLS_TXT="$TMP_DIR/codex-dual-skills.txt"
+env \
+  CODEX_HOME="$SCRIPT_BOTH_CODEX_HOME" \
+  HOME="$SCRIPT_BOTH_USER_HOME" \
+  codex debug prompt-input "probe dvandva skills after dual install" \
+  | jq -r '.. | strings? // empty' > "$CODEX_DUAL_SKILLS_TXT"
+grep -q 'dvandva:prativadi' "$CODEX_DUAL_SKILLS_TXT"
+grep -q 'dvandva:vadi' "$CODEX_DUAL_SKILLS_TXT"
+echo "SMOKE: install.sh dual-engine install passed"
+
+# Phase 6: keep the Codex-only helper covered because scripts/install.sh
+# delegates to it for Codex and older Codex builds still use its fallback path.
 SCRIPT_CODEX_HOME="$TMP_DIR/codex-home-via-script"
 SCRIPT_USER_HOME="$TMP_DIR/codex-user-home-via-script"
 mkdir -p "$SCRIPT_CODEX_HOME" "$SCRIPT_USER_HOME"

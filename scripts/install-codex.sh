@@ -15,17 +15,37 @@ set -euo pipefail
 
 MARKETPLACE="${1:-axatbhardwaj/Dvandva}"
 
+run_idempotent() {
+  local label="$1"
+  local output status
+  shift
+
+  if output="$("$@" 2>&1)"; then
+    [[ -z "$output" ]] || printf '%s\n' "$output"
+    return 0
+  fi
+
+  status=$?
+  [[ -z "$output" ]] || printf '%s\n' "$output" >&2
+  if printf '%s\n' "$output" | grep -Eiq 'already|exists|registered|installed|duplicate'; then
+    echo "$label already present; continuing."
+    return 0
+  fi
+
+  return "$status"
+}
+
 if ! command -v codex >/dev/null 2>&1; then
   echo "ERROR: codex CLI not found on PATH" >&2
   exit 1
 fi
 
 echo "Step 1: registering marketplace '$MARKETPLACE'..."
-codex plugin marketplace add "$MARKETPLACE"
+run_idempotent "Codex marketplace" codex plugin marketplace add "$MARKETPLACE"
 
 if codex plugin add --help >/dev/null 2>&1; then
   echo "Step 2: installing dvandva plugin with: codex plugin add dvandva@dvandva"
-  codex plugin add dvandva@dvandva
+  run_idempotent "Codex plugin" codex plugin add dvandva@dvandva
   echo "Done. Verify with: codex, then check /skills | grep dvandva and /dvandva:vadi"
   exit 0
 fi

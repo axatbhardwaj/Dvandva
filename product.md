@@ -383,23 +383,17 @@ Auto-activation depends entirely on `description`. Tuning rules:
 ### 11.1 Primary install (marketplace)
 
 ```bash
-claude plugin marketplace add axatbhardwaj/Dvandva
-claude plugin install dvandva@dvandva
-
-codex plugin marketplace add axatbhardwaj/Dvandva
-codex plugin add dvandva@dvandva
+bash scripts/install.sh
 ```
 
-`scripts/install-codex.sh` wraps the Codex path for users: it registers the marketplace, runs `codex plugin add dvandva@dvandva` on current Codex builds, and keeps the legacy app-server RPC install as a fallback for older builds. The authoritative preflight is whether the current agent session can see and invoke the required Superpowers skills.
+`scripts/install.sh` wraps the public install path for users: it registers the Dvandva marketplace and installs `dvandva@dvandva` in both Claude Code and Codex. It accepts `--claude-only` and `--codex-only` for one-engine installs. For Codex, it delegates to `scripts/install-codex.sh`, which runs `codex plugin add dvandva@dvandva` on current Codex builds and keeps the legacy app-server RPC install as a fallback for older builds. The authoritative preflight is whether the current agent session can see and invoke the required Superpowers skills.
 
 ### 11.2 Development install fallback
 
 For local development against a checkout, prefer marketplace install from the checkout:
 
 ```bash
-bash scripts/install-codex.sh "$(pwd)"
-claude plugin marketplace add "$(pwd)"
-claude plugin install dvandva@dvandva
+bash scripts/install.sh "$(pwd)"
 ```
 
 For live skill-development work where plugin cache copies are too indirect, symlink or copy `plugins/dvandva/skills/vadi/` and `plugins/dvandva/skills/prativadi/` into the engine skill directories. Remove old pre-plugin `dvandva-*` symlinks first because root `skills/` no longer exists.
@@ -441,7 +435,8 @@ v1 has no automated test surface for skill behavior. What can be tested:
 - **Schema key-presence check** (same script): the inlined `dvandva.baton.v1` JSON in each SKILL.md must parse as valid JSON and contain the required keys from Appendix A. Not a JSON Schema check — that's v2.
 - **Generated artifact lint** (`scripts/lint-artifacts.sh`): rejects generated Markdown under `./superpowers/`, requires generated HTML artifacts to declare dark color scheme, parses embedded Dvandva artifact metadata, and rejects external script/link references.
 - **Wait-helper tests** (`scripts/test-dvandva-wait.sh`): verifies the foreground helper exits 0 when a role is assigned, 10 on `done`, 11 on `human_decision`, 12 on `human_question` with resume fields, and 20 on timeout.
-- **Plugin smoke test** (`scripts/smoke-plugin-install.sh`): copies the plugin into a temp marketplace, validates Claude plugin/marketplace metadata, runs Codex marketplace add with isolated `CODEX_HOME`, verifies both wait helpers, and checks standalone development copies.
+- **Installer tests** (`scripts/test-install.sh`, `scripts/test-install-codex.sh`): verify the dual Claude/Codex installer invokes both engine install paths and the Codex-only helper uses `codex plugin add` when available, with the app-server path preserved only as legacy fallback.
+- **Plugin smoke test** (`scripts/smoke-plugin-install.sh`): copies the plugin into a temp marketplace, validates Claude plugin/marketplace metadata, runs Codex marketplace add with isolated `CODEX_HOME`, exercises the dual installer with isolated Claude/Codex homes, verifies both wait helpers, and checks standalone development copies.
 - **Pilot as integration test:** the pilot is the v1 integration test. Success criteria #1–#5 in section 2 are the acceptance gate.
 
 ## 14. Risks and open questions

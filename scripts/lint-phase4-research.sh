@@ -161,6 +161,7 @@ for command in \
   "bash scripts/test-dvandva-wait.sh" \
   "bash scripts/test-dvandva-write.sh" \
   "bash scripts/test-dvandva-snapshot.sh" \
+  "bash scripts/test-install.sh" \
   "bash scripts/test-install-codex.sh" \
   "bash scripts/smoke-plugin-install.sh" \
   "claude plugin validate plugins/dvandva" \

@@ -10,24 +10,25 @@ Dvandva ships as an installable plugin for both engines. The repo lives at https
 
 ## Quickstart
 
-Install the marketplace in each engine you want to use:
+Install the marketplace in both Claude Code and Codex:
 
 ```bash
-claude plugin marketplace add axatbhardwaj/Dvandva
-claude plugin install dvandva@dvandva
-
-bash scripts/install-codex.sh
+bash scripts/install.sh
 ```
 
-For Codex, `scripts/install-codex.sh` registers the marketplace and then runs
-`codex plugin add dvandva@dvandva` non-interactively — no TUI navigation
+`scripts/install.sh` registers the Dvandva marketplace and installs
+`dvandva@dvandva` into both engines. It accepts an optional local-path argument
+for development against a checkout:
+
+```bash
+bash scripts/install.sh /path/to/your/Dvandva
+```
+
+Use `--claude-only` or `--codex-only` when you are installing just one engine.
+For Codex, the wrapper delegates to `scripts/install-codex.sh`, which runs
+`codex plugin add dvandva@dvandva` non-interactively so no TUI navigation is
 required. Older Codex builds without `plugin add` fall back to the legacy
-app-server RPC path. The script accepts an optional local-path argument for
-development against a checkout:
-
-```bash
-bash scripts/install-codex.sh /path/to/your/Dvandva
-```
+app-server RPC path.
 
 See `docs/research/2026-05-16-codex-install.md` for the install-history note:
 Codex `0.130.0` required app-server RPC, while current Codex exposes
@@ -118,19 +119,16 @@ The `.dvandva/` directory is gitignored. Inspect history with `ls <baton-dir>/hi
 
 ## Development Install
 
-Marketplace install is the public path. For local development against a checkout, install the checkout as a local Codex marketplace and, if needed, a local Claude marketplace:
+Marketplace install is the public path. For local development against a checkout, install the checkout as a local marketplace in both engines:
 
 ```bash
 git clone https://github.com/axatbhardwaj/Dvandva.git
 cd Dvandva
 
-# Codex
-bash scripts/install-codex.sh "$(pwd)"
-
-# Claude
-claude plugin marketplace add "$(pwd)"
-claude plugin install dvandva@dvandva
+bash scripts/install.sh "$(pwd)"
 ```
+
+For engine-specific development, pass `--claude-only` or `--codex-only`.
 
 For direct skill-development work where you deliberately want live symlinks instead of plugin cache copies, link the skill directories directly:
 
@@ -165,6 +163,7 @@ done
 bash scripts/test-dvandva-wait.sh
 bash scripts/test-dvandva-write.sh
 bash scripts/test-dvandva-snapshot.sh
+bash scripts/test-install.sh
 bash scripts/test-install-codex.sh
 bash scripts/smoke-plugin-install.sh
 claude plugin validate plugins/dvandva
@@ -173,15 +172,16 @@ claude plugin validate .
 
 The smoke script builds a temp marketplace, validates the Claude plugin path,
 adds and installs the marketplace in Codex with `codex plugin add` under an
-isolated `CODEX_HOME`, checks that Codex renders both Dvandva skills, runs both
-bundled wait helpers, and checks standalone development copies.
+isolated `CODEX_HOME`, runs the dual Claude/Codex installer under isolated
+homes, checks that Codex renders both Dvandva skills, runs both bundled wait
+helpers, and checks standalone development copies.
 
 ## Release Checklist
 
 1. Bump `.claude-plugin/marketplace.json`, `plugins/dvandva/.claude-plugin/plugin.json`, and `plugins/dvandva/.codex-plugin/plugin.json` together.
 2. Run the validation commands above.
-3. Run `codex plugin marketplace add <repo-or-path>` and `codex plugin add dvandva@dvandva` from an isolated `CODEX_HOME`, then verify `/skills` exposes both Dvandva skills.
-4. Run `claude plugin marketplace add <repo-or-path>` and `claude plugin install dvandva@dvandva` from an isolated `HOME`.
+3. Run `bash scripts/install.sh <repo-or-path>` from isolated `HOME` and `CODEX_HOME`, then verify `/skills` exposes both Dvandva skills in the installed engines.
+4. If testing engine-specific fallback paths, run `bash scripts/install-codex.sh <repo-or-path>` from an isolated `CODEX_HOME` and `HOME`.
 5. Tag the release, for example `v0.1.0`.
 6. Push the branch and tag only after both Dvandva roles approve the final diff.
 
