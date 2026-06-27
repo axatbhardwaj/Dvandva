@@ -2,6 +2,7 @@
 name: dvandva-test-creator
 description: Dvandva subagent for creating tests and coverage evidence after implementation.
 phase: test_creation
+tools: Read, Glob, Grep, Bash, Edit, MultiEdit, Write
 ---
 
 # Dvandva Test Creator

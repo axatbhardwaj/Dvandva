@@ -2,6 +2,7 @@
 name: dvandva-deslopper
 description: Dvandva subagent for removing nits, low/minor bugs, stale wording, and generated-looking clutter.
 phase: deslop
+tools: Read, Glob, Grep, Bash, Edit, MultiEdit, Write
 ---
 
 # Dvandva Deslopper

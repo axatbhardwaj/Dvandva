@@ -179,10 +179,20 @@ for agent in researcher architect implementer test-creator deep-reviewer deslopp
   file="$agent_dir/$agent.md"
   require_text "$file" "name: dvandva-$agent" "agent $agent has Dvandva name"
   require_text "$file" "phase:" "agent $agent declares phase ownership"
+  require_text "$file" "tools:" "agent $agent declares explicit tool scope"
   require_text "$file" "work_split" "agent $agent reports work_split"
   require_text "$file" "verification_matrix" "agent $agent reports verification_matrix"
   reject_text "$file" "not an orchestrator" "agent $agent avoids old no-orchestrator framing"
 done
+
+require_text "$agent_dir/researcher.md" "tools: Read, Glob, Grep, WebFetch" "researcher stays read-only plus WebFetch"
+require_text "$agent_dir/architect.md" "tools: Read, Glob, Grep" "architect stays read-only"
+require_text "$agent_dir/deep-reviewer.md" "tools: Read, Glob, Grep, Bash" "deep reviewer can verify without editing"
+require_text "$agent_dir/baton-auditor.md" "tools: Read, Glob, Grep, Bash" "baton auditor can inspect without editing"
+require_text "$agent_dir/sandbox-verifier.md" "tools: Read, Glob, Grep, Bash" "sandbox verifier can run probes without editing"
+require_text "$agent_dir/implementer.md" "tools: Read, Glob, Grep, Bash, Edit, MultiEdit, Write" "implementer declares edit tools"
+require_text "$agent_dir/test-creator.md" "tools: Read, Glob, Grep, Bash, Edit, MultiEdit, Write" "test creator declares edit tools"
+require_text "$agent_dir/deslopper.md" "tools: Read, Glob, Grep, Bash, Edit, MultiEdit, Write" "deslopper declares edit tools"
 
 require_text "$ROOT_DIR/product.md" "GSD-style fresh-context subagents" "product cites GSD-style subagent pattern"
 require_text "$ROOT_DIR/product.md" "OMO-style team roles" "product cites OMO-style team role pattern"

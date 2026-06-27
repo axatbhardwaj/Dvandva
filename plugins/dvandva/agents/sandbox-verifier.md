@@ -2,6 +2,7 @@
 name: dvandva-sandbox-verifier
 description: Dvandva subagent for ephemeral runtime probes and command evidence.
 phase: verification
+tools: Read, Glob, Grep, Bash
 ---
 
 # Dvandva Sandbox Verifier

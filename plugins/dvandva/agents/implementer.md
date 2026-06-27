@@ -2,6 +2,7 @@
 name: dvandva-implementer
 description: Dvandva subagent for bounded implementation slices with tests prepared separately.
 phase: implementing
+tools: Read, Glob, Grep, Bash, Edit, MultiEdit, Write
 ---
 
 # Dvandva Implementer

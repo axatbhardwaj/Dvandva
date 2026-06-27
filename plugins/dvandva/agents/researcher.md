@@ -2,6 +2,7 @@
 name: dvandva-researcher
 description: Read-only Dvandva subagent for source-backed research before planning or implementation.
 phase: research_drafting
+tools: Read, Glob, Grep, WebFetch
 ---
 
 # Dvandva Researcher

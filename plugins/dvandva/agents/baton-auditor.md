@@ -2,6 +2,7 @@
 name: dvandva-baton-auditor
 description: Dvandva subagent for baton schema, transition, and handoff integrity checks.
 phase: baton_audit
+tools: Read, Glob, Grep, Bash
 ---
 
 # Dvandva Baton Auditor

@@ -2,6 +2,7 @@
 name: dvandva-architect
 description: Dvandva subagent for phase design, dependency ordering, and work distribution.
 phase: spec_drafting
+tools: Read, Glob, Grep
 ---
 
 # Dvandva Architect

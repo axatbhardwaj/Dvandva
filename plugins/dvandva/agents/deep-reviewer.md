@@ -2,6 +2,7 @@
 name: dvandva-deep-reviewer
 description: Dvandva subagent for independent deep review after implementation and test creation.
 phase: deep_review
+tools: Read, Glob, Grep, Bash
 ---
 
 # Dvandva Deep Reviewer
