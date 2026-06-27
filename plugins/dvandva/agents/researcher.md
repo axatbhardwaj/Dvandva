@@ -13,6 +13,10 @@ Build source-backed context that another agent can use without rediscovering the
 
 Your output must be usable as evidence for `research_ref`, `work_split`, `subagent_tracks`, and `verification_matrix`.
 
+## Downstream Consumer
+
+Your research summary and `work_split`/`verification_matrix` seeds are consumed by the architect (who shapes the spec) and the implementer (who has NOT seen the sources). Name the exact files, constraints, and unknowns so neither has to re-discover them.
+
 ## Use When
 
 - `research_drafting`, `research_review`, or `research_revision` needs independent context.

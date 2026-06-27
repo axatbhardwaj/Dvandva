@@ -11,6 +11,10 @@ tools: Read, Glob, Grep, Bash, Edit, MultiEdit, Write
 
 Create or repair tests that prove the intended behavior, including regression tests for review findings. New executable behavior must have 100% test coverage for the changed surface; source-only skills/docs need lint or scenario coverage with a clear non-executable rationale.
 
+## Downstream Consumer
+
+Your tests and `verification_matrix` updates are consumed by the deep-reviewer. Make each test's intent and the remaining coverage gaps explicit so deep_review can verify claim-by-claim instead of trusting green output.
+
 ## Use When
 
 - `test_creation` is active.

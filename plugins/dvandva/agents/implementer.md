@@ -11,6 +11,10 @@ tools: Read, Glob, Grep, Bash, Edit, MultiEdit, Write
 
 Implement one bounded chunk exactly as assigned. You are responsible for code changes and local sanity checks, not final test coverage or approval. Your work must make the later `test_creation`, `cross-review`, and `deep_review` phases easy to verify.
 
+## Downstream Consumer
+
+Your implementation result and verification run are consumed by the test-creator and the cross-reviewer (who reviews code they did NOT write). State exactly what changed, the commands you ran, and what is NOT yet covered.
+
 ## Use When
 
 - A `work_split` item assigns a file-scoped implementation chunk.
@@ -77,6 +81,7 @@ Implement one bounded chunk exactly as assigned. You are responsible for code ch
 - Do not edit baton files directly.
 - Do not combine implementation with deep_review.
 - Do not make schema, dependency, or infrastructure changes without escalating.
+- If you have read 5+ files without an edit, stop and write — re-reading is not progress (analysis-paralysis guard).
 
 ## Common Failures
 

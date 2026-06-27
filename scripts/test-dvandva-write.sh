@@ -787,6 +787,21 @@ make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 '.run_explainer_ref = "./s
 run_case_contains "v2 counter_review->done rejects legacy terminal review" 24 "no legal edge counter_review->done" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+BOX="$(new_box v2-team-cross-fixing-sync)"
+make_baton_v2 "$BOX/baton.json" "cross_fixing" "team" 4 '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "cross_fixing" "team" 5 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Team sync: prativadi protocol slice complete; vadi owns agent-roster slice."' \
+  '.next_action = "Vadi: complete agent-roster slice; prativadi is polling for next checkpoint."'
+run_case "v2 team cross_fixing accepts same-status sync checkpoint" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-non-team-same-status-still-rejected)"
+make_baton_v2 "$BOX/baton.json" "test_creation" "vadi" 4
+make_baton_v2 "$BOX/baton.next.json" "test_creation" "vadi" 5
+run_case_contains "v2 non-team same-status rewrite still rejects" 24 "same-status rewrite" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
 BOX="$(new_box v2-done-missing-run-explainer)"
 make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4
 make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 '.run_explainer_ref = null'

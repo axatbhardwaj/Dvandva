@@ -47,6 +47,8 @@ This shows a v2 run-scoped baton. Legacy v1 batons use `schema: "dvandva.baton.v
 
 implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; the `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. `test_creation` routes to `cross_review`, `cross_review` may route to `cross_fixing`, and only completed cross-review evidence for both roles can advance to `deep_review`. Phase convention: implementation-chunk tracks use the numeric implementation phase, while cross-review and deep-review gate tracks use the status-name phase such as `phase: "cross_review"` or `phase: "deep_review"`.
 
+Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`) may write same-status sync checkpoints when both roles remain active. Use them to record partial completion, task distribution, or peer wait state without advancing the lifecycle early. Scalar-owner states still reject same-status rewrites.
+
 ```json
 {
   "schema": "dvandva.baton.v2",

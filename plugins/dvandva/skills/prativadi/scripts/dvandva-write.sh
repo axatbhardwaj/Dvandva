@@ -307,7 +307,7 @@ else
   fi
 
   # Precedence is load-bearing — do not reorder:
-  #   1. checkpoint+1   2. same-status ban   3. from-human_question
+  #   1. checkpoint+1   2. same-status team-sync gate   3. from-human_question
   #   4. to-human_decision (universal)   5. from-human_decision
   #   6. to-human_question (spec-only, unlocked, fields set)   7. edge whitelist
   # e.g. moving the same-status ban below the human branches would silently
@@ -319,7 +319,27 @@ else
   elif [[ "$new_checkpoint" -ne $((cur_checkpoint + 1)) ]]; then
     reason="checkpoint must be $((cur_checkpoint + 1)), got $new_checkpoint"
   elif [[ "$new_status" == "$cur_status" ]]; then
-    reason="same-status rewrite (one baton write per handoff)"
+    if [[ "$schema" == "dvandva.baton.v2" ]]; then
+      case "$new_status" in
+        parallel_implementing|cross_review|cross_fixing)
+          if jq -e '
+            (.assignee == "team") and
+            ((.active_roles | sort) == ["prativadi", "vadi"]) and
+            ((.summary | type) == "string" and (.summary | length) > 0) and
+            ((.next_action | type) == "string" and (.next_action | length) > 0)
+          ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+            legal=1
+          else
+            reason="same-status team sync requires team assignee, both active_roles, summary, and next_action"
+          fi
+          ;;
+        *)
+          reason="same-status rewrite (only v2 team sync checkpoints may keep status)"
+          ;;
+      esac
+    else
+      reason="same-status rewrite (one baton write per handoff)"
+    fi
   elif [[ "$cur_status" == "human_question" ]]; then
     if [[ "$new_status" == "human_decision" ]]; then
       legal=1

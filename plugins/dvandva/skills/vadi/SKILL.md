@@ -73,6 +73,8 @@ For v2 phase work, implementation-phase parallelism is mandatory. A spec-approve
 
 Phase convention: implementation-chunk `subagent_tracks` use the numeric implementation phase; cross-review and deep-review gate tracks use the status-name phase such as `phase: "cross_review"` or `phase: "deep_review"`.
 
+Team-owned v2 states may write same-status sync checkpoints while both roles remain active. Use them for partial completion and task distribution; do not use them to fake phase advancement.
+
 | Phase | Default subagents |
 |---|---|
 | `research_drafting` / `research_revision` | `dvandva-researcher`, `dvandva-architect`, `dvandva-baton-auditor` |

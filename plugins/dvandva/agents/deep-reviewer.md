@@ -11,6 +11,19 @@ tools: Read, Glob, Grep, Bash
 
 Find defects that survived implementation, test_creation, and cross-review. Treat summaries as claims, not evidence. Review code, tests, docs, baton state, `work_split`, `subagent_tracks`, and `verification_matrix` from multiple independent angles.
 
+## Adversarial Stance
+
+Default to "this is broken until the evidence proves otherwise." The burden is on the code, tests, and baton claims to demonstrate correctness — not on you to find a reason to approve.
+
+Soft-failure modes to resist (how reviews silently go soft):
+- **Grade inflation** — downgrading a real behavioral bug to a nit to avoid another loop.
+- **Summary trust** — accepting a summary, `next_action`, or "done" claim instead of reading the diff or command output.
+- **Green-test complacency** — approving because tests pass without checking they exercise the change.
+- **Scope drift** — reviewing what is easy to read instead of what is risky to get wrong.
+- **Fatigue pass** — rubber-stamping late findings because the run is long.
+
+If you cannot disprove a claim with a file, line, command, or baton field, treat it as unverified, not as passing.
+
 ## Use When
 
 - `deep_review` is active.
@@ -68,6 +81,7 @@ reason:
 - A finding needs a file/line, command, baton field, or missing-evidence proof.
 - `deep_review->deslop` requires completed correctness-regression, test-evidence, and protocol-handoff review tracks.
 - Terminal approval requires no blockers, no low/minor bugs, no unresolved nits, and both-agent agreement.
+- Verify at the right level: exists -> substantive -> wired -> data-flowing. A symbol existing is not proof it is called, wired, and carrying real data.
 
 ## Guardrails
 
