@@ -104,6 +104,7 @@ for role in vadi prativadi; do
   require_text "$skill" "write-helper validation exit 23" "$role disambiguates write exit 23"
   require_text "$skill" "wait-helper persist cap exit 23" "$role disambiguates wait exit 23"
   require_text "$skill" 'dvandva.baton.v1` or `dvandva.baton.v2' "$role accepts supported v1/v2 baton schemas"
+  require_text "$skill" "Regular checkpoint commits" "$role documents regular checkpoint commits"
   reject_text "$skill" "until the v2 write-helper phase lands" "$role does not reference dangling v2 phase"
   reject_text "$skill" "equals \`dvandva.baton.v1\` in this helper version" "$role does not reject live v2 schema"
   reject_text "$skill" "Phase 6 includes v2 write-helper enforcement; until then" "$role does not describe v2 enforcement as future-only"
@@ -126,6 +127,7 @@ for command in "$ROOT_DIR/plugins/dvandva/commands/vadi.md" "$ROOT_DIR/plugins/d
   require_text "$command" "deslop" "$name goal includes de-slop pass"
   require_text "$command" "parallel subagents" "$name goal includes subagent parallelism"
   require_text "$command" "Invoke \`dvandva:research\`" "$name goal invokes research skill"
+  require_text "$command" "regular local checkpoint commits" "$name goal includes regular checkpoint commits"
 done
 
 for file in \
@@ -140,12 +142,15 @@ for file in \
   require_text "$file" "test_creation" "$name documents separate test creation"
   require_text "$file" "deep_review" "$name documents deep review loop"
   require_text "$file" "deslop" "$name documents de-slop pass"
+  require_text "$file" "Regular checkpoint commits" "$name documents regular checkpoint commits"
   require_text "$file" "v2 write-helper enforcement" "$name documents v2 enforcement"
   require_text "$file" "wait-helper persist cap exit 23" "$name disambiguates wait exit 23"
   require_text "$file" "write-helper validation exit 23" "$name disambiguates write exit 23"
 done
 
 readme="$ROOT_DIR/README.md"
+require_text "$readme" "regular local checkpoint commits" "README documents regular checkpoint commits"
+reject_text "$readme" "Agents may commit and push only after both" "README no longer says commits are final-only"
 for command in \
   "bash scripts/lint-protocol-phase1.sh" \
   "bash scripts/lint-skill-phase3.sh" \

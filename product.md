@@ -27,7 +27,7 @@ The v2 flow has seven lifecycle segments:
 6. **De-slop phase** — vadi/prativadi loop on nits, low/minor bugs, stale wording, vague instructions, duplicated logic, and generated-looking clutter until no findings remain except items explicitly accepted in `deferred`.
 7. **Phase advancement or completion** — on agreement, make a regular local checkpoint commit for the verified logical slice when `allow_commit` permits it, then advance to phase N+1. On completion of the final phase, require both final approvals, optionally push, then transition to `done`.
 
-Enforcement in v1 is by agent checklist embedded in each SKILL.md and by `/goal` evaluator transcript-checks. Deterministic schema and transition validation is deferred to v2 (a CLI validator backed by a real JSON Schema file).
+Legacy enforcement starts with the agent checklist embedded in each SKILL.md and `/goal` evaluator transcript checks. The bundled write helper now enforces the supported v1/v2 schema strings, required fields, checkpoint arithmetic, safe run IDs, v2 status-owner pairs, and transition subset. A future standalone CLI validator backed by a full JSON Schema file can replace the remaining checklist-only validation.
 
 The product is the `dvandva` plugin, its bundled protocol/orchestration skills, plugin-local baton references, bundled wait helpers, an install/usage doc, and a pilot case study. It coordinates work through baton state and skill checklists; it does not add an agent launcher, daemon, or GitHub integration.
 
@@ -78,14 +78,14 @@ If criterion #5 fails (any runaway loop observed during pilot), v1 does not ship
 
 ### 3.2 Out of v1 (non-goals)
 
-- No `dvandva` binary and no schema-validator script. v1 enforcement is checklist-gate inside the skill body + `/goal` transcript surfacing + the wait helper's simple exit-code contract. The deterministic validator and the real JSON Schema file are v2.
+- No standalone `dvandva` binary and no full JSON Schema validator script. Enforcement is the skill-body checklist plus `/goal` transcript surfacing, the wait helper's exit-code contract, and the write helper's deterministic validation for the supported v1/v2 transition subset. A complete JSON Schema validator remains future work.
 - No runtime runner / daemon / process launcher. The user starts the two interactive sessions; in walkaway mode, the skills keep those sessions alive by blocking in the wait helper when assigned away.
 - No GitHub integration. No PR comment posting. Skills tell the agent what to surface in transcript; humans write any PR comments using the baton as source material.
 - No multi-engine enforcement. v1 does not verify which engine is running a given role. The `current_engine` field on the baton records which CLI wrote each checkpoint for traceability, but the protocol does not require a particular pairing. The canonical pairing (vadi=Claude, prativadi=Codex) is documented but not enforced.
 - No separate `dvandva-init` skill. The vadi skill scaffolds `.dvandva/` inline on first run.
 - No official marketplace-directory submission and no npm-first distribution. v1 is a GitHub-hosted plugin marketplace package.
 - v2 supports multiple named batons per repo/worktree via safe run directories. It does not isolate the git index; overlapping `changed_paths` between active runs must route to `human_decision` before final ship.
-- No PR creation. Walkaway mode may commit and push after dual final approval, but it must not raise a PR.
+- No PR creation. Walkaway mode may create local checkpoint commits after verified logical slices and may push only after dual final approval, but it must not raise a PR.
 
 ## 4. Prerequisites (hard requirement before pilot)
 

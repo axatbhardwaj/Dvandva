@@ -154,6 +154,15 @@ mid-run.
 | any state | `human_decision` | Escalation, cap hit, blocker, malformed input, or unsafe dirty tree |
 | `human_decision` | any state | Human edits baton or prompts an agent with a decision |
 
+## Regular checkpoint commits
+
+Regular checkpoint commits are local commits made after verified logical slices
+when `allow_commit == true`. Commit only the baton's intended `changed_paths`
+union, excluding `.dvandva/` and `superpowers/`, and only when `git status
+--short` has no unrelated dirty paths. Record the hash in `verification` or
+`summary` as `checkpoint_commit=<hash>`. Do not push checkpoint commits; final
+push remains gated by both final approvals and `allow_push == true`.
+
 ## v2 Assignee Ownership
 
 The v2 helper validates the next candidate's `assignee` against the status it

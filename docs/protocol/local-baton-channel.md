@@ -215,7 +215,7 @@ The active agent must stop doing LLM work after writing a baton that assigns the
 
 Every baton write goes through `${CLAUDE_SKILL_DIR}/scripts/dvandva-write.sh`, which validates the v1 or v2 transition, installs atomically, and snapshots the checkpoint. The live v2 write-helper enforcement covers named-run research transitions, v2-only fields, safe run IDs, schema continuity, and status-owner pairs.
 
-## Regular Checkpoint Commits
+## Regular checkpoint commits
 
 The active agent should make regular local checkpoint commits after verified
 logical slices when `allow_commit == true`. Commit only the baton's intended
