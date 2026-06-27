@@ -59,7 +59,7 @@ Use the canonical Dvandva subagent roster under `plugins/dvandva/agents/` when t
 | `parallel_implementing` / `implementing` | `dvandva-implementer`, optionally `dvandva-sandbox-verifier` |
 | `test_creation` | `dvandva-test-creator`, `dvandva-sandbox-verifier` |
 | `cross_review` / `cross_fixing` | `dvandva-cross-reviewer`, `dvandva-baton-auditor`, `dvandva-sandbox-verifier` |
-| `deep_review` | `dvandva-deep-reviewer`, `dvandva-baton-auditor`, optionally `dvandva-sandbox-verifier` |
+| `deep_review` | `dvandva-deep-reviewer`, `dvandva-adversarial-analyst`, `dvandva-baton-auditor`, optionally `dvandva-sandbox-verifier` |
 | `deslop` | `dvandva-deslopper`, `dvandva-baton-auditor` |
 
 This borrows the useful part of GSD-style fresh-context subagents and OMO-style team roles without adding a daemon, mailbox, or central runtime process. The baton still owns coordination.

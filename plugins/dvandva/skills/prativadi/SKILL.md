@@ -75,7 +75,7 @@ Team-owned v2 states may write same-status sync checkpoints while both roles rem
 | `spec_review` | `dvandva-architect`, `dvandva-baton-auditor` |
 | `parallel_implementing` | `dvandva-implementer`, `dvandva-sandbox-verifier` |
 | `cross_review` / `cross_fixing` | `dvandva-cross-reviewer`, `dvandva-baton-auditor`, `dvandva-sandbox-verifier` |
-| `deep_review` / `phase_review` | `dvandva-deep-reviewer`, `dvandva-baton-auditor`, `dvandva-sandbox-verifier` |
+| `deep_review` / `phase_review` | `dvandva-deep-reviewer`, `dvandva-adversarial-analyst`, `dvandva-baton-auditor`, `dvandva-sandbox-verifier` |
 | narrow fixups | `dvandva-implementer`, `dvandva-test-creator` if behavior changes |
 | `counter_review` | `dvandva-deep-reviewer`, `dvandva-baton-auditor` |
 | `deslop` review | `dvandva-deslopper`, `dvandva-baton-auditor` |
@@ -168,7 +168,7 @@ Actions:
 1. Read the diff vs branch baseline: `git diff <baseline>..HEAD`.
 2. Confirm test_creation and cross-review happened before review. If tests or reciprocal cross-review evidence are missing for new executable behavior, treat it as a handback issue unless the `verification_matrix` documents source-only rationale.
 3. Cross-check the vadi's `verification` block and `verification_matrix`. Did the listed commands actually pass? Do they cover the changed paths, risks, and 100% test coverage target?
-4. Use conditional parallelism for evidence-backed checks. In `deep_review`, dispatch or directly run at least three angle-specific reviewers/tracks before approving: `correctness-regression`, `test-evidence`, and `protocol-handoff`. Add more tracks when independent scope exists, such as documentation/deslop, security, or runtime verification.
+4. Use conditional parallelism for evidence-backed checks. In `deep_review`, dispatch or directly run at least three angle-specific reviewers/tracks before approving: `correctness-regression`, `test-evidence`, and `protocol-handoff`. Add `dvandva-adversarial-analyst` for boundary, state/concurrency, error-handling, or bypass-logic attack hypotheses, and add more tracks when independent scope exists, such as documentation/deslop, security, or runtime verification.
 5. Record those review tracks in `subagent_tracks`; the v2 write helper rejects `deep_review -> deslop` without the three completed angle-specific reviewers.
 6. Look for: bugs, regressions, stale docs, missing tests, claims not matching the diff, and deslop opportunities.
 7. Categorize issues as blocker/bug, low/minor issue, nit/deslop, narrow-fixup-eligible, or handback-required.

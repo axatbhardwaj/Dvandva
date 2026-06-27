@@ -205,7 +205,7 @@ require_text "$schema" '"deep_review"' "v2 schema includes deep review status"
 require_text "$schema" '"deslop"' "v2 schema includes de-slop status"
 
 agent_dir="$ROOT_DIR/plugins/dvandva/agents"
-for agent in researcher architect implementer test-creator cross-reviewer deep-reviewer deslopper sandbox-verifier baton-auditor; do
+for agent in researcher architect implementer test-creator cross-reviewer adversarial-analyst deep-reviewer deslopper sandbox-verifier baton-auditor; do
   file="$agent_dir/$agent.md"
   require_text "$file" "name: dvandva-$agent" "agent $agent has Dvandva name"
   require_text "$file" "description: Use" "agent $agent has trigger-focused description"
@@ -229,7 +229,7 @@ for agent in researcher architect implementer test-creator deslopper; do
   require_text "$agent_dir/$agent.md" "## Downstream Consumer" "agent $agent names downstream consumer"
 done
 
-for agent in cross-reviewer deep-reviewer sandbox-verifier baton-auditor; do
+for agent in cross-reviewer adversarial-analyst deep-reviewer sandbox-verifier baton-auditor; do
   require_text "$agent_dir/$agent.md" "## Adversarial Stance" "agent $agent declares adversarial stance"
   require_text "$agent_dir/$agent.md" "If you cannot verify a claim" "agent $agent uses correct proof standard"
   reject_text "$agent_dir/$agent.md" "If you cannot disprove a claim" "agent $agent avoids inverted proof standard"
@@ -240,7 +240,9 @@ require_text "$agent_dir/architect.md" "tools: Read, Glob, Grep" "architect stay
 require_text "$agent_dir/architect.md" "must_not_do:" "architect work split carries must-not-do boundary"
 require_text "$agent_dir/implementer.md" "phase: parallel_implementing" "implementer maps to parallel implementation"
 require_text "$agent_dir/cross-reviewer.md" "phase: cross_review" "cross reviewer maps to cross_review"
+require_text "$agent_dir/adversarial-analyst.md" "phase: deep_review" "adversarial analyst maps to deep_review"
 require_text "$agent_dir/deep-reviewer.md" "tools: Read, Glob, Grep, Bash" "deep reviewer can verify without editing"
+require_text "$agent_dir/adversarial-analyst.md" "tools: Read, Glob, Grep, Bash" "adversarial analyst can inspect and run probes without editing"
 require_text "$agent_dir/baton-auditor.md" "tools: Read, Glob, Grep, Bash" "baton auditor can inspect without editing"
 require_text "$agent_dir/sandbox-verifier.md" "tools: Read, Glob, Grep, Bash" "sandbox verifier can run probes without editing"
 require_text "$agent_dir/implementer.md" "tools: Read, Glob, Grep, Bash, Edit, MultiEdit, Write" "implementer declares edit tools"
@@ -250,15 +252,20 @@ require_text "$agent_dir/cross-reviewer.md" "tools: Read, Glob, Grep, Bash" "cro
 require_text "$agent_dir/architect.md" "two-team parallel implementation" "architect plans two-team implementation"
 require_text "$agent_dir/architect.md" "implementation-phase parallelism is mandatory" "architect enforces mandatory implementation parallelism"
 require_text "$agent_dir/architect.md" "cross-review" "architect plans cross-review"
+require_text "$agent_dir/adversarial-analyst.md" "Attack Hypothesis" "adversarial analyst emits attack hypotheses"
 require_text "$agent_dir/deep-reviewer.md" "at least three angle-specific reviewers" "deep reviewer requires multi-angle review"
 require_text "$agent_dir/baton-auditor.md" "active_roles" "baton auditor checks active_roles"
 
 require_text "$ROOT_DIR/product.md" "GSD-style fresh-context subagents" "product cites GSD-style subagent pattern"
 require_text "$ROOT_DIR/product.md" "OMO-style team roles" "product cites OMO-style team role pattern"
 require_text "$ROOT_DIR/product.md" "canonical Dvandva subagent roster" "product declares canonical Dvandva agent roster"
+require_text "$ROOT_DIR/product.md" "dvandva-adversarial-analyst" "product includes adversarial analyst"
+require_text "$ROOT_DIR/product.md" "adversarial-analyst.md" "product layout includes adversarial analyst agent file"
 require_text "$ROOT_DIR/product.md" "at least three angle-specific reviewers" "product requires multi-angle deep review"
 require_text "$ROOT_DIR/product.md" "./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html" "product documents final explainer path"
 require_text "$research_skill" "canonical Dvandva subagent roster" "research skill declares canonical Dvandva agent roster"
+require_text "$research_skill" "dvandva-adversarial-analyst" "research skill includes adversarial analyst"
+require_text "$ROOT_DIR/plugins/dvandva/skills/prativadi/SKILL.md" "Add \`dvandva-adversarial-analyst\` for boundary, state/concurrency, error-handling, or bypass-logic attack hypotheses" "prativadi deep review invokes adversarial analyst"
 
 for absorbed in testing understanding worktree-setup; do
   file="$ROOT_DIR/plugins/dvandva/skills/$absorbed/SKILL.md"

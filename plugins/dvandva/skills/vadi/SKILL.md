@@ -84,7 +84,7 @@ Team-owned v2 states may write same-status sync checkpoints while both roles rem
 | `cross_review` / `cross_fixing` | `dvandva-cross-reviewer`, `dvandva-baton-auditor`, `dvandva-sandbox-verifier` |
 | `phase_fixing` | `dvandva-implementer`, `dvandva-test-creator` if behavior changes |
 | `deslop` | `dvandva-deslopper`, `dvandva-baton-auditor` |
-| `review_of_review` / `counter_review` | `dvandva-deep-reviewer`, `dvandva-baton-auditor` |
+| `review_of_review` / `counter_review` | `dvandva-deep-reviewer`, `dvandva-adversarial-analyst`, `dvandva-baton-auditor` |
 
 If no subagent tool is available, do the same tracks directly and record the fallback in `subagent_tracks` and `work_split`.
 
