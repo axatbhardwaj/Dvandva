@@ -387,13 +387,22 @@ claude plugin marketplace add axatbhardwaj/Dvandva
 claude plugin install dvandva@dvandva
 
 codex plugin marketplace add axatbhardwaj/Dvandva
+codex plugin add dvandva@dvandva
 ```
 
-The authoritative preflight is whether the current agent session can see and invoke the required Superpowers skills.
+`scripts/install-codex.sh` wraps the Codex path for users: it registers the marketplace, runs `codex plugin add dvandva@dvandva` on current Codex builds, and keeps the legacy app-server RPC install as a fallback for older builds. The authoritative preflight is whether the current agent session can see and invoke the required Superpowers skills.
 
 ### 11.2 Development install fallback
 
-For local development against a checkout, symlink or copy `plugins/dvandva/skills/vadi/` and `plugins/dvandva/skills/prativadi/` into the engine skill directories. Remove old pre-plugin `dvandva-*` symlinks first because root `skills/` no longer exists.
+For local development against a checkout, prefer marketplace install from the checkout:
+
+```bash
+bash scripts/install-codex.sh "$(pwd)"
+claude plugin marketplace add "$(pwd)"
+claude plugin install dvandva@dvandva
+```
+
+For live skill-development work where plugin cache copies are too indirect, symlink or copy `plugins/dvandva/skills/vadi/` and `plugins/dvandva/skills/prativadi/` into the engine skill directories. Remove old pre-plugin `dvandva-*` symlinks first because root `skills/` no longer exists.
 
 ### 11.3 Project-level adoption
 

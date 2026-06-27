@@ -19,18 +19,19 @@ claude plugin install dvandva@dvandva
 bash scripts/install-codex.sh
 ```
 
-For Codex, `scripts/install-codex.sh` registers the marketplace and then
-drives Codex's app-server JSON-RPC `plugin/install` method to install the
-plugin non-interactively — no TUI navigation required. The script accepts
-an optional local-path argument for development against a checkout:
+For Codex, `scripts/install-codex.sh` registers the marketplace and then runs
+`codex plugin add dvandva@dvandva` non-interactively — no TUI navigation
+required. Older Codex builds without `plugin add` fall back to the legacy
+app-server RPC path. The script accepts an optional local-path argument for
+development against a checkout:
 
 ```bash
 bash scripts/install-codex.sh /path/to/your/Dvandva
 ```
 
-See `docs/research/2026-05-16-codex-install.md` for the underlying
-mechanism (no `codex plugin install <name>` CLI exists today; the
-RPC backend is the supported non-interactive path).
+See `docs/research/2026-05-16-codex-install.md` for the install-history note:
+Codex `0.130.0` required app-server RPC, while current Codex exposes
+`codex plugin add`.
 
 After install, `/skills` should list `dvandva:vadi` and `dvandva:prativadi`,
 and `/dvandva:vadi` / `/dvandva:prativadi` should appear as slash commands.
@@ -117,12 +118,23 @@ The `.dvandva/` directory is gitignored. Inspect history with `ls <baton-dir>/hi
 
 ## Development Install
 
-Marketplace install is the public path. For local development against a checkout, symlink the plugin skill directories directly:
+Marketplace install is the public path. For local development against a checkout, install the checkout as a local Codex marketplace and, if needed, a local Claude marketplace:
 
 ```bash
 git clone https://github.com/axatbhardwaj/Dvandva.git
 cd Dvandva
 
+# Codex
+bash scripts/install-codex.sh "$(pwd)"
+
+# Claude
+claude plugin marketplace add "$(pwd)"
+claude plugin install dvandva@dvandva
+```
+
+For direct skill-development work where you deliberately want live symlinks instead of plugin cache copies, link the skill directories directly:
+
+```bash
 mkdir -p ~/.claude/skills ~/.agents/skills
 rm -f \
   ~/.claude/skills/dvandva-vadi \
@@ -153,21 +165,22 @@ done
 bash scripts/test-dvandva-wait.sh
 bash scripts/test-dvandva-write.sh
 bash scripts/test-dvandva-snapshot.sh
+bash scripts/test-install-codex.sh
 bash scripts/smoke-plugin-install.sh
 claude plugin validate plugins/dvandva
 claude plugin validate .
 ```
 
 The smoke script builds a temp marketplace, validates the Claude plugin path,
-adds and installs the marketplace in Codex with an isolated `CODEX_HOME`, checks
-that Codex renders both Dvandva skills, runs both bundled wait helpers, and
-checks standalone development copies.
+adds and installs the marketplace in Codex with `codex plugin add` under an
+isolated `CODEX_HOME`, checks that Codex renders both Dvandva skills, runs both
+bundled wait helpers, and checks standalone development copies.
 
 ## Release Checklist
 
 1. Bump `.claude-plugin/marketplace.json`, `plugins/dvandva/.claude-plugin/plugin.json`, and `plugins/dvandva/.codex-plugin/plugin.json` together.
 2. Run the validation commands above.
-3. Run `codex plugin marketplace add <repo-or-path>` from an isolated `CODEX_HOME`, then verify app-server plugin install exposes both skills.
+3. Run `codex plugin marketplace add <repo-or-path>` and `codex plugin add dvandva@dvandva` from an isolated `CODEX_HOME`, then verify `/skills` exposes both Dvandva skills.
 4. Run `claude plugin marketplace add <repo-or-path>` and `claude plugin install dvandva@dvandva` from an isolated `HOME`.
 5. Tag the release, for example `v0.1.0`.
 6. Push the branch and tag only after both Dvandva roles approve the final diff.

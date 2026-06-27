@@ -1,11 +1,10 @@
 #!/usr/bin/env bash
 # One-shot Codex install for Dvandva.
 #
-# Backend: app-server JSON-RPC `plugin/install` over `codex app-server --listen stdio://`.
-# This is the install half of scripts/smoke-plugin-install.sh:92-149, extracted as a
-# user-facing wrapper. See docs/research/2026-05-16-codex-install.md for the full
-# discovery (Q2 confirms no `codex plugin install <name>` CLI exists; Q3 confirms
-# the RPC backend works non-interactively).
+# Current backend: `codex plugin add dvandva@dvandva`.
+# Legacy fallback: app-server JSON-RPC `plugin/install` over
+# `codex app-server --listen stdio://` for older Codex builds that do not expose
+# `codex plugin add`.
 #
 # Usage: bash scripts/install-codex.sh [<marketplace-path-or-repo>]
 #
@@ -20,13 +19,21 @@ if ! command -v codex >/dev/null 2>&1; then
   echo "ERROR: codex CLI not found on PATH" >&2
   exit 1
 fi
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "ERROR: python3 not found on PATH (needed for app-server RPC driver)" >&2
-  exit 1
-fi
 
 echo "Step 1: registering marketplace '$MARKETPLACE'..."
 codex plugin marketplace add "$MARKETPLACE"
+
+if codex plugin add --help >/dev/null 2>&1; then
+  echo "Step 2: installing dvandva plugin with: codex plugin add dvandva@dvandva"
+  codex plugin add dvandva@dvandva
+  echo "Done. Verify with: codex, then check /skills | grep dvandva and /dvandva:vadi"
+  exit 0
+fi
+
+if ! command -v python3 >/dev/null 2>&1; then
+  echo "ERROR: python3 not found on PATH (needed for legacy app-server RPC fallback)" >&2
+  exit 1
+fi
 
 # Resolve the marketplace.json path the app-server expects. Even for remote
 # repos, prefer marketplacePath over remoteMarketplaceName: remoteMarketplaceName
@@ -57,7 +64,7 @@ if [[ -z "${MARKETPLACE_PATH:-}" || ! -f "$MARKETPLACE_PATH" ]]; then
   exit 1
 fi
 
-echo "Step 2: installing dvandva plugin via app-server RPC..."
+echo "Step 2: installing dvandva plugin via legacy app-server RPC fallback..."
 python3 - "$MARKETPLACE" "$MARKETPLACE_PATH" <<'PY'
 import json, os, select, subprocess, sys, time
 

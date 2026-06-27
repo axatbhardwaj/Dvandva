@@ -3,6 +3,12 @@
 **Date:** 2026-05-16
 **Context:** Dvandva protocol-ergonomics run (Phase 1 of 5). Informs Phase 4 (Codex slash commands) and Phase 5 (Codex install one-liner). Verified against `codex-cli 0.130.0` on Linux.
 
+**2026-06-27 update:** Current local verification against `codex-cli 0.142.3`
+shows Codex now exposes a stable non-interactive install command:
+`codex plugin add dvandva@dvandva`. `scripts/install-codex.sh` now uses that
+command as the primary path after `codex plugin marketplace add`, and keeps the
+app-server JSON-RPC method below only as a fallback for older Codex builds.
+
 ## Q1: What does `codex plugin marketplace add <path>` write to disk?
 
 It writes a `[marketplaces.<name>]` table into `$CODEX_HOME/config.toml` (default `~/.codex/config.toml`). A local smoke with `CODEX_HOME=<tmp>` produced this shape:
@@ -23,9 +29,10 @@ grep -q 'source = "' "$TMP_DIR/codex-home/config.toml"
 
 So `marketplace add` is purely a config write — it registers a marketplace location but does not install any plugins from it.
 
-## Q2: Does Codex expose a non-interactive `plugin install` CLI?
+## Q2: Does Codex expose a non-interactive plugin install CLI?
 
-**No.** As of the local `codex` CLI version installed today:
+**Historical answer for `codex-cli 0.130.0`: no.** As of the local `codex` CLI
+version installed on 2026-05-16:
 
 ```
 $ codex plugin --help
@@ -45,11 +52,33 @@ error: unrecognized subcommand 'install'
 Usage: codex plugin [OPTIONS] <COMMAND>
 ```
 
-The only `codex plugin` subcommand is `marketplace`. No `install`, no `add`, no `enable`. The CLI route for non-interactive plugin install is closed.
+The only `codex plugin` subcommand was `marketplace`. No `install`, no `add`,
+no `enable`. The CLI route for non-interactive plugin install was closed.
+
+**Current answer for `codex-cli 0.142.3`: yes.**
+
+```
+$ codex plugin add --help
+Install a plugin from a configured marketplace snapshot.
+
+Usage: codex plugin add [OPTIONS] <PLUGIN[@MARKETPLACE]>
+
+Examples:
+  codex plugin add sample@debug
+  codex plugin add sample --marketplace debug
+```
+
+For Dvandva the current path is:
+
+```bash
+codex plugin marketplace add axatbhardwaj/Dvandva
+codex plugin add dvandva@dvandva
+```
 
 ## Q3: What is the JSON-RPC install path?
 
-**Codex exposes plugin install through the experimental `app-server` JSON-RPC interface.** The smoke script at `scripts/smoke-plugin-install.sh:92-149` drives it end-to-end:
+**Historical fallback:** Codex exposes plugin install through the experimental
+`app-server` JSON-RPC interface. Older Dvandva installers drove it end-to-end:
 
 ```python
 # Launch the server speaking JSON-RPC over stdio
@@ -73,9 +102,14 @@ send(proc, 3, "plugin/install", {
 
 The sequence is `initialize` → `initialized` notification → `plugin/install` request. Verification via a follow-up `plugin/list` confirms `installed: true, enabled: true`.
 
-`codex app-server --help` confirms the surface is **experimental** but stable enough that the existing smoke depends on it for CI. The `--listen stdio://` transport is the default.
+`codex app-server --help` confirmed the surface was **experimental** but usable.
+Current smoke tests no longer depend on it because `codex plugin add` is
+available; `scripts/install-codex.sh` keeps the RPC sequence only as a legacy
+fallback.
 
-**Implication for Phase 5:** Shape A (programmatic wrapper) is viable via the RPC backend. Shape A's `scripts/install-codex.sh` should embed the same `initialize` → `plugin/install` sequence used by the smoke script.
+**Updated implication for Phase 5:** Shape A (programmatic wrapper) remains
+viable, but the backend should be `codex plugin add` first and RPC fallback only
+when `codex plugin add --help` is unavailable.
 
 ## Q4: What schema does Codex use for slash commands shipped from a plugin?
 
@@ -116,20 +150,30 @@ allowed-tools: [Read, Glob, Grep, Bash, Write, Edit, WebFetch]
 
 ## Q5: Recommended Phase 5 shape
 
-**Shape A — programmatic wrapper, RPC backend.**
+**Shape A — programmatic wrapper, current CLI backend.**
 
 Justification:
 
-- Q2 closed the CLI route (`codex plugin install <name>` does not exist).
-- Q3 proves the RPC route works non-interactively. The smoke script has been exercising it successfully for v0.1.0; the install half is easily extracted into a standalone script per the plan's Step 5.A.2-RPC pseudocode.
+- Q2 is now open via `codex plugin add <plugin>@<marketplace>`.
+- Q3 remains useful only as a fallback for older Codex builds.
 - Shape B (docs-only) is unnecessary here — we have a working backend.
 - The user gets a real one-liner: `bash scripts/install-codex.sh`. Friction goes from 3 manual steps to 0.
 
-Backend = **app-server JSON-RPC**, specifically the `initialize` → `plugin/install` sequence over `codex app-server --listen stdio://`.
+Backend = **current Codex CLI**, specifically:
+
+```bash
+codex plugin marketplace add <repo-or-path>
+codex plugin add dvandva@dvandva
+```
+
+Legacy fallback = **app-server JSON-RPC**, specifically the `initialize` →
+`plugin/install` sequence over `codex app-server --listen stdio://`.
 
 ## Open questions for follow-up runs
 
-- **Is the app-server protocol stable?** It's flagged `[experimental]` in `codex --help`. If it churns, `install-codex.sh` will break. Worth tracking via an issue on the Codex repo and pinning to a documented protocol version if one becomes available.
+- **Can the app-server fallback eventually be deleted?** Keep it until the
+  minimum supported Codex version is known to include `codex plugin add`.
 - **Is `experimentalApi: true` in the `initialize` capabilities the right opt-in long-term?** The smoke passes it; semantically it gates feature visibility. May need to revisit if a stable API emerges.
-- **Should we ship `codex plugin install` upstream?** A user-facing non-interactive install CLI would let us delete `install-codex.sh` entirely. Worth filing a feature request on the Codex repository, even though we're not blocked on it.
+- **Does Codex eventually rename `plugin add` to `plugin install`?** If it does,
+  update `scripts/install-codex.sh`, README, and this note together.
 - **Slash-command argument plumbing:** the Dvandva `/goal` blocks don't take arguments; the `argument-hint` and `$ARGUMENTS` interpolation in command files are unused for our use case. If we later want `/dvandva:supervised-vadi` or other variants, we can either ship multiple command files or accept an argument.
