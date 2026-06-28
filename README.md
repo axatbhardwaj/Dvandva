@@ -74,7 +74,7 @@ $prativadi
 
 ## Current State
 
-v0.2.0 ships as one `dvandva` plugin with:
+v0.4.0 ships as one `dvandva` plugin with:
 
 - `plugins/dvandva/skills/vadi/SKILL.md`
 - `plugins/dvandva/skills/prativadi/SKILL.md`
@@ -83,6 +83,9 @@ v0.2.0 ships as one `dvandva` plugin with:
 - `plugins/dvandva/skills/understanding/SKILL.md` — mastery-gated teaching grounded in baton/diff/`research_ref`/`plan_ref`; exports an HTML checklist; replaces standalone `understanding` for Dvandva work.
 - `plugins/dvandva/skills/worktree-setup/SKILL.md` — isolated-worktree prep with an optional DeFi profile; replaces standalone `worktree-setup` for Dvandva work.
 - 15 canonical subagent roles forming the **seed roster** under `plugins/dvandva/agents/` (researcher, architect, pattern-mapper, implementer, test-creator, debugger, cross-reviewer, adversarial-analyst, deep-reviewer, security-auditor, integration-checker, doc-verifier, deslopper, sandbox-verifier, baton-auditor); model classes are vendor-neutral (`opus`/`sonnet`). Run 3 turns this seed roster into a foundation for run-scoped dynamic agent generation: parent roles generate additional named instances on demand; each is recorded in `agent_instances` on the baton with its identity, parent role, model/permission class, read/write paths, base checkpoint, lifecycle state, output refs, evidence refs, and close result. Generated agents observe single-writer merge (they never own baton `assignee`, phase transitions, or final approval), explicit closure (every handle must be closed before its track counts as complete), and dynamic write-path disjointness (write-path overlaps for generated instances sharing the same `base_checkpoint`, or for any two live (`planned`/`running`) instances regardless of base_checkpoint, are rejected unless sharing a `conflict_group` with explicit dependency serialization; closed instances from an earlier base_checkpoint are not part of the collision set). Generated instances are run-scoped and ephemeral; no roster sprawl occurs unless a later reviewed run promotes a pattern into the seed roster.
+- Run 4 generalized path gates: `work_split` items now expose `write_paths` for write intent; bare `paths` remain backward-compatible write intent only for implementation and cross-fixing chunks. `cross_review` chunks are read-only unless they declare explicit `write_paths`. Live overlaps are rejected unless the chunks share a `conflict_group` and an explicit `depends_on` edge serializes the work.
+- Run 4 git work-gating: `scripts/install-dvandva-hooks.sh` opts a clone into repo-local `.githooks` by setting local `core.hooksPath`; the pre-commit hook delegates to `scripts/dvandva-commit-gate.sh`, which requires `DVANDVA_ROLE` to match baton ownership or `active_roles`; the prepare hook stamps `Dvandva-Checkpoint`; and `scripts/dvandva-drift-lint.sh` checks for off-protocol commits. This is a local shell gate, not a daemon or hidden central process.
+- Run 4 Dvandva-only retirement: `scripts/retire-standalone-agents.sh` can retire only the five Claude Code symlink agents whose Dvandva-covered workflows are replaced by the seed roster: `adversarial-analyst`, `architect`, `developer`, `quality-reviewer`, and `sandbox-executor`. Functional parity is based on equivalent-or-better empirical usage across Runs 1-4, plus 0.4.0 cache/roster parity and reversibility. Codex agent-axis retirement is a no-op; skills are out of scope and no skill files are touched. The helper is dry-run first, writes a backup manifest, and supports restore.
 - bundled `dvandva-wait.sh` helpers in both skill directories
 - plugin-local protocol references in `plugins/dvandva/references/`
 - Codex marketplace metadata in `.agents/plugins/marketplace.json`
@@ -120,6 +123,21 @@ The prativadi can also be launched *before* the vadi has scaffolded the baton. I
 For one-engine use, set `run_mode: "supervised"` in the active baton and invoke `vadi` and `prativadi` serially in that engine. Supervised mode exits on assigned-away states so one CLI session cannot deadlock itself. Setting `DVANDVA_NO_WAIT=1` in the prativadi's environment also opts out of the missing-baton wait so a serial-supervised user gets the original "no baton — vadi has not started" message immediately.
 
 Agents should make regular local checkpoint commits after a verified logical slice when `allow_commit` is true and the dirty paths match the baton's `changed_paths` union. Checkpoint commits are local only: pushing waits until both `vadi_final_approval` and `prativadi_final_approval` are true and `allow_push` is true. Dvandva must never create a PR.
+
+To opt a clone into Run 4 git work-gating, run:
+
+```bash
+bash scripts/install-dvandva-hooks.sh
+```
+
+The installer writes only repo-local git config (`core.hooksPath=.githooks`),
+refuses to overwrite a foreign hooks path unless `--force` is passed, and can be
+undone with `--uninstall`. While a Dvandva baton is active, commits require
+`DVANDVA_ROLE=vadi` or `DVANDVA_ROLE=prativadi`; `scripts/dvandva-commit-gate.sh`
+allows the commit only when that role owns the baton turn or appears in
+`active_roles`. The prepare hook appends `Dvandva-Checkpoint: <N>` so
+`scripts/dvandva-drift-lint.sh --warn` can report off-protocol commits. The
+gate is local shell/git-hook enforcement, not a daemon or hidden central process.
 
 Before terminal `done`, a v2 run must write a dark self-contained explainer report at `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html` and set `run_explainer_ref` on the baton. The report captures decisions, development, architecture, verification, and diagrams for the completed run.
 
@@ -177,6 +195,13 @@ bash scripts/test-dvandva-write.sh
 bash scripts/test-dvandva-snapshot.sh
 bash scripts/test-install.sh
 bash scripts/test-install-codex.sh
+bash scripts/test-dvandva-commit-gate.sh
+bash scripts/test-retire-standalone-agents.sh
+bash scripts/test-lint-run4-path-gates.sh
+bash scripts/test-lint-run4-standalone-agents.sh
+bash scripts/lint-run4-path-gates.sh
+bash scripts/lint-run4-standalone-agents.sh
+bash scripts/dvandva-drift-lint.sh --warn
 bash scripts/smoke-plugin-install.sh
 claude plugin validate plugins/dvandva
 claude plugin validate .
@@ -186,7 +211,8 @@ The smoke script builds a temp marketplace, validates the Claude plugin path,
 adds and installs the marketplace in Codex with `codex plugin add` under an
 isolated `CODEX_HOME`, runs the dual Claude/Codex installer and Codex-only
 helper under isolated homes, checks that Codex renders all six Dvandva skills,
-runs both bundled wait helpers, and checks standalone development copies.
+runs both bundled wait helpers, checks the 0.4.0 installed cache version, and
+checks exact 15-agent roster parity in the installed development copies.
 
 ## Release Checklist
 
@@ -194,7 +220,7 @@ runs both bundled wait helpers, and checks standalone development copies.
 2. Run the validation commands above.
 3. Run `bash scripts/install.sh <repo-or-path>` from isolated `HOME` and `CODEX_HOME`, then verify `/skills` exposes `dvandva:vadi`, `dvandva:prativadi`, `dvandva:research`, `dvandva:testing`, `dvandva:understanding`, and `dvandva:worktree-setup` in the installed engines.
 4. If testing engine-specific fallback paths, run `bash scripts/install-codex.sh <repo-or-path>` from an isolated `CODEX_HOME` and `HOME`.
-5. Tag the release, for example `v0.1.0`.
+5. Tag the release, for example `v0.4.0`.
 6. Push the branch and tag only after both Dvandva roles approve the final diff.
 
 ## Reading Order
@@ -206,8 +232,8 @@ runs both bundled wait helpers, and checks standalone development copies.
 
 ## Roadmap
 
-- **Run 3** (in progress) — super-parallel dynamic agent generation: the static 15-agent seed roster expands on demand via run-scoped `agent_instances`; single-writer merge ensures generated agents never own baton transitions; dynamic write-path disjointness rejects write collisions among generated instances sharing the same `base_checkpoint` or among any two live (`planned`/`running`) instances regardless of base_checkpoint; explicit closure of every generated handle is required before its track counts as complete. No daemon, no hidden orchestrator — the baton and foreground wait helper remain the only coordination channel.
-- **Run 4** — generalized path-gate enforcement (PreToolUse hook or equivalent write-guard) + retire the standalone agent fleet in favour of the canonical Dvandva roster once the seed roster covers the same scope.
+- **Run 3** — super-parallel dynamic agent generation: the static 15-agent seed roster expands on demand via run-scoped `agent_instances`; single-writer merge ensures generated agents never own baton transitions; dynamic write-path disjointness rejects write collisions among generated instances sharing the same `base_checkpoint` or among any two live (`planned`/`running`) instances regardless of base_checkpoint; explicit closure of every generated handle is required before its track counts as complete. No daemon, no hidden orchestrator — the baton and foreground wait helper remain the only coordination channel.
+- **Run 4** — generalized `work_split` path-gate enforcement + repo-local git work-gating + Dvandva-only standalone-agent retirement. The retirement scope is intentionally narrow: only Dvandva-covered workflows with functional parity via Runs 1-4 usage are eligible, Codex agent-axis cleanup is a no-op, and skill directories are never touched.
 
 ## Non-Goals
 

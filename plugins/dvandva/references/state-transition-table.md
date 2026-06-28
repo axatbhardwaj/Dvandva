@@ -19,7 +19,7 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
 - `research_ref`: path to the generated user-facing HTML research artifact.
 - `run_explainer_ref`: path to the final run explainer HTML under `./superpowers/run-reports/`, required before terminal `done`.
 - `active_roles`: v2 concurrent role list. Team-owned statuses use `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; scalar statuses use an empty array.
-- `work_split`: planned ownership map for vadi, prativadi, human, or subagents; records phase, owner, scope, paths, status, artifact refs, parallelism rationale, and dependencies.
+- `work_split`: planned ownership map for vadi, prativadi, human, or subagents; records phase, owner, scope, paths, read_paths, write_paths, status, artifact refs, parallelism rationale, dependencies, and optional conflict_group serialization.
 - `agent_instances`: first-class registry for generated run-scoped agent instances, including provenance, model/permission class, read/write paths, work item IDs, base checkpoint, output refs, evidence refs, lifecycle status, and closure result. Generated instance IDs must not collide with coordinator owners (`vadi`, `prativadi`, `team`, `human`), seed-roster owners such as `dvandva-implementer`, or legacy standalone owner names such as `adversarial-analyst`. `spawned_by` is executable provenance; `seed_agent` is advisory metadata for humans and brief generation. Dynamic write-path disjointness is checked among generated instances sharing the same `base_checkpoint` and among any two live (`planned`/`running`) instances regardless of base_checkpoint; closed historical instances from earlier base checkpoints do not block later sequential path reuse.
 - `subagent_tracks`: actual conditional parallelism record. Parallelize only genuinely disjoint tracks; record what was not parallelized and why when direct execution is safer or when subagent tooling is unavailable.
 - `verification_matrix`: planned evidence map from claims and risks to checks, owners, expected results, command or inspection, result, evidence refs, and the 100% test coverage target for new behavior.
@@ -47,6 +47,28 @@ targets before `research_ref` exists. Existing batons cannot change schema or v2
 
 implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. After `test_creation`, the baton enters `cross_review`; `cross_review` may route to `cross_fixing`, and only completed cross-review evidence for both roles can advance to `deep_review`. Phase convention: implementation-chunk tracks use the numeric implementation phase, while cross-review and deep-review gate tracks use the status-name phase such as `phase: "cross_review"` or `phase: "deep_review"`.
 
+Run 4 generalizes write gating from Run 3 generated instances to `work_split`.
+The helper validates `work_split.paths`, `work_split.read_paths`, and
+`work_split.write_paths` with `safe_rel_path`. `write_paths` is the authoritative
+write intent when present; bare `paths` stay backward-compatible write intent
+only for implementation/cross-fixing chunks. `cross_review` is read-only unless
+explicit `write_paths` are present. Live write overlaps are rejected unless both
+chunks share a non-empty `conflict_group` and a declared `depends_on` edge
+serializes one chunk after the other.
+
+Run 4 work-gating uses repo-local git hooks: `.githooks/pre-commit` delegates to
+`scripts/dvandva-commit-gate.sh`, the gate checks `DVANDVA_ROLE` against baton
+`assignee` / `active_roles`, `.githooks/prepare-commit-msg` stamps
+`Dvandva-Checkpoint`, and `scripts/dvandva-drift-lint.sh` detects unstamped
+commits after the latest checkpoint. This does not create a daemon, scheduler,
+or hidden central process.
+
+Run 4 retirement is Dvandva-only. It may retire only Dvandva-covered standalone
+Claude symlink workflows with functional parity via Runs 1-4 usage:
+`adversarial-analyst`, `architect`, `developer`, `quality-reviewer`, and
+`sandbox-executor`. Codex agent-axis retirement is a no-op, skills are out of
+scope, and backup manifest restore keeps the action reversible.
+
 Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`) may write same-status sync checkpoints when both roles remain active. Use them to record partial completion, task distribution, or peer wait state without advancing the lifecycle early. Scalar-owner states still reject same-status rewrites.
 
 ## Schema Fields
@@ -67,7 +89,7 @@ Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`) m
   "research_ref": "v2 path to gitignored generated HTML research file under ./superpowers/research/, set during research phase",
   "run_explainer_ref": "v2 path to gitignored final run explainer HTML under ./superpowers/run-reports/, required before terminal done",
   "plan_ref": "path to gitignored generated HTML plan file under ./superpowers/plans/, set during spec phase",
-  "work_split": "v2 array/object describing planned ownership by phase, owner, scope, paths, status, and artifact refs",
+  "work_split": "v2 array/object describing planned ownership by phase, owner, scope, paths, read_paths, write_paths, conflict_group, depends_on, status, and artifact refs",
   "agent_instances": "v2 array recording generated run-scoped agent instances, provenance, model/permission class, read/write paths, work item IDs, base checkpoint, output refs, evidence refs, lifecycle status, and closure result",
   "subagent_tracks": "v2 array recording actual conditional parallelism tracks, owner, evidence refs, fallback rationale, and result",
   "verification_matrix": "v2 array/object mapping claims and risks to planned checks, owners, expected evidence, result, and evidence_ref",
@@ -232,4 +254,4 @@ Do not use `haiku` for Dvandva dynamic agents.
 ### Run3/Run4 boundary
 
 - **Run 3**: dynamic agent creation via `agent_instances`, single-writer merge enforcement, explicit closure gate, and dynamic write-path disjointness validation in the write helper.
-- **Run 4**: generalized path-gate (PreToolUse hook or equivalent write-guard) beyond the Run 3 dynamic disjointness check, retire the standalone agent fleet once the seed roster covers the same scope, and work-gating enforcement.
+- **Run 4**: generalized `work_split.write_paths` path-gate beyond the Run 3 dynamic disjointness check, repo-local git work-gating, and Dvandva-only standalone-agent retirement once the seed roster covers the same scope with functional parity via Runs 1-4 usage.

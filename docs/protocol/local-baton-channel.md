@@ -47,6 +47,32 @@ This shows a v2 run-scoped baton. Legacy v1 batons use `schema: "dvandva.baton.v
 
 implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; the `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. `test_creation` routes to `cross_review`, `cross_review` may route to `cross_fixing`, and only completed cross-review evidence for both roles can advance to `deep_review`. Phase convention: implementation-chunk tracks use the numeric implementation phase, while cross-review and deep-review gate tracks use the status-name phase such as `phase: "cross_review"` or `phase: "deep_review"`.
 
+Run 4 generalizes the path gate from dynamic `agent_instances` to `work_split`.
+The write helper applies `safe_rel_path` to `work_split.paths`,
+`work_split.read_paths`, and `work_split.write_paths`. `write_paths` is the
+authoritative write intent when present; bare `paths` remain a
+backward-compatible write intent only for implementation/cross-fixing chunks.
+`cross_review` is read-only unless explicit `write_paths` are present. Any live
+overlap between write-capable chunks is rejected unless both chunks share the
+same non-empty `conflict_group` and one chunk's `depends_on` serializes it after
+the other. Closed or terminal historical chunks do not block later sequential
+reuse.
+
+Run 4 also adds local git work-gating. `scripts/install-dvandva-hooks.sh` sets
+repo-local `core.hooksPath=.githooks`; `.githooks/pre-commit` delegates to
+`scripts/dvandva-commit-gate.sh`; commits during an active baton require
+`DVANDVA_ROLE` to match `assignee` or `active_roles`; `.githooks/prepare-commit-msg`
+stamps `Dvandva-Checkpoint`; and `scripts/dvandva-drift-lint.sh` reports
+unstamped commits after the latest checkpoint. This is shell/git-hook
+enforcement only. There is no daemon or hidden orchestrator.
+
+Run 4 standalone-agent retirement is intentionally Dvandva-only: it covers only
+Dvandva-covered workflows with functional parity via Runs 1-4 usage. The
+allowlist is the five Claude symlink agents `adversarial-analyst`, `architect`,
+`developer`, `quality-reviewer`, and `sandbox-executor`. Codex agent-axis files
+are reported as no-op, skill directories are not touched, and the helper writes
+a backup manifest so `--restore` can reverse an apply run.
+
 Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`) may write same-status sync checkpoints when both roles remain active. Use them to record partial completion, task distribution, or peer wait state without advancing the lifecycle early. Scalar-owner states still reject same-status rewrites.
 
 ```json
@@ -77,12 +103,31 @@ Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`) m
       "owner_role": "vadi",
       "scope": "Implement feature scaffolding.",
       "paths": ["src/example.ts"],
+      "read_paths": ["src/example.ts"],
+      "write_paths": ["src/example.ts"],
       "cross_review_by": "prativadi",
       "can_parallelize": true,
       "parallel_rationale": "Independent implementation chunk in the two-team plan.",
       "depends_on": ["research-codebase"],
+      "conflict_group": "",
       "status": "complete",
       "artifact_refs": ["./superpowers/research/2026-05-13-example-feature.html"]
+    },
+    {
+      "id": "cross-review-vadi-chunk",
+      "phase": "cross_review",
+      "chunk_type": "cross_review",
+      "owner": "prativadi",
+      "owner_role": "prativadi",
+      "scope": "Read-only review of the vadi-owned implementation chunk.",
+      "paths": ["src/example.ts"],
+      "read_paths": ["src/example.ts"],
+      "cross_review_by": null,
+      "can_parallelize": true,
+      "depends_on": ["implementation-chunk-1"],
+      "conflict_group": "",
+      "status": "planned",
+      "artifact_refs": []
     }
   ],
   "subagent_tracks": [

@@ -80,10 +80,13 @@
       "owner_role": "vadi",
       "suggested_agent": "dvandva-implementer",
       "scope": "Implement the first bounded vadi-owned slice with local sanity checks.",
-      "paths": [],
+      "paths": ["src/example.ts"],
+      "read_paths": ["src/example.ts"],
+      "write_paths": ["src/example.ts"],
       "cross_review_by": "prativadi",
       "can_parallelize": true,
       "parallel_rationale": "Implementation chunks must be split across both roles when paths are disjoint.",
+      "conflict_group": "",
       "depends_on": [
         "spec-approved"
       ],
@@ -98,10 +101,13 @@
       "owner_role": "prativadi",
       "suggested_agent": "dvandva-implementer",
       "scope": "Implement the first bounded prativadi-owned slice with local sanity checks.",
-      "paths": [],
+      "paths": ["tests/example.test.ts"],
+      "read_paths": ["tests/example.test.ts"],
+      "write_paths": ["tests/example.test.ts"],
       "cross_review_by": "vadi",
       "can_parallelize": true,
       "parallel_rationale": "Two-team parallel implementation reduces idle time and gives both roles code ownership before review.",
+      "conflict_group": "",
       "depends_on": [
         "spec-approved"
       ],
@@ -127,13 +133,16 @@
     {
       "id": "cross_review",
       "phase": "1",
+      "chunk_type": "cross_review",
       "owner": "team",
       "owner_role": "team",
       "suggested_agent": "dvandva-cross-reviewer",
       "scope": "Each role reviews the other role's implementation chunks before holistic deep_review.",
-      "paths": [],
+      "paths": ["src/example.ts", "tests/example.test.ts"],
+      "read_paths": ["src/example.ts", "tests/example.test.ts"],
       "can_parallelize": true,
       "parallel_rationale": "Vadi and prativadi can cross-review peer-owned chunks in parallel after tests exist.",
+      "conflict_group": "",
       "depends_on": [
         "test_creation"
       ],
