@@ -314,15 +314,16 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
       exit 23
     fi
   fi
-  if [[ "$new_status" == "done" ]] \
-    && ! jq -e '
-      (.assignee == "human" or .assignee == "team" or .assignee == "vadi" or .assignee == "prativadi") and
-      (.vadi_final_approval == true) and
-      (.prativadi_final_approval == true)
-    ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
-    echo "DVANDVA_WRITE bad_done_state candidate=$CANDIDATE_FILE" >&2
-    exit 23
-  fi
+fi
+
+if [[ "$new_status" == "done" ]] \
+  && ! jq -e '
+    (.assignee == "human" or .assignee == "team" or .assignee == "vadi" or .assignee == "prativadi") and
+    (.vadi_final_approval == true) and
+    (.prativadi_final_approval == true)
+  ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+  echo "DVANDVA_WRITE bad_done_state candidate=$CANDIDATE_FILE" >&2
+  exit 23
 fi
 
 # Type gate before extraction: jq -r strips quotes, so a JSON string "5"

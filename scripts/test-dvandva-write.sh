@@ -1126,8 +1126,13 @@ for edge in $EDGES; do
   cur="${edge%%:*}"
   new="${edge##*:}"
   BOX="$(new_box "edge-$i")"
+  extras=()
+  if [[ "$new" == "done" ]]; then
+    extras+=('.vadi_final_approval = true')
+    extras+=('.prativadi_final_approval = true')
+  fi
   make_baton "$BOX/baton.json" "$cur" "vadi" 4
-  make_baton "$BOX/baton.next.json" "$new" "prativadi" 5
+  make_baton "$BOX/baton.next.json" "$new" "prativadi" 5 "${extras[@]}"
   run_case "edge $edge is legal" 0 \
     "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 done
@@ -1452,6 +1457,32 @@ make_baton_v2 "$BOX/baton.next.json" "done" "r3-generated-dynamic-review" 5 \
 run_case_contains "v2 done rejects generated assignee" 23 "DVANDVA_WRITE bad_done_state" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+for done_owner in human team vadi prativadi; do
+  BOX="$(new_box "v1-done-accepts-$done_owner")"
+  make_baton "$BOX/baton.json" "phase_review" "prativadi" 4
+  make_baton "$BOX/baton.next.json" "done" "$done_owner" 5 \
+    '.vadi_final_approval = true' \
+    '.prativadi_final_approval = true'
+  run_case "v1 done accepts coordinator assignee $done_owner" 0 \
+    "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+done
+
+BOX="$(new_box v1-done-rejects-missing-final-approval)"
+make_baton "$BOX/baton.json" "phase_review" "prativadi" 4
+make_baton "$BOX/baton.next.json" "done" "team" 5 \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = false'
+run_case_contains "v1 done requires both final approvals" 23 "DVANDVA_WRITE bad_done_state" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v1-done-rejects-generated-assignee)"
+make_baton "$BOX/baton.json" "phase_review" "prativadi" 4
+make_baton "$BOX/baton.next.json" "done" "generated-owner" 5 \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+run_case_contains "v1 done rejects generated assignee" 23 "DVANDVA_WRITE bad_done_state" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
 BOX="$(new_box v2-deep-review-missing-angles)"
 make_baton_v2 "$BOX/baton.json" "deep_review" "prativadi" 4
 make_baton_v2 "$BOX/baton.next.json" "deslop" "vadi" 5
@@ -1497,7 +1528,9 @@ run_case "v2 research state can enter human_question" 0 \
 
 BOX="$(new_box illegal-impl-done)"
 make_baton "$BOX/baton.json" "implementing" "vadi" 4
-make_baton "$BOX/baton.next.json" "done" "human" 5
+make_baton "$BOX/baton.next.json" "done" "human" 5 \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
 run_case "implementing->done exits 24 (no self-declared done)" 24 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
