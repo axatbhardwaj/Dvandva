@@ -223,6 +223,113 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
     echo "DVANDVA_WRITE bad_work_split candidate=$CANDIDATE_FILE" >&2
     exit 23
   fi
+  if ! jq -e '
+    def safe_rel_path:
+      (type == "string") and
+      (length > 0) and
+      (startswith("/") | not) and
+      (contains("//") | not) and
+      ((split("/") | all(. != "" and . != "." and . != "..")));
+    def work_items:
+      if (.work_split | type) == "array" then
+        .work_split[]?
+      else
+        .work_split[]?
+      end;
+    all(work_items;
+      ((has("paths") | not) or ((.paths | type) == "array" and all(.paths[]; safe_rel_path))) and
+      ((has("read_paths") | not) or ((.read_paths | type) == "array" and all(.read_paths[]; safe_rel_path))) and
+      ((has("write_paths") | not) or ((.write_paths | type) == "array" and all(.write_paths[]; safe_rel_path))) and
+      ((has("depends_on") | not) or ((.depends_on | type) == "array")) and
+      ((has("conflict_group") | not) or ((.conflict_group | type) == "string"))
+    )
+  ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+    echo "DVANDVA_WRITE bad_work_split candidate=$CANDIDATE_FILE" >&2
+    exit 23
+  fi
+  if ! jq -e '
+    . as $root |
+    def work_items:
+      if ($root.work_split | type) == "array" then
+        $root.work_split[]?
+      else
+        $root.work_split[]?
+      end;
+    def terminal_status:
+      . == "completed" or
+      . == "approved" or
+      . == "passed" or
+      . == "closed" or
+      . == "done" or
+      . == "rejected" or
+      . == "collapsed" or
+      . == "skipped" or
+      . == "cancelled";
+    def chunk_kind($item):
+      ($item.chunk_type // $item.type // (
+        if $root.status == "parallel_implementing" then
+          "implementation"
+        elif $root.status == "cross_fixing" then
+          "cross_fixing"
+        else
+          ""
+        end
+      ));
+    def write_capable_chunk($item):
+      (chunk_kind($item) == "implementation") or
+      (chunk_kind($item) == "cross_fixing") or
+      (chunk_kind($item) == "fix");
+    def parallel_impl_chunk($item):
+      (chunk_kind($item) == "implementation") and
+      (($item.phase | tostring) == ($root.phase | tostring)) and
+      (((($item.owner_role // $item.owner // "") == "vadi")) or ((($item.owner_role // $item.owner // "") == "prativadi"))) and
+      (((($item.cross_review_by // "") == "vadi")) or ((($item.cross_review_by // "") == "prativadi"))) and
+      (($item | has("write_paths")) or ((($item.paths // []) | length) > 0));
+    def effective_write_paths($item):
+      if ($item | has("write_paths")) then
+        ($item.write_paths // [])
+      elif write_capable_chunk($item) then
+        ($item.paths // [])
+      else
+        []
+      end;
+    def live_item($item):
+      (($item.status // "") | terminal_status | not);
+    def path_overlap($left; $right):
+      ($left == $right) or
+      ($left | startswith($right + "/")) or
+      ($right | startswith($left + "/"));
+    def overlap($a; $b):
+      any(effective_write_paths($a)[]; . as $path | any(effective_write_paths($b)[]; path_overlap($path; .)));
+    def serialized($a; $b):
+      (($a.conflict_group // "") != "") and
+      (($a.conflict_group // "") == ($b.conflict_group // "")) and
+      (((($a.depends_on // []) | index($b.id)) != null) or ((($b.depends_on // []) | index($a.id)) != null));
+    (
+      if $root.status == "parallel_implementing" then
+        all(work_items;
+          if parallel_impl_chunk(.) then
+            (effective_write_paths(.) | length) > 0
+          else
+            true
+          end
+        )
+      else
+        true
+      end
+    ) and
+    ([ work_items | select(live_item(.)) | select((effective_write_paths(.) | length) > 0) ] as $writers |
+      [
+        range(0; ($writers | length)) as $i |
+        range($i + 1; ($writers | length)) as $j |
+        ($writers[$i]) as $a |
+        ($writers[$j]) as $b |
+        select(overlap($a; $b) and (serialized($a; $b) | not))
+      ] | length == 0)
+  ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+    echo "DVANDVA_WRITE bad_work_split_write_paths candidate=$CANDIDATE_FILE" >&2
+    exit 23
+  fi
   if ! jq -e '((.verification_matrix | type) == "array" or (.verification_matrix | type) == "object") and (.verification_matrix | length) > 0' "$CANDIDATE_FILE" >/dev/null 2>&1; then
     echo "DVANDVA_WRITE bad_verification_matrix candidate=$CANDIDATE_FILE" >&2
     exit 23

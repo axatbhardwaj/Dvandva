@@ -559,6 +559,80 @@ v2_cross_review_finding_filter() {
 JQ
 }
 
+v2_cross_fixing_chunks_filter() {
+  cat <<'JQ'
+.work_split = [
+  {
+    "id": "cross-fixing-a",
+    "phase": "1",
+    "chunk_type": "cross_fixing",
+    "owner": "vadi",
+    "owner_role": "vadi",
+    "suggested_agent": "dvandva-implementer",
+    "scope": "Vadi-owned cross-fixing chunk A.",
+    "paths": ["src/fix/a.ts"],
+    "can_parallelize": true,
+    "parallel_rationale": "Independent fix slice.",
+    "depends_on": [],
+    "status": "planned",
+    "artifact_refs": []
+  },
+  {
+    "id": "cross-fixing-b",
+    "phase": "1",
+    "chunk_type": "cross_fixing",
+    "owner": "prativadi",
+    "owner_role": "prativadi",
+    "suggested_agent": "dvandva-implementer",
+    "scope": "Prativadi-owned cross-fixing chunk B.",
+    "paths": ["src/fix/b.ts"],
+    "can_parallelize": true,
+    "parallel_rationale": "Independent fix slice.",
+    "depends_on": [],
+    "status": "planned",
+    "artifact_refs": []
+  }
+]
+JQ
+}
+
+v2_cross_review_chunks_filter() {
+  cat <<'JQ'
+.work_split = [
+  {
+    "id": "cross-review-a",
+    "phase": "1",
+    "chunk_type": "cross_review",
+    "owner": "vadi",
+    "owner_role": "vadi",
+    "suggested_agent": "dvandva-cross-reviewer",
+    "scope": "Vadi cross-reviews prativadi-owned code.",
+    "paths": ["src/shared-review.ts"],
+    "can_parallelize": true,
+    "parallel_rationale": "Cross-review is read-only by default.",
+    "depends_on": [],
+    "status": "planned",
+    "artifact_refs": []
+  },
+  {
+    "id": "cross-review-b",
+    "phase": "1",
+    "chunk_type": "cross_review",
+    "owner": "prativadi",
+    "owner_role": "prativadi",
+    "suggested_agent": "dvandva-cross-reviewer",
+    "scope": "Prativadi cross-reviews vadi-owned code.",
+    "paths": ["src/shared-review.ts"],
+    "can_parallelize": true,
+    "parallel_rationale": "Cross-review is read-only by default.",
+    "depends_on": [],
+    "status": "planned",
+    "artifact_refs": []
+  }
+]
+JQ
+}
+
 run_case() {
   local name="$1"
   local expected_exit="$2"
@@ -741,6 +815,11 @@ run_case_contains "v2 missing work_split exits 23" 23 "DVANDVA_WRITE missing_key
 BOX="$(new_box v2-empty-work-split)"
 make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 '.work_split = []'
 run_case_contains "v2 empty work_split exits 23" 23 "DVANDVA_WRITE bad_work_split" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-unsafe-work-split-path)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 '.work_split[0].paths = ["../escape"]'
+run_case_contains "v2 unsafe work_split path exits 23" 23 "DVANDVA_WRITE bad_work_split" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-empty-verification-matrix)"
@@ -1088,6 +1167,190 @@ make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
   '.agent_instances[0].write_paths = ["scripts/test-dvandva-write.sh"]' \
   '.agent_instances += [(.agent_instances[0] | .id = "r3-generated-dynamic-review-b" | .status = "running" | .depends_on = ["r3-generated-dynamic-review"] | .write_paths = ["scripts/test-dvandva-write.sh"] | .evidence_refs = ["subagent:r3-generated-dynamic-review-b"] | .output_refs = ["subagent_track:r3-generated-dynamic-review-b"])]'
 run_case "v2 serialized agent_instance conflict is accepted" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-work-split-bare-path-collision)"
+make_baton_v2 "$BOX/baton.json" "parallel_implementing" "team" 4 \
+  "$(v2_parallel_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "parallel_implementing" "team" 5 \
+  "$(v2_parallel_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Team sync: candidate introduces a parallel implementation collision."' \
+  '.next_action = "Team: reject overlapping write intent before continuing."' \
+  '.work_split |= map(
+    if .id == "implementation-chunk-a" then .paths = ["src/shared"]
+    elif .id == "implementation-chunk-b" then .paths = ["src/shared"]
+    else .
+    end
+  )'
+run_case_contains "v2 parallel work_split bare path collision exits 23" 23 "DVANDVA_WRITE bad_work_split_write_paths" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-work-split-default-implementation-collision)"
+make_baton_v2 "$BOX/baton.json" "parallel_implementing" "team" 4 \
+  "$(v2_parallel_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "parallel_implementing" "team" 5 \
+  "$(v2_parallel_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Team sync: candidate uses default implementation chunks with colliding paths."' \
+  '.next_action = "Team: reject missing chunk_type chunks as implementation write intent."' \
+  '.work_split |= map(
+    if .id == "implementation-chunk-a" then del(.chunk_type) | .paths = ["src/default-impl.ts"]
+    elif .id == "implementation-chunk-b" then del(.chunk_type) | .paths = ["src/default-impl.ts"]
+    else .
+    end
+  )'
+run_case_contains "v2 default implementation chunks collide on bare paths" 23 "DVANDVA_WRITE bad_work_split_write_paths" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-work-split-prefix-collision)"
+make_baton_v2 "$BOX/baton.json" "cross_fixing" "team" 4 \
+  "$(v2_cross_fixing_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "cross_fixing" "team" 5 \
+  "$(v2_cross_fixing_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Team sync: candidate introduces an ancestor-descendant write collision."' \
+  '.next_action = "Team: reject prefix-overlapping fix chunks."' \
+  '.work_split[0].paths = ["src/tree"]' \
+  '.work_split[1].paths = ["src/tree/child"]'
+run_case_contains "v2 work_split prefix collision exits 23" 23 "DVANDVA_WRITE bad_work_split_write_paths" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-work-split-sibling-prefix-accepted)"
+make_baton_v2 "$BOX/baton.json" "cross_fixing" "team" 4 \
+  "$(v2_cross_fixing_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "cross_fixing" "team" 5 \
+  "$(v2_cross_fixing_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Team sync: sibling prefixes should remain disjoint."' \
+  '.next_action = "Team: continue with non-overlapping sibling write paths."' \
+  '.work_split[0].paths = ["src/a"]' \
+  '.work_split[1].paths = ["src/ab"]'
+run_case "v2 work_split sibling prefix paths are accepted" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-work-split-serialized-conflict)"
+make_baton_v2 "$BOX/baton.json" "cross_fixing" "team" 4 \
+  "$(v2_cross_fixing_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "cross_fixing" "team" 5 \
+  "$(v2_cross_fixing_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Team sync: serialized write conflict is intentional."' \
+  '.next_action = "Team: allow the dependent fix chunk to reuse the path after its dependency."' \
+  '.work_split[0].paths = ["src/shared-fix.ts"]' \
+  '.work_split[1].paths = ["src/shared-fix.ts"]' \
+  '.work_split[0].conflict_group = "fix-shared"' \
+  '.work_split[1].conflict_group = "fix-shared"' \
+  '.work_split[1].depends_on = ["cross-fixing-a"]'
+run_case "v2 serialized work_split conflict is accepted" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-work-split-conflict-group-without-depends-on)"
+make_baton_v2 "$BOX/baton.json" "cross_fixing" "team" 4 \
+  "$(v2_cross_fixing_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "cross_fixing" "team" 5 \
+  "$(v2_cross_fixing_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Team sync: conflict_group alone must not serialize writers."' \
+  '.next_action = "Team: reject overlapping write chunks without an explicit dependency edge."' \
+  '.work_split[0].paths = ["src/shared-fix.ts"]' \
+  '.work_split[1].paths = ["src/shared-fix.ts"]' \
+  '.work_split[0].conflict_group = "fix-shared"' \
+  '.work_split[1].conflict_group = "fix-shared"'
+run_case_contains "v2 work_split conflict_group without depends_on rejects" 23 "DVANDVA_WRITE bad_work_split_write_paths" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-work-split-depends-on-without-conflict-group)"
+make_baton_v2 "$BOX/baton.json" "cross_fixing" "team" 4 \
+  "$(v2_cross_fixing_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "cross_fixing" "team" 5 \
+  "$(v2_cross_fixing_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Team sync: depends_on alone must not serialize writers."' \
+  '.next_action = "Team: reject overlapping write chunks without a shared conflict group."' \
+  '.work_split[0].paths = ["src/shared-fix.ts"]' \
+  '.work_split[1].paths = ["src/shared-fix.ts"]' \
+  '.work_split[1].depends_on = ["cross-fixing-a"]'
+run_case_contains "v2 work_split depends_on without conflict_group rejects" 23 "DVANDVA_WRITE bad_work_split_write_paths" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-work-split-cross-review-read-overlap)"
+make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 \
+  "$(v2_cross_review_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "cross_review" "team" 5 \
+  "$(v2_cross_review_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Team sync: cross-review overlaps are read-only by default."' \
+  '.next_action = "Team: continue with read-only cross-review coverage."' \
+  '.work_split[0].paths = ["src/shared-review.ts"]' \
+  '.work_split[1].paths = ["src/shared-review.ts"]'
+run_case "v2 cross_review overlapping read paths are accepted" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-work-split-cross-review-explicit-write-collision)"
+make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 \
+  "$(v2_cross_review_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "cross_review" "team" 5 \
+  "$(v2_cross_review_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Team sync: explicit write_paths should make cross-review collisions fail."' \
+  '.next_action = "Team: reject cross-review write collisions unless serialized."' \
+  '.work_split[0].write_paths = ["src/shared-review.ts"]' \
+  '.work_split[1].write_paths = ["src/shared-review.ts"]'
+run_case_contains "v2 cross_review explicit write_paths collision rejects" 23 "DVANDVA_WRITE bad_work_split_write_paths" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-team-sync-work-split-collision)"
+make_baton_v2 "$BOX/baton.json" "cross_fixing" "team" 4 \
+  "$(v2_cross_fixing_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.work_split = [.work_split[0]]'
+make_baton_v2 "$BOX/baton.next.json" "cross_fixing" "team" 5 \
+  "$(v2_cross_fixing_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Team sync: candidate adds a new colliding live fix chunk."' \
+  '.next_action = "Team: reject the sync because it introduces overlapping write ownership."' \
+  '.work_split[0].paths = ["src/live.ts"]' \
+  '.work_split[1].paths = ["src/live.ts"]'
+run_case_contains "v2 team sync rejects newly introduced live work_split collision" 23 "DVANDVA_WRITE bad_work_split_write_paths" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-work-split-terminal-reuse)"
+make_baton_v2 "$BOX/baton.json" "cross_fixing" "team" 4 \
+  "$(v2_cross_fixing_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "cross_fixing" "team" 5 \
+  "$(v2_cross_fixing_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Team sync: terminal chunks should not block later path reuse."' \
+  '.next_action = "Team: continue because the live fix chunk is reusing a completed path."' \
+  '.work_split[0].paths = ["src/reuse.ts"]' \
+  '.work_split[0].status = "completed"' \
+  '.work_split[1].paths = ["src/reuse.ts"]' \
+  '.work_split[1].status = "planned"'
+run_case "v2 terminal-aware work_split path reuse is accepted" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-work-split-empty-explicit-write-paths)"
+make_baton_v2 "$BOX/baton.json" "parallel_implementing" "team" 4 \
+  "$(v2_parallel_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "parallel_implementing" "team" 5 \
+  "$(v2_parallel_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Team sync: implementation chunks must keep effective write intent."' \
+  '.next_action = "Team: reject chunks that override paths with empty write_paths."' \
+  '.work_split |= map(if .id == "implementation-chunk-a" then .write_paths = [] else . end)'
+run_case_contains "v2 implementation chunk with explicit empty write_paths rejects" 23 "DVANDVA_WRITE bad_work_split_write_paths" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 for owner in \
