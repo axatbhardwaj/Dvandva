@@ -75,8 +75,11 @@ v2_status_owner() {
     research_review|spec_review|deep_review|phase_review|counter_review)
       echo "prativadi"
       ;;
-    human_question|human_decision|done)
+    human_question|human_decision)
       echo "human"
+      ;;
+    done)
+      echo "team"
       ;;
     *)
       echo "vadi"
@@ -972,6 +975,18 @@ make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
 run_case_contains "v2 unsafe agent_instance id exits 23" 23 "DVANDVA_WRITE bad_agent_instances" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+for reserved_id in \
+  dvandva-implementer \
+  adversarial-analyst \
+  vadi; do
+  BOX="$(new_box "v2-reserved-agent-instance-id-$reserved_id")"
+  make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+    "$(v2_dynamic_agent_instances_filter)" \
+    ".agent_instances[0].id = \"$reserved_id\""
+  run_case_contains "v2 generated agent_instance rejects reserved id $reserved_id" 23 "DVANDVA_WRITE bad_agent_instances" \
+    "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+done
+
 BOX="$(new_box v2-bad-agent-instance-permission)"
 make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
   "$(v2_dynamic_agent_instances_filter)" \
@@ -989,8 +1004,9 @@ run_case_contains "v2 bad agent_instance model exits 23" 23 "DVANDVA_WRITE bad_a
 BOX="$(new_box v2-agent-instance-write-path-collision)"
 make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
   "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].status = "running"' \
   '.agent_instances[0].write_paths = ["scripts/test-dvandva-write.sh"]' \
-  '.agent_instances += [(.agent_instances[0] | .id = "r3-generated-dynamic-review-b" | .write_paths = ["scripts/test-dvandva-write.sh"] | .evidence_refs = ["subagent:r3-generated-dynamic-review-b", "closed:r3-generated-dynamic-review-b"] | .output_refs = ["subagent_track:r3-generated-dynamic-review-b"])]'
+  '.agent_instances += [(.agent_instances[0] | .id = "r3-generated-dynamic-review-b" | .status = "running" | .write_paths = ["scripts/test-dvandva-write.sh"] | .evidence_refs = ["subagent:r3-generated-dynamic-review-b"] | .output_refs = ["subagent_track:r3-generated-dynamic-review-b"])]'
 run_case_contains "v2 agent_instance write path collision exits 23" 23 "DVANDVA_WRITE bad_agent_instances_write_paths" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
@@ -1004,16 +1020,18 @@ run_case_contains "v2 agent_instance unsafe write path exits 23" 23 "DVANDVA_WRI
 BOX="$(new_box v2-agent-instance-write-path-prefix-collision)"
 make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
   "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].status = "running"' \
   '.agent_instances[0].write_paths = ["src/a"]' \
-  '.agent_instances += [(.agent_instances[0] | .id = "r3-generated-dynamic-review-b" | .write_paths = ["src/a/b"] | .evidence_refs = ["subagent:r3-generated-dynamic-review-b", "closed:r3-generated-dynamic-review-b"] | .output_refs = ["subagent_track:r3-generated-dynamic-review-b"])]'
+  '.agent_instances += [(.agent_instances[0] | .id = "r3-generated-dynamic-review-b" | .status = "running" | .write_paths = ["src/a/b"] | .evidence_refs = ["subagent:r3-generated-dynamic-review-b"] | .output_refs = ["subagent_track:r3-generated-dynamic-review-b"])]'
 run_case_contains "v2 agent_instance write path prefix collision exits 23" 23 "DVANDVA_WRITE bad_agent_instances_write_paths" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-agent-instance-sibling-prefix-paths)"
 make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
   "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].status = "running"' \
   '.agent_instances[0].write_paths = ["src/a"]' \
-  '.agent_instances += [(.agent_instances[0] | .id = "r3-generated-dynamic-review-b" | .write_paths = ["src/ab"] | .evidence_refs = ["subagent:r3-generated-dynamic-review-b", "closed:r3-generated-dynamic-review-b"] | .output_refs = ["subagent_track:r3-generated-dynamic-review-b"])]'
+  '.agent_instances += [(.agent_instances[0] | .id = "r3-generated-dynamic-review-b" | .status = "running" | .write_paths = ["src/ab"] | .evidence_refs = ["subagent:r3-generated-dynamic-review-b"] | .output_refs = ["subagent_track:r3-generated-dynamic-review-b"])]'
 run_case "v2 agent_instance sibling prefix paths are accepted" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
@@ -1026,16 +1044,37 @@ run_case "v2 six generated agent_instances with collapsed mix are accepted" 0 \
 BOX="$(new_box v2-six-agent-instances-late-collision)"
 make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
   "$(v2_many_agent_instances_filter)" \
+  '.agent_instances[4].status = "running"' \
+  '.agent_instances[5].status = "running"' \
   '.agent_instances[4].write_paths = ["src/late"]' \
   '.agent_instances[5].write_paths = ["src/late/sub"]'
 run_case_contains "v2 six generated agent_instances catch late path collision" 23 "DVANDVA_WRITE bad_agent_instances_write_paths" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
-BOX="$(new_box v2-agent-instance-serialized-conflict)"
+BOX="$(new_box v2-closed-agent-instances-same-base-collision)"
 make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
   "$(v2_dynamic_agent_instances_filter)" \
   '.agent_instances[0].write_paths = ["scripts/test-dvandva-write.sh"]' \
-  '.agent_instances += [(.agent_instances[0] | .id = "r3-generated-dynamic-review-b" | .depends_on = ["r3-generated-dynamic-review"] | .write_paths = ["scripts/test-dvandva-write.sh"] | .evidence_refs = ["subagent:r3-generated-dynamic-review-b", "closed:r3-generated-dynamic-review-b"] | .output_refs = ["subagent_track:r3-generated-dynamic-review-b"])]'
+  '.agent_instances += [(.agent_instances[0] | .id = "r3-generated-dynamic-review-b" | .write_paths = ["scripts/test-dvandva-write.sh"] | .evidence_refs = ["subagent:r3-generated-dynamic-review-b", "closed:r3-generated-dynamic-review-b"] | .output_refs = ["subagent_track:r3-generated-dynamic-review-b"])]'
+run_case_contains "v2 closed agent_instances sharing base checkpoint still collide" 23 "DVANDVA_WRITE bad_agent_instances_write_paths" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-closed-agent-instances-prior-base-reuse-paths)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].base_checkpoint = 5' \
+  '.agent_instances[0].spawned_at_checkpoint = 5' \
+  '.agent_instances[0].write_paths = ["scripts/test-dvandva-write.sh"]' \
+  '.agent_instances += [(.agent_instances[0] | .id = "r3-generated-dynamic-review-b" | .base_checkpoint = 12 | .spawned_at_checkpoint = 12 | .write_paths = ["scripts/test-dvandva-write.sh"] | .evidence_refs = ["subagent:r3-generated-dynamic-review-b", "closed:r3-generated-dynamic-review-b"] | .output_refs = ["subagent_track:r3-generated-dynamic-review-b"])]'
+run_case "v2 closed historical agent_instances may reuse write paths" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-agent-instance-serialized-conflict)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].status = "running"' \
+  '.agent_instances[0].write_paths = ["scripts/test-dvandva-write.sh"]' \
+  '.agent_instances += [(.agent_instances[0] | .id = "r3-generated-dynamic-review-b" | .status = "running" | .depends_on = ["r3-generated-dynamic-review"] | .write_paths = ["scripts/test-dvandva-write.sh"] | .evidence_refs = ["subagent:r3-generated-dynamic-review-b"] | .output_refs = ["subagent_track:r3-generated-dynamic-review-b"])]'
 run_case "v2 serialized agent_instance conflict is accepted" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
@@ -1128,6 +1167,8 @@ for edge in $V2_EDGES; do
   fi
   if [[ "$edge" == "deslop:done" ]]; then
     extras+=('.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"')
+    extras+=('.vadi_final_approval = true')
+    extras+=('.prativadi_final_approval = true')
   fi
   make_baton_v2 "$BOX/baton.json" "$cur" "$(v2_status_owner "$cur")" 4
   make_baton_v2 "$BOX/baton.next.json" "$new" "$(v2_status_owner "$new")" 5 "${extras[@]}"
@@ -1285,19 +1326,28 @@ run_case_contains "v2 cross_review tracks must use status-name phase" 24 "comple
 
 BOX="$(new_box v2-reject-legacy-phase-review-done)"
 make_baton_v2 "$BOX/baton.json" "phase_review" "prativadi" 4
-make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
 run_case_contains "v2 phase_review->done rejects legacy terminal review" 24 "no legal edge phase_review->done" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-reject-legacy-review-of-review-done)"
 make_baton_v2 "$BOX/baton.json" "review_of_review" "vadi" 4
-make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
 run_case_contains "v2 review_of_review->done rejects legacy terminal review" 24 "no legal edge review_of_review->done" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-reject-legacy-counter-review-done)"
 make_baton_v2 "$BOX/baton.json" "counter_review" "prativadi" 4
-make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
 run_case_contains "v2 counter_review->done rejects legacy terminal review" 24 "no legal edge counter_review->done" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
@@ -1366,14 +1416,40 @@ run_case_contains "v2 done rejects run_explainer_ref for different run_id" 23 "b
 
 BOX="$(new_box v2-done-valid-run-explainer)"
 make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4
-make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
 run_case "v2 done accepts valid run_explainer_ref path" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+for done_owner in human team vadi prativadi; do
+  BOX="$(new_box "v2-done-accepts-$done_owner")"
+  make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4
+  make_baton_v2 "$BOX/baton.next.json" "done" "$done_owner" 5 \
+    '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+    '.vadi_final_approval = true' \
+    '.prativadi_final_approval = true'
+  run_case "v2 done accepts coordinator assignee $done_owner" 0 \
+    "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+done
+
+BOX="$(new_box v2-done-rejects-missing-final-approval)"
+make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4
+make_baton_v2 "$BOX/baton.next.json" "done" "team" 5 \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = false'
+run_case_contains "v2 done requires both final approvals" 23 "DVANDVA_WRITE bad_done_state" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-done-rejects-generated-assignee)"
 make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4
-make_baton_v2 "$BOX/baton.next.json" "done" "r3-generated-dynamic-review" 5 '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"'
-run_case_contains "v2 done requires human assignee" 23 "bad_assignee_owner" \
+make_baton_v2 "$BOX/baton.next.json" "done" "r3-generated-dynamic-review" 5 \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+run_case_contains "v2 done rejects generated assignee" 23 "DVANDVA_WRITE bad_done_state" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-deep-review-missing-angles)"

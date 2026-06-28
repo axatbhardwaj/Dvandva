@@ -20,7 +20,7 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
 - `run_explainer_ref`: path to the final run explainer HTML under `./superpowers/run-reports/`, required before terminal `done`.
 - `active_roles`: v2 concurrent role list. Team-owned statuses use `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; scalar statuses use an empty array.
 - `work_split`: planned ownership map for vadi, prativadi, human, or subagents; records phase, owner, scope, paths, status, artifact refs, parallelism rationale, and dependencies.
-- `agent_instances`: first-class registry for generated run-scoped agent instances, including provenance, model/permission class, read/write paths, work item IDs, base checkpoint, output refs, evidence refs, lifecycle status, and closure result.
+- `agent_instances`: first-class registry for generated run-scoped agent instances, including provenance, model/permission class, read/write paths, work item IDs, base checkpoint, output refs, evidence refs, lifecycle status, and closure result. Generated instance IDs must not collide with coordinator owners (`vadi`, `prativadi`, `team`, `human`), seed-roster owners such as `dvandva-implementer`, or legacy standalone owner names such as `adversarial-analyst`. Dynamic write-path disjointness is checked among generated instances sharing the same `base_checkpoint`; closed historical instances from earlier base checkpoints do not block later sequential path reuse.
 - `subagent_tracks`: actual conditional parallelism record. Parallelize only genuinely disjoint tracks; record what was not parallelized and why when direct execution is safer or when subagent tooling is unavailable.
 - `verification_matrix`: planned evidence map from claims and risks to checks, owners, expected results, command or inspection, result, evidence refs, and the 100% test coverage target for new behavior.
 - `turn_cap`: default `60`; passive shell wait heartbeats do not count as
@@ -43,7 +43,7 @@ v2 write-helper enforcement requires safe `run_id`, `original_ask`,
 non-empty `research_ref` before advancing beyond the initial research draft,
 except that `human_question` and `human_decision` remain legal early-escalation
 targets before `research_ref` exists. Existing batons cannot change schema or v2
-`run_id` mid-run. Terminal `done` requires `run_explainer_ref` to point to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`.
+`run_id` mid-run. Terminal `done` requires a coordinator assignee (`human`, `team`, `vadi`, or `prativadi`), `vadi_final_approval == true`, `prativadi_final_approval == true`, and `run_explainer_ref` pointing to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`.
 
 implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. After `test_creation`, the baton enters `cross_review`; `cross_review` may route to `cross_fixing`, and only completed cross-review evidence for both roles can advance to `deep_review`. Phase convention: implementation-chunk tracks use the numeric implementation phase, while cross-review and deep-review gate tracks use the status-name phase such as `phase: "cross_review"` or `phase: "deep_review"`.
 
@@ -142,7 +142,7 @@ Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`) m
 | `phase_fixing` | `test_creation` | v2: Vadi fixed behavior, tests, or verification gaps and must refresh test evidence before review |
 | `deslop` | `phase_fixing` | v2: Cleanup finds behavior, test, or review blockers |
 | `deslop` | `phase: N+1, status: parallel_implementing, disagreement_round: 0` | v2: no nits, low/minor bugs, stale wording, or unclear instructions remain except explicitly accepted `deferred` items |
-| `deslop` | final `done` | v2: final phase passed implementation, test_creation, deep_review, deslop, dual approval, and `run_explainer_ref` points to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html` |
+| `deslop` | final `done` | v2: final phase passed implementation, test_creation, deep_review, deslop, uses a coordinator assignee (`human`, `team`, `vadi`, or `prativadi`), has both final approvals true, and `run_explainer_ref` points to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html` |
 | `phase: N, implementing` | `human_decision` | Vadi blocked |
 | `phase_review (impl)` | `phase_fixing` | Prativadi hands back substantive findings |
 | `phase_review (impl)` | `review_of_review, review_target: prativadi_fixups` | Prativadi applied narrow fixups, mutual review owed |
@@ -157,11 +157,11 @@ Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`) m
 | From | To | Trigger |
 |---|---|---|
 | `review_of_review (prativadi_fixups)` | `phase: N+1, status: implementing, disagreement_round: 0` | Legacy v1: Vadi approves prativadi fixups |
-| `review_of_review (prativadi_fixups)` | final `done` | Final phase fixups approved by both roles; optional commit/push complete |
+| `review_of_review (prativadi_fixups)` | final `done` | Legacy v1: final phase fixups approved by both roles; optional commit/push complete |
 | `review_of_review (prativadi_fixups)` | `counter_review, review_target: vadi_counter` | Vadi disapproves, writes counter, increments `disagreement_round` |
 | `review_of_review (prativadi_fixups)` | `human_decision` | `disagreement_round >= disagreement_cap` |
 | `counter_review (vadi_counter)` | `phase: N+1, status: implementing, disagreement_round: 0` | Legacy v1: Prativadi approves counter |
-| `counter_review (vadi_counter)` | final `done` | Final phase counter approved by both roles; optional commit/push complete |
+| `counter_review (vadi_counter)` | final `done` | Legacy v1: final phase counter approved by both roles; optional commit/push complete |
 | `counter_review (vadi_counter)` | `review_of_review, review_target: prativadi_fixups` | Prativadi disapproves counter, applies a different fix, increments `disagreement_round` |
 | `counter_review (vadi_counter)` | `human_decision` | `disagreement_round >= disagreement_cap` |
 
@@ -194,7 +194,9 @@ writes:
 - Prativadi-owned: `research_review`, `spec_review`, `deep_review`,
   `phase_review`, `counter_review`.
 - Human-owned: `human_question`, `human_decision`.
-- Terminal `done` is accepted as terminal regardless of assignee; wait helpers
+- Terminal `done` has no status owner. It is accepted as terminal for a
+  coordinator assignee (`human`, `team`, `vadi`, or `prativadi`) while the final
+  gate still requires both final approvals and the run explainer; wait helpers
   stop on `done`.
 
 Any other transition is illegal in v1 or v2 and must be rejected by the writing
@@ -224,7 +226,7 @@ Do not use `haiku` for Dvandva dynamic agents.
 | **Single-writer** | Generated agents never own baton `assignee`, phase transitions, or final approvals. The parent role serializes all evidence into one monotonic checkpoint write. |
 | **No daemon** | No background scheduler, mailbox, or launcher. The baton and foreground wait helper remain the only coordination channel. |
 | **Explicit closure** | Every generated handle must be explicitly closed before its track counts as complete. Codex closure evidence includes `closed:<handle>` or equivalent harness-specific proof. |
-| **Dynamic write-path disjointness** | Same-checkpoint write-path overlaps between instances are rejected unless they share a `conflict_group` with explicit dependency serialization. |
+| **Dynamic write-path disjointness** | Write-path overlaps between generated instances sharing the same `base_checkpoint` are rejected unless they share a `conflict_group` with explicit dependency serialization. Closed historical instances from earlier base checkpoints are not part of the collision set. |
 | **No additive sprawl** | Generated instances are run-scoped and ephemeral. The seed roster is never modified at runtime; promotion requires a later reviewed source change. |
 
 ### Run3/Run4 boundary

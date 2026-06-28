@@ -76,7 +76,7 @@ Generated instances are run-scoped and ephemeral — no additive roster sprawl u
 Mandatory invariants:
 - Coordination invariant: no daemon, no hidden orchestrator — the baton is the only coordinator.
 - Single-writer: generated agents never own `assignee`, `active_roles`, phase transitions, or final approval.
-- Path invariant: dynamic write-path disjointness — instances with non-empty `write_paths` in the same checkpoint must be pairwise disjoint unless explicitly serialized through `depends_on` within a shared `conflict_group`.
+- Path invariant: dynamic write-path disjointness — generated instances with non-empty `write_paths` sharing the same `base_checkpoint` must be pairwise disjoint unless explicitly serialized through `depends_on` within a shared `conflict_group`.
 - Model-class mapping: use `opus-class|gpt-5.5` for review, planning, and architecture seeds; use `sonnet-class|gpt-5.4` for implementation and documentation seeds. Never use `haiku`.
 
 ## Absorbed Dvandva skills

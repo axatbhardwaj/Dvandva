@@ -56,7 +56,7 @@ v2_expected_assignee() {
     research_review|spec_review|deep_review|phase_review|counter_review)
       echo "prativadi"
       ;;
-    human_question|human_decision|done)
+    human_question|human_decision)
       echo "human"
       ;;
     *)
@@ -145,12 +145,15 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
       . == "write-artifact-only";
     def generated_instance:
       (.agent_kind // "") == "generated" or has("parent_role") or has("permission_class") or has("model_class");
+    def reserved_agent_id:
+      test("^(dvandva-(researcher|architect|implementer|test-creator|cross-reviewer|adversarial-analyst|deep-reviewer|deslopper|sandbox-verifier|baton-auditor|security-auditor|integration-checker|debugger|doc-verifier|pattern-mapper)|adversarial-analyst|quality-reviewer|sandbox-executor|architect|developer|vadi|prativadi|team|human)$");
     (.agent_instances | type) == "array" and
     (([.agent_instances[]?.id] | length) == ([.agent_instances[]?.id] | unique | length)) and
     all(.agent_instances[]?;
       (.id | safe_id) and
       (
         if generated_instance then
+          ((.id | reserved_agent_id) | not) and
           ((.parent_role == "vadi") or (.parent_role == "prativadi")) and
           (.spawned_by | nonblank) and
           ((.spawned_at_checkpoint | type) == "number") and
@@ -208,7 +211,7 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
       range($i + 1; ($instances | length)) as $j |
       ($instances[$i]) as $a |
       ($instances[$j]) as $b |
-      select(overlap($a; $b) and (serialized($a; $b) | not))
+      select(($a.base_checkpoint == $b.base_checkpoint) and overlap($a; $b) and (serialized($a; $b) | not))
     ] | length == 0
   ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
     echo "DVANDVA_WRITE bad_agent_instances_write_paths candidate=$CANDIDATE_FILE" >&2
@@ -310,6 +313,15 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
       echo "DVANDVA_WRITE bad_run_explainer_ref candidate=$CANDIDATE_FILE" >&2
       exit 23
     fi
+  fi
+  if [[ "$new_status" == "done" ]] \
+    && ! jq -e '
+      (.assignee == "human" or .assignee == "team" or .assignee == "vadi" or .assignee == "prativadi") and
+      (.vadi_final_approval == true) and
+      (.prativadi_final_approval == true)
+    ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+    echo "DVANDVA_WRITE bad_done_state candidate=$CANDIDATE_FILE" >&2
+    exit 23
   fi
 fi
 

@@ -144,7 +144,7 @@ Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`) m
 
 ## Dynamic Agent Instances (Run 3)
 
-Run 3 turns the static 15-agent roster into a **seed roster** for run-scoped dynamic agent generation. Parent roles may generate additional named instances on demand; each is recorded in `agent_instances` on the baton — a first-class array separate from the post-hoc `subagent_tracks` record.
+Run 3 turns the static 15-agent roster into a **seed roster** for run-scoped dynamic agent generation. Parent roles may generate additional named instances on demand; each is recorded in `agent_instances` on the baton — a first-class array separate from the post-hoc `subagent_tracks` record. Generated instance IDs must not collide with coordinator owners (`vadi`, `prativadi`, `team`, `human`), seed-roster owners such as `dvandva-implementer`, or legacy standalone owner names such as `adversarial-analyst`; those reserved names are protocol owners, not generated handles.
 
 ### `agent_instances` item shape
 
@@ -184,7 +184,7 @@ Model classes are vendor-neutral: `opus-class|gpt-5.5` for architecture/planning
 
 **Explicit closure.** Every generated agent handle must be explicitly closed after its result is consumed. Codex closure evidence must include `closed:<handle>` or equivalent harness-specific proof. A track whose closure record is missing is not counted as complete.
 
-**Dynamic write-path disjointness.** Dynamic instances with non-empty `write_paths` in the same checkpoint must be pairwise disjoint unless they share the same `conflict_group` and are explicitly serialized by declared dependencies. The Run 3 write helper rejects collisions.
+**Dynamic write-path disjointness.** Dynamic instances with non-empty `write_paths` sharing the same `base_checkpoint` must be pairwise disjoint unless they share the same `conflict_group` and are explicitly serialized by declared dependencies. Closed historical instances from earlier base checkpoints do not block later sequential path reuse. The Run 3 write helper rejects collisions in the current merge set.
 
 **No additive sprawl.** Generated instances are run-scoped and ephemeral. A pattern may be promoted to the seed roster only through a later reviewed source change; the seed roster is never modified at runtime.
 
@@ -252,22 +252,22 @@ Model classes are vendor-neutral: `opus-class|gpt-5.5` for architecture/planning
 - v2: `deep_review (impl)` → `deslop` when implementation and tests are substantively accepted and `subagent_tracks` contains the three completed review angles
 - v2: `deep_review (impl)` → `phase_fixing` when bugs, missing tests, or verification gaps remain
 - v2: `phase_fixing` → `test_creation` when fixes changed behavior, tests, or verification evidence
-- v2: `deslop` → `phase: N+1, parallel_implementing` or terminal `done` when no nits, low/minor bugs, stale wording, or unclear instructions remain except explicitly accepted `deferred` items; terminal `done` also requires `run_explainer_ref` pointing to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`
+- v2: `deslop` → `phase: N+1, parallel_implementing` or terminal `done` when no nits, low/minor bugs, stale wording, or unclear instructions remain except explicitly accepted `deferred` items; terminal `done` also requires a coordinator assignee (`human`, `team`, `vadi`, or `prativadi`), `run_explainer_ref` pointing to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`, `vadi_final_approval == true`, and `prativadi_final_approval == true`
 - v2: `deslop` → `phase_fixing` when cleanup finds behavior, test, or review blockers
 - `phase: N, implementing` → `human_decision`
 - `phase_review (impl)` → `phase_fixing` (substantive findings)
 - `phase_review (impl)` → `review_of_review (prativadi_fixups)` (narrow fixups applied)
-- `phase_review (impl)` → `phase: N+1, implementing` (approve no changes) **or** terminal `done` after dual final approval if N is final
+- Legacy v1: `phase_review (impl)` → `phase: N+1, implementing` (approve no changes) **or** terminal `done` after dual final approval if N is final
 - `phase_review (impl)` → `human_decision`
 - `phase_fixing` → `phase_review (impl)`
 - `phase_fixing` → `human_decision`
 
 **Mutual review and disagreement loop:**
 
-- `review_of_review (prativadi_fixups)` → `phase: N+1, implementing` (vadi approves) or terminal `done` after dual final approval
+- Legacy v1: `review_of_review (prativadi_fixups)` → `phase: N+1, implementing` (vadi approves) or terminal `done` after dual final approval
 - `review_of_review (prativadi_fixups)` → `counter_review (vadi_counter)` (vadi disapproves; `disagreement_round += 1`)
 - `review_of_review (prativadi_fixups)` → `human_decision` (when `disagreement_round >= cap`)
-- `counter_review (vadi_counter)` → `phase: N+1, implementing` (prativadi approves counter) or terminal `done` after dual final approval
+- Legacy v1: `counter_review (vadi_counter)` → `phase: N+1, implementing` (prativadi approves counter) or terminal `done` after dual final approval
 - `counter_review (vadi_counter)` → `review_of_review (prativadi_fixups)` (prativadi disapproves counter, writes new fix; `disagreement_round += 1`)
 - `counter_review (vadi_counter)` → `human_decision` (when `disagreement_round >= cap`)
 
@@ -286,8 +286,10 @@ For v2 candidates, `assignee` is status-owned: vadi owns
 `implementing`, `test_creation`, `deslop`, `phase_fixing`, and
 `review_of_review`; prativadi owns `research_review`, `spec_review`,
 `deep_review`, `phase_review`, and `counter_review`; human owns
-`human_question` and `human_decision`. Terminal `done` is terminal regardless of
-assignee. Existing batons cannot change schema or v2 `run_id` mid-run.
+`human_question` and `human_decision`. Terminal `done` has no status owner: it
+may use a coordinator assignee (`human`, `team`, `vadi`, or `prativadi`) while
+the final gate still requires both approvals and the run explainer. Existing
+batons cannot change schema or v2 `run_id` mid-run.
 
 Any other transition is illegal in v1 or v2. The writing agent must reject
 illegal transitions and route to `human_decision` instead.
