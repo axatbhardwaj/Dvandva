@@ -139,6 +139,7 @@ check_understanding() {
   require_text "$skill" "research_ref" "understanding skill grounds teaching in research refs"
   require_text "$skill" "plan_ref" "understanding skill grounds teaching in plan refs"
   require_text "$skill" "./superpowers/understanding/YYYY-MM-DD-<topic>.html" "understanding skill writes HTML checklist"
+  require_text "$skill" "dark self-contained HTML checklist" "understanding skill writes dark self-contained HTML checklist"
   require_text "$skill" "copy-as-prompt" "understanding HTML exposes copy-as-prompt export"
   require_text "$skill" "copy-as-JSON" "understanding HTML exposes copy-as-JSON export"
   require_text "$skill" "when not to use" "understanding skill states when not to use it"
@@ -224,6 +225,7 @@ anti-lecture learner speaks at least as much makes sense
 mental model concrete trace transfer whys-to-bedrock explain-back edge-case prediction counterfactual
 research_ref plan_ref
 ./superpowers/understanding/YYYY-MM-DD-<topic>.html
+dark self-contained HTML checklist
 copy-as-prompt copy-as-JSON when not to use
 FIXTURE
 

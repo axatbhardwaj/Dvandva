@@ -232,6 +232,9 @@ done
 
 readme="$ROOT_DIR/README.md"
 require_text "$readme" "regular local checkpoint commits" "README documents regular checkpoint commits"
+require_text "$readme" 'dvandva:vadi`, `dvandva:prativadi`, `dvandva:testing`, `dvandva:understanding`, and `dvandva:worktree-setup' "README documents all installed Dvandva skills"
+require_text "$readme" "all five Dvandva skills" "README validation describes all five Dvandva skills"
+reject_text "$readme" "both Dvandva skills" "README avoids stale two-skill install wording"
 reject_text "$readme" "Agents may commit and push only after both" "README no longer says commits are final-only"
 for command in \
   "bash scripts/lint-protocol-phase1.sh" \
@@ -379,6 +382,10 @@ done
 require_text "$ROOT_DIR/product.md" "adversarial-analyst.md" "product layout includes adversarial analyst agent file"
 require_text "$ROOT_DIR/product.md" "at least three angle-specific reviewers" "product requires multi-angle deep review"
 require_text "$ROOT_DIR/product.md" "./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html" "product documents final explainer path"
+require_text "$ROOT_DIR/product.md" 'direct Codex plugin install, dual installer install, and `install-codex.sh` helper install' "product documents all smoke install runtime probes"
+require_text "$ROOT_DIR/product.md" 'dvandva:vadi`, `dvandva:prativadi`, `dvandva:testing`, `dvandva:understanding`, and `dvandva:worktree-setup' "product documents all smoke-verified Dvandva skills"
+reject_text "$ROOT_DIR/product.md" 'then write baton with `status: deep_review, assignee: prativadi' "product avoids stale direct test_creation-to-deep_review mode wording"
+reject_text "$ROOT_DIR/product.md" '| `test_creation` | `deep_review, review_target: implementation`' "product avoids stale direct test_creation-to-deep_review transition row"
 require_text "$research_skill" "canonical Dvandva subagent roster" "research skill declares canonical Dvandva agent roster"
 require_text "$research_skill" "dvandva-adversarial-analyst" "research skill includes adversarial analyst"
 require_text "$ROOT_DIR/plugins/dvandva/skills/prativadi/SKILL.md" "Add \`dvandva-adversarial-analyst\` for boundary, state/concurrency, error-handling, or bypass-logic attack hypotheses" "prativadi deep review invokes adversarial analyst"

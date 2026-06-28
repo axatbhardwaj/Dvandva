@@ -161,7 +161,7 @@ The existing `templates/prompts/claude-doer-goal.md` and `templates/prompts/code
 
 ## 6. Flow overview
 
-The v2 flow has seven segments and an end state: research, master planning, implementation, test_creation, deep_review, deslop, and phase advancement/completion. Every arrow in the diagram is a baton write by the active agent. In default walkaway mode, the other persistent session is already blocked in `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh`; the helper returns when the baton assigns that role, and the agent re-enters preflight.
+The v2 flow has eight segments and an end state: research, master planning, implementation, test_creation, cross_review, deep_review, deslop, and phase advancement/completion. Every arrow in the diagram is a baton write by the active agent. In default walkaway mode, the other persistent session is already blocked in `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh`; the helper returns when the baton assigns that role, and the agent re-enters preflight.
 
 ```
                   ┌──────────────────────────────────┐
@@ -231,7 +231,11 @@ The v2 flow has seven segments and an end state: research, master planning, impl
    │   Vadi (test_creation)                                │
    │     creates/updates tests and coverage evidence       │
    │     targets 100% test coverage for new behavior       │
-   │     baton → deep_review                               │
+   │     baton → cross_review                              │
+   │       ▼                                               │
+   │   Vadi + Prativadi (cross_review for phase N)         │
+   │     reciprocal review of peer-owned chunks            │
+   │     baton → cross_fixing or deep_review               │
    │       ▼                                               │
    │   Prativadi (deep_review for phase N)                 │
    │     independent review after tests exist              │
@@ -319,7 +323,7 @@ No `allowed-tools` reliance (see section 9). Optional Claude-only `argument-hint
 5. **Mode A: spec drafting** — when `phase: "spec", status: "spec_drafting"`. Read `research_ref`, `work_split`, and `verification_matrix` first. Invoke `superpowers:brainstorming` skill flow without rediscovering already-settled research. The vadi may ask the user questions if required before the master plan is useful. Produce a gitignored dark self-contained HTML plan under `./superpowers/plans/YYYY-MM-DD-<topic>.html` with declared `total_phases` and a per-phase scope list. Set `plan_ref`, `total_phases`, and `master_plan_locked: false` on the baton. Write baton with `status: spec_review, assignee: prativadi, review_target: spec`.
 6. **Mode B: spec revision** — when `phase: "spec", status: "spec_revision"`. Read the baton's `findings` array (prativadi's Q&A), respond in the `plan_ref` plan, update affected `total_phases` if scope changed. Always write baton with `status: spec_review, assignee: prativadi, review_target: spec`; the prativadi is the only actor that can advance the spec to phase 1. Follow the stop/wait rule.
 7. **Mode C: phase implementation** — when `phase: 1..N, status: "implementing"`. Read the corresponding phase scope from the `plan_ref` plan and the relevant `work_split` / `verification_matrix` entries. Invoke `superpowers:test-driven-development` when applicable. Implement only the phase scope; do not bleed into adjacent phases. Write baton with `status: test_creation, assignee: vadi, review_target: null`.
-8. **Mode T: test creation** — when `phase: 1..N, status: "test_creation"`. Create or update tests for every new behavior, record 100% test coverage evidence or source-only rationale in `verification_matrix`, run motivating tests and cheap checks, then write baton with `status: deep_review, assignee: prativadi, review_target: implementation`. Test creation is separate from review.
+8. **Mode T: test creation** — when `phase: 1..N, status: "test_creation"`. Create or update tests for every new behavior, record 100% test coverage evidence or source-only rationale in `verification_matrix`, run motivating tests and cheap checks, then write baton with `status: cross_review, assignee: team, active_roles: ["vadi", "prativadi"], review_target: implementation`. Test creation is separate from review.
 9. **Mode D: phase fixing** — when `phase: 1..N, status: "phase_fixing"`. Read `findings` from prativadi. Fix only listed items, update tests if behavior changed, and return through `test_creation` rather than directly to review. Follow the stop/wait rule.
 10. **Mode S: deslop** — when `phase: 1..N, status: "deslop"`. Remove nits, low/minor bugs, stale wording, duplicated instructions, and generated-looking clutter found by deep review. Use conditional parallelism for independent style, protocol, and artifact-integrity tracks and record them in `subagent_tracks`. If no unresolved issues remain except explicitly accepted `deferred` items, advance to the next phase or final completion.
 11. **Mode E: prativadi-fixup review** — when `status: "review_of_review", review_target: "prativadi_fixups", assignee: vadi`. Read the prativadi's `narrow_fixups` array and inspect the diff the prativadi applied. Decide: approve or disapprove.
@@ -451,7 +455,7 @@ v1 has no automated test surface for skill behavior. What can be tested:
 - **Generated artifact lint** (`scripts/lint-artifacts.sh`): rejects generated Markdown under `./superpowers/`, requires generated HTML artifacts to declare dark color scheme, parses embedded Dvandva artifact metadata, and rejects external script/link references.
 - **Wait-helper tests** (`scripts/test-dvandva-wait.sh`): verifies the foreground helper exits 0 when a role is assigned, 10 on `done`, 11 on `human_decision`, 12 on `human_question` with resume fields, and 20 on timeout.
 - **Installer tests** (`scripts/test-install.sh`, `scripts/test-install-codex.sh`): verify the dual Claude/Codex installer invokes both engine install paths and the Codex-only helper uses `codex plugin add` when available, with the app-server path preserved only as legacy fallback.
-- **Plugin smoke test** (`scripts/smoke-plugin-install.sh`): copies the plugin into a temp marketplace, validates Claude plugin/marketplace metadata, runs Codex marketplace add with isolated `CODEX_HOME`, exercises the dual installer with isolated Claude/Codex homes, verifies both wait helpers, and checks standalone development copies.
+- **Plugin smoke test** (`scripts/smoke-plugin-install.sh`): copies the plugin into a temp marketplace, validates Claude plugin/marketplace metadata, runs Codex marketplace add with isolated `CODEX_HOME`, probes Codex runtime discovery after direct Codex plugin install, dual installer install, and `install-codex.sh` helper install, requires `dvandva:vadi`, `dvandva:prativadi`, `dvandva:testing`, `dvandva:understanding`, and `dvandva:worktree-setup`, verifies both wait helpers, and checks standalone development copies.
 - **Pilot as integration test:** the pilot is the v1 integration test. Success criteria #1–#5 in section 2 are the acceptance gate.
 
 ## 14. Risks and open questions
@@ -588,7 +592,10 @@ This spec is authoritative for v1 transitions and the enforced v2 research, test
 | From | To | Trigger |
 |---|---|---|
 | `phase: N, implementing` | `phase: N, status: test_creation` | Vadi completes the code slice and moves to separate test creation |
-| `test_creation` | `deep_review, review_target: implementation` | Vadi records tests/coverage evidence and hands to prativadi |
+| `test_creation` | `cross_review, review_target: implementation` | Vadi records tests/coverage evidence and hands to both roles for reciprocal peer-chunk review |
+| `cross_review` | `cross_fixing` | Either role finds peer-owned chunk defects that must be fixed before deep review |
+| `cross_fixing` | `test_creation` | Cross-review findings are fixed and tests/evidence must be refreshed before another cross-review |
+| `cross_review` | `deep_review, review_target: implementation` | Both roles record completed approved cross-review tracks with evidence |
 | `deep_review (impl)` | `deslop` | Prativadi substantively accepts implementation/test evidence and records completed `correctness-regression`, `test-evidence`, and `protocol-handoff` subagent tracks with evidence |
 | `deep_review (impl)` | `phase_fixing` | Prativadi finds bugs, missing tests, verification gaps, or substantive protocol blockers |
 | `phase_fixing` | `test_creation` | Vadi addressed findings and must refresh tests/evidence before another deep review |
