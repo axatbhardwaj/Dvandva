@@ -78,6 +78,12 @@ check_testing() {
 
   require_file "$skill" "testing skill"
   require_text "$skill" "BATON_STATE" "testing skill surfaces baton state"
+  require_text "$skill" "Keep test_creation separate from deep_review." "testing skill keeps test creation separate from review"
+  require_text "$skill" "Target 100% test coverage" "testing skill preserves full coverage target"
+  require_text "$skill" "For source-only docs/skills, record lint/review coverage and the reason executable coverage does not apply." "testing skill records source-only coverage rationale"
+  require_text "$skill" "coverage owner, command, expected result, actual result, and evidence refs" "testing skill records verification matrix evidence fields"
+  require_text "$skill" "dvandva-test-creator" "testing skill invokes test creator subagent"
+  require_text "$skill" "dvandva-sandbox-verifier" "testing skill invokes sandbox verifier subagent"
   require_text "$skill" "detect context" "testing skill preserves Step 1 detect context"
   require_text "$skill" "coverage analysis" "testing skill preserves Step 2 coverage analysis"
   require_text "$skill" "red attack" "testing skill preserves Step 3 red attack"
@@ -91,7 +97,7 @@ check_testing() {
   require_text "$skill" "State/Concurrency" "testing skill covers state and concurrency attacks"
   require_text "$skill" "Error Handling" "testing skill covers error-handling attacks"
   require_text "$skill" "Bypass Logic" "testing skill covers bypass-logic attacks"
-  require_text "$skill" "False positives and design limitations" "testing skill filters false positives before tests"
+  require_text "$skill" "False positives and design limitations are filtered before tests are written." "testing skill filters false positives before tests"
   require_text "$skill" "/tmp" "testing skill keeps runtime probes ephemeral"
   require_text "$skill" "shell=True" "testing skill forbids shell=True probes"
   require_text "$skill" "Docker --network none" "testing skill documents offline sandbox preference"
@@ -114,6 +120,12 @@ check_understanding() {
 
   require_file "$skill" "understanding skill"
   require_text "$skill" "BATON_STATE" "understanding skill surfaces baton state"
+  require_text "$skill" "git diff" "understanding skill grounds teaching in diff"
+  require_text "$skill" "git log" "understanding skill grounds teaching in commit history"
+  require_text "$skill" 'The HTML artifact at `research_ref`' "understanding skill reads research HTML artifact"
+  require_text "$skill" 'The HTML artifact at `plan_ref`' "understanding skill reads plan HTML artifact"
+  require_text "$skill" "confirm mastery before advancing" "understanding skill gates each stage on mastery"
+  require_text "$skill" "Do not mutate the baton" "understanding skill is baton read-only"
   require_text "$skill" "anti-lecture" "understanding skill enforces anti-lecture behavior"
   require_text "$skill" "learner speaks at least as much" "understanding skill requires learner participation"
   require_text "$skill" "makes sense" "understanding skill rejects makes-sense as mastery evidence"
@@ -137,6 +149,12 @@ check_worktree() {
 
   require_file "$skill" "worktree setup skill"
   require_text "$skill" "BATON_STATE" "worktree skill surfaces baton state"
+  require_text "$skill" ".gitignore" "worktree skill checks ignored local state"
+  require_text "$skill" ".dvandva/" "worktree skill checks dvandva ignore entry"
+  require_text "$skill" "/superpowers/" "worktree skill checks superpowers ignore entry"
+  require_text "$skill" "agent-os/" "worktree skill checks agent-os ignore entry"
+  require_text "$skill" "Do not reset, delete branches, or remove dependencies without explicit user approval." "worktree skill forbids destructive git/dependency actions"
+  require_text "$skill" 'Start or update Dvandva baton fields: `run_id`, `original_ask`, `work_split`, and `verification_matrix`.' "worktree skill seeds required baton fields"
   require_text "$skill" "superpowers:using-git-worktrees" "worktree skill invokes Superpowers worktree gate"
   require_text "$skill" "git status --short --branch" "worktree skill preserves status preflight"
   require_text "$skill" "git worktree list --porcelain" "worktree skill preserves worktree preflight"
@@ -174,9 +192,14 @@ make_fixture() {
 
   cat > "$root/plugins/dvandva/skills/testing/SKILL.md" <<'FIXTURE'
 BATON_STATE
+Keep test_creation separate from deep_review.
+Target 100% test coverage
+For source-only docs/skills, record lint/review coverage and the reason executable coverage does not apply.
+coverage owner, command, expected result, actual result, and evidence refs
+dvandva-test-creator dvandva-sandbox-verifier
 detect context coverage analysis red attack green verification sandbox validation blue test writing quality review final review results
 Boundary State/Concurrency Error Handling Bypass Logic
-False positives and design limitations
+False positives and design limitations are filtered before tests are written.
 /tmp shell=True Docker --network none UNVERIFIABLE
 tests only for confirmed issues
 .testing-skill/ subagent_tracks verification_matrix
@@ -192,6 +215,11 @@ FIXTURE
 
   cat > "$root/plugins/dvandva/skills/understanding/SKILL.md" <<'FIXTURE'
 BATON_STATE
+git diff git log
+The HTML artifact at `research_ref`
+The HTML artifact at `plan_ref`
+confirm mastery before advancing
+Do not mutate the baton
 anti-lecture learner speaks at least as much makes sense
 mental model concrete trace transfer whys-to-bedrock explain-back edge-case prediction counterfactual
 research_ref plan_ref
@@ -201,6 +229,9 @@ FIXTURE
 
   cat > "$root/plugins/dvandva/skills/worktree-setup/SKILL.md" <<'FIXTURE'
 BATON_STATE
+.gitignore .dvandva/ /superpowers/ agent-os/
+Do not reset, delete branches, or remove dependencies without explicit user approval.
+Start or update Dvandva baton fields: `run_id`, `original_ask`, `work_split`, and `verification_matrix`.
 superpowers:using-git-worktrees
 git status --short --branch
 git worktree list --porcelain
@@ -219,10 +250,11 @@ FIXTURE
 
 self_test() {
   local script="${BASH_SOURCE[0]}"
-  local good bad
+  local good bad malformed
   good="$(mktemp -d)"
   bad="$(mktemp -d)"
-  trap 'rm -rf "$good" "$bad"' RETURN
+  malformed="$(mktemp -d)"
+  trap 'rm -rf "$good" "$bad" "$malformed"' RETURN
 
   make_fixture "$good"
   if DVANDVA_RUN2_ABSORPTION_ROOT="$good" bash "$script" --scope all >/dev/null; then
@@ -240,6 +272,16 @@ self_test() {
     pass "self-test missing requirement fails"
   else
     fail "self-test missing requirement should fail and mention red attack"
+  fi
+
+  make_fixture "$malformed"
+  sed -i 's/False positives and design limitations are filtered before tests are written\./False positives and design limitations are not filtered before tests are written./' "$malformed/plugins/dvandva/skills/testing/SKILL.md"
+  output="$(DVANDVA_RUN2_ABSORPTION_ROOT="$malformed" bash "$script" --scope testing 2>&1)"
+  rc=$?
+  if [[ "$rc" -ne 0 && "$output" == *"False positives and design limitations are filtered before tests are written."* ]]; then
+    pass "self-test malformed-present requirement fails"
+  else
+    fail "self-test malformed-present requirement should fail and mention exact false-positive filter contract"
   fi
 
   output="$(DVANDVA_RUN2_ABSORPTION_ROOT="$bad/does-not-exist" bash "$script" --scope testing 2>&1)"

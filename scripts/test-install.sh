@@ -121,6 +121,12 @@ grep -q "Claude Code install complete" "$OUTPUT" \
   || fail "installer output should report Claude completion"
 grep -q "Codex install complete" "$OUTPUT" \
   || fail "installer output should report Codex completion"
+grep -q "dvandva:testing" "$OUTPUT" \
+  || fail "installer output should tell users to verify absorbed testing skill"
+grep -q "dvandva:understanding" "$OUTPUT" \
+  || fail "installer output should tell users to verify absorbed understanding skill"
+grep -q "dvandva:worktree-setup" "$OUTPUT" \
+  || fail "installer output should tell users to verify absorbed worktree skill"
 
 CONFLICT_LOG="$TMP_DIR/conflict.log"
 CONFLICT_OUTPUT="$TMP_DIR/conflict.out"

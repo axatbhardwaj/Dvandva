@@ -46,7 +46,7 @@ run_idempotent "Codex marketplace" codex plugin marketplace add "$MARKETPLACE"
 if codex plugin add --help >/dev/null 2>&1; then
   echo "Step 2: installing dvandva plugin with: codex plugin add dvandva@dvandva"
   run_idempotent "Codex plugin" codex plugin add dvandva@dvandva
-  echo "Done. Verify with: codex, then check /skills | grep dvandva and /dvandva:vadi"
+  echo "Done. Verify with: codex, then check /skills for dvandva:vadi, dvandva:prativadi, dvandva:testing, dvandva:understanding, and dvandva:worktree-setup."
   exit 0
 fi
 
@@ -146,4 +146,4 @@ finally:
         proc.wait(timeout=5)
 PY
 
-echo "Done. Verify with: codex, then check /skills | grep dvandva and /dvandva:vadi"
+echo "Done. Verify with: codex, then check /skills for dvandva:vadi, dvandva:prativadi, dvandva:testing, dvandva:understanding, and dvandva:worktree-setup."

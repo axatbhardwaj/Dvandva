@@ -23,6 +23,21 @@ run() {
   "$@"
 }
 
+require_codex_skill_surface() {
+  local file="$1"
+  for skill in \
+    dvandva:prativadi \
+    dvandva:vadi \
+    dvandva:testing \
+    dvandva:understanding \
+    dvandva:worktree-setup; do
+    grep -q "$skill" "$file" || {
+      echo "FAIL: installed Codex skill surface missing $skill in $file" >&2
+      exit 1
+    }
+  done
+}
+
 need_cmd claude
 need_cmd codex
 need_cmd jq
@@ -69,8 +84,7 @@ env \
   HOME="$CODEX_USER_HOME" \
   codex debug prompt-input "probe dvandva skills" \
   | jq -r '.. | strings? // empty' > "$CODEX_SKILLS_TXT"
-grep -q 'dvandva:prativadi' "$CODEX_SKILLS_TXT"
-grep -q 'dvandva:vadi' "$CODEX_SKILLS_TXT"
+require_codex_skill_surface "$CODEX_SKILLS_TXT"
 
 # Phase 4: verify slash-command files are bundled into the plugin.
 # Codex auto-discovers <plugin-root>/commands/<name>.md per
@@ -103,8 +117,7 @@ env \
   HOME="$SCRIPT_BOTH_USER_HOME" \
   codex debug prompt-input "probe dvandva skills after dual install" \
   | jq -r '.. | strings? // empty' > "$CODEX_DUAL_SKILLS_TXT"
-grep -q 'dvandva:prativadi' "$CODEX_DUAL_SKILLS_TXT"
-grep -q 'dvandva:vadi' "$CODEX_DUAL_SKILLS_TXT"
+require_codex_skill_surface "$CODEX_DUAL_SKILLS_TXT"
 echo "SMOKE: install.sh dual-engine install passed"
 
 # Phase 6: keep the Codex-only helper covered because scripts/install.sh
@@ -114,6 +127,13 @@ SCRIPT_USER_HOME="$TMP_DIR/codex-user-home-via-script"
 mkdir -p "$SCRIPT_CODEX_HOME" "$SCRIPT_USER_HOME"
 run env CODEX_HOME="$SCRIPT_CODEX_HOME" HOME="$SCRIPT_USER_HOME" \
   bash "$ROOT_DIR/scripts/install-codex.sh" "$MARKETPLACE_ROOT"
+CODEX_SCRIPT_SKILLS_TXT="$TMP_DIR/codex-script-skills.txt"
+env \
+  CODEX_HOME="$SCRIPT_CODEX_HOME" \
+  HOME="$SCRIPT_USER_HOME" \
+  codex debug prompt-input "probe dvandva skills after codex helper install" \
+  | jq -r '.. | strings? // empty' > "$CODEX_SCRIPT_SKILLS_TXT"
+require_codex_skill_surface "$CODEX_SCRIPT_SKILLS_TXT"
 echo "SMOKE: install-codex.sh end-to-end install passed"
 
 run jq empty \

@@ -110,4 +110,4 @@ if [[ "$INSTALL_CODEX" -eq 1 ]]; then
   echo "Codex install complete"
 fi
 
-echo "Done. Verify the installed engine(s) can see dvandva:vadi and dvandva:prativadi in /skills."
+echo "Done. Verify the installed engine(s) can see dvandva:vadi, dvandva:prativadi, dvandva:testing, dvandva:understanding, and dvandva:worktree-setup in /skills."
