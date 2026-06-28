@@ -103,7 +103,7 @@ check_testing() {
   require_text "$skill" "Docker --network none" "testing skill documents offline sandbox preference"
   require_text "$skill" "UNVERIFIABLE" "testing skill records blocked probes as unverifiable"
   require_text "$skill" "tests only for confirmed issues" "testing skill writes tests only for confirmed gaps"
-  require_text "$skill" ".testing-skill/" "testing skill explicitly rejects old state directory recreation"
+  require_text "$skill" 'Do not recreate `.testing-skill/`' "testing skill explicitly rejects old state directory recreation"
   require_text "$skill" "subagent_tracks" "testing skill maps old state to subagent tracks"
   require_text "$skill" "verification_matrix" "testing skill maps coverage to verification matrix"
   require_text "$skill" "Do not implement production behavior" "testing skill keeps production fixes out of testing"
@@ -203,7 +203,7 @@ Boundary State/Concurrency Error Handling Bypass Logic
 False positives and design limitations are filtered before tests are written.
 /tmp shell=True Docker --network none UNVERIFIABLE
 tests only for confirmed issues
-.testing-skill/ subagent_tracks verification_matrix
+Do not recreate `.testing-skill/`; subagent_tracks verification_matrix
 Do not implement production behavior
 FIXTURE
 
