@@ -16,6 +16,7 @@
 #   (h) double restore guard: a second restore exits nonzero
 #   (i) crafted restore manifest cannot restore non-allowlisted agent paths
 #   (j) manifest JSON is valid and restore round-trips quoted path components
+#   (k) manifest JSON round-trips a HOME path containing a space
 set -u
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -652,6 +653,65 @@ test_restore_rejects_non_allowlisted_manifest() {
   else
     fail "[restore/allowlist] crafted backup symlink was moved"
   fi
+
+  local mixed_backup_dir="$fake_home/.claude/agents/.retired-mixed"
+  mkdir -p "$mixed_backup_dir"
+  ln -s "$FAKE_HAOSHOKU_DIR/developer.md" "$mixed_backup_dir/developer.md"
+  ln -s "$FAKE_HAOSHOKU_DIR/decoy.md" "$mixed_backup_dir/decoy.md"
+  rm -f "$fake_home/.claude/agents/developer.md"
+
+  jq -n \
+    --arg backup_dir "$mixed_backup_dir" \
+    --arg valid_original "$fake_home/.claude/agents/developer.md" \
+    --arg valid_backup "$mixed_backup_dir/developer.md" \
+    --arg valid_target "$FAKE_HAOSHOKU_DIR/developer.md" \
+    --arg invalid_original "$fake_home/.claude/agents/decoy.md" \
+    --arg invalid_backup "$mixed_backup_dir/decoy.md" \
+    --arg invalid_target "$FAKE_HAOSHOKU_DIR/decoy.md" \
+    '{
+      retired_at: "test",
+      dvandva_version: "0.4.0",
+      backup_dir: $backup_dir,
+      entries: [
+        {
+          original_path: $valid_original,
+          backup_path: $valid_backup,
+          symlink_target: $valid_target
+        },
+        {
+          original_path: $invalid_original,
+          backup_path: $invalid_backup,
+          symlink_target: $invalid_target
+        }
+      ]
+    }' > "$mixed_backup_dir/manifest.json"
+
+  output="$(run_retire "$fake_home" --restore "$mixed_backup_dir" 2>&1)"
+  rc=$?
+
+  if [[ "$rc" -ne 0 ]]; then
+    pass "[restore/allowlist] mixed manifest exits nonzero"
+  else
+    fail "[restore/allowlist] mixed manifest should fail; output: $output"
+  fi
+
+  if [[ -L "$mixed_backup_dir/developer.md" ]]; then
+    pass "[restore/allowlist] valid backup left untouched after later invalid entry"
+  else
+    fail "[restore/allowlist] valid backup moved before later invalid entry was rejected"
+  fi
+
+  if [[ ! -e "$fake_home/.claude/agents/developer.md" && ! -L "$fake_home/.claude/agents/developer.md" ]]; then
+    pass "[restore/allowlist] valid original remains absent after mixed manifest failure"
+  else
+    fail "[restore/allowlist] valid original was restored before mixed manifest rejection"
+  fi
+
+  if [[ -L "$mixed_backup_dir/decoy.md" ]]; then
+    pass "[restore/allowlist] mixed decoy backup left untouched"
+  else
+    fail "[restore/allowlist] mixed decoy backup was moved"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -710,6 +770,64 @@ test_manifest_json_roundtrip_with_quoted_paths() {
 }
 
 # ---------------------------------------------------------------------------
+# (k) A HOME path with a space must round-trip through apply → restore.
+#     Spaces are the most common word-splitting hazard for unquoted paths;
+#     the jq --arg / jq -r path must not break on them.
+# ---------------------------------------------------------------------------
+test_manifest_json_roundtrip_with_space_in_path() {
+  echo "--- test (k): manifest JSON handles space in HOME path ---"
+  local fake_home
+  fake_home="$(build_fake_home 'home with space')"
+
+  local apply_output apply_rc
+  apply_output="$(run_retire "$fake_home" --apply 2>&1)"
+  apply_rc=$?
+
+  if [[ "$apply_rc" -eq 0 ]]; then
+    pass "[manifest/space] apply exit code 0"
+  else
+    fail "[manifest/space] apply should succeed with space in HOME; output: $apply_output"
+    return
+  fi
+
+  local backup_dir
+  backup_dir="$(find "$fake_home/.claude/agents" -maxdepth 1 -name '.retired-*' -type d 2>/dev/null | head -1)"
+  if [[ -n "$backup_dir" ]]; then
+    pass "[manifest/space] backup dir created"
+  else
+    fail "[manifest/space] backup dir missing"
+    return
+  fi
+
+  if jq empty "$backup_dir/manifest.json" >/dev/null 2>&1; then
+    pass "[manifest/space] manifest parses as JSON"
+  else
+    fail "[manifest/space] manifest is not valid JSON"
+    return
+  fi
+
+  local restore_output restore_rc
+  restore_output="$(run_retire "$fake_home" --restore "$backup_dir" 2>&1)"
+  restore_rc=$?
+
+  if [[ "$restore_rc" -eq 0 ]]; then
+    pass "[manifest/space] restore exit code 0"
+  else
+    fail "[manifest/space] restore failed for space HOME; output: $restore_output"
+  fi
+
+  local restored=0
+  for agent in "${STANDALONE_AGENTS[@]}"; do
+    if [[ -L "$fake_home/.claude/agents/$agent" ]]; then
+      restored=$((restored + 1))
+    else
+      fail "[manifest/space] $agent not restored under space HOME"
+    fi
+  done
+  [[ "$restored" -eq 5 ]] && pass "[manifest/space] all 5 symlinks restored under space HOME"
+}
+
+# ---------------------------------------------------------------------------
 # Pre-flight: confirm the script under test exists
 # ---------------------------------------------------------------------------
 if [[ ! -f "$RETIRE_SCRIPT" ]]; then
@@ -739,6 +857,8 @@ echo ""
 test_restore_rejects_non_allowlisted_manifest
 echo ""
 test_manifest_json_roundtrip_with_quoted_paths
+echo ""
+test_manifest_json_roundtrip_with_space_in_path
 echo ""
 
 if [[ "$FAILURES" -gt 0 ]]; then
