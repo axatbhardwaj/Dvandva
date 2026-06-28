@@ -182,9 +182,9 @@ Model classes are vendor-neutral: `opus-class|gpt-5.5` for architecture/planning
 
 **No daemon / no hidden orchestrator.** There is no background scheduler, mailbox, or launcher outside the baton and foreground wait helper. Run 3 adds richer baton data and a validation gate; it does not add a new central process.
 
-**Explicit closure.** Every generated agent handle must be explicitly closed after its result is consumed. Codex closure evidence must include `closed:<handle>` or equivalent harness-specific proof. A track whose closure record is missing is not counted as complete.
+**Explicit closure.** Every generated agent handle must be explicitly closed after its result is consumed. Codex closure evidence must include `closed:<handle>` or equivalent harness-specific proof. A closed instance must carry non-empty `work_item_ids` — an entry with an empty array is not considered validly closed. A track whose closure record is missing is not counted as complete.
 
-**Dynamic write-path disjointness.** Dynamic instances with non-empty `write_paths` sharing the same `base_checkpoint` must be pairwise disjoint unless they share the same `conflict_group` and are explicitly serialized by declared dependencies. Closed historical instances from earlier base checkpoints do not block later sequential path reuse. The Run 3 write helper rejects collisions in the current merge set.
+**Dynamic write-path disjointness.** Dynamic instances with non-empty `write_paths` sharing the same `base_checkpoint`, or any two live (`planned`/`running`) instances regardless of base_checkpoint, must be pairwise disjoint unless they share the same `conflict_group` and are explicitly serialized by declared dependencies. Closed historical instances from earlier base checkpoints do not block later sequential path reuse. The Run 3 write helper rejects collisions in the current merge set.
 
 **No additive sprawl.** Generated instances are run-scoped and ephemeral. A pattern may be promoted to the seed roster only through a later reviewed source change; the seed roster is never modified at runtime.
 

@@ -113,3 +113,7 @@ Soft-failure modes to resist:
 | Single hypothesis, no alternatives | Generate at least two hypotheses and probe both before confirming |
 | Probe skipped as "obvious" | Run it; cheap probes often refute obvious hypotheses and prevent wrong fixes |
 | Root cause stated without evidence | Record the probe command, its output, and the file/line that confirms the cause |
+
+## Seed Roster
+
+This agent is a **seed roster** role and may be used as a dynamic agent-instance seed. When the parent role dispatches a dynamic instance of this agent, it records an `agent_instances` entry in the baton covering identity, parent role, model/permission class, read/write paths, work_item_ids, base checkpoint, output refs, evidence refs, and close result. Generated briefs for that dynamic instance must satisfy this same seed agent contract, including required inputs, output contract, evidence rules, guardrails, and `work_item_ids` binding. The dynamic instance provides **explicit closure** evidence before its `subagent_tracks` entry is counted as completed. Dynamic instances never own the baton; only the vadi, prativadi, team, or human assignee states are **single-writer** checkpoint owners. Dynamic instances with non-empty write paths sharing the same `base_checkpoint` must satisfy **dynamic write-path disjointness** or share a `conflict_group` with explicitly serialized dependencies.

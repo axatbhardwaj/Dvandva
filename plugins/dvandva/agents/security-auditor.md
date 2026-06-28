@@ -115,3 +115,7 @@ If you cannot verify a claim with a file, line, command, or baton field, treat i
 | Treating a missing security test as low | Route to `phase_fixing` with the specific threat path untested |
 | Ignoring installer or vendored script paths | Trace `work_split` paths for third-party or generated scripts and probe them |
 | Accepting baton summary as security evidence | Read the implementation file and the test file directly |
+
+## Seed Roster
+
+This agent is a **seed roster** role and may be used as a dynamic agent-instance seed. When the parent role dispatches a dynamic instance of this agent, it records an `agent_instances` entry in the baton covering identity, parent role, model/permission class, read/write paths, work_item_ids, base checkpoint, output refs, evidence refs, and close result. Generated briefs for that dynamic instance must satisfy this same seed agent contract, including required inputs, output contract, evidence rules, guardrails, and `work_item_ids` binding. The dynamic instance provides **explicit closure** evidence before its `subagent_tracks` entry is counted as completed. Dynamic instances never own the baton; only the vadi, prativadi, team, or human assignee states are **single-writer** checkpoint owners. Dynamic instances with non-empty write paths sharing the same `base_checkpoint` must satisfy **dynamic write-path disjointness** or share a `conflict_group` with explicitly serialized dependencies.
