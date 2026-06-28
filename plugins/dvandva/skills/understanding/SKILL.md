@@ -1,6 +1,6 @@
 ---
 name: understanding
-description: Use when a Dvandva user wants to understand a run, phase, review, branch, or decision deeply rather than receive a summary. Triggers: "teach me what we just did", "help me understand this phase", "walk me through this diff", "make sure I really get this change", "explain the baton", or onboarding to an unfamiliar Dvandva run.
+description: 'Use when a Dvandva user wants to understand a run, phase, review, branch, or decision deeply rather than receive a summary. Triggers: "teach me what we just did", "help me understand this phase", "walk me through this diff", "make sure I really get this change", "explain the baton", or onboarding to an unfamiliar Dvandva run.'
 ---
 
 # Dvandva Understanding
@@ -11,7 +11,7 @@ Use this after or between Dvandva phases when the user wants mastery. This absor
 
 You already write excellent explanations. **That is the trap.** Asked to "teach," you will instinctively deliver one complete, well-organized lecture — and a lecture produces nodding, not understanding. This skill replaces the lecture with **teaching**: deliver understanding in stages, make the learner do the cognitive work, and **confirm mastery before advancing**. Drill *why* relentlessly.
 
-Core principle: **the learner talks at least as much as you do.** If a stretch goes by where they only read, you are lecturing again.
+Core principle: **the learner talks at least as much as you do.** This is the anti-lecture rule: the learner speaks at least as much as the agent, or the session has drifted back into a lecture. If a stretch goes by where they only read, you are lecturing again.
 
 ## Ground Yourself First (no fiction)
 
@@ -44,9 +44,9 @@ All of these mean: **stop, shrink the chunk, ask a question.**
 
 ## The Three Pillars (teach in this order)
 
-1. **The Problem** — what the original ask was (`original_ask`), **why it existed**, what made it non-trivial (constraints surfaced in `research_ref`), and which alternatives were considered. *Do not start the solution until the learner can articulate why the problem mattered.*
-2. **The Solution** — what was built (diffed files, `changed_paths`), **why that approach** (vs. rejected branches in `plan_ref`), the key design decisions, and edge cases surfaced in `verification` or `findings`.
-3. **The Broader Context** — **why this matters** downstream (invariants, risk, future work, baton fields that carry the impact forward).
+1. **The Problem / mental model** — what the original ask was (`original_ask`), **why it existed**, what made it non-trivial (constraints surfaced in `research_ref`), and which alternatives were considered. *Do not start the solution until the learner can articulate why the problem mattered.*
+2. **The Solution / concrete trace** — what was built (diffed files, `changed_paths`), **why that approach** (vs. rejected branches in `plan_ref`), the key design decisions, and edge cases surfaced in `verification` or `findings`.
+3. **The Broader Context / transfer** — **why this matters** downstream (invariants, risk, future work, baton fields that carry the impact forward), and where the learner can transfer the same constraint to the next Dvandva run.
 
 Each pillar maps to a section of the running HTML checklist. Each concrete thing to grasp is one checkbox item.
 
@@ -55,19 +55,19 @@ Each pillar maps to a section of the running HTML checklist. Each concrete thing
 1. **Orient** — one sentence on where we are and what this stage covers. Cite the baton field or artifact you are teaching from.
 2. **Teach one chunk** — the smallest self-contained idea from the real run. Stop early.
 3. **Check** — hand the work back: ask them to explain it, answer a targeted question, or predict an outcome grounded in the actual diff or baton.
-4. **Drill the whys** — take their answer one or more levels deeper until you hit bedrock (a fundamental constraint, invariant, or tradeoff documented in `research_ref` or `plan_ref`).
+4. **Drill the whys-to-bedrock** — take their answer one or more levels deeper until you hit bedrock (a fundamental constraint, invariant, or tradeoff documented in `research_ref` or `plan_ref`).
 5. **Gate on mastery** — high-level (why it matters) *and* low-level (the mechanism/edge case). Shallow → re-teach differently. Solid → tick the checklist item and advance.
 
 The one place you will fail is the gate: you will plow ahead instead of looping back when understanding is shallow. Don't.
 
 ## Checking Mastery (ask, don't tell)
 
-Replace assertions with questions that force retrieval and reasoning:
+Replace assertions with questions that force retrieval and reasoning. Use explain-back, edge-case prediction, counterfactual, and transfer checks before you mark a concept mastered:
 
-- **Explain-back:** "In your own words, why did the baton need `research_ref` before `plan_ref` could be written?"
-- **Edge-case prediction:** "If two engines both wrote a baton field during the same phase, what would happen?"
-- **Counterfactual:** "Why is the rejected approach from `plan_ref` actually *worse*, not just different?"
-- **Transfer:** "Where else in the Dvandva protocol would this same constraint appear?"
+- **explain-back:** "In your own words, why did the baton need `research_ref` before `plan_ref` could be written?"
+- **edge-case prediction:** "If two engines both wrote a baton field during the same phase, what would happen?"
+- **counterfactual:** "Why is the rejected approach from `plan_ref` actually *worse*, not just different?"
+- **transfer:** "Where else in the Dvandva protocol would this same constraint appear?"
 
 **Real mastery:** they reconstruct the reasoning unprompted, catch their own gaps, handle a variation. **Shallow:** they parrot your words, hedge, or jump to mechanism with no why. "Makes sense" is not mastery — require a demonstration.
 
@@ -90,7 +90,7 @@ At the **start**, build a dark self-contained HTML checklist at `./superpowers/u
 - BATON_STATE snapshot (phase, status, changed_paths, findings summary)
 - Phase timeline (which phases happened, in order)
 - Three-pillar item structure with unchecked checkboxes
-- Copy-as-prompt export button (exports checked/unchecked state + user notes as a paste-back prompt)
+- copy-as-prompt and copy-as-JSON export buttons (export checked/unchecked state + user notes as a paste-back prompt or structured JSON)
 
 **Tick an item only when mastery is confirmed** — never in advance. Re-surface / update the file at each checkpoint. Tell the user its path and offer to send it with SendUserFile.
 
@@ -100,7 +100,9 @@ Surface `BATON_STATE` at the start of the teaching session. Read `research_ref` 
 
 **Do not mutate the baton** during an understanding session. If the user asks for a reference to the understanding artifact to carry forward, add it to `deferred` or `summary` only if they explicitly request it.
 
-## When NOT to Use
+## When Not to Use
+
+The phrase "when not to use" is part of the contract: this skill is for mastery sessions, not every explanation.
 
 - The user wants a quick summary or TL;DR — give them the summary.
 - The user is already an expert and just needs the facts — don't make them play student.
