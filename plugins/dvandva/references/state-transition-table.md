@@ -60,15 +60,16 @@ terminal historical chunks do not block later sequential reuse because
 work_split has no `base_checkpoint` wave model.
 
 Run 4 work-gating uses repo-local git hooks activated by role preflight:
-`scripts/install-dvandva-hooks.sh` sets and verifies `core.hooksPath=.githooks`
-and records `dvandva.hooksAdoptedAt` as the pre-first-checkpoint drift baseline.
+the active skill exports and asserts `DVANDVA_ROLE=<role>`,
+`scripts/install-dvandva-hooks.sh` sets and verifies `core.hooksPath=.githooks`,
+and the installer records `dvandva.hooksAdoptedAt` as the local drift baseline.
 `.githooks/pre-commit` delegates to `scripts/dvandva-commit-gate.sh`, the gate
 checks `DVANDVA_ROLE` against baton `assignee` / `active_roles`,
 `.githooks/prepare-commit-msg` stamps `Dvandva-Checkpoint`, and
-`scripts/dvandva-drift-lint.sh` detects unstamped commits after the latest
-checkpoint or, before any checkpoint trailer exists, after the hook-adoption
-baseline. This is shell/git-hook enforcement only; it does not create a daemon,
-scheduler, or hidden central process.
+`scripts/dvandva-drift-lint.sh` detects unstamped commits from the
+hook-adoption baseline floor when present, so a later checkpoint cannot hide an
+unstamped sandwich bypass. This is shell/git-hook enforcement only; it does not
+create a daemon, scheduler, or hidden central process.
 
 Run 4 retirement is Dvandva-only. It may retire only Dvandva-covered standalone
 Claude symlink workflows with functional parity via Runs 1-4 usage:

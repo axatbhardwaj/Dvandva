@@ -96,11 +96,13 @@ validate_work_split_paths() {
 EOF
 
   cat > "$root/plugins/dvandva/skills/vadi/SKILL.md" <<'EOF'
-Preflight runs scripts/install-dvandva-hooks.sh and asserts core.hooksPath=.githooks.
+Preflight runs export DVANDVA_ROLE=vadi, asserts DVANDVA_ROLE=vadi,
+runs scripts/install-dvandva-hooks.sh, and asserts core.hooksPath=.githooks.
 EOF
 
   cat > "$root/plugins/dvandva/skills/prativadi/SKILL.md" <<'EOF'
-Preflight runs scripts/install-dvandva-hooks.sh and asserts core.hooksPath=.githooks.
+Preflight runs export DVANDVA_ROLE=prativadi, asserts DVANDVA_ROLE=prativadi,
+runs scripts/install-dvandva-hooks.sh, and asserts core.hooksPath=.githooks.
 EOF
 
   cat > "$root/.githooks/pre-commit" <<'EOF'
@@ -262,6 +264,24 @@ expect_fail \
   "$CASE" \
   "vadi skill preflight must enforce repo-local Dvandva hooks"
 
+CASE="$TMP_DIR/no-vadi-role-export"
+write_path_fixture "$CASE"
+perl -0pi -e 's/export DVANDVA_ROLE=vadi/use vadi role/g' \
+  "$CASE/plugins/dvandva/skills/vadi/SKILL.md"
+expect_fail \
+  "path-gate lint rejects vadi skill without DVANDVA_ROLE export" \
+  "$CASE" \
+  "vadi skill preflight must export DVANDVA_ROLE=vadi"
+
+CASE="$TMP_DIR/no-vadi-role-assert"
+write_path_fixture "$CASE"
+perl -0pi -e 's/asserts DVANDVA_ROLE=vadi/checks vadi role/g' \
+  "$CASE/plugins/dvandva/skills/vadi/SKILL.md"
+expect_fail \
+  "path-gate lint rejects vadi skill without DVANDVA_ROLE assertion" \
+  "$CASE" \
+  "vadi skill preflight must assert DVANDVA_ROLE=vadi"
+
 CASE="$TMP_DIR/no-prativadi-hook-preflight"
 write_path_fixture "$CASE"
 perl -0pi -e 's/core\.hooksPath=\.githooks/hooks enabled/g' \
@@ -270,6 +290,24 @@ expect_fail \
   "path-gate lint rejects prativadi skill without hook preflight" \
   "$CASE" \
   "prativadi skill preflight must enforce repo-local Dvandva hooks"
+
+CASE="$TMP_DIR/no-prativadi-role-export"
+write_path_fixture "$CASE"
+perl -0pi -e 's/export DVANDVA_ROLE=prativadi/use prativadi role/g' \
+  "$CASE/plugins/dvandva/skills/prativadi/SKILL.md"
+expect_fail \
+  "path-gate lint rejects prativadi skill without DVANDVA_ROLE export" \
+  "$CASE" \
+  "prativadi skill preflight must export DVANDVA_ROLE=prativadi"
+
+CASE="$TMP_DIR/no-prativadi-role-assert"
+write_path_fixture "$CASE"
+perl -0pi -e 's/asserts DVANDVA_ROLE=prativadi/checks prativadi role/g' \
+  "$CASE/plugins/dvandva/skills/prativadi/SKILL.md"
+expect_fail \
+  "path-gate lint rejects prativadi skill without DVANDVA_ROLE assertion" \
+  "$CASE" \
+  "prativadi skill preflight must assert DVANDVA_ROLE=prativadi"
 
 resolver_files=(
   "scripts/dvandva-commit-gate.sh"

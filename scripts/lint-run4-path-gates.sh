@@ -182,9 +182,29 @@ require_slurp_match \
   'vadi skill preflight must enforce repo-local Dvandva hooks'
 
 require_slurp_match \
+  plugins/dvandva/skills/vadi/SKILL.md \
+  'export[[:space:]]+DVANDVA_ROLE=vadi' \
+  'vadi skill preflight must export DVANDVA_ROLE=vadi'
+
+require_slurp_match \
+  plugins/dvandva/skills/vadi/SKILL.md \
+  'asserts?[[:space:]]+`?DVANDVA_ROLE=vadi`?' \
+  'vadi skill preflight must assert DVANDVA_ROLE=vadi'
+
+require_slurp_match \
   plugins/dvandva/skills/prativadi/SKILL.md \
   'install-dvandva-hooks\.sh.*core\.hooksPath=.*\.githooks|core\.hooksPath=.*\.githooks.*install-dvandva-hooks\.sh' \
   'prativadi skill preflight must enforce repo-local Dvandva hooks'
+
+require_slurp_match \
+  plugins/dvandva/skills/prativadi/SKILL.md \
+  'export[[:space:]]+DVANDVA_ROLE=prativadi' \
+  'prativadi skill preflight must export DVANDVA_ROLE=prativadi'
+
+require_slurp_match \
+  plugins/dvandva/skills/prativadi/SKILL.md \
+  'asserts?[[:space:]]+`?DVANDVA_ROLE=prativadi`?' \
+  'prativadi skill preflight must assert DVANDVA_ROLE=prativadi'
 
 for rel in scripts/dvandva-commit-gate.sh scripts/dvandva-drift-lint.sh .githooks/prepare-commit-msg; do
   require_slurp_match \

@@ -12,6 +12,7 @@
 #  (g) team active_roles     → gate exits 0 for vadi and prativadi
 #  (h) installer idempotency + foreign hooksPath refusal
 #  (i) drift lint flags unstamped commits and honors hook-adoption baseline
+#      across a stamp -> no-verify -> stamp sandwich
 #  (j) --no-verify bypass is visible: commit succeeds without trailer
 #      and drift-lint catches the first active-baton bypass commit
 #  (k) --no-verify cannot stamp an arbitrary checkpoint under multi-run ambiguity
@@ -328,6 +329,8 @@ fi
 # ===========================================================================
 BOX="$TMP_DIR/i-drift"
 new_git_repo "$BOX"
+out="$(cd "$BOX" && "$INSTALLER" 2>&1)"; rc=$?
+check "(i) drift lint sandwich baseline install exits 0" 0 "$rc" "$out"
 
 # Commit 1 (stamped): checkpoint 3
 touch "$BOX/file1.txt"
@@ -348,13 +351,13 @@ out="$(cd "$BOX" && "$DRIFT_LINT" --warn 2>&1)"; rc=$?
 check "(i) drift lint --warn exits 0" 0 "$rc" "$out"
 check_msg "(i) drift lint --warn still prints DVANDVA_DRIFT" 0 "$rc" "$out" "DVANDVA_DRIFT"
 
-# Commit 3 (stamped): checkpoint 4 — should clear the drift
+# Commit 3 (stamped): checkpoint 4 — must not hide the unstamped middle commit
 touch "$BOX/file3.txt"
 git -C "$BOX" add file3.txt
 git -C "$BOX" commit --quiet -m "$(printf 'feat: second stamped commit\n\nDvandva-Checkpoint: 4')"
 
 out="$(cd "$BOX" && "$DRIFT_LINT" 2>&1)"; rc=$?
-check "(i) drift lint exits 0 after stamped commit" 0 "$rc" "$out"
+check_msg "(i) drift lint still flags sandwich bypass after later stamp" 1 "$rc" "$out" "off-protocol"
 
 # Repo with no checkpointed commits at all → no drift to report
 BOX2="$TMP_DIR/i-no-checkpoints"

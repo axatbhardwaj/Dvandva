@@ -6,9 +6,12 @@
 # Algorithm:
 #   1. Walk the git log to find the most recent commit that contains a
 #      "Dvandva-Checkpoint: <N>" trailer.
-#   2. List commits between that commit (exclusive) and HEAD.
-#   3. For each of those commits, check whether the trailer is present.
-#   4. Any commit without the trailer is "drift" — off-protocol work.
+#   2. Floor the scan at the hook-adoption baseline when present, otherwise
+#      the latest checkpoint. This catches stamp -> no-verify -> stamp
+#      sandwiches instead of letting a later checkpoint hide the bypass.
+#   3. List commits between that floor (exclusive) and HEAD.
+#   4. For each of those commits, check whether the trailer is present.
+#   5. Any commit without the trailer is "drift" — off-protocol work.
 #
 # A repo with no checkpointed commits at all exits 0 with an informational
 # message (pre-run or non-Dvandva history is not drift).
@@ -160,8 +163,23 @@ if [[ -z "$LAST_CHECKPOINT_SHA" ]]; then
   exit 0
 fi
 
+SCAN_BASE_SHA="$LAST_CHECKPOINT_SHA"
+SCAN_CONTEXT="since checkpoint $LAST_CHECKPOINT_NUM ($LAST_CHECKPOINT_SHA)"
+ADOPTION_BASELINE_SHA=""
+if ADOPTION_BASELINE_SHA="$(hook_adoption_baseline)"; then
+  if git -C "$REPO_ROOT" merge-base --is-ancestor "$ADOPTION_BASELINE_SHA" "$LAST_CHECKPOINT_SHA" 2>/dev/null; then
+    SCAN_BASE_SHA="$ADOPTION_BASELINE_SHA"
+    SCAN_CONTEXT="since hook adoption baseline $ADOPTION_BASELINE_SHA (checkpoint $LAST_CHECKPOINT_NUM at $LAST_CHECKPOINT_SHA)"
+  elif git -C "$REPO_ROOT" merge-base --is-ancestor "$LAST_CHECKPOINT_SHA" "$ADOPTION_BASELINE_SHA" 2>/dev/null; then
+    SCAN_BASE_SHA="$LAST_CHECKPOINT_SHA"
+    SCAN_CONTEXT="since checkpoint $LAST_CHECKPOINT_NUM ($LAST_CHECKPOINT_SHA), before later hook adoption baseline $ADOPTION_BASELINE_SHA"
+  else
+    echo "DVANDVA_DRIFT warning: dvandva.hooksAdoptedAt baseline is not in checkpoint ancestry: $ADOPTION_BASELINE_SHA" >&2
+  fi
+fi
+
 # ---------------------------------------------------------------------------
-# Collect commits between the last checkpoint and HEAD
+# Collect commits between the scan floor and HEAD
 # ---------------------------------------------------------------------------
 DRIFT_SHAS=()
 while IFS= read -r sha; do
@@ -170,17 +188,17 @@ while IFS= read -r sha; do
   if ! echo "$body" | grep -qE "^Dvandva-Checkpoint:[[:space:]]"; then
     DRIFT_SHAS+=("$sha")
   fi
-done < <(git -C "$REPO_ROOT" log --format="%H" "${LAST_CHECKPOINT_SHA}..HEAD" 2>/dev/null)
+done < <(git -C "$REPO_ROOT" log --format="%H" "${SCAN_BASE_SHA}..HEAD" 2>/dev/null)
 
 # ---------------------------------------------------------------------------
 # Report
 # ---------------------------------------------------------------------------
 if [[ ${#DRIFT_SHAS[@]} -eq 0 ]]; then
-  echo "DVANDVA_DRIFT ok: no off-protocol commits since checkpoint $LAST_CHECKPOINT_NUM ($LAST_CHECKPOINT_SHA)"
+  echo "DVANDVA_DRIFT ok: no off-protocol commits $SCAN_CONTEXT"
   exit 0
 fi
 
-echo "DVANDVA_DRIFT warning: ${#DRIFT_SHAS[@]} off-protocol commit(s) found since checkpoint $LAST_CHECKPOINT_NUM ($LAST_CHECKPOINT_SHA)" >&2
+echo "DVANDVA_DRIFT warning: ${#DRIFT_SHAS[@]} off-protocol commit(s) found $SCAN_CONTEXT" >&2
 for sha in "${DRIFT_SHAS[@]}"; do
   subject="$(git -C "$REPO_ROOT" show -s --format="%s" "$sha" 2>/dev/null || echo "(unreadable)")"
   echo "  $sha  $subject" >&2
