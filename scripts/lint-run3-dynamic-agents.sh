@@ -74,6 +74,26 @@ require_regex() {
   fi
 }
 
+require_file_fixed() {
+  local file="$1" pattern="$2" label="$3"
+
+  if rg -q -F -- "$pattern" "$file"; then
+    return
+  fi
+
+  fail_missing "$label" "$file lacks: $pattern"
+}
+
+require_file_regex() {
+  local file="$1" pattern="$2" label="$3"
+
+  if rg -q -- "$pattern" "$file"; then
+    return
+  fi
+
+  fail_missing "$label" "$file lacks regex: $pattern"
+}
+
 require_fixed "agent_instances" "surface names Run 3 agent_instances"
 require_regex 'seed roster|static roster[^[:alnum:]]+as seed|static roster.*seed|seed.*static roster' "surface treats the roster as a seed/static roster"
 require_regex 'run-scoped.*dynamic (agents|agent|instances|instance)|dynamic (agents|agent|instances|instance).*run-scoped' "surface documents run-scoped dynamic agents or instances"
@@ -85,6 +105,20 @@ require_regex 'hidden scheduler|hidden central process|hidden process that owns 
 require_fixed 'Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models' "surface documents Anthropic opus/sonnet model-class mapping"
 require_fixed 'Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`' "surface documents Codex gpt-5.5/gpt-5.4 model-class mapping"
 require_regex 'generated agents?.*(do not|must not|never).*(own|set|mutate).*(assignee|active_roles|transitions)|(assignee|active_roles|transitions).*(do not|must not|never).*(belong to|owned by).*(generated agents?)' "surface says generated agents do not own assignee, active_roles, or transitions"
+
+mapfile -t seed_files < <(rg -l 'seed roster.*dynamic agent-instance seed|dynamic agent-instance seed|same seed agent contract' plugins/dvandva/agents/*.md 2>/dev/null | sort)
+if [[ "${#seed_files[@]}" -gt 0 ]]; then
+  for seed_file in "${seed_files[@]}"; do
+    require_file_fixed "$seed_file" "agent_instances" "$seed_file names agent_instances"
+    require_file_fixed "$seed_file" "work_item_ids" "$seed_file binds work_item_ids"
+    require_file_regex "$seed_file" 'same seed agent contract|same agent contract as its seed agent' "$seed_file requires generated briefs to satisfy the seed contract"
+    require_file_regex "$seed_file" 'explicit closure|closed generated instance' "$seed_file requires explicit closure"
+    require_file_regex "$seed_file" 'never own the baton|generated agents? never own.*assignee|generated instances never own.*assignee|never own `assignee`' "$seed_file keeps generated agents out of baton ownership"
+    require_file_regex "$seed_file" 'dynamic write-path disjointness|write-path disjointness' "$seed_file documents write-path disjointness"
+    require_file_regex "$seed_file" 'planned.*running|running.*planned|live' "$seed_file documents live instance collision scope"
+    require_file_regex "$seed_file" 'conflict_group.*depends_on|depends_on.*conflict_group' "$seed_file documents serialized conflict-group overlap"
+  done
+fi
 
 if [[ "$failures" -gt 0 ]]; then
   echo "Run 3 dynamic-agent lint failed with $failures contract gap(s)."

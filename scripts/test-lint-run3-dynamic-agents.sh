@@ -51,23 +51,32 @@ There is no daemon and no mailbox.
 There is no hidden scheduler or hidden central process.
 Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models.
 Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`.
-generated agents must never own assignee, active_roles, or transitions.
+generated agents never own assignee, active_roles, or transitions.
 SURFACE
 }
 
 write_agent_contract_surface() {
   local box="$1"
-  cat > "$box/plugins/dvandva/agents/implementer.md" <<'SURFACE'
+  local agent_file
+
+  for agent_file in \
+    "$box/plugins/dvandva/agents/implementer.md" \
+    "$box/plugins/dvandva/agents/architect.md"
+  do
+    cat > "$agent_file" <<'SURFACE'
 Dvandva uses agent_instances for Run 3 dynamic agent records.
 The static roster is the seed roster for run-scoped dynamic agents.
-Explicit closure is required; every generated handle must be explicitly closed before completion.
-Dynamic write-path disjointness is required unless conflict_group serialization applies.
+This file is a dynamic agent-instance seed.
+Generated briefs must satisfy this same seed agent contract.
+Explicit closure is required; every generated handle must be explicitly closed before completion and each closed generated instance records non-empty work_item_ids.
+Dynamic write-path disjointness is required when instances share base_checkpoint or when both instances are live planned/running, unless conflict_group serialization through depends_on applies.
 There is no daemon and no mailbox.
 There is no hidden scheduler or hidden central process.
 Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models.
 Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`.
-generated agents must never own assignee, active_roles, or transitions.
+generated agents never own assignee, active_roles, or transitions.
 SURFACE
+  done
 }
 
 run_expect() {
@@ -101,6 +110,12 @@ run_expect "run3 lint accepts complete contract surface" 0 "Run 3 dynamic-agent 
 BOX="$(make_case agents-surface)"
 write_agent_contract_surface "$BOX"
 run_expect "run3 lint scans seed agent contracts" 0 "Run 3 dynamic-agent lint passed." \
+  "$BOX/scripts/lint-run3-dynamic-agents.sh"
+
+BOX="$(make_case missing-seed-file-work-items)"
+write_agent_contract_surface "$BOX"
+perl -0pi -e 's/work_item_ids/work items/g' "$BOX/plugins/dvandva/agents/architect.md"
+run_expect "run3 lint rejects one seed file missing work_item_ids" 1 "binds work_item_ids" \
   "$BOX/scripts/lint-run3-dynamic-agents.sh"
 
 BOX="$(make_case missing-agent-instances)"
