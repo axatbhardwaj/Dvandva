@@ -23,6 +23,98 @@ run() {
   "$@"
 }
 
+fail() {
+  echo "FAIL: $*" >&2
+  exit 1
+}
+
+readonly EXPECTED_DVANDVA_VERSION="0.4.0"
+readonly EXPECTED_AGENT_IDS=(
+  "dvandva-adversarial-analyst"
+  "dvandva-architect"
+  "dvandva-baton-auditor"
+  "dvandva-cross-reviewer"
+  "dvandva-debugger"
+  "dvandva-deep-reviewer"
+  "dvandva-deslopper"
+  "dvandva-doc-verifier"
+  "dvandva-implementer"
+  "dvandva-integration-checker"
+  "dvandva-pattern-mapper"
+  "dvandva-researcher"
+  "dvandva-sandbox-verifier"
+  "dvandva-security-auditor"
+  "dvandva-test-creator"
+)
+
+collect_agent_ids() {
+  local agents_dir="$1"
+  local file
+
+  find "$agents_dir" -maxdepth 1 -type f -name '*.md' -exec basename {} \; \
+    | sort \
+    | while IFS= read -r file; do
+        printf 'dvandva-%s\n' "${file%.md}"
+      done
+}
+
+assert_source_manifest_version_parity() {
+  local marketplace_version claude_version codex_version
+
+  marketplace_version="$(
+    jq -r '.plugins[] | select(.name == "dvandva") | .version' \
+      "$ROOT_DIR/.claude-plugin/marketplace.json"
+  )"
+  claude_version="$(jq -r '.version' "$ROOT_DIR/plugins/dvandva/.claude-plugin/plugin.json")"
+  codex_version="$(jq -r '.version' "$ROOT_DIR/plugins/dvandva/.codex-plugin/plugin.json")"
+
+  [[ -n "$marketplace_version" && "$marketplace_version" != "null" ]] \
+    || fail "missing marketplace version in .claude-plugin/marketplace.json"
+  [[ "$marketplace_version" == "$claude_version" ]] \
+    || fail "version mismatch: marketplace=$marketplace_version claude-plugin=$claude_version"
+  [[ "$marketplace_version" == "$codex_version" ]] \
+    || fail "version mismatch: marketplace=$marketplace_version codex-plugin=$codex_version"
+  [[ "$marketplace_version" == "$EXPECTED_DVANDVA_VERSION" ]] \
+    || fail "expected Dvandva plugin version $EXPECTED_DVANDVA_VERSION, got $marketplace_version"
+}
+
+roster_matches_expected() {
+  local agents_dir="$1"
+  local actual expected
+
+  actual="$(collect_agent_ids "$agents_dir")"
+  expected="$(printf '%s\n' "${EXPECTED_AGENT_IDS[@]}")"
+  [[ "$actual" == "$expected" ]]
+}
+
+require_exact_agent_roster() {
+  local agents_dir="$1"
+  local label="$2"
+  local actual expected
+
+  actual="$(collect_agent_ids "$agents_dir")"
+  expected="$(printf '%s\n' "${EXPECTED_AGENT_IDS[@]}")"
+  [[ "$actual" == "$expected" ]] || {
+    printf 'Expected agent roster:\n%s\nActual agent roster:\n%s\n' "$expected" "$actual" >&2
+    fail "$label agent roster did not match the expected 15-agent Dvandva set"
+  }
+}
+
+require_installed_codex_cache() {
+  local codex_home="$1"
+  local label="$2"
+  local plugin_root="$codex_home/plugins/cache/dvandva/dvandva/$EXPECTED_DVANDVA_VERSION"
+
+  test -d "$plugin_root" || fail "$label missing Codex cache at $plugin_root"
+  jq -e --arg version "$EXPECTED_DVANDVA_VERSION" '.version == $version' \
+    "$plugin_root/.claude-plugin/plugin.json" >/dev/null \
+    || fail "$label cached Claude manifest version mismatch"
+  jq -e --arg version "$EXPECTED_DVANDVA_VERSION" '.version == $version' \
+    "$plugin_root/.codex-plugin/plugin.json" >/dev/null \
+    || fail "$label cached Codex manifest version mismatch"
+  require_exact_agent_roster "$plugin_root/agents" "$label cached"
+}
+
 require_codex_skill_surface() {
   local file="$1"
   for skill in \
@@ -42,6 +134,9 @@ require_codex_skill_surface() {
 need_cmd claude
 need_cmd codex
 need_cmd jq
+
+assert_source_manifest_version_parity
+require_exact_agent_roster "$ROOT_DIR/plugins/dvandva/agents" "source"
 
 MARKETPLACE_ROOT="$TMP_DIR/marketplace"
 PLUGIN_DIR="$MARKETPLACE_ROOT/plugins/dvandva"
@@ -78,6 +173,8 @@ echo "SMOKE: env CODEX_HOME=$TMP_DIR/codex-home HOME=$CODEX_USER_HOME codex plug
 env CODEX_HOME="$TMP_DIR/codex-home" HOME="$CODEX_USER_HOME" \
   codex plugin list --json > "$CODEX_INSTALLED_JSON"
 jq -e '.installed[] | select(.pluginId == "dvandva@dvandva" and .installed == true and .enabled == true)' "$CODEX_INSTALLED_JSON" >/dev/null
+
+require_installed_codex_cache "$TMP_DIR/codex-home" "direct Codex install"
 
 CODEX_SKILLS_TXT="$TMP_DIR/codex-skills.txt"
 env \
@@ -120,6 +217,7 @@ env \
   codex debug prompt-input "probe dvandva skills after dual install" \
   | jq -r '.. | strings? // empty' > "$CODEX_DUAL_SKILLS_TXT"
 require_codex_skill_surface "$CODEX_DUAL_SKILLS_TXT"
+require_installed_codex_cache "$SCRIPT_BOTH_CODEX_HOME" "dual install.sh Codex path"
 echo "SMOKE: install.sh dual-engine install passed"
 
 # Phase 6: keep the Codex-only helper covered because scripts/install.sh
@@ -136,7 +234,18 @@ env \
   codex debug prompt-input "probe dvandva skills after codex helper install" \
   | jq -r '.. | strings? // empty' > "$CODEX_SCRIPT_SKILLS_TXT"
 require_codex_skill_surface "$CODEX_SCRIPT_SKILLS_TXT"
+require_installed_codex_cache "$SCRIPT_CODEX_HOME" "install-codex.sh helper path"
 echo "SMOKE: install-codex.sh end-to-end install passed"
+
+STALE_CACHE_DIR="$TMP_DIR/stale-codex-cache/$EXPECTED_DVANDVA_VERSION"
+mkdir -p "$TMP_DIR/stale-codex-cache"
+cp -R "$SCRIPT_CODEX_HOME/plugins/cache/dvandva/dvandva/$EXPECTED_DVANDVA_VERSION" "$STALE_CACHE_DIR"
+rm -f "$STALE_CACHE_DIR/agents/deslopper.md"
+touch "$STALE_CACHE_DIR/agents/not-a-dvandva-agent.md"
+if roster_matches_expected "$STALE_CACHE_DIR/agents"; then
+  fail "same-version stale cache fixture unexpectedly passed exact roster validation"
+fi
+echo "SMOKE: same-version stale cache rejected by exact roster validation"
 
 run jq empty \
   "$MARKETPLACE_ROOT/.agents/plugins/marketplace.json" \

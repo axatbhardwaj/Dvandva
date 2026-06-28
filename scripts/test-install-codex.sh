@@ -17,6 +17,65 @@ fail() {
   exit 1
 }
 
+readonly EXPECTED_DVANDVA_VERSION="0.4.0"
+readonly EXPECTED_AGENT_IDS=(
+  "dvandva-adversarial-analyst"
+  "dvandva-architect"
+  "dvandva-baton-auditor"
+  "dvandva-cross-reviewer"
+  "dvandva-debugger"
+  "dvandva-deep-reviewer"
+  "dvandva-deslopper"
+  "dvandva-doc-verifier"
+  "dvandva-implementer"
+  "dvandva-integration-checker"
+  "dvandva-pattern-mapper"
+  "dvandva-researcher"
+  "dvandva-sandbox-verifier"
+  "dvandva-security-auditor"
+  "dvandva-test-creator"
+)
+
+assert_source_manifest_version_parity() {
+  local marketplace_version claude_version codex_version
+
+  marketplace_version="$(
+    jq -r '.plugins[] | select(.name == "dvandva") | .version' \
+      "$ROOT_DIR/.claude-plugin/marketplace.json"
+  )"
+  claude_version="$(jq -r '.version' "$ROOT_DIR/plugins/dvandva/.claude-plugin/plugin.json")"
+  codex_version="$(jq -r '.version' "$ROOT_DIR/plugins/dvandva/.codex-plugin/plugin.json")"
+
+  [[ -n "$marketplace_version" && "$marketplace_version" != "null" ]] \
+    || fail "missing marketplace version in .claude-plugin/marketplace.json"
+  [[ "$marketplace_version" == "$claude_version" ]] \
+    || fail "version mismatch: marketplace=$marketplace_version claude-plugin=$claude_version"
+  [[ "$marketplace_version" == "$codex_version" ]] \
+    || fail "version mismatch: marketplace=$marketplace_version codex-plugin=$codex_version"
+  [[ "$marketplace_version" == "$EXPECTED_DVANDVA_VERSION" ]] \
+    || fail "expected Dvandva plugin version $EXPECTED_DVANDVA_VERSION, got $marketplace_version"
+}
+
+assert_source_agent_roster() {
+  local actual expected file
+  actual="$(
+    find "$ROOT_DIR/plugins/dvandva/agents" -maxdepth 1 -type f -name '*.md' -exec basename {} \; \
+      | sort \
+      | while IFS= read -r file; do
+          printf 'dvandva-%s\n' "${file%.md}"
+        done
+  )"
+  expected="$(printf '%s\n' "${EXPECTED_AGENT_IDS[@]}")"
+
+  [[ "$actual" == "$expected" ]] || {
+    printf 'Expected agent roster:\n%s\nActual agent roster:\n%s\n' "$expected" "$actual" >&2
+    fail "canonical Dvandva agent roster differs from the expected 15-agent set"
+  }
+}
+
+assert_source_manifest_version_parity
+assert_source_agent_roster
+
 TMP_PARENT="${TMPDIR:-/tmp}"
 TMP_PARENT="${TMP_PARENT%/}"
 TMP_DIR="$(mktemp -d "$TMP_PARENT/dvandva-test-install-codex.XXXXXX")"
