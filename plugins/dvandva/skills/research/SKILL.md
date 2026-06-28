@@ -67,6 +67,14 @@ Dvandva model classes are vendor-neutral. Agent frontmatter uses `model: opus` a
 
 This borrows the useful part of GSD-style fresh-context subagents and OMO-style team roles without adding a daemon, mailbox, or central runtime process. The baton still owns coordination.
 
+## Absorbed Dvandva skills
+
+These skills are available within the Dvandva run context. Use each only when its trigger applies; none is mandatory on every run.
+
+- **`dvandva:testing`** — use during `test_creation` track planning to define coverage targets and populate `verification_matrix` with required test entries for new behavior.
+- **`dvandva:understanding`** — invoke when the human asks to understand the run, its code, or its decisions during any phase. Teaching is mastery-gated and grounded in the active baton, diff, `research_ref`, and `plan_ref`.
+- **`dvandva:worktree-setup`** — invoke when a run needs an isolated git worktree before starting implementation. Uses the generic core profile by default; apply the DeFi profile when working in defi-com repos.
+
 ## Mode Contracts
 
 ### research_drafting

@@ -43,6 +43,14 @@ Superpowers is a hard runtime dependency. Dvandva owns baton state, role handoff
 
 If a required Superpowers skill is unavailable, do not continue with a weakened Dvandva workflow. If the baton exists and prativadi owns the current state, write `status: "human_decision"` with a blocker naming the missing Superpowers capability; otherwise surface setup instructions and exit without writing.
 
+## Absorbed Dvandva skills
+
+These skills are available within the Dvandva run context. Use each only when its trigger applies; none is mandatory on every run.
+
+- **`dvandva:testing`** — invoke during adversarial and sandbox sub-steps of `deep_review` or `cross_review` to validate test evidence and identify missing coverage before approving an implementation phase.
+- **`dvandva:understanding`** — invoke when the human asks to understand the run, its code, or its decisions during any phase. Teaching is mastery-gated and grounded in the active baton, diff, `research_ref`, and `plan_ref`.
+- **`dvandva:worktree-setup`** — invoke when a run needs an isolated git worktree before starting implementation. Uses the generic core profile by default; apply the DeFi profile when working in defi-com repos.
+
 ## Mode table
 
 | baton fields | Mode |
