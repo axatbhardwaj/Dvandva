@@ -291,6 +291,7 @@ cmd_restore() {
   printf 'Reading manifest: %s\n\n' "$manifest_file"
 
   local restored=0
+  local attempted=0
 
   # Extract original_path / backup_path pairs in document order.
   # The manifest has exactly one "original_path" and one "backup_path" line per
@@ -299,6 +300,7 @@ cmd_restore() {
     if [[ -z "$orig" || -z "$backup" ]]; then
       continue
     fi
+    attempted=$((attempted + 1))
     if [[ -e "$backup" || -L "$backup" ]]; then
       if [[ -e "$orig" || -L "$orig" ]]; then
         printf '  WARNING: original path already occupied, skipping: %s\n' "$orig" >&2
@@ -316,6 +318,10 @@ cmd_restore() {
   )
 
   printf '\n%d agent(s) restored.\n' "$restored"
+  if [[ "$attempted" -gt 0 && "$restored" -eq 0 ]]; then
+    printf 'ERROR: no agents restored; backup appears already restored or incomplete.\n' >&2
+    return 1
+  fi
 }
 
 # ---------------------------------------------------------------------------

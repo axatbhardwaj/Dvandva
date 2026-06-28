@@ -12,6 +12,9 @@
 #  (g) team active_roles     → gate exits 0 for vadi and prativadi
 #  (h) installer idempotency + foreign hooksPath refusal
 #  (i) drift lint flags unstamped commits
+#  (j) --no-verify bypass is visible: commit succeeds without trailer
+#  (k) run-scoped scalar assignee match is allowed
+#  (l) empty git repo has no drift
 set -u
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -212,6 +215,15 @@ make_gate_baton "$BOX/.dvandva/runs/run-b/baton.json" "cross_fixing" "team" 12 '
 out="$(cd "$BOX" && DVANDVA_ROLE=vadi "$GATE" 2>&1)"; rc=$?
 check "(g) run-scoped team baton: vadi in active_roles → exits 0" 0 "$rc" "$out"
 
+BOX="$TMP_DIR/g-run-scoped-scalar"
+new_git_repo "$BOX"
+mkdir -p "$BOX/.dvandva/runs/run-c"
+make_gate_baton "$BOX/.dvandva/runs/run-c/baton.json" "phase_fixing" "vadi" 13
+out="$(cd "$BOX" && DVANDVA_ROLE=vadi "$GATE" 2>&1)"; rc=$?
+check "(g) run-scoped scalar baton: matching assignee exits 0" 0 "$rc" "$out"
+out="$(cd "$BOX" && DVANDVA_ROLE=prativadi "$GATE" 2>&1)"; rc=$?
+check_msg "(g) run-scoped scalar baton: wrong role exits 1" 1 "$rc" "$out" "assignee=vadi"
+
 # ===========================================================================
 # (h) Installer: idempotency + foreign hooksPath refusal
 # ===========================================================================
@@ -313,6 +325,51 @@ git -C "$BOX2" add file.txt
 git -C "$BOX2" commit --quiet -m "plain commit without trailer"
 out="$(cd "$BOX2" && "$DRIFT_LINT" 2>&1)"; rc=$?
 check "(i) drift lint exits 0 when no checkpoints exist" 0 "$rc" "$out"
+
+# ===========================================================================
+# (j) --no-verify bypass: Git bypasses pre-commit, so the gate cannot block.
+#     With DVANDVA_ROLE unset, prepare-commit-msg also cannot stamp the trailer.
+#     This documents the limitation; drift-lint is the backstop.
+# ===========================================================================
+BOX="$TMP_DIR/j-no-verify-bypass"
+new_git_repo "$BOX"
+make_gate_baton "$BOX/.dvandva/baton.json" "implementing" "vadi" 14
+mkdir -p "$BOX/.githooks"
+cat > "$BOX/.githooks/pre-commit" <<HOOK
+#!/usr/bin/env bash
+exec "${GATE}"
+HOOK
+cat > "$BOX/.githooks/prepare-commit-msg" <<HOOK
+#!/usr/bin/env bash
+exec "${PREPARE_HOOK}" "\$@"
+HOOK
+chmod +x "$BOX/.githooks/pre-commit" "$BOX/.githooks/prepare-commit-msg"
+git -C "$BOX" config core.hooksPath ".githooks"
+
+touch "$BOX/noverify.txt"
+git -C "$BOX" add noverify.txt
+out="$(cd "$BOX" && (unset DVANDVA_ROLE; git commit --no-verify -m "bypass without role") 2>&1)"; rc=$?
+check "(j) --no-verify bypasses commit gate without DVANDVA_ROLE" 0 "$rc" "$out"
+if [[ "$rc" -eq 0 ]]; then
+  commit_body="$(git -C "$BOX" show -s --format="%B" HEAD)"
+  if echo "$commit_body" | grep -qE "^Dvandva-Checkpoint:"; then
+    echo "FAIL: (j) --no-verify commit unexpectedly has Dvandva-Checkpoint trailer"
+    echo "  commit body: $commit_body"
+    failures=$((failures + 1))
+  else
+    echo "PASS: (j) --no-verify commit has no Dvandva-Checkpoint trailer"
+  fi
+fi
+
+# ===========================================================================
+# (k) Drift lint handles an empty git repo with no commits.
+# ===========================================================================
+BOX="$TMP_DIR/k-empty-repo"
+mkdir -p "$BOX"
+git -C "$BOX" init --quiet
+out="$(cd "$BOX" && "$DRIFT_LINT" 2>&1)"; rc=$?
+check "(k) drift lint exits 0 in empty git repo" 0 "$rc" "$out"
+check_msg "(k) empty git repo reports no checkpoint history" 0 "$rc" "$out" "no checkpointed commits"
 
 # ===========================================================================
 # Summary

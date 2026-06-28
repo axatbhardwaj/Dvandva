@@ -12,6 +12,8 @@
 #   (d) apply with stale/missing cache: parity gate refuses, exits nonzero
 #   (e) skills dir untouched after apply
 #   (f) Codex dirs empty → no-op report; never retires anything from Codex
+#   (g) partial pre-existing retirement: apply handles already-absent symlinks
+#   (h) double restore guard: a second restore exits nonzero
 set -u
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -358,6 +360,24 @@ test_apply_and_restore() {
   else
     fail "[restore] output does not mention RESTORED; got: $restore_output"
   fi
+
+  # A second restore is not a successful no-op.  It should fail loudly so an
+  # operator does not treat an already-consumed backup as fresh evidence.
+  local second_restore_output second_restore_rc
+  second_restore_output="$(run_retire "$fake_home" --restore "$backup_dir" 2>&1)"
+  second_restore_rc=$?
+
+  if [[ "$second_restore_rc" -ne 0 ]]; then
+    pass "[restore/double] second restore exits nonzero"
+  else
+    fail "[restore/double] second restore should exit nonzero; output: $second_restore_output"
+  fi
+
+  if printf '%s\n' "$second_restore_output" | grep -qi "already restored"; then
+    pass "[restore/double] output mentions already restored"
+  else
+    fail "[restore/double] output should mention already restored; got: $second_restore_output"
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -492,6 +512,86 @@ test_codex_noop() {
 }
 
 # ---------------------------------------------------------------------------
+# (g) Partial pre-existing retirement: missing allowlisted symlinks are skipped,
+#     remaining allowlisted symlinks are retired/restored, and manifest tracks
+#     only what moved in this run.
+# ---------------------------------------------------------------------------
+test_partial_pre_existing_retirement() {
+  echo "--- test (g): partial pre-existing retirement ---"
+  local fake_home
+  fake_home="$(build_fake_home "home-partial-preexisting")"
+
+  rm "$fake_home/.claude/agents/adversarial-analyst.md"
+  rm "$fake_home/.claude/agents/architect.md"
+
+  local apply_output apply_rc
+  apply_output="$(run_retire "$fake_home" --apply 2>&1)"
+  apply_rc=$?
+
+  if [[ "$apply_rc" -eq 0 ]]; then
+    pass "[partial] apply exit code 0"
+  else
+    fail "[partial] unexpected nonzero exit: $apply_rc; output: $apply_output"
+  fi
+
+  if printf '%s\n' "$apply_output" | grep -q "3 agent(s) retired"; then
+    pass "[partial] output reports 3 retired agents"
+  else
+    fail "[partial] output should report 3 retired agents; got: $apply_output"
+  fi
+
+  local backup_dir=""
+  backup_dir="$(find "$fake_home/.claude/agents" -maxdepth 1 -name '.retired-*' -type d 2>/dev/null | head -1)"
+  if [[ -n "$backup_dir" ]]; then
+    pass "[partial] backup dir created"
+  else
+    fail "[partial] backup dir missing"
+    return
+  fi
+
+  local manifest_count
+  manifest_count="$(grep -c '"original_path"' "$backup_dir/manifest.json" 2>/dev/null || echo 0)"
+  if [[ "$manifest_count" -eq 3 ]]; then
+    pass "[partial] manifest tracks only 3 moved symlinks"
+  else
+    fail "[partial] expected 3 manifest entries, got $manifest_count"
+  fi
+
+  for agent in developer.md quality-reviewer.md sandbox-executor.md; do
+    if [[ -L "$backup_dir/$agent" ]]; then
+      pass "[partial] $agent moved to backup"
+    else
+      fail "[partial] $agent missing from backup"
+    fi
+  done
+
+  local restore_output restore_rc
+  restore_output="$(run_retire "$fake_home" --restore "$backup_dir" 2>&1)"
+  restore_rc=$?
+  if [[ "$restore_rc" -eq 0 ]]; then
+    pass "[partial] restore exit code 0"
+  else
+    fail "[partial] restore exited nonzero: $restore_rc; output: $restore_output"
+  fi
+
+  for agent in developer.md quality-reviewer.md sandbox-executor.md; do
+    if [[ -L "$fake_home/.claude/agents/$agent" ]]; then
+      pass "[partial] $agent restored"
+    else
+      fail "[partial] $agent not restored"
+    fi
+  done
+
+  for agent in adversarial-analyst.md architect.md; do
+    if [[ ! -e "$fake_home/.claude/agents/$agent" && ! -L "$fake_home/.claude/agents/$agent" ]]; then
+      pass "[partial] pre-existing absent $agent remains absent"
+    else
+      fail "[partial] pre-existing absent $agent was recreated"
+    fi
+  done
+}
+
+# ---------------------------------------------------------------------------
 # Pre-flight: confirm the script under test exists
 # ---------------------------------------------------------------------------
 if [[ ! -f "$RETIRE_SCRIPT" ]]; then
@@ -515,6 +615,8 @@ echo ""
 test_skills_untouched
 echo ""
 test_codex_noop
+echo ""
+test_partial_pre_existing_retirement
 echo ""
 
 if [[ "$FAILURES" -gt 0 ]]; then
