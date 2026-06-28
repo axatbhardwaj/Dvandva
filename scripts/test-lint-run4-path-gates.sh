@@ -45,6 +45,8 @@ EOF
 
   cat > "$root/docs/protocol/local-baton-channel.md" <<'EOF'
 Run 4 work_split path gates require write_paths for write-capable chunks.
+write_paths supplements paths rather than narrowing them; the effective write
+set is a union.
 Overlaps require a shared conflict_group and explicit depends_on serialization.
 cross_review is read-only unless explicit write_paths are present.
 The Dvandva shell gate is local; there is no daemon or hidden orchestrator.
@@ -53,6 +55,8 @@ EOF
   cat > "$root/plugins/dvandva/references/state-transition-table.md" <<'EOF'
 Run 4 validates work_split write_paths with safe_rel_path. Live overlapping
 chunks are rejected unless they share conflict_group and depends_on serialization.
+Closed or terminal historical chunks can reuse paths later because work_split
+has no base_checkpoint wave model.
 EOF
 
   cat > "$root/plugins/dvandva/references/baton-schema-v2.json" <<'EOF'
@@ -77,6 +81,7 @@ EOF
 safe_rel_path() { :; }
 validate_work_split_paths() {
   echo work_split paths read_paths write_paths conflict_group depends_on cross_review
+  echo paths write_paths unique
 }
 EOF
 
@@ -84,6 +89,7 @@ EOF
 safe_rel_path() { :; }
 validate_work_split_paths() {
   echo work_split paths read_paths write_paths conflict_group depends_on cross_review
+  echo paths write_paths unique
 }
 EOF
 
@@ -170,6 +176,24 @@ expect_fail \
   "$CASE" \
   "local-baton-channel.md must document cross_review read-only semantics"
 
+CASE="$TMP_DIR/no-write-path-union"
+write_path_fixture "$CASE"
+perl -0pi -e 's/write_paths supplements paths rather than narrowing them; the effective write\nset is a union\.//g' \
+  "$CASE/docs/protocol/local-baton-channel.md"
+expect_fail \
+  "path-gate lint rejects missing write_paths union rule" \
+  "$CASE" \
+  "local-baton-channel.md must document write_paths cannot narrow write-capable paths"
+
+CASE="$TMP_DIR/no-terminal-reuse-rationale"
+write_path_fixture "$CASE"
+perl -0pi -e 's/Closed or terminal historical chunks can reuse paths later because work_split\nhas no base_checkpoint wave model\.//g' \
+  "$CASE/plugins/dvandva/references/state-transition-table.md"
+expect_fail \
+  "path-gate lint rejects missing terminal reuse rationale" \
+  "$CASE" \
+  "state-transition-table.md must document terminal work_split reuse rationale"
+
 CASE="$TMP_DIR/no-precommit-gate"
 write_path_fixture "$CASE"
 printf '#!/usr/bin/env bash\necho gate\n' > "$CASE/.githooks/pre-commit"
@@ -194,6 +218,15 @@ expect_fail \
   "path-gate lint rejects prativadi helper without safe_rel_path" \
   "$CASE" \
   "prativadi dvandva-write.sh must validate work_split paths with safe_rel_path"
+
+CASE="$TMP_DIR/no-vadi-write-union"
+write_path_fixture "$CASE"
+perl -0pi -e 's/paths write_paths unique/write_paths only/g' \
+  "$CASE/plugins/dvandva/skills/vadi/scripts/dvandva-write.sh"
+expect_fail \
+  "path-gate lint rejects vadi helper without write path union" \
+  "$CASE" \
+  "vadi dvandva-write.sh must union write-capable paths and write_paths"
 
 if [[ "$FAILURES" -gt 0 ]]; then
   exit 1

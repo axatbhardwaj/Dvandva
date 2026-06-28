@@ -49,12 +49,15 @@ implementation-phase parallelism is mandatory for v2. Spec approval enters `para
 
 Run 4 generalizes write gating from Run 3 generated instances to `work_split`.
 The helper validates `work_split.paths`, `work_split.read_paths`, and
-`work_split.write_paths` with `safe_rel_path`. `write_paths` is the authoritative
-write intent when present; bare `paths` stay backward-compatible write intent
-only for implementation/cross-fixing chunks. `cross_review` is read-only unless
-explicit `write_paths` are present. Live write overlaps are rejected unless both
-chunks share a non-empty `conflict_group` and a declared `depends_on` edge
-serializes one chunk after the other.
+`work_split.write_paths` with `safe_rel_path`. For write-capable chunks
+(`implementation`, `cross_fixing`, and `fix`), `write_paths` supplements rather
+than narrows `paths`; the effective write set is their union, so
+`write_paths: []` cannot mask the backward-compatible `paths` write surface.
+`cross_review` is read-only unless explicit `write_paths` are present. Live
+write overlaps are rejected unless both chunks share a non-empty `conflict_group`
+and a declared `depends_on` edge serializes one chunk after the other. Closed or
+terminal historical chunks do not block later sequential reuse because
+work_split has no `base_checkpoint` wave model.
 
 Run 4 work-gating uses repo-local git hooks: `.githooks/pre-commit` delegates to
 `scripts/dvandva-commit-gate.sh`, the gate checks `DVANDVA_ROLE` against baton

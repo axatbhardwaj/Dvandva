@@ -1219,6 +1219,21 @@ make_baton_v2 "$BOX/baton.next.json" "cross_fixing" "team" 5 \
 run_case_contains "v2 work_split prefix collision exits 23" 23 "DVANDVA_WRITE bad_work_split_write_paths" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+BOX="$(new_box v2-work-split-empty-write-paths-cannot-mask-paths)"
+make_baton_v2 "$BOX/baton.json" "cross_fixing" "team" 4 \
+  "$(v2_cross_fixing_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "cross_fixing" "team" 5 \
+  "$(v2_cross_fixing_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Team sync: empty write_paths must not mask write-capable paths."' \
+  '.next_action = "Team: reject colliding paths even when one chunk declares empty write_paths."' \
+  '.work_split[0].paths = ["src/masked.ts"]' \
+  '.work_split[0].write_paths = []' \
+  '.work_split[1].paths = ["src/masked.ts"]'
+run_case_contains "v2 work_split empty write_paths cannot mask paths collision" 23 "DVANDVA_WRITE bad_work_split_write_paths" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
 BOX="$(new_box v2-work-split-sibling-prefix-accepted)"
 make_baton_v2 "$BOX/baton.json" "cross_fixing" "team" 4 \
   "$(v2_cross_fixing_chunks_filter)" \
@@ -1347,10 +1362,10 @@ make_baton_v2 "$BOX/baton.json" "parallel_implementing" "team" 4 \
 make_baton_v2 "$BOX/baton.next.json" "parallel_implementing" "team" 5 \
   "$(v2_parallel_chunks_filter)" \
   '.active_roles = ["vadi", "prativadi"]' \
-  '.summary = "Team sync: implementation chunks must keep effective write intent."' \
-  '.next_action = "Team: reject chunks that override paths with empty write_paths."' \
+  '.summary = "Team sync: implementation paths still carry write intent with empty write_paths."' \
+  '.next_action = "Team: continue because write_paths does not narrow paths for write-capable chunks."' \
   '.work_split |= map(if .id == "implementation-chunk-a" then .write_paths = [] else . end)'
-run_case_contains "v2 implementation chunk with explicit empty write_paths rejects" 23 "DVANDVA_WRITE bad_work_split_write_paths" \
+run_case "v2 implementation chunk with explicit empty write_paths keeps paths write intent" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 for owner in \

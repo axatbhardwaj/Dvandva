@@ -286,13 +286,16 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
       (((($item.cross_review_by // "") == "vadi")) or ((($item.cross_review_by // "") == "prativadi"))) and
       (($item | has("write_paths")) or ((($item.paths // []) | length) > 0));
     def effective_write_paths($item):
-      if ($item | has("write_paths")) then
+      if write_capable_chunk($item) then
+        ((($item.paths // []) + ($item.write_paths // [])) | unique)
+      elif ($item | has("write_paths")) then
         ($item.write_paths // [])
-      elif write_capable_chunk($item) then
-        ($item.paths // [])
       else
         []
       end;
+    # work_split has no base_checkpoint wave model. Terminal chunks are
+    # completed historical work and are excluded so later fix chunks can reuse
+    # the same paths; live planned/running overlaps are still rejected below.
     def live_item($item):
       (($item.status // "") | terminal_status | not);
     def path_overlap($left; $right):

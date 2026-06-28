@@ -96,6 +96,11 @@ require_slurp_match \
 
 require_slurp_match \
   docs/protocol/local-baton-channel.md \
+  'write_paths.*supplements.*paths|effective write set.*union' \
+  'local-baton-channel.md must document write_paths cannot narrow write-capable paths'
+
+require_slurp_match \
+  docs/protocol/local-baton-channel.md \
   'conflict_group.*depends_on|depends_on.*conflict_group' \
   'local-baton-channel.md must document conflict_group/depends_on serialization'
 
@@ -103,6 +108,11 @@ require_slurp_match \
   plugins/dvandva/references/state-transition-table.md \
   'conflict_group.*depends_on|depends_on.*conflict_group' \
   'state-transition-table.md must document conflict_group/depends_on serialization'
+
+require_slurp_match \
+  plugins/dvandva/references/state-transition-table.md \
+  'terminal historical.*reuse|base_checkpoint.*wave model' \
+  'state-transition-table.md must document terminal work_split reuse rationale'
 
 require_slurp_match \
   plugins/dvandva/references/baton-schema-v2.json \
@@ -115,9 +125,19 @@ require_slurp_match \
   'vadi dvandva-write.sh must validate work_split paths with safe_rel_path'
 
 require_slurp_match \
+  plugins/dvandva/skills/vadi/scripts/dvandva-write.sh \
+  'paths.*write_paths.*unique|write_paths.*paths.*unique' \
+  'vadi dvandva-write.sh must union write-capable paths and write_paths'
+
+require_slurp_match \
   plugins/dvandva/skills/prativadi/scripts/dvandva-write.sh \
   'safe_rel_path.*work_split|work_split.*safe_rel_path' \
   'prativadi dvandva-write.sh must validate work_split paths with safe_rel_path'
+
+require_slurp_match \
+  plugins/dvandva/skills/prativadi/scripts/dvandva-write.sh \
+  'paths.*write_paths.*unique|write_paths.*paths.*unique' \
+  'prativadi dvandva-write.sh must union write-capable paths and write_paths'
 
 require_match \
   .githooks/pre-commit \
