@@ -109,6 +109,19 @@ Environment:
 EOF
 }
 
+require_jq() {
+  command -v jq >/dev/null 2>&1 || die "jq is required for manifest JSON handling"
+}
+
+allowlisted_agent() {
+  local candidate="$1"
+  local agent
+  for agent in "${ALLOWLIST[@]}"; do
+    [[ "$candidate" == "$agent" ]] && return 0
+  done
+  return 1
+}
+
 # ---------------------------------------------------------------------------
 # Parity gate: refuse --apply unless the dvandva cache is complete
 # ---------------------------------------------------------------------------
@@ -205,6 +218,7 @@ cmd_dry_run() {
 cmd_apply() {
   printf '=== Dvandva Standalone Agent Retirement (APPLY) ===\n\n'
 
+  require_jq
   parity_gate
   printf '\n'
 
@@ -243,30 +257,39 @@ cmd_apply() {
     retired=$((retired + 1))
   done
 
-  # Write manifest.json
+  # Write manifest.json with a real JSON writer so paths with quotes or
+  # backslashes round-trip through restore.
   local manifest_file="$backup_dir/manifest.json"
-  {
-    printf '{\n'
-    printf '  "retired_at": "%s",\n' "$ts"
-    printf '  "dvandva_version": "%s",\n' "$DVANDVA_EXPECTED_VERSION"
-    printf '  "backup_dir": "%s",\n' "$backup_dir"
-    printf '  "entries": [\n'
-    local n="${#retired_originals[@]}"
-    local i
-    for (( i = 0; i < n; i++ )); do
-      printf '    {\n'
-      printf '      "original_path": "%s",\n' "${retired_originals[$i]}"
-      printf '      "backup_path": "%s",\n' "${retired_backups[$i]}"
-      printf '      "symlink_target": "%s"\n' "${retired_targets[$i]}"
-      if (( i + 1 < n )); then
-        printf '    },\n'
-      else
-        printf '    }\n'
-      fi
-    done
-    printf '  ]\n'
-    printf '}\n'
-  } > "$manifest_file"
+  local entries_file="$backup_dir/.manifest.entries.json"
+  printf '[]\n' > "$entries_file"
+  local n="${#retired_originals[@]}"
+  local i
+  for (( i = 0; i < n; i++ )); do
+    local next_entries="$entries_file.tmp"
+    jq \
+      --arg original_path "${retired_originals[$i]}" \
+      --arg backup_path "${retired_backups[$i]}" \
+      --arg symlink_target "${retired_targets[$i]}" \
+      '. + [{
+        original_path: $original_path,
+        backup_path: $backup_path,
+        symlink_target: $symlink_target
+      }]' "$entries_file" > "$next_entries"
+    mv "$next_entries" "$entries_file"
+  done
+
+  jq -n \
+    --arg retired_at "$ts" \
+    --arg dvandva_version "$DVANDVA_EXPECTED_VERSION" \
+    --arg backup_dir "$backup_dir" \
+    --slurpfile entries "$entries_file" \
+    '{
+      retired_at: $retired_at,
+      dvandva_version: $dvandva_version,
+      backup_dir: $backup_dir,
+      entries: $entries[0]
+    }' > "$manifest_file"
+  rm -f "$entries_file" "$entries_file.tmp"
 
   printf '\n%d agent(s) retired to: %s\n' "$retired" "$backup_dir"
   printf 'Manifest: %s\n' "$manifest_file"
@@ -287,35 +310,87 @@ cmd_restore() {
     die "Manifest not found: $manifest_file"
   fi
 
+  require_jq
+  if ! jq empty "$manifest_file" >/dev/null 2>&1; then
+    die "Manifest is not valid JSON: $manifest_file"
+  fi
+
+  if ! jq -e '
+    (.backup_dir | type) == "string" and
+    (.entries | type) == "array" and
+    all(.entries[];
+      (.original_path | type) == "string" and
+      (.backup_path | type) == "string" and
+      (.symlink_target | type) == "string"
+    )
+  ' "$manifest_file" >/dev/null 2>&1; then
+    die "Manifest is not valid Dvandva retirement JSON: $manifest_file"
+  fi
+
+  local manifest_backup_dir
+  manifest_backup_dir="$(jq -r '.backup_dir' "$manifest_file")"
+  if [[ "$manifest_backup_dir" != "$restore_dir" ]]; then
+    die "Invalid manifest entry: backup_dir does not match restore dir: $manifest_backup_dir"
+  fi
+
   printf '=== Dvandva Standalone Agent Retirement (RESTORE) ===\n'
   printf 'Reading manifest: %s\n\n' "$manifest_file"
 
   local restored=0
   local attempted=0
+  local missing_backup=0
+  local entry_json orig backup agent expected_orig expected_backup
 
-  # Extract original_path / backup_path pairs in document order.
-  # The manifest has exactly one "original_path" and one "backup_path" line per
-  # entry, in that order.  We read them in pairs so no external parser is needed.
-  while IFS= read -r orig && IFS= read -r backup; do
-    if [[ -z "$orig" || -z "$backup" ]]; then
-      continue
+  # Validate every entry before moving anything.  A crafted or corrupted
+  # manifest must fail as a whole, not partially restore unsafe paths.
+  while IFS= read -r entry_json; do
+    orig="$(printf '%s\n' "$entry_json" | jq -r '.original_path')"
+    backup="$(printf '%s\n' "$entry_json" | jq -r '.backup_path')"
+    agent="${orig##*/}"
+
+    if ! allowlisted_agent "$agent"; then
+      die "Invalid manifest entry: non-allowlisted agent: $orig"
     fi
-    attempted=$((attempted + 1))
+
+    expected_orig="$CLAUDE_AGENTS_DIR/$agent"
+    if [[ "$orig" != "$expected_orig" ]]; then
+      die "Invalid manifest entry: original_path outside allowlist: $orig"
+    fi
+
+    expected_backup="$restore_dir/$agent"
+    if [[ "$backup" != "$expected_backup" ]]; then
+      die "Invalid manifest entry: backup_path outside restore dir: $backup"
+    fi
+
     if [[ -e "$backup" || -L "$backup" ]]; then
-      if [[ -e "$orig" || -L "$orig" ]]; then
-        printf '  WARNING: original path already occupied, skipping: %s\n' "$orig" >&2
-      else
-        mv "$backup" "$orig"
-        printf '  RESTORED: %s\n' "$orig"
-        restored=$((restored + 1))
+      if [[ ! -L "$backup" ]]; then
+        die "Invalid manifest entry: backup_path is not a symlink: $backup"
       fi
     else
-      printf '  WARNING: backup not found, skipping: %s\n' "$backup" >&2
+      missing_backup=1
     fi
-  done < <(
-    grep -E '"(original_path|backup_path)"' "$manifest_file" \
-      | sed 's/^[[:space:]]*"[^"]*": "\([^"]*\)".*/\1/'
-  )
+
+    attempted=$((attempted + 1))
+  done < <(jq -c '.entries[]' "$manifest_file")
+
+  if [[ "$missing_backup" -eq 1 ]]; then
+    printf 'ERROR: no agents restored; backup appears already restored or incomplete.\n' >&2
+    return 1
+  fi
+
+  while IFS= read -r entry_json; do
+    orig="$(printf '%s\n' "$entry_json" | jq -r '.original_path')"
+    backup="$(printf '%s\n' "$entry_json" | jq -r '.backup_path')"
+
+    if [[ -e "$orig" || -L "$orig" ]]; then
+      printf '  WARNING: original path already occupied, skipping: %s\n' "$orig" >&2
+      continue
+    fi
+
+    mv "$backup" "$orig"
+    printf '  RESTORED: %s\n' "$orig"
+    restored=$((restored + 1))
+  done < <(jq -c '.entries[]' "$manifest_file")
 
   printf '\n%d agent(s) restored.\n' "$restored"
   if [[ "$attempted" -gt 0 && "$restored" -eq 0 ]]; then

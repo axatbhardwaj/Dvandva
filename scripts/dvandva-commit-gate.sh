@@ -58,14 +58,21 @@ if [[ ${#BATON_PATHS[@]} -eq 0 ]]; then
   exit 0
 fi
 
+if ! command -v jq >/dev/null 2>&1; then
+  echo "DVANDVA_GATE error: jq is required to parse Dvandva baton files." >&2
+  exit 1
+fi
+
 # ---------------------------------------------------------------------------
 # Filter to active (non-terminal) batons
 # ---------------------------------------------------------------------------
 ACTIVE_BATONS=()
 for bp in "${BATON_PATHS[@]}"; do
   [[ -f "$bp" ]] || continue
-  # Skip files that are not valid JSON
-  jq empty "$bp" 2>/dev/null || continue
+  if ! jq empty "$bp" 2>/dev/null; then
+    echo "DVANDVA_GATE error: malformed baton JSON: $bp" >&2
+    exit 1
+  fi
   status="$(jq -r '.status // ""' "$bp")"
   if ! is_terminal "$status"; then
     ACTIVE_BATONS+=("$bp")

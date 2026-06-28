@@ -28,6 +28,26 @@ REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 ROLE="${DVANDVA_ROLE:-}"
 [[ -z "$ROLE" ]] && exit 0
 
+# Collect baton candidates before requiring jq.  Repos without Dvandva state
+# should still be unaffected by this hook.
+BATON_PATHS=()
+if [[ -f "$REPO_ROOT/.dvandva/baton.json" ]]; then
+  BATON_PATHS+=("$REPO_ROOT/.dvandva/baton.json")
+fi
+
+if [[ -d "$REPO_ROOT/.dvandva/runs" ]]; then
+  while IFS= read -r -d '' bp; do
+    BATON_PATHS+=("$bp")
+  done < <(find "$REPO_ROOT/.dvandva/runs" -maxdepth 2 -name "baton.json" -print0 2>/dev/null)
+fi
+
+[[ ${#BATON_PATHS[@]} -eq 0 ]] && exit 0
+
+if ! command -v jq >/dev/null 2>&1; then
+  echo "Dvandva prepare-commit-msg error: jq is required to parse Dvandva baton files." >&2
+  exit 1
+fi
+
 # ---------------------------------------------------------------------------
 # Inline terminal-status test (mirrors dvandva-commit-gate.sh)
 # ---------------------------------------------------------------------------
@@ -39,17 +59,24 @@ _is_terminal() {
 }
 
 # ---------------------------------------------------------------------------
-# Inline baton probe: find an active baton where ROLE is allowed, extract checkpoint
+# Inline baton probe: count active batons and record allowed checkpoints.
 # ---------------------------------------------------------------------------
 CHECKPOINT=""
+ACTIVE_COUNT=0
+ALLOWED_CHECKPOINTS=()
+ALLOWED_BATONS=()
 
 _probe_baton() {
   local f="$1"
   [[ -f "$f" ]] || return
-  jq empty "$f" 2>/dev/null || return
+  if ! jq empty "$f" 2>/dev/null; then
+    echo "Dvandva prepare-commit-msg error: malformed baton JSON: $f" >&2
+    exit 1
+  fi
   local status
   status="$(jq -r '.status // ""' "$f")"
   _is_terminal "$status" && return
+  ACTIVE_COUNT=$((ACTIVE_COUNT + 1))
   # Check role permission (matches gate logic)
   local allowed
   allowed="$(jq --arg role "$ROLE" '
@@ -58,22 +85,25 @@ _probe_baton() {
      ((.active_roles | index($role)) != null))
   ' "$f")"
   [[ "$allowed" == "true" ]] || return
-  CHECKPOINT="$(jq -r '.checkpoint // ""' "$f")"
+  ALLOWED_CHECKPOINTS+=("$(jq -r '.checkpoint // ""' "$f")")
+  ALLOWED_BATONS+=("$f")
 }
 
-# Legacy baton path
-_probe_baton "$REPO_ROOT/.dvandva/baton.json"
+for bp in "${BATON_PATHS[@]}"; do
+  _probe_baton "$bp"
+done
 
-# Run-scoped baton paths (first matching active baton wins)
-if [[ -z "$CHECKPOINT" && -d "$REPO_ROOT/.dvandva/runs" ]]; then
-  while IFS= read -r -d '' bp; do
-    _probe_baton "$bp"
-    [[ -n "$CHECKPOINT" ]] && break
-  done < <(find "$REPO_ROOT/.dvandva/runs" -maxdepth 2 -name "baton.json" -print0 2>/dev/null)
+if [[ "$ACTIVE_COUNT" -gt 1 ]]; then
+  echo "Dvandva prepare-commit-msg error: $ACTIVE_COUNT active batons found — ambiguous active runs." >&2
+  echo "Resolve to a single active run before committing." >&2
+  exit 1
 fi
 
 # No active baton where ROLE is allowed → nothing to stamp.
-[[ -z "$CHECKPOINT" ]] && exit 0
+[[ "$ACTIVE_COUNT" -eq 0 ]] && exit 0
+[[ ${#ALLOWED_CHECKPOINTS[@]} -eq 0 ]] && exit 0
+
+CHECKPOINT="${ALLOWED_CHECKPOINTS[0]}"
 
 # ---------------------------------------------------------------------------
 # Skip if the trailer is already present

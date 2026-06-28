@@ -14,6 +14,8 @@
 #   (f) Codex dirs empty → no-op report; never retires anything from Codex
 #   (g) partial pre-existing retirement: apply handles already-absent symlinks
 #   (h) double restore guard: a second restore exits nonzero
+#   (i) crafted restore manifest cannot restore non-allowlisted agent paths
+#   (j) manifest JSON is valid and restore round-trips quoted path components
 set -u
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -592,6 +594,122 @@ test_partial_pre_existing_retirement() {
 }
 
 # ---------------------------------------------------------------------------
+# (i) Crafted/corrupted manifest must not restore outside the allowlist.
+# ---------------------------------------------------------------------------
+test_restore_rejects_non_allowlisted_manifest() {
+  echo "--- test (i): restore rejects non-allowlisted manifest entry ---"
+  local fake_home
+  fake_home="$(build_fake_home "home-crafted-manifest")"
+
+  local backup_dir="$fake_home/.claude/agents/.retired-crafted"
+  mkdir -p "$backup_dir"
+  printf '# fake haoshoku source: decoy.md\n' > "$FAKE_HAOSHOKU_DIR/decoy.md"
+  ln -s "$FAKE_HAOSHOKU_DIR/decoy.md" "$backup_dir/decoy.md"
+  rm -f "$fake_home/.claude/agents/decoy.md"
+
+  jq -n \
+    --arg backup_dir "$backup_dir" \
+    --arg original_path "$fake_home/.claude/agents/decoy.md" \
+    --arg backup_path "$backup_dir/decoy.md" \
+    --arg symlink_target "$FAKE_HAOSHOKU_DIR/decoy.md" \
+    '{
+      retired_at: "test",
+      dvandva_version: "0.4.0",
+      backup_dir: $backup_dir,
+      entries: [
+        {
+          original_path: $original_path,
+          backup_path: $backup_path,
+          symlink_target: $symlink_target
+        }
+      ]
+    }' > "$backup_dir/manifest.json"
+
+  local output rc
+  output="$(run_retire "$fake_home" --restore "$backup_dir" 2>&1)"
+  rc=$?
+
+  if [[ "$rc" -ne 0 ]]; then
+    pass "[restore/allowlist] crafted manifest exits nonzero"
+  else
+    fail "[restore/allowlist] crafted manifest should fail; output: $output"
+  fi
+
+  if printf '%s\n' "$output" | grep -qi "invalid manifest entry"; then
+    pass "[restore/allowlist] output mentions invalid manifest entry"
+  else
+    fail "[restore/allowlist] output should mention invalid manifest entry; got: $output"
+  fi
+
+  if [[ ! -e "$fake_home/.claude/agents/decoy.md" && ! -L "$fake_home/.claude/agents/decoy.md" ]]; then
+    pass "[restore/allowlist] decoy.md was not restored"
+  else
+    fail "[restore/allowlist] decoy.md was restored from crafted manifest"
+  fi
+
+  if [[ -L "$backup_dir/decoy.md" ]]; then
+    pass "[restore/allowlist] crafted backup symlink left untouched"
+  else
+    fail "[restore/allowlist] crafted backup symlink was moved"
+  fi
+}
+
+# ---------------------------------------------------------------------------
+# (j) Manifest JSON must be parser-valid and paths with quotes must restore.
+# ---------------------------------------------------------------------------
+test_manifest_json_roundtrip_with_quoted_paths() {
+  echo "--- test (j): manifest JSON handles quoted path components ---"
+  local fake_home
+  fake_home="$(build_fake_home 'home-with-"quote')"
+
+  local apply_output apply_rc
+  apply_output="$(run_retire "$fake_home" --apply 2>&1)"
+  apply_rc=$?
+
+  if [[ "$apply_rc" -eq 0 ]]; then
+    pass "[manifest/json] apply exit code 0"
+  else
+    fail "[manifest/json] apply should succeed with quoted HOME; output: $apply_output"
+    return
+  fi
+
+  local backup_dir
+  backup_dir="$(find "$fake_home/.claude/agents" -maxdepth 1 -name '.retired-*' -type d 2>/dev/null | head -1)"
+  if [[ -n "$backup_dir" ]]; then
+    pass "[manifest/json] backup dir created"
+  else
+    fail "[manifest/json] backup dir missing"
+    return
+  fi
+
+  if jq empty "$backup_dir/manifest.json" >/dev/null 2>&1; then
+    pass "[manifest/json] manifest parses as JSON"
+  else
+    fail "[manifest/json] manifest is not valid JSON"
+  fi
+
+  local restore_output restore_rc
+  restore_output="$(run_retire "$fake_home" --restore "$backup_dir" 2>&1)"
+  restore_rc=$?
+
+  if [[ "$restore_rc" -eq 0 ]]; then
+    pass "[manifest/json] restore exit code 0"
+  else
+    fail "[manifest/json] restore failed for quoted HOME; output: $restore_output"
+  fi
+
+  local restored=0
+  for agent in "${STANDALONE_AGENTS[@]}"; do
+    if [[ -L "$fake_home/.claude/agents/$agent" ]]; then
+      restored=$((restored + 1))
+    else
+      fail "[manifest/json] $agent not restored under quoted HOME"
+    fi
+  done
+  [[ "$restored" -eq 5 ]] && pass "[manifest/json] all 5 symlinks restored under quoted HOME"
+}
+
+# ---------------------------------------------------------------------------
 # Pre-flight: confirm the script under test exists
 # ---------------------------------------------------------------------------
 if [[ ! -f "$RETIRE_SCRIPT" ]]; then
@@ -617,6 +735,10 @@ echo ""
 test_codex_noop
 echo ""
 test_partial_pre_existing_retirement
+echo ""
+test_restore_rejects_non_allowlisted_manifest
+echo ""
+test_manifest_json_roundtrip_with_quoted_paths
 echo ""
 
 if [[ "$FAILURES" -gt 0 ]]; then

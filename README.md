@@ -140,7 +140,9 @@ allows the commit only when that role owns the baton turn or appears in
 gate is local shell/git-hook enforcement, not a daemon or hidden central process.
 Git `commit --no-verify` can bypass the pre-commit gate; if the role environment
 is also unset, no `Dvandva-Checkpoint` trailer is stamped. Treat drift lint as
-the backstop for that explicit bypass.
+the backstop for that explicit bypass. While a baton is active, drift lint also
+reports unstamped commits when no earlier checkpoint baseline exists, so a first
+bypass commit is still visible.
 
 Before terminal `done`, a v2 run must write a dark self-contained explainer report at `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html` and set `run_explainer_ref` on the baton. The report captures decisions, development, architecture, verification, and diagrams for the completed run.
 

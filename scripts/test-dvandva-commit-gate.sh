@@ -13,7 +13,8 @@
 #  (h) installer idempotency + foreign hooksPath refusal
 #  (i) drift lint flags unstamped commits
 #  (j) --no-verify bypass is visible: commit succeeds without trailer
-#  (k) run-scoped scalar assignee match is allowed
+#      and drift-lint catches the first active-baton bypass commit
+#  (k) --no-verify cannot stamp an arbitrary checkpoint under multi-run ambiguity
 #  (l) empty git repo has no drift
 set -u
 
@@ -192,6 +193,36 @@ out="$(cd "$BOX" && DVANDVA_ROLE=vadi "$GATE" 2>&1)"; rc=$?
 check_msg "(f) two active batons: gate exits 1" 1 "$rc" "$out" "ambiguous"
 check_msg "(f) two active batons: reports count" 1 "$rc" "$out" "2 active batons"
 
+# Malformed baton JSON must fail closed.  Silently skipping it would turn a
+# broken active-run gate into "no active baton found" and allow the commit.
+BOX="$TMP_DIR/f-malformed-legacy"
+new_git_repo "$BOX"
+mkdir -p "$BOX/.dvandva"
+printf '{ bad json\n' > "$BOX/.dvandva/baton.json"
+out="$(cd "$BOX" && DVANDVA_ROLE=vadi "$GATE" 2>&1)"; rc=$?
+check_msg "(f) malformed legacy baton: gate fails closed" 1 "$rc" "$out" "malformed baton"
+
+BOX="$TMP_DIR/f-malformed-run-scoped"
+new_git_repo "$BOX"
+mkdir -p "$BOX/.dvandva/runs/run-bad"
+printf '{ bad json\n' > "$BOX/.dvandva/runs/run-bad/baton.json"
+out="$(cd "$BOX" && DVANDVA_ROLE=vadi "$GATE" 2>&1)"; rc=$?
+check_msg "(f) malformed run-scoped baton: gate fails closed" 1 "$rc" "$out" "malformed baton"
+
+# Missing jq must also fail closed when baton candidates exist.  Build a tiny
+# PATH that has git/find but deliberately omits jq.
+BOX="$TMP_DIR/f-missing-jq"
+new_git_repo "$BOX"
+make_gate_baton "$BOX/.dvandva/baton.json" "implementing" "vadi" 6
+NO_JQ_BIN="$TMP_DIR/no-jq-bin"
+mkdir -p "$NO_JQ_BIN"
+ln -s "$(command -v git)" "$NO_JQ_BIN/git"
+ln -s "$(command -v find)" "$NO_JQ_BIN/find"
+ln -s "$(command -v env)" "$NO_JQ_BIN/env"
+ln -s "$(command -v bash)" "$NO_JQ_BIN/bash"
+out="$(cd "$BOX" && PATH="$NO_JQ_BIN" DVANDVA_ROLE=vadi "$GATE" 2>&1)"; rc=$?
+check_msg "(f) missing jq: gate fails closed" 1 "$rc" "$out" "jq is required"
+
 # ===========================================================================
 # (g) Team state (active_roles contains the role) → gate exits 0
 # ===========================================================================
@@ -361,15 +392,52 @@ if [[ "$rc" -eq 0 ]]; then
   fi
 fi
 
+out="$(cd "$BOX" && "$DRIFT_LINT" 2>&1)"; rc=$?
+check_msg "(j) drift lint flags first active-baton bypass commit" 1 "$rc" "$out" "DVANDVA_DRIFT warning"
+check_msg "(j) drift lint names first bypass commit" 1 "$rc" "$out" "bypass without role"
+
 # ===========================================================================
-# (k) Drift lint handles an empty git repo with no commits.
+# (k) --no-verify should not let prepare-commit-msg stamp an arbitrary
+#     checkpoint when multiple run-scoped batons are active.
 # ===========================================================================
-BOX="$TMP_DIR/k-empty-repo"
+BOX="$TMP_DIR/k-prepare-ambiguous"
+new_git_repo "$BOX"
+mkdir -p "$BOX/.dvandva/runs/run-a" "$BOX/.dvandva/runs/run-b"
+make_gate_baton "$BOX/.dvandva/runs/run-a/baton.json" "implementing" "vadi" 21
+make_gate_baton "$BOX/.dvandva/runs/run-b/baton.json" "spec_drafting" "vadi" 22
+mkdir -p "$BOX/.githooks"
+cat > "$BOX/.githooks/pre-commit" <<HOOK
+#!/usr/bin/env bash
+exec "${GATE}"
+HOOK
+cat > "$BOX/.githooks/prepare-commit-msg" <<HOOK
+#!/usr/bin/env bash
+exec "${PREPARE_HOOK}" "\$@"
+HOOK
+chmod +x "$BOX/.githooks/pre-commit" "$BOX/.githooks/prepare-commit-msg"
+git -C "$BOX" config core.hooksPath ".githooks"
+
+touch "$BOX/ambiguous.txt"
+git -C "$BOX" add ambiguous.txt
+out="$(DVANDVA_ROLE=vadi git -C "$BOX" commit --no-verify -m "ambiguous no-verify" 2>&1)"; rc=$?
+check_msg "(k) prepare hook blocks ambiguous --no-verify commit" 1 "$rc" "$out" "ambiguous active runs"
+latest_subject="$(git -C "$BOX" log -1 --format=%s)"
+if [[ "$latest_subject" == "initial" ]]; then
+  echo "PASS: (k) ambiguous --no-verify did not create a commit"
+else
+  echo "FAIL: (k) ambiguous --no-verify created a commit: $latest_subject"
+  failures=$((failures + 1))
+fi
+
+# ===========================================================================
+# (l) Drift lint handles an empty git repo with no commits.
+# ===========================================================================
+BOX="$TMP_DIR/l-empty-repo"
 mkdir -p "$BOX"
 git -C "$BOX" init --quiet
 out="$(cd "$BOX" && "$DRIFT_LINT" 2>&1)"; rc=$?
-check "(k) drift lint exits 0 in empty git repo" 0 "$rc" "$out"
-check_msg "(k) empty git repo reports no checkpoint history" 0 "$rc" "$out" "no checkpointed commits"
+check "(l) drift lint exits 0 in empty git repo" 0 "$rc" "$out"
+check_msg "(l) empty git repo reports no checkpoint history" 0 "$rc" "$out" "no checkpointed commits"
 
 # ===========================================================================
 # Summary
