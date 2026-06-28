@@ -197,3 +197,35 @@ writes:
 
 Any other transition is illegal in v1 or v2 and must be rejected by the writing
 agent.
+
+## Dynamic Agent Instances (Run 3)
+
+The 15-agent roster is the **seed roster**. Run 3 enables run-scoped dynamic agent generation via `agent_instances` on the baton — a first-class registry separate from `subagent_tracks`.
+
+### Model classes (vendor-neutral)
+
+| Class label | Use | Claude Code | Codex |
+|---|---|---|---|
+| `opus-class\|gpt-5.5` | Architecture, planning, review | Opus-class | gpt-5.5 |
+| `sonnet-class\|gpt-5.4` | Implementation, documentation | Sonnet-class | gpt-5.4 |
+
+Do not use `haiku` for Dvandva dynamic agents.
+
+### Permission classes
+
+`readonly`, `verify-only`, `edit-scoped`, `write-artifact-only`.
+
+### Protocol invariants for generated instances
+
+| Invariant | Rule |
+|---|---|
+| **Single-writer** | Generated agents never own baton `assignee`, phase transitions, or final approvals. The parent role serializes all evidence into one monotonic checkpoint write. |
+| **No daemon** | No background scheduler, mailbox, or launcher. The baton and foreground wait helper remain the only coordination channel. |
+| **Explicit closure** | Every generated handle must be explicitly closed before its track counts as complete. Codex closure evidence includes `closed:<handle>` or equivalent harness-specific proof. |
+| **Dynamic write-path disjointness** | Same-checkpoint write-path overlaps between instances are rejected unless they share a `conflict_group` with explicit dependency serialization. |
+| **No additive sprawl** | Generated instances are run-scoped and ephemeral. The seed roster is never modified at runtime; promotion requires a later reviewed source change. |
+
+### Run3/Run4 boundary
+
+- **Run 3**: dynamic agent creation via `agent_instances`, single-writer merge enforcement, explicit closure gate, and dynamic write-path disjointness validation in the write helper.
+- **Run 4**: generalized path-gate (PreToolUse hook or equivalent write-guard) beyond the Run 3 dynamic disjointness check, retire the standalone agent fleet once the seed roster covers the same scope, and work-gating enforcement.

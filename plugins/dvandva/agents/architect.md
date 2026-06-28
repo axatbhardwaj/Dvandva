@@ -100,3 +100,7 @@ Your `work_split` and parallelism plan are consumed by the implementers and cros
 | Only vadi has implementation work | Move real chunks to prativadi too |
 | Tests are part of implementation | Create separate test_creation ownership |
 | Review happens only at the end | Add chunk-level cross-review plus holistic deep_review |
+
+## Seed Roster
+
+This agent is a **seed roster** role and may be used as a dynamic agent-instance seed. When the parent role dispatches a dynamic instance of this agent, it records an `agent_instances` entry in the baton covering identity, parent role, model/permission class, read/write paths, base checkpoint, output refs, evidence refs, and close result. Dynamic instances provide **explicit closure** evidence before their `subagent_tracks` entry counts as completed. Dynamic instances never own the baton; only vadi, prativadi, team, or human assignee states are **single-writer** checkpoint owners. When planning dynamic tracks (for example, parallel implementer instances), ensure **dynamic write-path disjointness**: same-checkpoint instances must have pairwise disjoint write paths, or share a `conflict_group` with explicitly serialized dependencies.

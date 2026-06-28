@@ -93,3 +93,7 @@ If you cannot verify a claim with a file, line, command, or baton field, treat i
 | Probe left in repo | Remove it or move to temp |
 | Environment failure marked as pass | Mark unverified with limitation |
 | Disproved claim buried | Route to phase_fixing or test_creation |
+
+## Seed Roster
+
+This agent is a **seed roster** role and may be used as a dynamic agent-instance seed. When the parent role dispatches a dynamic instance of this agent, it records an `agent_instances` entry in the baton covering identity, parent role, model/permission class, read/write paths, base checkpoint, output refs, evidence refs, and close result. The dynamic instance provides **explicit closure** evidence before its `subagent_tracks` entry is counted as completed. Dynamic instances never own the baton; only the vadi, prativadi, team, or human assignee states are **single-writer** checkpoint owners. Dynamic instances with non-empty write paths in the same checkpoint must satisfy **dynamic write-path disjointness** or share a `conflict_group` with explicitly serialized dependencies.

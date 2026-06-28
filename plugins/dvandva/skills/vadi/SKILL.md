@@ -98,6 +98,18 @@ Team-owned v2 states may write same-status sync checkpoints while both roles rem
 
 If no subagent tool is available, do the same tracks directly and record the fallback in `subagent_tracks` and `work_split`.
 
+## Dynamic agents (seed roster)
+
+The seed roster in `plugins/dvandva/agents/` is the canonical source for generated run-scoped agent instances. When a phase needs more parallel capacity than the static roster supplies, the vadi plans dynamic tracks in `work_split`, generates a brief from the seed roster (each brief satisfies the same agent contract as its seed agent), records the instance in `agent_instances` on the baton, dispatches the harness subagent, and applies explicit closure: close the handle and record closure evidence in `agent_instances[].evidence_refs` and `agent_instances[].closed_at` before the track counts as completed. All outputs are then serialized into one baton checkpoint via the single-writer rule: only the vadi (or the assigned parent role) writes the baton.
+
+Generated instances are run-scoped and ephemeral — no additive roster sprawl unless a later reviewed source change promotes the pattern into the seed roster.
+
+Mandatory invariants for all generated agents:
+- Coordination invariant: no daemon, no hidden orchestrator — the baton is the only coordinator; generated agents never drive phase transitions.
+- Single-writer: generated agents never own `assignee`, `active_roles`, phase transitions, or final approval.
+- Path invariant: dynamic write-path disjointness — instances with non-empty `write_paths` in the same checkpoint must be pairwise disjoint unless explicitly serialized through `depends_on` within a shared `conflict_group`.
+- Model-class mapping: use `opus-class|gpt-5.5` for review, planning, and architecture seeds; use `sonnet-class|gpt-5.4` for implementation and documentation seeds. Never use `haiku`.
+
 ## Mode R1 — research drafting
 
 Trigger: `phase: "research", status: "research_drafting"`.

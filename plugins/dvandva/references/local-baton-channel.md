@@ -141,6 +141,52 @@ Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`) m
 }
 ```
 
+## Dynamic Agent Instances (Run 3)
+
+Run 3 turns the static 15-agent roster into a **seed roster** for run-scoped dynamic agent generation. Parent roles may generate additional named instances on demand; each is recorded in `agent_instances` on the baton — a first-class array separate from the post-hoc `subagent_tracks` record.
+
+### `agent_instances` item shape
+
+```json
+{
+  "id": "r3-generated-security-review-01",
+  "parent_role": "vadi",
+  "spawned_by": "dvandva-security-auditor",
+  "spawned_at_checkpoint": 8,
+  "phase": 1,
+  "purpose": "Review generated-agent write-helper gates for bypasses.",
+  "agent_kind": "generated",
+  "seed_agent": "dvandva-security-auditor",
+  "model_class": "opus-class|gpt-5.5",
+  "permission_class": "verify-only",
+  "status": "closed",
+  "work_item_ids": ["r3-dynamic-schema-and-write-gates"],
+  "read_paths": ["plugins/dvandva/skills/vadi/scripts/dvandva-write.sh"],
+  "write_paths": [],
+  "depends_on": [],
+  "conflict_group": "run3-helper-gates",
+  "base_checkpoint": 8,
+  "output_refs": ["subagent_track:r3-generated-security-review-01"],
+  "evidence_refs": ["subagent:<handle>", "closed:<handle>"],
+  "closed_at": "2026-06-28T00:00:00Z",
+  "result": "passed"
+}
+```
+
+Model classes are vendor-neutral: `opus-class|gpt-5.5` for architecture/planning/review (Opus on Claude Code, gpt-5.5 on Codex); `sonnet-class|gpt-5.4` for implementation/docs (Sonnet on Claude Code, gpt-5.4 on Codex). Permission classes are `readonly`, `verify-only`, `edit-scoped`, or `write-artifact-only`.
+
+### Protocol invariants for generated instances
+
+**Single-writer merge.** Generated agents never write the baton directly and never own `assignee`, phase transitions, or `vadi_final_approval`/`prativadi_final_approval`. The parent role waits for all generated handles to close, then serializes their evidence into one monotonic baton checkpoint write.
+
+**No daemon / no hidden orchestrator.** There is no background scheduler, mailbox, or launcher outside the baton and foreground wait helper. Run 3 adds richer baton data and a validation gate; it does not add a new central process.
+
+**Explicit closure.** Every generated agent handle must be explicitly closed after its result is consumed. Codex closure evidence must include `closed:<handle>` or equivalent harness-specific proof. A track whose closure record is missing is not counted as complete.
+
+**Dynamic write-path disjointness.** Dynamic instances with non-empty `write_paths` in the same checkpoint must be pairwise disjoint unless they share the same `conflict_group` and are explicitly serialized by declared dependencies. The Run 3 write helper rejects collisions.
+
+**No additive sprawl.** Generated instances are run-scoped and ephemeral. A pattern may be promoted to the seed roster only through a later reviewed source change; the seed roster is never modified at runtime.
+
 ## State Machine
 
 > **Authority:** `product.md` Appendix A is authoritative for v1 transitions. This section is reference; if the two diverge, the spec wins. Update this section when the spec changes.

@@ -67,6 +67,18 @@ Dvandva model classes are vendor-neutral. Agent frontmatter uses `model: opus` a
 
 This borrows the useful part of GSD-style fresh-context subagents and OMO-style team roles without adding a daemon, mailbox, or central runtime process. The baton still owns coordination.
 
+## Dynamic agents (seed roster)
+
+The seed roster in `plugins/dvandva/agents/` is the canonical source for generated run-scoped agent instances during research. When additional parallel tracks are needed, plan them in `work_split`, generate each brief from the seed roster (each brief satisfies the same agent contract as the static seed), record the instance in `agent_instances` on the baton, dispatch the harness subagent, and apply explicit closure: close the handle and record closure evidence in `agent_instances[].evidence_refs` and `agent_instances[].closed_at` before the track counts as completed. Outputs are serialized into one baton checkpoint via the single-writer rule.
+
+Generated instances are run-scoped and ephemeral — no additive roster sprawl unless a later reviewed source change promotes the pattern into the seed roster.
+
+Mandatory invariants:
+- Coordination invariant: no daemon, no hidden orchestrator — the baton is the only coordinator.
+- Single-writer: generated agents never own `assignee`, phase transitions, or final approval.
+- Path invariant: dynamic write-path disjointness — instances with non-empty `write_paths` in the same checkpoint must be pairwise disjoint unless explicitly serialized through `depends_on` within a shared `conflict_group`.
+- Model-class mapping: use `opus-class|gpt-5.5` for review, planning, and architecture seeds; use `sonnet-class|gpt-5.4` for implementation and documentation seeds. Never use `haiku`.
+
 ## Absorbed Dvandva skills
 
 These skills are available within the Dvandva run context. Use each only when its trigger applies; none is mandatory on every run.

@@ -99,3 +99,7 @@ reason:
 | Only one review angle | Spawn or request additional angle-specific reviewers |
 | Missing test treated as low | Route to test_creation or phase_fixing |
 | Done while peer is active | Keep baton non-terminal and polling |
+
+## Seed Roster
+
+This agent is a **seed roster** role and may be used as a dynamic agent-instance seed. When the parent role dispatches a dynamic instance of this agent, it records an `agent_instances` entry in the baton covering identity, parent role, model/permission class, read/write paths, base checkpoint, output refs, evidence refs, and close result. The dynamic instance provides **explicit closure** evidence before its `subagent_tracks` entry is counted as completed. Dynamic instances never own the baton; only the vadi, prativadi, team, or human assignee states are **single-writer** checkpoint owners. Dynamic instances with non-empty write paths in the same checkpoint must satisfy **dynamic write-path disjointness** or share a `conflict_group` with explicitly serialized dependencies.
