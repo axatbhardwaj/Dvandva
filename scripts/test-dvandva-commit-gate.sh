@@ -11,7 +11,7 @@
 #  (f) two active batons     → gate exits 1 "ambiguous"
 #  (g) team active_roles     → gate exits 0 for vadi and prativadi
 #  (h) installer idempotency + foreign hooksPath refusal
-#  (i) drift lint flags unstamped commits
+#  (i) drift lint flags unstamped commits and honors hook-adoption baseline
 #  (j) --no-verify bypass is visible: commit succeeds without trailer
 #      and drift-lint catches the first active-baton bypass commit
 #  (k) --no-verify cannot stamp an arbitrary checkpoint under multi-run ambiguity
@@ -270,6 +270,14 @@ else
   echo "FAIL: (h) fresh install: expected .githooks, got '$current'"
   failures=$((failures + 1))
 fi
+adopted_at="$(git -C "$BOX" config --local dvandva.hooksAdoptedAt 2>/dev/null || echo "")"
+head_sha="$(git -C "$BOX" rev-parse HEAD)"
+if [[ "$adopted_at" == "$head_sha" ]]; then
+  echo "PASS: (h) fresh install: dvandva.hooksAdoptedAt records HEAD"
+else
+  echo "FAIL: (h) fresh install: expected dvandva.hooksAdoptedAt=$head_sha, got '$adopted_at'"
+  failures=$((failures + 1))
+fi
 
 out="$(cd "$BOX" && "$INSTALLER" 2>&1)"; rc=$?
 check_msg "(h) second install is idempotent: exits 0" 0 "$rc" "$out" "already installed"
@@ -356,6 +364,26 @@ git -C "$BOX2" add file.txt
 git -C "$BOX2" commit --quiet -m "plain commit without trailer"
 out="$(cd "$BOX2" && "$DRIFT_LINT" 2>&1)"; rc=$?
 check "(i) drift lint exits 0 when no checkpoints exist" 0 "$rc" "$out"
+
+# Active baton adopted after existing history → pre-adoption commits are not
+# drift.  Only commits after the local hooks baseline are reportable.
+BOX3="$TMP_DIR/i-adoption-baseline"
+new_git_repo "$BOX3"
+touch "$BOX3/pre-adoption.txt"
+git -C "$BOX3" add pre-adoption.txt
+git -C "$BOX3" commit --quiet -m "plain pre-adoption commit"
+make_gate_baton "$BOX3/.dvandva/baton.json" "implementing" "vadi" 31
+out="$(cd "$BOX3" && "$INSTALLER" 2>&1)"; rc=$?
+check "(i) adoption baseline install exits 0" 0 "$rc" "$out"
+out="$(cd "$BOX3" && "$DRIFT_LINT" 2>&1)"; rc=$?
+check "(i) active baton drift lint ignores pre-adoption history" 0 "$rc" "$out"
+
+touch "$BOX3/post-adoption.txt"
+git -C "$BOX3" add post-adoption.txt
+out="$(cd "$BOX3" && (unset DVANDVA_ROLE; git commit --no-verify -m "post-adoption bypass") 2>&1)"; rc=$?
+check "(i) post-adoption no-verify commit succeeds for drift probe" 0 "$rc" "$out"
+out="$(cd "$BOX3" && "$DRIFT_LINT" 2>&1)"; rc=$?
+check_msg "(i) drift lint flags post-adoption bypass only" 1 "$rc" "$out" "post-adoption bypass"
 
 # ===========================================================================
 # (j) --no-verify bypass: Git bypasses pre-commit, so the gate cannot block.

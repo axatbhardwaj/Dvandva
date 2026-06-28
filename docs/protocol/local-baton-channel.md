@@ -59,13 +59,16 @@ same non-empty `conflict_group` and one chunk's `depends_on` serializes it after
 the other. Closed or terminal historical chunks do not block later sequential
 reuse because work_split has no `base_checkpoint` wave model.
 
-Run 4 also adds local git work-gating. `scripts/install-dvandva-hooks.sh` sets
-repo-local `core.hooksPath=.githooks`; `.githooks/pre-commit` delegates to
+Run 4 also adds local git work-gating. Role preflight runs
+`scripts/install-dvandva-hooks.sh`, verifies repo-local
+`core.hooksPath=.githooks`, and records `dvandva.hooksAdoptedAt` as the
+pre-first-checkpoint drift baseline. `.githooks/pre-commit` delegates to
 `scripts/dvandva-commit-gate.sh`; commits during an active baton require
 `DVANDVA_ROLE` to match `assignee` or `active_roles`; `.githooks/prepare-commit-msg`
 stamps `Dvandva-Checkpoint`; and `scripts/dvandva-drift-lint.sh` reports
-unstamped commits after the latest checkpoint. This is shell/git-hook
-enforcement only. There is no daemon or hidden orchestrator.
+unstamped commits after the latest checkpoint or, before any checkpoint trailer
+exists, after the hook-adoption baseline. This is shell/git-hook enforcement
+only. There is no daemon or hidden orchestrator.
 
 Run 4 standalone-agent retirement is intentionally Dvandva-only: it covers only
 Dvandva-covered workflows with functional parity via Runs 1-4 usage. The

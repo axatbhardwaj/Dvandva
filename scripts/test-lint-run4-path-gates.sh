@@ -28,6 +28,8 @@ write_path_fixture() {
     "$root/plugins/dvandva/references" \
     "$root/plugins/dvandva/skills/vadi/scripts" \
     "$root/plugins/dvandva/skills/prativadi/scripts" \
+    "$root/plugins/dvandva/skills/vadi" \
+    "$root/plugins/dvandva/skills/prativadi" \
     "$root/scripts" \
     "$root/.githooks"
 
@@ -93,29 +95,44 @@ validate_work_split_paths() {
 }
 EOF
 
+  cat > "$root/plugins/dvandva/skills/vadi/SKILL.md" <<'EOF'
+Preflight runs scripts/install-dvandva-hooks.sh and asserts core.hooksPath=.githooks.
+EOF
+
+  cat > "$root/plugins/dvandva/skills/prativadi/SKILL.md" <<'EOF'
+Preflight runs scripts/install-dvandva-hooks.sh and asserts core.hooksPath=.githooks.
+EOF
+
   cat > "$root/.githooks/pre-commit" <<'EOF'
 #!/usr/bin/env bash
+echo ".dvandva/runs baton.json done human_question human_decision"
+jq empty "$1" 2>/dev/null || exit 1
 exec scripts/dvandva-commit-gate.sh
 EOF
 
   cat > "$root/.githooks/prepare-commit-msg" <<'EOF'
 #!/usr/bin/env bash
+echo ".dvandva/runs baton.json done human_question human_decision"
+jq empty "$1" 2>/dev/null || exit 1
 echo "Dvandva-Checkpoint"
 EOF
 
   cat > "$root/scripts/dvandva-commit-gate.sh" <<'EOF'
 #!/usr/bin/env bash
-echo "DVANDVA_ROLE changed_paths active_roles"
+echo "DVANDVA_ROLE changed_paths active_roles .dvandva/runs baton.json done human_question human_decision"
+jq empty "$1" 2>/dev/null || exit 1
 EOF
 
   cat > "$root/scripts/dvandva-drift-lint.sh" <<'EOF'
 #!/usr/bin/env bash
-echo "drift lint Dvandva-Checkpoint"
+echo "drift lint Dvandva-Checkpoint dvandva.hooksAdoptedAt .dvandva/runs baton.json done human_question human_decision"
+jq empty "$1" 2>/dev/null || exit 1
 EOF
 
   cat > "$root/scripts/install-dvandva-hooks.sh" <<'EOF'
 #!/usr/bin/env bash
 echo ".githooks core.hooksPath"
+echo "dvandva.hooksAdoptedAt"
 EOF
 }
 
@@ -227,6 +244,40 @@ expect_fail \
   "path-gate lint rejects vadi helper without write path union" \
   "$CASE" \
   "vadi dvandva-write.sh must union write-capable paths and write_paths"
+
+CASE="$TMP_DIR/no-hook-adoption-baseline"
+write_path_fixture "$CASE"
+perl -0pi -e 's/dvandva\.hooksAdoptedAt//g' "$CASE/scripts/install-dvandva-hooks.sh"
+expect_fail \
+  "path-gate lint rejects installer without hook adoption baseline" \
+  "$CASE" \
+  "install-dvandva-hooks.sh must record hook-adoption baseline"
+
+CASE="$TMP_DIR/no-vadi-hook-preflight"
+write_path_fixture "$CASE"
+perl -0pi -e 's#scripts/install-dvandva-hooks\.sh#install hooks#g' \
+  "$CASE/plugins/dvandva/skills/vadi/SKILL.md"
+expect_fail \
+  "path-gate lint rejects vadi skill without hook preflight" \
+  "$CASE" \
+  "vadi skill preflight must enforce repo-local Dvandva hooks"
+
+CASE="$TMP_DIR/no-prativadi-hook-preflight"
+write_path_fixture "$CASE"
+perl -0pi -e 's/core\.hooksPath=\.githooks/hooks enabled/g' \
+  "$CASE/plugins/dvandva/skills/prativadi/SKILL.md"
+expect_fail \
+  "path-gate lint rejects prativadi skill without hook preflight" \
+  "$CASE" \
+  "prativadi skill preflight must enforce repo-local Dvandva hooks"
+
+CASE="$TMP_DIR/no-resolver-run-scope"
+write_path_fixture "$CASE"
+perl -0pi -e 's#\.dvandva/runs#run dirs#g' "$CASE/scripts/dvandva-drift-lint.sh"
+expect_fail \
+  "path-gate lint rejects resolver without run-scoped scan" \
+  "$CASE" \
+  "scripts/dvandva-drift-lint.sh must scan run-scoped baton paths"
 
 if [[ "$FAILURES" -gt 0 ]]; then
   exit 1

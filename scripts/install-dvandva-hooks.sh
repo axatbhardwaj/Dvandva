@@ -54,6 +54,24 @@ fi
 
 TARGET_HOOKS_PATH=".githooks"
 
+record_hook_adoption_baseline() {
+  local existing=""
+  existing="$(git -C "$REPO_ROOT" config --local dvandva.hooksAdoptedAt 2>/dev/null || echo "")"
+  if [[ -n "$existing" ]] && git -C "$REPO_ROOT" cat-file -e "$existing^{commit}" 2>/dev/null; then
+    echo "install-dvandva-hooks: hook adoption baseline already recorded (dvandva.hooksAdoptedAt=$existing)"
+    return 0
+  fi
+
+  local head_sha=""
+  if head_sha="$(git -C "$REPO_ROOT" rev-parse --verify HEAD 2>/dev/null)"; then
+    git -C "$REPO_ROOT" config --local dvandva.hooksAdoptedAt "$head_sha"
+    echo "install-dvandva-hooks: recorded hook adoption baseline dvandva.hooksAdoptedAt=$head_sha"
+  else
+    git -C "$REPO_ROOT" config --local --unset dvandva.hooksAdoptedAt >/dev/null 2>&1 || true
+    echo "install-dvandva-hooks: no HEAD commit yet; hook adoption baseline will start with future checkpoint commits."
+  fi
+}
+
 # ---------------------------------------------------------------------------
 # --uninstall: clear core.hooksPath
 # ---------------------------------------------------------------------------
@@ -64,6 +82,7 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
     exit 0
   fi
   git -C "$REPO_ROOT" config --local --unset core.hooksPath
+  git -C "$REPO_ROOT" config --local --unset dvandva.hooksAdoptedAt >/dev/null 2>&1 || true
   echo "install-dvandva-hooks: unset core.hooksPath (was: $current) in $REPO_ROOT"
   exit 0
 fi
@@ -75,6 +94,7 @@ current="$(git -C "$REPO_ROOT" config --local core.hooksPath 2>/dev/null || echo
 
 # Already set to our target → idempotent, nothing to do.
 if [[ "$current" == "$TARGET_HOOKS_PATH" ]]; then
+  record_hook_adoption_baseline
   echo "install-dvandva-hooks: already installed (core.hooksPath=$TARGET_HOOKS_PATH in $REPO_ROOT)"
   exit 0
 fi
@@ -90,5 +110,6 @@ if [[ -n "$current" && "$current" != "$TARGET_HOOKS_PATH" ]]; then
 fi
 
 git -C "$REPO_ROOT" config --local core.hooksPath "$TARGET_HOOKS_PATH"
+record_hook_adoption_baseline
 echo "install-dvandva-hooks: set core.hooksPath=$TARGET_HOOKS_PATH in $REPO_ROOT"
 exit 0

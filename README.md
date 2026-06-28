@@ -84,7 +84,7 @@ v0.4.0 ships as one `dvandva` plugin with:
 - `plugins/dvandva/skills/worktree-setup/SKILL.md` — isolated-worktree prep with an optional DeFi profile; replaces standalone `worktree-setup` for Dvandva work.
 - 15 canonical subagent roles forming the **seed roster** under `plugins/dvandva/agents/` (researcher, architect, pattern-mapper, implementer, test-creator, debugger, cross-reviewer, adversarial-analyst, deep-reviewer, security-auditor, integration-checker, doc-verifier, deslopper, sandbox-verifier, baton-auditor); model classes are vendor-neutral (`opus`/`sonnet`). Run 3 turns this seed roster into a foundation for run-scoped dynamic agent generation: parent roles generate additional named instances on demand; each is recorded in `agent_instances` on the baton with its identity, parent role, model/permission class, read/write paths, base checkpoint, lifecycle state, output refs, evidence refs, and close result. Generated agents observe single-writer merge (they never own baton `assignee`, phase transitions, or final approval), explicit closure (every handle must be closed before its track counts as complete), and dynamic write-path disjointness (write-path overlaps for generated instances sharing the same `base_checkpoint`, or for any two live (`planned`/`running`) instances regardless of base_checkpoint, are rejected unless sharing a `conflict_group` with explicit dependency serialization; closed instances from an earlier base_checkpoint are not part of the collision set). Generated instances are run-scoped and ephemeral; no roster sprawl occurs unless a later reviewed run promotes a pattern into the seed roster.
 - Run 4 generalized path gates: `work_split` items now expose `write_paths` for write intent; bare `paths` remain backward-compatible write intent only for implementation and cross-fixing chunks. For write-capable chunks, `write_paths` supplements rather than narrows `paths`; the collision check uses their union so `write_paths: []` cannot mask a declared write surface. `cross_review` chunks are read-only unless they declare explicit `write_paths`. Live overlaps are rejected unless the chunks share a `conflict_group` and an explicit `depends_on` edge serializes the work. Terminal work_split chunks are historical and do not block later path reuse because work_split does not carry the generated-agent `base_checkpoint` wave model.
-- Run 4 git work-gating: `scripts/install-dvandva-hooks.sh` opts a clone into repo-local `.githooks` by setting local `core.hooksPath`; the pre-commit hook delegates to `scripts/dvandva-commit-gate.sh`, which requires `DVANDVA_ROLE` to match baton ownership or `active_roles`; the prepare hook stamps `Dvandva-Checkpoint`; and `scripts/dvandva-drift-lint.sh` checks for off-protocol commits. This is a local shell gate, not a daemon or hidden central process.
+- Run 4 git work-gating: role preflight runs `scripts/install-dvandva-hooks.sh` and verifies local `core.hooksPath=.githooks`; the installer records `dvandva.hooksAdoptedAt` as the local drift-lint baseline. The pre-commit hook delegates to `scripts/dvandva-commit-gate.sh`, which requires `DVANDVA_ROLE` to match baton ownership or `active_roles`; the prepare hook stamps `Dvandva-Checkpoint`; and `scripts/dvandva-drift-lint.sh` checks for off-protocol commits after the latest checkpoint or, before the first checkpoint, after the hook-adoption baseline. This is local shell/git-hook enforcement, not a daemon or hidden central process.
 - Run 4 Dvandva-only retirement: `scripts/retire-standalone-agents.sh` can retire only the five Claude Code symlink agents whose Dvandva-covered workflows are replaced by the seed roster: `adversarial-analyst`, `architect`, `developer`, `quality-reviewer`, and `sandbox-executor`. Functional parity is based on equivalent-or-better empirical usage across Runs 1-4, plus 0.4.0 cache/roster parity and reversibility. Codex agent-axis retirement is a no-op; skills are out of scope and no skill files are touched. The helper is dry-run first, writes a backup manifest, and supports restore.
 - bundled `dvandva-wait.sh` helpers in both skill directories
 - plugin-local protocol references in `plugins/dvandva/references/`
@@ -124,20 +124,24 @@ For one-engine use, set `run_mode: "supervised"` in the active baton and invoke 
 
 Agents should make regular local checkpoint commits after a verified logical slice when `allow_commit` is true and the dirty paths match the baton's `changed_paths` union. Checkpoint commits are local only: pushing waits until both `vadi_final_approval` and `prativadi_final_approval` are true and `allow_push` is true. Dvandva must never create a PR.
 
-To opt a clone into Run 4 git work-gating, run:
+Run 4 role preflight enforces git work-gating automatically in each clone by
+running:
 
 ```bash
 bash scripts/install-dvandva-hooks.sh
 ```
 
 The installer writes only repo-local git config (`core.hooksPath=.githooks`),
-refuses to overwrite a foreign hooks path unless `--force` is passed, and can be
-undone with `--uninstall`. While a Dvandva baton is active, commits require
+records the current `HEAD` as `dvandva.hooksAdoptedAt`, refuses to overwrite a
+foreign hooks path unless `--force` is passed, and can be undone with
+`--uninstall`. While a Dvandva baton is active, commits require
 `DVANDVA_ROLE=vadi` or `DVANDVA_ROLE=prativadi`; `scripts/dvandva-commit-gate.sh`
 allows the commit only when that role owns the baton turn or appears in
 `active_roles`. The prepare hook appends `Dvandva-Checkpoint: <N>` so
-`scripts/dvandva-drift-lint.sh --warn` can report off-protocol commits. The
-gate is local shell/git-hook enforcement, not a daemon or hidden central process.
+`scripts/dvandva-drift-lint.sh --warn` can report off-protocol commits. Before
+the first checkpoint trailer exists, drift lint starts from the hook-adoption
+baseline instead of treating all pre-adoption history as drift. The gate is
+local shell/git-hook enforcement, not a daemon or hidden central process.
 Git `commit --no-verify` can bypass the pre-commit gate; if the role environment
 is also unset, no `Dvandva-Checkpoint` trailer is stamped. Treat drift lint as
 the backstop for that explicit bypass. While a baton is active, drift lint also

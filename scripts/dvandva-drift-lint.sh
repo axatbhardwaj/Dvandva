@@ -78,6 +78,20 @@ active_baton_exists() {
   return 1
 }
 
+hook_adoption_baseline() {
+  local baseline=""
+  baseline="$(git -C "$REPO_ROOT" config --local dvandva.hooksAdoptedAt 2>/dev/null || echo "")"
+  [[ -n "$baseline" ]] || return 1
+
+  if git -C "$REPO_ROOT" cat-file -e "$baseline^{commit}" 2>/dev/null; then
+    printf '%s\n' "$baseline"
+    return 0
+  fi
+
+  echo "DVANDVA_DRIFT warning: invalid dvandva.hooksAdoptedAt baseline: $baseline" >&2
+  return 1
+}
+
 # ---------------------------------------------------------------------------
 # Find the most recent commit with a Dvandva-Checkpoint trailer
 # ---------------------------------------------------------------------------
@@ -104,21 +118,31 @@ if [[ -z "$LAST_CHECKPOINT_SHA" ]]; then
       exit 0
     fi
 
+    ADOPTION_BASELINE_SHA=""
+    ADOPTION_CONTEXT="while an active baton exists and no checkpoint baseline exists"
+    if ADOPTION_BASELINE_SHA="$(hook_adoption_baseline)"; then
+      ADOPTION_CONTEXT="since hook adoption baseline $ADOPTION_BASELINE_SHA"
+    fi
+
     DRIFT_SHAS=()
+    LOG_ARGS=(--format="%H")
+    if [[ -n "$ADOPTION_BASELINE_SHA" ]]; then
+      LOG_ARGS+=("${ADOPTION_BASELINE_SHA}..HEAD")
+    fi
     while IFS= read -r sha; do
       [[ -z "$sha" ]] && continue
       body="$(git -C "$REPO_ROOT" show -s --format="%B" "$sha" 2>/dev/null)" || continue
       if ! echo "$body" | grep -qE "^Dvandva-Checkpoint:[[:space:]]"; then
         DRIFT_SHAS+=("$sha")
       fi
-    done < <(git -C "$REPO_ROOT" log --format="%H" 2>/dev/null)
+    done < <(git -C "$REPO_ROOT" log "${LOG_ARGS[@]}" 2>/dev/null)
 
     if [[ ${#DRIFT_SHAS[@]} -eq 0 ]]; then
-      echo "DVANDVA_DRIFT ok: active baton exists but all commits carry Dvandva-Checkpoint trailers."
+      echo "DVANDVA_DRIFT ok: no off-protocol commits $ADOPTION_CONTEXT."
       exit 0
     fi
 
-    echo "DVANDVA_DRIFT warning: ${#DRIFT_SHAS[@]} off-protocol commit(s) found while an active baton exists and no checkpoint baseline exists" >&2
+    echo "DVANDVA_DRIFT warning: ${#DRIFT_SHAS[@]} off-protocol commit(s) found $ADOPTION_CONTEXT" >&2
     for sha in "${DRIFT_SHAS[@]}"; do
       subject="$(git -C "$REPO_ROOT" show -s --format="%s" "$sha" 2>/dev/null || echo "(unreadable)")"
       echo "  $sha  $subject" >&2

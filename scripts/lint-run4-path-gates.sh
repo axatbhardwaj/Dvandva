@@ -68,6 +68,8 @@ required_files=(
   plugins/dvandva/references/baton-schema-v2.json
   plugins/dvandva/skills/vadi/scripts/dvandva-write.sh
   plugins/dvandva/skills/prativadi/scripts/dvandva-write.sh
+  plugins/dvandva/skills/vadi/SKILL.md
+  plugins/dvandva/skills/prativadi/SKILL.md
   .githooks/pre-commit
   .githooks/prepare-commit-msg
   scripts/dvandva-commit-gate.sh
@@ -163,6 +165,41 @@ require_slurp_match \
   scripts/install-dvandva-hooks.sh \
   'core\.hooksPath.*\.githooks|\.githooks.*core\.hooksPath' \
   'install-dvandva-hooks.sh must install repo-local .githooks via core.hooksPath'
+
+require_slurp_match \
+  scripts/install-dvandva-hooks.sh \
+  'dvandva\.hooksAdoptedAt' \
+  'install-dvandva-hooks.sh must record hook-adoption baseline'
+
+require_slurp_match \
+  scripts/dvandva-drift-lint.sh \
+  'dvandva\.hooksAdoptedAt' \
+  'dvandva-drift-lint.sh must honor hook-adoption baseline'
+
+require_slurp_match \
+  plugins/dvandva/skills/vadi/SKILL.md \
+  'install-dvandva-hooks\.sh.*core\.hooksPath=.*\.githooks|core\.hooksPath=.*\.githooks.*install-dvandva-hooks\.sh' \
+  'vadi skill preflight must enforce repo-local Dvandva hooks'
+
+require_slurp_match \
+  plugins/dvandva/skills/prativadi/SKILL.md \
+  'install-dvandva-hooks\.sh.*core\.hooksPath=.*\.githooks|core\.hooksPath=.*\.githooks.*install-dvandva-hooks\.sh' \
+  'prativadi skill preflight must enforce repo-local Dvandva hooks'
+
+for rel in scripts/dvandva-commit-gate.sh scripts/dvandva-drift-lint.sh .githooks/prepare-commit-msg; do
+  require_slurp_match \
+    "$rel" \
+    '\.dvandva/runs.*baton\.json|baton\.json.*\.dvandva/runs' \
+    "$rel must scan run-scoped baton paths"
+  require_slurp_match \
+    "$rel" \
+    'done.*human_question.*human_decision|human_question.*human_decision.*done' \
+    "$rel must share terminal baton statuses"
+  require_slurp_match \
+    "$rel" \
+    'jq empty' \
+    "$rel must fail closed on malformed baton JSON"
+done
 
 require_slurp_match \
   product.md \
