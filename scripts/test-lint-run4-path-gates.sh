@@ -271,13 +271,39 @@ expect_fail \
   "$CASE" \
   "prativadi skill preflight must enforce repo-local Dvandva hooks"
 
-CASE="$TMP_DIR/no-resolver-run-scope"
-write_path_fixture "$CASE"
-perl -0pi -e 's#\.dvandva/runs#run dirs#g' "$CASE/scripts/dvandva-drift-lint.sh"
-expect_fail \
-  "path-gate lint rejects resolver without run-scoped scan" \
-  "$CASE" \
-  "scripts/dvandva-drift-lint.sh must scan run-scoped baton paths"
+resolver_files=(
+  "scripts/dvandva-commit-gate.sh"
+  "scripts/dvandva-drift-lint.sh"
+  ".githooks/prepare-commit-msg"
+)
+
+for rel in "${resolver_files[@]}"; do
+  safe_rel="${rel//\//-}"
+
+  CASE="$TMP_DIR/no-resolver-run-scope-$safe_rel"
+  write_path_fixture "$CASE"
+  perl -0pi -e 's#\.dvandva/runs#run dirs#g' "$CASE/$rel"
+  expect_fail \
+    "path-gate lint rejects $rel without run-scoped scan" \
+    "$CASE" \
+    "$rel must scan run-scoped baton paths"
+
+  CASE="$TMP_DIR/no-resolver-terminal-status-$safe_rel"
+  write_path_fixture "$CASE"
+  perl -0pi -e 's/human_question/human review/g' "$CASE/$rel"
+  expect_fail \
+    "path-gate lint rejects $rel without terminal statuses" \
+    "$CASE" \
+    "$rel must share terminal baton statuses"
+
+  CASE="$TMP_DIR/no-resolver-jq-empty-$safe_rel"
+  write_path_fixture "$CASE"
+  perl -0pi -e 's/jq empty/jq type/g' "$CASE/$rel"
+  expect_fail \
+    "path-gate lint rejects $rel without jq empty" \
+    "$CASE" \
+    "$rel must fail closed on malformed baton JSON"
+done
 
 if [[ "$FAILURES" -gt 0 ]]; then
   exit 1
