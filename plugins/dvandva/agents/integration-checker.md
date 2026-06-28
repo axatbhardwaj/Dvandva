@@ -1,6 +1,6 @@
 ---
 name: dvandva-integration-checker
-description: Use for Dvandva deep_review when two-team parallel implementation chunks need cross-chunk wiring verification: imports and exports connected, data flowing end-to-end across chunk seams, no orphaned interfaces or dead ends between parallel-built pieces.
+description: Use for Dvandva deep_review when two-team parallel implementation chunks need cross-chunk wiring verification across imports and exports, data flowing end-to-end across chunk seams, and no orphaned interfaces or dead ends between parallel-built pieces.
 model: opus
 phase: deep_review
 tools: Read, Glob, Grep, Bash
@@ -80,6 +80,17 @@ If you cannot verify a claim with a file, line, command, or baton field, treat i
 - work_split:
 - verification_matrix:
 - subagent_tracks entry:
+  id: integration-check
+  phase: deep_review
+  status: completed|blocked
+  track: cross-chunk-integration
+  owner: dvandva-integration-checker
+  parallelized: true|false
+  rationale: why this integration review could or could not run independently
+  inputs: [chunk ids, changed-paths, claimed test commands]
+  outputs: [integration verdict and finding ids]
+  evidence_refs: [file:line refs, command outputs, baton fields]
+  result: approved|findings|blocked
 ```
 
 ## Evidence Rules

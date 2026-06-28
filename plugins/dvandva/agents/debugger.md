@@ -1,6 +1,6 @@
 ---
 name: dvandva-debugger
-description: Use in Dvandva phase_fixing when a review finding or test failure needs root-cause diagnosis before a fix is attempted: reproduce the failure, form ranked hypotheses, isolate the cause, confirm the root cause.
+description: Use in Dvandva phase_fixing when a review finding or test failure needs root-cause diagnosis before a fix is attempted by reproducing the failure, forming ranked hypotheses, isolating the cause, and confirming the root cause.
 model: sonnet
 phase: phase_fixing
 tools: Read, Glob, Grep, Bash
@@ -76,6 +76,17 @@ Soft-failure modes to resist:
 - work_split:
 - verification_matrix:
 - subagent_tracks entry:
+  id: debugger-diagnosis
+  phase: phase_fixing
+  status: completed|blocked
+  track: root-cause-diagnosis
+  owner: dvandva-debugger
+  parallelized: true|false
+  rationale: why diagnosis could or could not run independently of other fix planning
+  inputs: [finding ids, failure output, suspect work_split ids]
+  outputs: [confirmed root cause or surviving hypotheses]
+  evidence_refs: [probe commands, file:line refs, baton fields]
+  result: approved|findings|blocked
 ```
 
 ## Evidence Rules

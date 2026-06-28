@@ -1,6 +1,6 @@
 ---
 name: dvandva-security-auditor
-description: Use for Dvandva deep_review when the run needs structured security-threat analysis: authn/authz and role/privilege boundaries, input validation and injection vectors, secrets handling, supply-chain risks in installer scripts, and unsafe shell/path operations.
+description: Use for Dvandva deep_review when the run needs structured security-threat analysis across authn/authz and role/privilege boundaries, input validation and injection vectors, secrets handling, supply-chain risks in installer scripts, and unsafe shell/path operations.
 model: opus
 phase: deep_review
 tools: Read, Glob, Grep, Bash
@@ -77,6 +77,17 @@ If you cannot verify a claim with a file, line, command, or baton field, treat i
 - work_split:
 - verification_matrix:
 - subagent_tracks entry:
+  id: security-audit
+  phase: deep_review
+  status: completed|blocked
+  track: security-threat-review
+  owner: dvandva-security-auditor
+  parallelized: true|false
+  rationale: why this security review could or could not run independently
+  inputs: [changed-paths, work_split ids, verification_matrix ids]
+  outputs: [security verdict and finding ids]
+  evidence_refs: [file:line refs, command outputs, baton fields]
+  result: approved|findings|blocked
 ```
 
 ## Evidence Rules

@@ -69,6 +69,8 @@ If a required Superpowers skill is unavailable, do not continue with a weakened 
 
 All phases are subagent-driven through conditional parallelism: use parallel subagents for genuinely disjoint tracks when the harness exposes enough subagent capacity; otherwise do the track directly and record what was not parallelized and why in `subagent_tracks` and `work_split`. In short, all phases are subagent-driven, but only independent tracks are parallelized. Do not cap Dvandva at two subagents; spawn as many independent subagent tracks as the harness can safely run without file-scope conflicts or shared-state races. Codex subagent handles must be closed explicitly after their results are consumed, because completed agents can remain open and keep counting against the thread limit. Use the canonical Dvandva subagent roster in `plugins/dvandva/agents/`:
 
+Dvandva model classes are vendor-neutral. Agent frontmatter uses `model: opus` and `model: sonnet` as class labels, not Anthropic-only product IDs. Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models. Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`. Do not use `haiku` for Dvandva subagents.
+
 For v2 phase work, implementation-phase parallelism is mandatory. A spec-approved phase enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; the `work_split` must contain at least five implementation chunks distributed across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. After tests, the phase enters `cross_review` so each role reviews the other role's chunks before `deep_review`.
 
 Phase convention: implementation-chunk `subagent_tracks` use the numeric implementation phase; cross-review and deep-review gate tracks use the status-name phase such as `phase: "cross_review"` or `phase: "deep_review"`.
@@ -77,14 +79,14 @@ Team-owned v2 states may write same-status sync checkpoints while both roles rem
 
 | Phase | Default subagents |
 |---|---|
-| `research_drafting` / `research_revision` | `dvandva-researcher`, `dvandva-architect`, `dvandva-baton-auditor` |
+| `research_drafting` / `research_revision` | `dvandva-researcher`, `dvandva-pattern-mapper` when local analogs matter, `dvandva-architect`, `dvandva-baton-auditor` |
 | `spec_drafting` / `spec_revision` | `dvandva-architect`, `dvandva-baton-auditor` |
 | `parallel_implementing` / `implementing` | `dvandva-implementer`, `dvandva-sandbox-verifier` when runtime evidence helps |
 | `test_creation` | `dvandva-test-creator`, `dvandva-sandbox-verifier` |
 | `cross_review` / `cross_fixing` | `dvandva-cross-reviewer`, `dvandva-baton-auditor`, `dvandva-sandbox-verifier` |
-| `phase_fixing` | `dvandva-implementer`, `dvandva-test-creator` if behavior changes |
+| `phase_fixing` | `dvandva-debugger` when root cause is unclear or disputed, `dvandva-implementer`, `dvandva-test-creator` if behavior changes |
 | `deslop` | `dvandva-deslopper`, `dvandva-baton-auditor` |
-| `review_of_review` / `counter_review` | `dvandva-deep-reviewer`, `dvandva-adversarial-analyst`, `dvandva-baton-auditor` |
+| `review_of_review` / `counter_review` | `dvandva-deep-reviewer`, `dvandva-adversarial-analyst`, `dvandva-security-auditor` for security-relevant counter-changes, `dvandva-integration-checker` for cross-chunk wiring, `dvandva-doc-verifier` for docs or explainer claims, `dvandva-baton-auditor` |
 
 If no subagent tool is available, do the same tracks directly and record the fallback in `subagent_tracks` and `work_split`.
 

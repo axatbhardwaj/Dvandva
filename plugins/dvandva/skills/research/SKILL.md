@@ -52,14 +52,17 @@ Subagents are read-only during research by default. The main agent synthesizes t
 
 Use the canonical Dvandva subagent roster under `plugins/dvandva/agents/` when the harness supports named subagents. These local roles are the source of truth for Dvandva; retired personal agent definitions from external skill repos should not be required.
 
+Dvandva model classes are vendor-neutral. Agent frontmatter uses `model: opus` and `model: sonnet` as class labels, not Anthropic-only product IDs. Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models. Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`. Do not use `haiku` for Dvandva subagents.
+
 | Phase | Agent |
 |---|---|
-| `research_drafting` | `dvandva-researcher`, `dvandva-architect`, `dvandva-baton-auditor` |
+| `research_drafting` | `dvandva-researcher`, `dvandva-pattern-mapper`, `dvandva-architect`, `dvandva-baton-auditor` |
 | `spec_drafting` | `dvandva-architect`, `dvandva-baton-auditor` |
 | `parallel_implementing` / `implementing` | `dvandva-implementer`, optionally `dvandva-sandbox-verifier` |
 | `test_creation` | `dvandva-test-creator`, `dvandva-sandbox-verifier` |
 | `cross_review` / `cross_fixing` | `dvandva-cross-reviewer`, `dvandva-baton-auditor`, `dvandva-sandbox-verifier` |
-| `deep_review` | `dvandva-deep-reviewer`, `dvandva-adversarial-analyst`, `dvandva-baton-auditor`, optionally `dvandva-sandbox-verifier` |
+| `deep_review` | `dvandva-deep-reviewer`, `dvandva-adversarial-analyst`, trigger-gated `dvandva-security-auditor`, `dvandva-integration-checker`, `dvandva-doc-verifier`, `dvandva-baton-auditor`, optionally `dvandva-sandbox-verifier` |
+| `phase_fixing` | `dvandva-debugger` when root cause is unclear, `dvandva-implementer`, `dvandva-test-creator` |
 | `deslop` | `dvandva-deslopper`, `dvandva-baton-auditor` |
 
 This borrows the useful part of GSD-style fresh-context subagents and OMO-style team roles without adding a daemon, mailbox, or central runtime process. The baton still owns coordination.

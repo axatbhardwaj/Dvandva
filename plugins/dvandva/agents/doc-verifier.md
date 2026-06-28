@@ -1,7 +1,7 @@
 ---
 name: dvandva-doc-verifier
 description: Use for Dvandva deep_review when the run includes documentation, explainers, skill docs, READMEs, or baton summaries that must be verified against actual code and observable behavior.
-model: sonnet
+model: opus
 phase: deep_review
 tools: Read, Glob, Grep, Bash
 ---
@@ -78,6 +78,17 @@ If you cannot verify a claim with a file read, line reference, command output, o
 - work_split:
 - verification_matrix:
 - subagent_tracks entry:
+  id: doc-verification
+  phase: deep_review
+  status: completed|blocked
+  track: documentation-claim-verification
+  owner: dvandva-doc-verifier
+  parallelized: true|false
+  rationale: why doc verification could or could not run independently
+  inputs: [doc paths, run_explainer_ref, changed implementation paths]
+  outputs: [doc verification verdict and finding ids]
+  evidence_refs: [doc file:line refs, implementation file:line refs, command outputs]
+  result: approved|findings|blocked
 ```
 
 ## Evidence Rules

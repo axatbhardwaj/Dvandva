@@ -47,6 +47,65 @@ reject_text() {
   fi
 }
 
+require_agent_model() {
+  local file="$1"
+  local expected="$2"
+  local label="$3"
+
+  if [[ ! -f "$file" ]]; then
+    echo "FAIL: $label"
+    echo "  missing file: ${file#$ROOT_DIR/}"
+    failures=$((failures + 1))
+    return
+  fi
+
+  local count
+  count="$(grep -Ec '^model:' "$file" || true)"
+  if [[ "$count" -ne 1 ]]; then
+    echo "FAIL: $label"
+    echo "  expected exactly one model: field, found $count"
+    echo "  file: ${file#$ROOT_DIR/}"
+    failures=$((failures + 1))
+    return
+  fi
+
+  if grep -Fxq -- "model: $expected" "$file"; then
+    echo "PASS: $label"
+  else
+    echo "FAIL: $label"
+    echo "  expected model: $expected"
+    echo "  file: ${file#$ROOT_DIR/}"
+    failures=$((failures + 1))
+  fi
+}
+
+require_output_contract_text() {
+  local file="$1"
+  local pattern="$2"
+  local label="$3"
+
+  if [[ ! -f "$file" ]]; then
+    echo "FAIL: $label"
+    echo "  missing file: ${file#$ROOT_DIR/}"
+    failures=$((failures + 1))
+    return
+  fi
+
+  if awk -v pattern="$pattern" '
+    /^## Output Contract/ { in_contract = 1 }
+    /^## Evidence Rules/ { in_contract = 0 }
+    in_contract && index($0, pattern) { found = 1 }
+    END { exit(found ? 0 : 1) }
+  ' "$file"; then
+    echo "PASS: $label"
+  else
+    echo "FAIL: $label"
+    echo "  missing output-contract pattern: $pattern"
+    echo "  file: ${file#$ROOT_DIR/}"
+    failures=$((failures + 1))
+  fi
+}
+
 research_skill="$ROOT_DIR/plugins/dvandva/skills/research/SKILL.md"
 require_text "$research_skill" "name: research" "research skill has plugin-local name"
 require_text "$research_skill" "description: Use when" "research skill has trigger-only description"
@@ -203,12 +262,18 @@ require_text "$schema" '"cross_review"' "v2 schema includes cross-review status"
 require_text "$schema" '"cross_fixing"' "v2 schema includes cross-fixing status"
 require_text "$schema" '"deep_review"' "v2 schema includes deep review status"
 require_text "$schema" '"deslop"' "v2 schema includes de-slop status"
+reject_text "$schema" '"id": "deep_review-security"' "v2 seed does not make security auditor mandatory"
+reject_text "$schema" '"id": "deep_review-integration"' "v2 seed does not make integration checker mandatory"
+reject_text "$schema" '"id": "deep_review-doc-verification"' "v2 seed does not make doc verifier mandatory"
+reject_text "$schema" '"id": "phase_fixing-debug"' "v2 seed does not make debugger mandatory"
+reject_text "$schema" '"id": "research-pattern-mapping"' "v2 seed does not make pattern mapper mandatory"
 
 agent_dir="$ROOT_DIR/plugins/dvandva/agents"
 for agent in researcher architect implementer test-creator cross-reviewer adversarial-analyst deep-reviewer deslopper sandbox-verifier baton-auditor security-auditor integration-checker debugger doc-verifier pattern-mapper; do
   file="$agent_dir/$agent.md"
   require_text "$file" "name: dvandva-$agent" "agent $agent has Dvandva name"
   require_text "$file" "description: Use" "agent $agent has trigger-focused description"
+  reject_text "$file" "model: haiku" "agent $agent rejects haiku model class"
   require_text "$file" "phase:" "agent $agent declares phase ownership"
   require_text "$file" "tools:" "agent $agent declares explicit tool scope"
   require_text "$file" "## Mission" "agent $agent declares a mission"
@@ -223,6 +288,29 @@ for agent in researcher architect implementer test-creator cross-reviewer advers
   require_text "$file" "verification_matrix" "agent $agent reports verification_matrix"
   require_text "$file" "subagent_tracks" "agent $agent reports subagent track evidence"
   reject_text "$file" "not an orchestrator" "agent $agent avoids old no-orchestrator framing"
+done
+
+for agent in security-auditor integration-checker debugger doc-verifier pattern-mapper; do
+  file="$agent_dir/$agent.md"
+  require_output_contract_text "$file" "id:" "new agent $agent outputs schema-valid track id"
+  require_output_contract_text "$file" "phase:" "new agent $agent outputs schema-valid track phase"
+  require_output_contract_text "$file" "status: completed|blocked" "new agent $agent outputs schema-valid track status"
+  require_output_contract_text "$file" "track:" "new agent $agent outputs schema-valid track name"
+  require_output_contract_text "$file" "owner: dvandva-$agent" "new agent $agent outputs schema-valid track owner"
+  require_output_contract_text "$file" "parallelized:" "new agent $agent outputs schema-valid parallelized flag"
+  require_output_contract_text "$file" "rationale:" "new agent $agent outputs schema-valid rationale"
+  require_output_contract_text "$file" "inputs:" "new agent $agent outputs schema-valid inputs"
+  require_output_contract_text "$file" "outputs:" "new agent $agent outputs schema-valid outputs"
+  require_output_contract_text "$file" "evidence_refs:" "new agent $agent outputs schema-valid evidence refs"
+  require_output_contract_text "$file" "result: approved|findings|blocked" "new agent $agent outputs schema-valid result"
+done
+
+for agent in adversarial-analyst architect baton-auditor cross-reviewer deep-reviewer doc-verifier integration-checker pattern-mapper researcher sandbox-verifier security-auditor; do
+  require_agent_model "$agent_dir/$agent.md" "opus" "agent $agent uses opus-class model for planning/reviewing/architecture"
+done
+
+for agent in debugger deslopper implementer test-creator; do
+  require_agent_model "$agent_dir/$agent.md" "sonnet" "agent $agent uses sonnet-class model for development/implementation/documentation"
 done
 
 for agent in researcher architect implementer test-creator deslopper pattern-mapper; do
@@ -270,6 +358,24 @@ require_text "$ROOT_DIR/product.md" "GSD-style fresh-context subagents" "product
 require_text "$ROOT_DIR/product.md" "OMO-style team roles" "product cites OMO-style team role pattern"
 require_text "$ROOT_DIR/product.md" "canonical Dvandva subagent roster" "product declares canonical Dvandva agent roster"
 require_text "$ROOT_DIR/product.md" "dvandva-adversarial-analyst" "product includes adversarial analyst"
+for agent in security-auditor integration-checker debugger doc-verifier pattern-mapper; do
+  require_text "$ROOT_DIR/product.md" "dvandva-$agent" "product includes $agent"
+  require_text "$ROOT_DIR/plugins/dvandva/skills/vadi/SKILL.md" "dvandva-$agent" "vadi skill includes $agent"
+  require_text "$ROOT_DIR/plugins/dvandva/skills/prativadi/SKILL.md" "dvandva-$agent" "prativadi skill includes $agent"
+  require_text "$research_skill" "dvandva-$agent" "research skill includes $agent"
+done
+for file in \
+  "$ROOT_DIR/README.md" \
+  "$ROOT_DIR/product.md" \
+  "$ROOT_DIR/plugins/dvandva/skills/vadi/SKILL.md" \
+  "$ROOT_DIR/plugins/dvandva/skills/prativadi/SKILL.md" \
+  "$research_skill"; do
+  name="${file#$ROOT_DIR/}"
+  require_text "$file" "Dvandva model classes are vendor-neutral" "$name documents vendor-neutral model classes"
+  require_text "$file" "Claude Code maps \`opus\` to Opus-class and \`sonnet\` to Sonnet-class models" "$name documents Claude model-class mapping"
+  require_text "$file" "Codex maps \`opus\` to \`gpt-5.5\` and \`sonnet\` to \`gpt-5.4\`" "$name documents Codex model-class mapping"
+  require_text "$file" "Do not use \`haiku\` for Dvandva subagents" "$name forbids haiku-class Dvandva subagents"
+done
 require_text "$ROOT_DIR/product.md" "adversarial-analyst.md" "product layout includes adversarial analyst agent file"
 require_text "$ROOT_DIR/product.md" "at least three angle-specific reviewers" "product requires multi-angle deep review"
 require_text "$ROOT_DIR/product.md" "./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html" "product documents final explainer path"

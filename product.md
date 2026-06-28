@@ -33,7 +33,9 @@ Legacy enforcement starts with the agent checklist embedded in each SKILL.md and
 
 The product is the `dvandva` plugin, its bundled protocol/orchestration skills, plugin-local baton references, bundled wait helpers, an install/usage doc, and a pilot case study. It coordinates work through baton state and skill checklists; it does not add an agent launcher, daemon, or GitHub integration.
 
-Subagent execution uses the canonical Dvandva subagent roster under `plugins/dvandva/agents/`. This roster replaces the earlier personal `claude-skills/agents` roles for Dvandva work and includes `dvandva-researcher`, `dvandva-architect`, `dvandva-implementer`, `dvandva-test-creator`, `dvandva-cross-reviewer`, `dvandva-adversarial-analyst`, `dvandva-deep-reviewer`, `dvandva-deslopper`, `dvandva-sandbox-verifier`, and `dvandva-baton-auditor`. The design takes GSD-style fresh-context subagents for bounded heavy work and OMO-style team roles for specialization, but preserves Dvandva's core constraint: the baton remains the only coordinator. There is no two-subagent ceiling; each phase uses conditional parallelism and may spawn as many independent tracks as the harness can safely run without shared-state conflicts. Codex-specific lifecycle note: completed subagents can remain open and keep counting against the thread/concurrency limit, so the controller must explicitly close each subagent handle after consuming its result.
+Subagent execution uses the canonical Dvandva subagent roster under `plugins/dvandva/agents/`. This roster replaces the earlier personal `claude-skills/agents` roles for Dvandva work and includes `dvandva-researcher`, `dvandva-architect`, `dvandva-pattern-mapper`, `dvandva-implementer`, `dvandva-test-creator`, `dvandva-debugger`, `dvandva-cross-reviewer`, `dvandva-adversarial-analyst`, `dvandva-deep-reviewer`, `dvandva-security-auditor`, `dvandva-integration-checker`, `dvandva-doc-verifier`, `dvandva-deslopper`, `dvandva-sandbox-verifier`, and `dvandva-baton-auditor`. The design takes GSD-style fresh-context subagents for bounded heavy work and OMO-style team roles for specialization, but preserves Dvandva's core constraint: the baton remains the only coordinator. There is no two-subagent ceiling; each phase uses conditional parallelism and may spawn as many independent tracks as the harness can safely run without shared-state conflicts. Specialist agents are trigger-gated, not mandatory seed work: use security, integration, doc-verification, debugger, and pattern-mapping agents when their phase/risk trigger applies. Codex-specific lifecycle note: completed subagents can remain open and keep counting against the thread/concurrency limit, so the controller must explicitly close each subagent handle after consuming its result.
+
+Dvandva model classes are vendor-neutral. Agent frontmatter uses `model: opus` and `model: sonnet` as class labels, not Anthropic-only product IDs. Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models. Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`. Do not use `haiku` for Dvandva subagents.
 
 **PR 353 provenance.** PR 353 proved the need for a durable handoff surface, explicit ack/ownership flips, reviewer findings that can become fixes, and a cheaper alternative to agent-to-agent PR comment traffic. The v1 mutual-review loop, disagreement cap, turn cap, `human_decision` terminal, and baton transition table are product design responses to that evidence; they were not themselves fully exercised as named states in PR 353. The pilot exists to validate those new protocol pieces.
 
@@ -126,11 +128,16 @@ plugins/
     agents/
       researcher.md
       architect.md
+      pattern-mapper.md
       implementer.md
       test-creator.md
+      debugger.md
       cross-reviewer.md
       adversarial-analyst.md
       deep-reviewer.md
+      security-auditor.md
+      integration-checker.md
+      doc-verifier.md
       deslopper.md
       sandbox-verifier.md
       baton-auditor.md
@@ -372,6 +379,8 @@ Both skills target the agentskills.io open standard. Only the universal frontmat
 - **No `paths` glob.** Skills are workflow-scoped, not file-scoped.
 - **No `context: fork`.** Skills run in the main session so `/goal` transcript surfacing works (the goal evaluator only sees what's surfaced).
 - **No engine-specific frontmatter extensions.** If forced in a future rev, the SKILL.md forks into engine-specific variants; document the reason explicitly.
+
+Agent files are separate from `SKILL.md` portability. Their `model:` field is a Dvandva model-class hint, not an engine lock-in: `opus` means the strongest available planning/review/architecture class, and `sonnet` means the implementation/documentation workhorse class. Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models. Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`. Dvandva never maps any agent to a `haiku` class.
 
 **Superpowers compatibility note:** both engines must have Superpowers installed at runtime. The vadi and prativadi rely on Superpowers as the active-work discipline, not only as planning helpers: skill-use discipline before action, brainstorming before design, TDD before implementation/fixups, verification before completion, writing-skills discipline for skill edits, and parallel/subagent execution when tracks are independent. Skills invoke these via the engine's native skill tool. If Superpowers is absent, the active Dvandva role must stop, surface setup instructions, and avoid writing a success or advancement baton.
 

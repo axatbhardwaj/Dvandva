@@ -1,7 +1,7 @@
 ---
 name: dvandva-pattern-mapper
 description: Use for Dvandva research when an implementer needs to know the existing codebase analog or proven pattern before writing new code.
-model: sonnet
+model: opus
 phase: research
 tools: Read, Glob, Grep
 ---
@@ -74,10 +74,15 @@ One paragraph: the dominant pattern found and why it is the right analog for the
 - subagent_tracks entry:
   id: pattern-mapping
   phase: research
+  status: completed|blocked
   track: pattern-research
   owner: dvandva-pattern-mapper
+  parallelized: true|false
+  rationale: why pattern mapping could or could not run independently
+  inputs: [original ask, work_split ids, search terms]
   outputs: [pattern-map-ref]
   evidence_refs: [file-paths-inspected]
+  result: approved|findings|blocked
 
 ## Unknowns
 - Question, why it blocks or does not block progress

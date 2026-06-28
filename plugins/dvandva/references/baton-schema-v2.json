@@ -47,19 +47,6 @@
       "artifact_refs": []
     },
     {
-      "id": "research-pattern-mapping",
-      "phase": "research",
-      "owner": "vadi",
-      "scope": "Map existing codebase patterns so implementers copy proven structure instead of inventing. Delivers exact file paths and line ranges for the closest analog to each planned implementation chunk.",
-      "suggested_agent": "dvandva-pattern-mapper",
-      "paths": [],
-      "can_parallelize": true,
-      "parallel_rationale": "Pattern mapping can run beside codebase exploration and docs research when search paths do not overlap.",
-      "depends_on": [],
-      "status": "planned",
-      "artifact_refs": []
-    },
-    {
       "id": "implementation-chunk-1",
       "phase": "1",
       "chunk_type": "implementation",
@@ -139,70 +126,6 @@
       "parallel_rationale": "Deep review splits across independent review angles when subagent tooling is available.",
       "depends_on": [
         "cross_review"
-      ],
-      "status": "planned",
-      "artifact_refs": []
-    },
-    {
-      "id": "deep_review-security",
-      "phase": "1",
-      "owner": "prativadi",
-      "owner_role": "prativadi",
-      "suggested_agent": "dvandva-security-auditor",
-      "scope": "Security-focused deep review angle: authn/authz boundaries, injection vectors, secrets handling, supply-chain, and unsafe shell/path operations.",
-      "paths": [],
-      "can_parallelize": true,
-      "parallel_rationale": "Security review angle runs independently of other deep_review angles.",
-      "depends_on": [
-        "cross_review"
-      ],
-      "status": "planned",
-      "artifact_refs": []
-    },
-    {
-      "id": "deep_review-integration",
-      "phase": "1",
-      "owner": "prativadi",
-      "owner_role": "prativadi",
-      "suggested_agent": "dvandva-integration-checker",
-      "scope": "Cross-chunk wiring angle: verify imports, exports, and end-to-end data flow across parallel-built vadi and prativadi chunks.",
-      "paths": [],
-      "can_parallelize": true,
-      "parallel_rationale": "Integration check angle runs independently of other deep_review angles.",
-      "depends_on": [
-        "cross_review"
-      ],
-      "status": "planned",
-      "artifact_refs": []
-    },
-    {
-      "id": "deep_review-doc-verification",
-      "phase": "1",
-      "owner": "prativadi",
-      "owner_role": "prativadi",
-      "suggested_agent": "dvandva-doc-verifier",
-      "scope": "Documentation verification angle: confirm that run-explainer HTML, skill docs, READMEs, and baton summaries match what the code actually does. Flags doc-drift and unsupported claims.",
-      "paths": [],
-      "can_parallelize": true,
-      "parallel_rationale": "Doc verification angle runs independently of other deep_review angles.",
-      "depends_on": [
-        "cross_review"
-      ],
-      "status": "planned",
-      "artifact_refs": []
-    },
-    {
-      "id": "phase_fixing-debug",
-      "phase": "1",
-      "owner": "vadi",
-      "owner_role": "vadi",
-      "suggested_agent": "dvandva-debugger",
-      "scope": "Root-cause diagnosis before fix: reproduce the failure, form ranked hypotheses, isolate, confirm root cause.",
-      "paths": [],
-      "can_parallelize": false,
-      "parallel_rationale": "Debugging is sequential: confirm root cause before writing a fix.",
-      "depends_on": [
-        "deep_review"
       ],
       "status": "planned",
       "artifact_refs": []

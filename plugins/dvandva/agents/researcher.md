@@ -1,7 +1,7 @@
 ---
 name: dvandva-researcher
 description: Use for read-only Dvandva source research before planning, implementation, review, or a disputed baton handoff.
-model: sonnet
+model: opus
 phase: research_drafting
 tools: Read, Glob, Grep, WebFetch
 ---

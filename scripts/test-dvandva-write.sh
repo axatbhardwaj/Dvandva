@@ -618,6 +618,22 @@ make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
 run_case "v2 bundled adversarial analyst parallel owner is accepted" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+for owner in \
+  dvandva-security-auditor \
+  dvandva-integration-checker \
+  dvandva-debugger \
+  dvandva-doc-verifier \
+  dvandva-pattern-mapper; do
+  BOX="$(new_box "v2-${owner}-parallel-subagent-owner")"
+  make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+    '.subagent_tracks[0].parallelized = true' \
+    ".subagent_tracks[0].owner = \"$owner\"" \
+    ".subagent_tracks[0].outputs = [\"New bundled owner accepted: $owner\"]" \
+    ".subagent_tracks[0].evidence_refs = [\"subagent:$owner\"]"
+  run_case "v2 new bundled owner $owner is accepted" 0 \
+    "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+done
+
 BOX="$(new_box v2-phase-status-mismatch)"
 make_baton_v2 "$BOX/baton.next.json" "implementing" "vadi" 0 '.phase = "research"'
 run_case_contains "v2 implementation status rejects research phase" 23 "DVANDVA_WRITE bad_phase_status" \
