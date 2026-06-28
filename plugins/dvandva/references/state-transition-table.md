@@ -20,6 +20,7 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
 - `run_explainer_ref`: path to the final run explainer HTML under `./superpowers/run-reports/`, required before terminal `done`.
 - `active_roles`: v2 concurrent role list. Team-owned statuses use `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; scalar statuses use an empty array.
 - `work_split`: planned ownership map for vadi, prativadi, human, or subagents; records phase, owner, scope, paths, status, artifact refs, parallelism rationale, and dependencies.
+- `agent_instances`: first-class registry for generated run-scoped agent instances, including provenance, model/permission class, read/write paths, work item IDs, base checkpoint, output refs, evidence refs, lifecycle status, and closure result.
 - `subagent_tracks`: actual conditional parallelism record. Parallelize only genuinely disjoint tracks; record what was not parallelized and why when direct execution is safer or when subagent tooling is unavailable.
 - `verification_matrix`: planned evidence map from claims and risks to checks, owners, expected results, command or inspection, result, evidence refs, and the 100% test coverage target for new behavior.
 - `turn_cap`: default `60`; passive shell wait heartbeats do not count as
@@ -38,7 +39,7 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
 
 Legacy `.dvandva/baton.json` may continue using `dvandva.baton.v1`. The live
 v2 write-helper enforcement requires safe `run_id`, `original_ask`,
-`run_explainer_ref`, `active_roles`, `work_split`, `subagent_tracks`, and `verification_matrix`; it also requires a
+`run_explainer_ref`, `active_roles`, `work_split`, `agent_instances`, `subagent_tracks`, and `verification_matrix`; it also requires a
 non-empty `research_ref` before advancing beyond the initial research draft,
 except that `human_question` and `human_decision` remain legal early-escalation
 targets before `research_ref` exists. Existing batons cannot change schema or v2
@@ -67,6 +68,7 @@ Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`) m
   "run_explainer_ref": "v2 path to gitignored final run explainer HTML under ./superpowers/run-reports/, required before terminal done",
   "plan_ref": "path to gitignored generated HTML plan file under ./superpowers/plans/, set during spec phase",
   "work_split": "v2 array/object describing planned ownership by phase, owner, scope, paths, status, and artifact refs",
+  "agent_instances": "v2 array recording generated run-scoped agent instances, provenance, model/permission class, read/write paths, work item IDs, base checkpoint, output refs, evidence refs, lifecycle status, and closure result",
   "subagent_tracks": "v2 array recording actual conditional parallelism tracks, owner, evidence refs, fallback rationale, and result",
   "verification_matrix": "v2 array/object mapping claims and risks to planned checks, owners, expected evidence, result, and evidence_ref",
   "master_plan_locked": "boolean; false during planning, true once prativadi advances to phase 1",
@@ -144,7 +146,7 @@ Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`) m
 | `phase: N, implementing` | `human_decision` | Vadi blocked |
 | `phase_review (impl)` | `phase_fixing` | Prativadi hands back substantive findings |
 | `phase_review (impl)` | `review_of_review, review_target: prativadi_fixups` | Prativadi applied narrow fixups, mutual review owed |
-| `phase_review (impl)` | `phase: N+1, status: implementing, disagreement_round: 0` | Prativadi approves, no changes |
+| `phase_review (impl)` | `phase: N+1, status: implementing, disagreement_round: 0` | Legacy v1: Prativadi approves, no changes |
 | `phase_review (impl)` | final `done` | Legacy v1 final phase approved by both roles; optional commit/push complete; PR creation remains false |
 | `phase_review (impl)` | `human_decision` | Prativadi escalates |
 | `phase_fixing` | `phase_review (impl)` | Vadi addressed findings, re-hands |
@@ -154,11 +156,11 @@ Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`) m
 
 | From | To | Trigger |
 |---|---|---|
-| `review_of_review (prativadi_fixups)` | `phase: N+1, status: implementing, disagreement_round: 0` | Vadi approves prativadi fixups |
+| `review_of_review (prativadi_fixups)` | `phase: N+1, status: implementing, disagreement_round: 0` | Legacy v1: Vadi approves prativadi fixups |
 | `review_of_review (prativadi_fixups)` | final `done` | Final phase fixups approved by both roles; optional commit/push complete |
 | `review_of_review (prativadi_fixups)` | `counter_review, review_target: vadi_counter` | Vadi disapproves, writes counter, increments `disagreement_round` |
 | `review_of_review (prativadi_fixups)` | `human_decision` | `disagreement_round >= disagreement_cap` |
-| `counter_review (vadi_counter)` | `phase: N+1, status: implementing, disagreement_round: 0` | Prativadi approves counter |
+| `counter_review (vadi_counter)` | `phase: N+1, status: implementing, disagreement_round: 0` | Legacy v1: Prativadi approves counter |
 | `counter_review (vadi_counter)` | final `done` | Final phase counter approved by both roles; optional commit/push complete |
 | `counter_review (vadi_counter)` | `review_of_review, review_target: prativadi_fixups` | Prativadi disapproves counter, applies a different fix, increments `disagreement_round` |
 | `counter_review (vadi_counter)` | `human_decision` | `disagreement_round >= disagreement_cap` |

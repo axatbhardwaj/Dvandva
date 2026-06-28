@@ -82,7 +82,7 @@ Your implementation result and verification run are consumed by the test-creator
 - Do not edit baton files directly.
 - Do not combine implementation with deep_review.
 - Do not make schema, dependency, or infrastructure changes without escalating.
-- If you have read 5+ files without an edit, stop and write — re-reading is not progress (analysis-paralysis guard).
+- If required context exceeds the assigned scope, stop and report the blocker instead of expanding the edit.
 
 ## Common Failures
 

@@ -41,7 +41,7 @@ Use parallel subagents aggressively when tools are available. Default tracks:
 - Risk map: edge cases, conflicting requirements, stale references, and likely review failures.
 - Work distribution: proposed owner and scope for each track or phase.
 - Test creation: every new behavior, helper, schema path, or generated workflow needs an explicit test or lint entry. Source-only documentation gets a lint/review entry rather than executable coverage.
-- Deep review: plan a `deep_review` pass after implementation and test creation to hunt correctness bugs, stale wording, missed invariants, and low/minor issues.
+- Deep review: plan a `deep_review` pass after implementation, test_creation, and cross_review to hunt correctness bugs, stale wording, missed invariants, and low/minor issues.
 - De-slop: plan a `deslop` pass to remove fuzzy wording, duplicated instructions, overbroad abstractions, stale examples, and generated-looking clutter before final approval.
 
 If no subagent tool is available, do the same exploration directly and record the fallback in work_split.
@@ -75,7 +75,7 @@ Generated instances are run-scoped and ephemeral — no additive roster sprawl u
 
 Mandatory invariants:
 - Coordination invariant: no daemon, no hidden orchestrator — the baton is the only coordinator.
-- Single-writer: generated agents never own `assignee`, phase transitions, or final approval.
+- Single-writer: generated agents never own `assignee`, `active_roles`, phase transitions, or final approval.
 - Path invariant: dynamic write-path disjointness — instances with non-empty `write_paths` in the same checkpoint must be pairwise disjoint unless explicitly serialized through `depends_on` within a shared `conflict_group`.
 - Model-class mapping: use `opus-class|gpt-5.5` for review, planning, and architecture seeds; use `sonnet-class|gpt-5.4` for implementation and documentation seeds. Never use `haiku`.
 

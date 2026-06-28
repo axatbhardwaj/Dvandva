@@ -43,7 +43,7 @@ The shareable templates live in `templates/channel/`.
 
 ## Baton Schema (v2)
 
-This shows a v2 run-scoped baton. Legacy v1 batons use `schema: "dvandva.baton.v1"`, omit the v2-only fields `run_id`, `original_ask`, `research_ref`, `run_explainer_ref`, `active_roles`, `work_split`, `subagent_tracks`, and `verification_matrix`, and default `turn_cap` to 60. The live v2 write-helper enforcement covers v2-only fields, safe `run_id` values, schema continuity for existing runs, v2 status-owner pairs, honest `subagent_tracks`, the terminal `run_explainer_ref` invariant, and v2 lifecycle transitions.
+This shows a v2 run-scoped baton. Legacy v1 batons use `schema: "dvandva.baton.v1"`, omit the v2-only fields `run_id`, `original_ask`, `research_ref`, `run_explainer_ref`, `active_roles`, `work_split`, `agent_instances`, `subagent_tracks`, and `verification_matrix`, and default `turn_cap` to 60. The live v2 write-helper enforcement covers v2-only fields, safe `run_id` values, schema continuity for existing runs, v2 status-owner pairs, honest `agent_instances` and `subagent_tracks`, the terminal `run_explainer_ref` invariant, and v2 lifecycle transitions.
 
 implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; the `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. `test_creation` routes to `cross_review`, `cross_review` may route to `cross_fixing`, and only completed cross-review evidence for both roles can advance to `deep_review`. Phase convention: implementation-chunk tracks use the numeric implementation phase, while cross-review and deep-review gate tracks use the status-name phase such as `phase: "cross_review"` or `phase: "deep_review"`.
 
@@ -61,6 +61,7 @@ Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`) m
   "status": "parallel_implementing",
   "assignee": "team",
   "active_roles": ["vadi", "prativadi"],
+  "agent_instances": [],
   "current_engine": "codex",
   "review_target": "implementation",
   "original_ask": "Implement the example feature with Dvandva review.",
@@ -177,7 +178,7 @@ Model classes are vendor-neutral: `opus-class|gpt-5.5` for architecture/planning
 
 ### Protocol invariants for generated instances
 
-**Single-writer merge.** Generated agents never write the baton directly and never own `assignee`, phase transitions, or `vadi_final_approval`/`prativadi_final_approval`. The parent role waits for all generated handles to close, then serializes their evidence into one monotonic baton checkpoint write.
+**Single-writer merge.** Generated agents never write the baton directly and never own `assignee`, `active_roles`, phase transitions, or `vadi_final_approval`/`prativadi_final_approval`. The parent role waits for all generated handles to close, then serializes their evidence into one monotonic baton checkpoint write.
 
 **No daemon / no hidden orchestrator.** There is no background scheduler, mailbox, or launcher outside the baton and foreground wait helper. Run 3 adds richer baton data and a validation gate; it does not add a new central process.
 
@@ -224,7 +225,7 @@ Model classes are vendor-neutral: `opus-class|gpt-5.5` for architecture/planning
 - `(no baton)` → `spec_drafting`
 - `spec_drafting` → `spec_review`
 - `spec_review` → `spec_revision` (Codex Q&A)
-- `spec_review` → `phase: 1, implementing` (Codex accepts plan; only Codex can advance the spec)
+- Legacy v1: `spec_review` → `phase: 1, implementing` (Codex accepts plan; only Codex can advance the spec)
 - `spec_revision` → `spec_review` (Claude answered Q&A, hands back)
 - any spec state while `master_plan_locked: false` → `human_question` (human answer needed before master plan lock)
 - `human_question` → `resume_status` with `assignee: resume_assignee` (human answers; skill clears question fields)
@@ -251,7 +252,7 @@ Model classes are vendor-neutral: `opus-class|gpt-5.5` for architecture/planning
 - v2: `deep_review (impl)` → `deslop` when implementation and tests are substantively accepted and `subagent_tracks` contains the three completed review angles
 - v2: `deep_review (impl)` → `phase_fixing` when bugs, missing tests, or verification gaps remain
 - v2: `phase_fixing` → `test_creation` when fixes changed behavior, tests, or verification evidence
-- v2: `deslop` → `phase: N+1, implementing` or terminal `done` when no nits, low/minor bugs, stale wording, or unclear instructions remain except explicitly accepted `deferred` items; terminal `done` also requires `run_explainer_ref` pointing to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`
+- v2: `deslop` → `phase: N+1, parallel_implementing` or terminal `done` when no nits, low/minor bugs, stale wording, or unclear instructions remain except explicitly accepted `deferred` items; terminal `done` also requires `run_explainer_ref` pointing to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`
 - v2: `deslop` → `phase_fixing` when cleanup finds behavior, test, or review blockers
 - `phase: N, implementing` → `human_decision`
 - `phase_review (impl)` → `phase_fixing` (substantive findings)

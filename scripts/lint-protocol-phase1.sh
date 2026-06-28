@@ -49,12 +49,17 @@ require_rg 'dvandva-wait\.sh --persist|--persist' product.md 'product spec defin
 require_rg 'Continuous polling is the hard rule' product.md 'product spec makes continuous polling mandatory'
 require_rg 'generated user-facing artifacts.*HTML|HTML.*generated user-facing artifacts' product.md 'product spec scopes HTML migration to generated user-facing artifacts'
 reject_rg 'No multi-baton-per-repo support|One active baton per worktree' product.md 'product spec no longer excludes multi-run support'
+require_rg 'Required v2 fields include.*active_roles.*agent_instances' product.md 'product v2 field list includes active_roles and agent_instances'
+reject_rg 'Vadi \(implementing phase N\+1\)' product.md 'product flow diagram avoids stale sequential v2 implementation wording'
 
 for file in docs/protocol/local-baton-channel.md plugins/dvandva/references/local-baton-channel.md; do
   require_rg 'runs/<run_id>|runs/\$|DVANDVA_RUN_ID|run_id' "$file" "$file documents run-scoped baton paths"
   require_rg 'generated user-facing artifacts|HTML' "$file" "$file documents HTML generated artifact policy"
   require_rg 'Continuous polling is the hard rule' "$file" "$file makes continuous polling mandatory"
   require_rg 'Phase convention: implementation-chunk' "$file" "$file documents subagent track phase convention"
+  require_rg 'Legacy v1.*`spec_review` → `phase: 1, implementing`|`spec_review` → `phase: 1, implementing`.*Legacy v1' "$file" "$file scopes spec_review->implementing as legacy v1"
+  require_rg 'v2: `deslop` → `phase: N\+1, parallel_implementing`' "$file" "$file routes v2 deslop to parallel_implementing"
+  reject_rg 'v2: `deslop` → `phase: N\+1, implementing`' "$file" "$file avoids stale v2 deslop->implementing wording"
 done
 
 require_rg '"schema": "dvandva\.baton\.v2"' plugins/dvandva/references/baton-schema-v2.json 'v2 schema seed declares dvandva.baton.v2'
@@ -67,6 +72,9 @@ require_jq '.turn_cap == 60' plugins/dvandva/references/baton-schema-v2.json 'v2
 reject_rg 'extended v1 seed|legacy v1 default 20|Legacy v1 defaults to 20' product.md 'product spec no longer mentions stale v1 turn_cap seed/default wording'
 require_rg 'dvandva\.baton\.v2' plugins/dvandva/references/state-transition-table.md 'transition table documents baton v2'
 require_rg 'research_drafting|research_review|research_revision' plugins/dvandva/references/state-transition-table.md 'transition table documents research states'
+require_rg '\| `phase_review \(impl\)` \| `phase: N\+1, status: implementing, disagreement_round: 0` \| Legacy v1:' plugins/dvandva/references/state-transition-table.md 'transition table scopes phase_review advancement as legacy v1'
+require_rg '\| `review_of_review \(prativadi_fixups\)` \| `phase: N\+1, status: implementing, disagreement_round: 0` \| Legacy v1:' plugins/dvandva/references/state-transition-table.md 'transition table scopes review_of_review advancement as legacy v1'
+require_rg '\| `counter_review \(vadi_counter\)` \| `phase: N\+1, status: implementing, disagreement_round: 0` \| Legacy v1:' plugins/dvandva/references/state-transition-table.md 'transition table scopes counter_review advancement as legacy v1'
 
 if [[ "$failures" -gt 0 ]]; then
   exit 1
