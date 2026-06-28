@@ -33,7 +33,7 @@ Legacy enforcement starts with the agent checklist embedded in each SKILL.md and
 
 The product is the `dvandva` plugin, its bundled protocol/orchestration skills, plugin-local baton references, bundled wait helpers, an install/usage doc, and a pilot case study. It coordinates work through baton state and skill checklists; it does not add an agent launcher, daemon, or GitHub integration.
 
-Subagent execution uses the canonical Dvandva subagent roster under `plugins/dvandva/agents/`. This roster replaces the earlier personal `claude-skills/agents` roles for Dvandva work and includes `dvandva-researcher`, `dvandva-architect`, `dvandva-pattern-mapper`, `dvandva-implementer`, `dvandva-test-creator`, `dvandva-debugger`, `dvandva-cross-reviewer`, `dvandva-adversarial-analyst`, `dvandva-deep-reviewer`, `dvandva-security-auditor`, `dvandva-integration-checker`, `dvandva-doc-verifier`, `dvandva-deslopper`, `dvandva-sandbox-verifier`, and `dvandva-baton-auditor`. The design takes GSD-style fresh-context subagents for bounded heavy work and OMO-style team roles for specialization, but preserves Dvandva's core constraint: the baton remains the only coordinator. There is no two-subagent ceiling; each phase uses conditional parallelism and may spawn as many independent tracks as the harness can safely run without shared-state conflicts. Specialist agents are trigger-gated, not mandatory seed work: use security, integration, doc-verification, debugger, and pattern-mapping agents when their phase/risk trigger applies. Codex-specific lifecycle note: completed subagents can remain open and keep counting against the thread/concurrency limit, so the controller must explicitly close each subagent handle after consuming its result.
+Subagent execution uses the canonical Dvandva subagent roster (15 agents) under `plugins/dvandva/agents/`. This roster replaces the earlier personal `claude-skills/agents` roles for Dvandva work and includes `dvandva-researcher`, `dvandva-architect`, `dvandva-pattern-mapper`, `dvandva-implementer`, `dvandva-test-creator`, `dvandva-debugger`, `dvandva-cross-reviewer`, `dvandva-adversarial-analyst`, `dvandva-deep-reviewer`, `dvandva-security-auditor`, `dvandva-integration-checker`, `dvandva-doc-verifier`, `dvandva-deslopper`, `dvandva-sandbox-verifier`, and `dvandva-baton-auditor`. The design takes GSD-style fresh-context subagents for bounded heavy work and OMO-style team roles for specialization, but preserves Dvandva's core constraint: the baton remains the only coordinator. There is no two-subagent ceiling; each phase uses conditional parallelism and may spawn as many independent tracks as the harness can safely run without shared-state conflicts. Specialist agents are trigger-gated, not mandatory seed work: use security, integration, doc-verification, debugger, and pattern-mapping agents when their phase/risk trigger applies. Codex-specific lifecycle note: completed subagents can remain open and keep counting against the thread/concurrency limit, so the controller must explicitly close each subagent handle after consuming its result.
 
 Dvandva model classes are vendor-neutral. Agent frontmatter uses `model: opus` and `model: sonnet` as class labels, not Anthropic-only product IDs. Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models. Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`. Do not use `haiku` for Dvandva subagents.
 
@@ -60,9 +60,9 @@ If criterion #5 fails (any runaway loop observed during pilot), v1 does not ship
 - `plugins/dvandva/skills/vadi/SKILL.md` — frontmatter (portable `name` + `description`), body covering research drafting/revision, spec drafting, spec revision, phase implementation, phase fixing, prativadi-fixup review, the baton schema, the `/goal` exit conditions, and the disagreement-cap behavior.
 - `plugins/dvandva/skills/prativadi/SKILL.md` — same shape, covering research review, spec Q&A, phase review, vadi-counter review, narrow-fix allowlist, handback conditions, baton schema, `/goal` exit conditions.
 - `plugins/dvandva/skills/research/SKILL.md` — shared Dvandva research workflow used by both roles to produce `research_ref`, `work_split`, and `verification_matrix`.
-- `plugins/dvandva/skills/testing/SKILL.md` — Dvandva-native test-creation and test-gap workflow absorbed from the previous standalone testing skill.
-- `plugins/dvandva/skills/understanding/SKILL.md` — Dvandva-native deep-understanding teaching workflow that produces HTML mastery checklists.
-- `plugins/dvandva/skills/worktree-setup/SKILL.md` — Dvandva-native worktree preparation workflow with generic and DeFi profile conventions.
+- `plugins/dvandva/skills/testing/SKILL.md` — Dvandva-native test-creation and test-gap workflow, invoked during `test_creation` and review sandbox steps. Absorbed from the standalone `testing` skill; replaces it for all Dvandva work.
+- `plugins/dvandva/skills/understanding/SKILL.md` — Dvandva-native mastery-gated teaching of the run, code, and decisions; grounded in baton/diff/`research_ref`/`plan_ref`; exports an HTML mastery checklist. Absorbed from the standalone `understanding` skill; replaces it for all Dvandva work.
+- `plugins/dvandva/skills/worktree-setup/SKILL.md` — Dvandva-native worktree preparation with generic and optional DeFi profile conventions. Absorbed from the standalone `worktree-setup` skill; replaces it for all Dvandva work.
 - `plugins/dvandva/skills/*/scripts/dvandva-wait.sh` — foreground shell wait helper bundled as a real executable in each runtime skill directory. It polls `.dvandva/baton.json` cheaply, without spending model turns, until the baton returns to the role or reaches a terminal human/done state.
 - `plugins/dvandva/skills/*/scripts/dvandva-write.sh` — validated atomic baton installer; rejects illegal v1 transitions, installs via tmp+mv, auto-snapshots. Tested by `scripts/test-dvandva-write.sh`.
 - `scripts/test-dvandva-wait.sh` — focused shell tests for the helper's exit-code contract.
@@ -492,6 +492,13 @@ In priority order:
 - **Concurrent-agent detection.** Lock file or PID file with stale-detection so v2 can refuse to start a second agent against a baton already in use.
 - **Explicit human-answer field.** Replace the v1 judgment call ("did the current prompt answer the question?") with a deterministic `human_answer` field or helper command that resumes `human_question` states only when populated.
 - **Per-phase scope refinement.** v2 could auto-suggest phase boundaries based on file-graph or churn analysis during the spec phase.
+
+## 17. Roadmap and deferred scope
+
+In design-run order:
+
+- **Run 3 — super-parallel agent creation.** Oh-my-openagent-style dynamic agent generation: roles generated on demand from a trait spec rather than drawn from the fixed fifteen-agent roster, enabling unbounded parallelism at any phase.
+- **Run 4 — protocol work-gating enforcement.** Off-protocol commits blocked at the shell level (PreToolUse hook or equivalent write-guard) + retire the user's standalone agent fleet once the canonical Dvandva roster covers the same scope.
 
 ## Appendix A — `dvandva.baton.v1` canonical schema and transitions
 

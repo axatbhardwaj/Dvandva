@@ -71,10 +71,15 @@ $prativadi
 
 ## Current State
 
-v0.1.0 ships as one `dvandva` plugin with:
+v0.2.0 ships as one `dvandva` plugin with:
 
 - `plugins/dvandva/skills/vadi/SKILL.md`
 - `plugins/dvandva/skills/prativadi/SKILL.md`
+- `plugins/dvandva/skills/research/SKILL.md`
+- `plugins/dvandva/skills/testing/SKILL.md` — Dvandva-native test discipline invoked during `test_creation` and review sandbox steps; replaces standalone `testing` for Dvandva work.
+- `plugins/dvandva/skills/understanding/SKILL.md` — mastery-gated teaching grounded in baton/diff/`research_ref`/`plan_ref`; exports an HTML checklist; replaces standalone `understanding` for Dvandva work.
+- `plugins/dvandva/skills/worktree-setup/SKILL.md` — isolated-worktree prep with an optional DeFi profile; replaces standalone `worktree-setup` for Dvandva work.
+- 15 canonical subagent roles under `plugins/dvandva/agents/` (researcher, architect, pattern-mapper, implementer, test-creator, debugger, cross-reviewer, adversarial-analyst, deep-reviewer, security-auditor, integration-checker, doc-verifier, deslopper, sandbox-verifier, baton-auditor); model classes are vendor-neutral (`opus`/`sonnet`).
 - bundled `dvandva-wait.sh` helpers in both skill directories
 - plugin-local protocol references in `plugins/dvandva/references/`
 - Codex marketplace metadata in `.agents/plugins/marketplace.json`
@@ -195,6 +200,11 @@ helpers, and checks standalone development copies.
 2. `plugins/dvandva/references/local-baton-channel.md` - bundled baton protocol
 3. `plugins/dvandva/references/state-transition-table.md` - bundled transition reference
 4. `docs/case-studies/pr-353.md` - sanitized case study that motivated the design
+
+## Roadmap
+
+- **Run 3** — super-parallel agent creation: oh-my-openagent-style dynamic agent generation so the roster expands on demand rather than staying fixed.
+- **Run 4** — protocol work-gating enforcement (off-protocol commits blocked at the shell level) + retire the standalone user agent fleet in favour of the canonical Dvandva roster.
 
 ## Non-Goals
 
