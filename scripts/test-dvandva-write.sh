@@ -218,6 +218,45 @@ v2_parallel_chunks_filter() {
 JQ
 }
 
+v2_dynamic_agent_instances_filter() {
+  cat <<'JQ'
+.agent_instances = [
+  {
+    "id": "r3-generated-dynamic-review",
+    "parent_role": "vadi",
+    "spawned_by": "dvandva-implementer",
+    "spawned_at_checkpoint": 0,
+    "phase": "research",
+    "purpose": "Run-scoped generated agent for dynamic-agent gate coverage.",
+    "agent_kind": "generated",
+    "seed_agent": "dvandva-implementer",
+    "model_class": "sonnet-class|gpt-5.4",
+    "permission_class": "verify-only",
+    "status": "closed",
+    "work_item_ids": ["implementation-chunk-1"],
+    "read_paths": ["plugins/dvandva/skills/vadi/scripts/dvandva-write.sh"],
+    "write_paths": [],
+    "depends_on": [],
+    "conflict_group": "r3-dynamic-review",
+    "base_checkpoint": 0,
+    "output_refs": ["subagent_track:r3-generated-dynamic-review"],
+    "evidence_refs": ["subagent:r3-generated-dynamic-review", "closed:r3-generated-dynamic-review"],
+    "closed_at": "2026-06-28T00:00:00Z",
+    "result": "passed"
+  }
+]
+JQ
+}
+
+v2_dynamic_parallel_track_filter() {
+  cat <<'JQ'
+.subagent_tracks[0].parallelized = true
+| .subagent_tracks[0].owner = "r3-generated-dynamic-review"
+| .subagent_tracks[0].outputs = ["Generated dynamic review completed."]
+| .subagent_tracks[0].evidence_refs = ["subagent:r3-generated-dynamic-review", "closed:r3-generated-dynamic-review"]
+JQ
+}
+
 v2_implementation_tracks_filter() {
   cat <<'JQ'
 .subagent_tracks += [
@@ -571,6 +610,16 @@ make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 'del(.active_r
 run_case_contains "v2 missing active_roles exits 23" 23 "DVANDVA_WRITE missing_key key=active_roles" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+BOX="$(new_box v2-missing-agent-instances)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 'del(.agent_instances)'
+run_case_contains "v2 missing agent_instances exits 23" 23 "DVANDVA_WRITE missing_key key=agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-non-array-agent-instances)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 '.agent_instances = {}'
+run_case_contains "v2 non-array agent_instances exits 23" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
 BOX="$(new_box v2-bad-active-roles)"
 make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 '.active_roles = ["vadi", "vadi"]'
 run_case_contains "v2 duplicate active_roles exits 23" 23 "DVANDVA_WRITE bad_active_roles" \
@@ -616,6 +665,96 @@ make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
   '.subagent_tracks[0].outputs = ["Bundled adversarial review completed."]' \
   '.subagent_tracks[0].evidence_refs = ["subagent:dvandva-adversarial-analyst"]'
 run_case "v2 bundled adversarial analyst parallel owner is accepted" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-dynamic-owner-missing-agent-instance)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_parallel_track_filter)" \
+  '.agent_instances = []'
+run_case_contains "v2 dynamic owner requires agent_instance" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-dynamic-owner-missing-closure)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  "$(v2_dynamic_parallel_track_filter)" \
+  '.agent_instances[0].evidence_refs = ["subagent:r3-generated-dynamic-review"]' \
+  '.agent_instances[0].closed_at = null'
+run_case_contains "v2 dynamic owner requires closure evidence" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-dynamic-owner-accepted)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  "$(v2_dynamic_parallel_track_filter)"
+run_case "v2 dynamic owner with closed agent_instance is accepted" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-duplicate-agent-instance-id)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances += [.agent_instances[0]]'
+run_case_contains "v2 duplicate agent_instance ids exit 23" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-unsafe-agent-instance-id)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].id = "../escape"'
+run_case_contains "v2 unsafe agent_instance id exits 23" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-bad-agent-instance-permission)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].permission_class = "full-write"'
+run_case_contains "v2 bad agent_instance permission exits 23" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-bad-agent-instance-model)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].model_class = "haiku"'
+run_case_contains "v2 bad agent_instance model exits 23" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-agent-instance-write-path-collision)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].write_paths = ["scripts/test-dvandva-write.sh"]' \
+  '.agent_instances += [(.agent_instances[0] | .id = "r3-generated-dynamic-review-b" | .write_paths = ["scripts/test-dvandva-write.sh"] | .evidence_refs = ["subagent:r3-generated-dynamic-review-b", "closed:r3-generated-dynamic-review-b"] | .output_refs = ["subagent_track:r3-generated-dynamic-review-b"])]'
+run_case_contains "v2 agent_instance write path collision exits 23" 23 "DVANDVA_WRITE bad_agent_instances_write_paths" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-agent-instance-unsafe-write-path)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].write_paths = ["../escape"]'
+run_case_contains "v2 agent_instance unsafe write path exits 23" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-agent-instance-write-path-prefix-collision)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].write_paths = ["src/a"]' \
+  '.agent_instances += [(.agent_instances[0] | .id = "r3-generated-dynamic-review-b" | .write_paths = ["src/a/b"] | .evidence_refs = ["subagent:r3-generated-dynamic-review-b", "closed:r3-generated-dynamic-review-b"] | .output_refs = ["subagent_track:r3-generated-dynamic-review-b"])]'
+run_case_contains "v2 agent_instance write path prefix collision exits 23" 23 "DVANDVA_WRITE bad_agent_instances_write_paths" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-agent-instance-sibling-prefix-paths)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].write_paths = ["src/a"]' \
+  '.agent_instances += [(.agent_instances[0] | .id = "r3-generated-dynamic-review-b" | .write_paths = ["src/ab"] | .evidence_refs = ["subagent:r3-generated-dynamic-review-b", "closed:r3-generated-dynamic-review-b"] | .output_refs = ["subagent_track:r3-generated-dynamic-review-b"])]'
+run_case "v2 agent_instance sibling prefix paths are accepted" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-agent-instance-serialized-conflict)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].write_paths = ["scripts/test-dvandva-write.sh"]' \
+  '.agent_instances += [(.agent_instances[0] | .id = "r3-generated-dynamic-review-b" | .depends_on = ["r3-generated-dynamic-review"] | .write_paths = ["scripts/test-dvandva-write.sh"] | .evidence_refs = ["subagent:r3-generated-dynamic-review-b", "closed:r3-generated-dynamic-review-b"] | .output_refs = ["subagent_track:r3-generated-dynamic-review-b"])]'
+run_case "v2 serialized agent_instance conflict is accepted" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 for owner in \

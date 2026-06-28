@@ -86,7 +86,7 @@ esac
 
 REQUIRED_KEYS=(schema updated_at mode run_mode phase total_phases status assignee current_engine review_target plan_ref master_plan_locked question resume_assignee resume_status disagreement_round disagreement_cap turn_cap branch checkpoint allow_commit allow_push allow_pr vadi_final_approval prativadi_final_approval final_commit pushed_ref summary changed_paths verification findings narrow_fixups vadi_counter deferred blockers next_action)
 if [[ "$schema" == "dvandva.baton.v2" ]]; then
-  REQUIRED_KEYS+=(run_id original_ask research_ref run_explainer_ref active_roles work_split subagent_tracks verification_matrix)
+  REQUIRED_KEYS+=(run_id original_ask research_ref run_explainer_ref active_roles agent_instances work_split subagent_tracks verification_matrix)
 fi
 
 for key in "${REQUIRED_KEYS[@]}"; do
@@ -115,6 +115,103 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
     ((.active_roles | unique | length) == (.active_roles | length))
   ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
     echo "DVANDVA_WRITE bad_active_roles candidate=$CANDIDATE_FILE" >&2
+    exit 23
+  fi
+  if ! jq -e '
+    def nonblank:
+      (type == "string") and test("[^[:space:]]");
+    def safe_id:
+      (type == "string") and
+      (length > 0) and
+      test("^[A-Za-z0-9][A-Za-z0-9._-]*$") and
+      (contains("..") | not);
+    def safe_rel_path:
+      (type == "string") and
+      (length > 0) and
+      (startswith("/") | not) and
+      (contains("//") | not) and
+      ((split("/") | all(. != "" and . != "." and . != "..")));
+    def valid_model:
+      . == "opus-class|gpt-5.5" or
+      . == "sonnet-class|gpt-5.4" or
+      . == "opus" or
+      . == "sonnet" or
+      . == "gpt-5.5" or
+      . == "gpt-5.4";
+    def valid_permission:
+      . == "readonly" or
+      . == "verify-only" or
+      . == "edit-scoped" or
+      . == "write-artifact-only";
+    def generated_instance:
+      (.agent_kind // "") == "generated" or has("parent_role") or has("permission_class") or has("model_class");
+    (.agent_instances | type) == "array" and
+    (([.agent_instances[]?.id] | length) == ([.agent_instances[]?.id] | unique | length)) and
+    all(.agent_instances[]?;
+      (.id | safe_id) and
+      (
+        if generated_instance then
+          ((.parent_role == "vadi") or (.parent_role == "prativadi")) and
+          (.spawned_by | nonblank) and
+          ((.spawned_at_checkpoint | type) == "number") and
+          (((.phase | type) == "string" or (.phase | type) == "number") and ((.phase | tostring | length) > 0)) and
+          (.purpose | nonblank) and
+          ((.agent_kind // "") == "generated") and
+          ((.model_class | valid_model)) and
+          ((.permission_class | valid_permission)) and
+          ((.status // "") as $status | ["planned", "running", "closed", "rejected", "collapsed"] | index($status) != null) and
+          ((.work_item_ids | type) == "array") and
+          ((.read_paths | type) == "array") and all(.read_paths[]; safe_rel_path) and
+          ((.write_paths | type) == "array") and all(.write_paths[]; safe_rel_path) and
+          ((.depends_on | type) == "array") and
+          ((.output_refs | type) == "array") and
+          ((.evidence_refs | type) == "array") and
+          ((.base_checkpoint | type) == "number") and
+          (
+            if .status == "closed" then
+              (.closed_at | nonblank) and
+              (.result | nonblank) and
+              ((.work_item_ids | length) > 0) and
+              ((.evidence_refs | length) > 0) and
+              any(.evidence_refs[]; (type == "string") and startswith("closed:"))
+            else
+              true
+            end
+          )
+        else
+          true
+        end
+      )
+    )
+  ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+    echo "DVANDVA_WRITE bad_agent_instances candidate=$CANDIDATE_FILE" >&2
+    exit 23
+  fi
+  if ! jq -e '
+    def generated_live:
+      (.agent_kind // "") == "generated" and
+      ((.status // "") != "rejected") and
+      ((.status // "") != "collapsed");
+    def path_overlap($left; $right):
+      ($left == $right) or
+      ($left | startswith($right + "/")) or
+      ($right | startswith($left + "/"));
+    def overlap($a; $b):
+      any(($a.write_paths // [])[]; . as $path | any(($b.write_paths // [])[]; path_overlap($path; .)));
+    def serialized($a; $b):
+      (($a.conflict_group // "") != "") and
+      (($a.conflict_group // "") == ($b.conflict_group // "")) and
+      (((($a.depends_on // []) | index($b.id)) != null) or ((($b.depends_on // []) | index($a.id)) != null));
+    [ .agent_instances[]? | select(generated_live) | select((.write_paths | length) > 0) ] as $instances |
+    [
+      range(0; ($instances | length)) as $i |
+      range($i + 1; ($instances | length)) as $j |
+      ($instances[$i]) as $a |
+      ($instances[$j]) as $b |
+      select(overlap($a; $b) and (serialized($a; $b) | not))
+    ] | length == 0
+  ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+    echo "DVANDVA_WRITE bad_agent_instances_write_paths candidate=$CANDIDATE_FILE" >&2
     exit 23
   fi
   if ! jq -e '((.work_split | type) == "array" or (.work_split | type) == "object") and (.work_split | length) > 0' "$CANDIDATE_FILE" >/dev/null 2>&1; then
@@ -147,17 +244,45 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
     exit 23
   fi
   if ! jq -e '
+    . as $root |
+    def static_owner:
+      test("^dvandva-(researcher|architect|implementer|test-creator|cross-reviewer|adversarial-analyst|deep-reviewer|deslopper|sandbox-verifier|baton-auditor|security-auditor|integration-checker|debugger|doc-verifier|pattern-mapper)$");
+    def legacy_owner:
+      test("^(adversarial-analyst|quality-reviewer|sandbox-executor|architect|developer)$");
+    def closed_agent_instance($owner):
+      any($root.agent_instances[]?;
+        (.id == $owner) and
+        ((.agent_kind // "") == "generated") and
+        (.status == "closed") and
+        ((.output_refs | length) > 0) and
+        ((.evidence_refs | length) > 0) and
+        any(.evidence_refs[]; (type == "string") and startswith("closed:"))
+      );
     all(.subagent_tracks[];
       if .parallelized then
-        (((.owner | test("^dvandva-(researcher|architect|implementer|test-creator|cross-reviewer|adversarial-analyst|deep-reviewer|deslopper|sandbox-verifier|baton-auditor|security-auditor|integration-checker|debugger|doc-verifier|pattern-mapper)$")) or
-          (.owner | test("^(adversarial-analyst|quality-reviewer|sandbox-executor|architect|developer)$"))) and
+        (((.owner | static_owner) or (.owner | legacy_owner) or closed_agent_instance(.owner)) and
           (((.outputs | length) > 0) or ((.evidence_refs | length) > 0)))
       else
         true
       end
     )
   ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
-    echo "DVANDVA_WRITE bad_subagent_tracks candidate=$CANDIDATE_FILE" >&2
+    if jq -e '
+      def static_owner:
+        test("^dvandva-(researcher|architect|implementer|test-creator|cross-reviewer|adversarial-analyst|deep-reviewer|deslopper|sandbox-verifier|baton-auditor|security-auditor|integration-checker|debugger|doc-verifier|pattern-mapper)$");
+      def legacy_owner:
+        test("^(adversarial-analyst|quality-reviewer|sandbox-executor|architect|developer)$");
+      any(.subagent_tracks[];
+        .parallelized and
+        ((.owner | static_owner) | not) and
+        ((.owner | legacy_owner) | not) and
+        ((.owner == "vadi" or .owner == "prativadi" or .owner == "team" or .owner == "human") | not)
+      )
+    ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+      echo "DVANDVA_WRITE bad_agent_instances candidate=$CANDIDATE_FILE" >&2
+    else
+      echo "DVANDVA_WRITE bad_subagent_tracks candidate=$CANDIDATE_FILE" >&2
+    fi
     exit 23
   fi
   if [[ "$new_status" != "research_drafting" && "$new_status" != "human_question" && "$new_status" != "human_decision" ]] \
