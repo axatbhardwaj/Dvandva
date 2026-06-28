@@ -53,6 +53,7 @@ else
 fi
 
 TARGET_HOOKS_PATH=".githooks"
+PENDING_ROOT_BASELINE="__DVANDVA_ROOT_PENDING__"
 
 record_hook_adoption_baseline() {
   local existing=""
@@ -64,11 +65,24 @@ record_hook_adoption_baseline() {
 
   local head_sha=""
   if head_sha="$(git -C "$REPO_ROOT" rev-parse --verify HEAD 2>/dev/null)"; then
+    if [[ "$existing" == "$PENDING_ROOT_BASELINE" ]]; then
+      local root_sha=""
+      root_sha="$(git -C "$REPO_ROOT" rev-list --max-parents=0 --reverse HEAD 2>/dev/null | head -n 1 || true)"
+      if [[ -n "$root_sha" ]]; then
+        git -C "$REPO_ROOT" config --local dvandva.hooksAdoptedAt "$root_sha"
+        git -C "$REPO_ROOT" config --local dvandva.hooksAdoptedAtInclusive true
+        echo "install-dvandva-hooks: backfilled hook adoption baseline dvandva.hooksAdoptedAt=$root_sha"
+        return 0
+      fi
+    fi
+
     git -C "$REPO_ROOT" config --local dvandva.hooksAdoptedAt "$head_sha"
+    git -C "$REPO_ROOT" config --local --unset dvandva.hooksAdoptedAtInclusive >/dev/null 2>&1 || true
     echo "install-dvandva-hooks: recorded hook adoption baseline dvandva.hooksAdoptedAt=$head_sha"
   else
-    git -C "$REPO_ROOT" config --local --unset dvandva.hooksAdoptedAt >/dev/null 2>&1 || true
-    echo "install-dvandva-hooks: no HEAD commit yet; hook adoption baseline will start with future checkpoint commits."
+    git -C "$REPO_ROOT" config --local dvandva.hooksAdoptedAt "$PENDING_ROOT_BASELINE"
+    git -C "$REPO_ROOT" config --local dvandva.hooksAdoptedAtInclusive true
+    echo "install-dvandva-hooks: no HEAD commit yet; recorded pending root hook adoption baseline."
   fi
 }
 
@@ -83,6 +97,7 @@ if [[ "$UNINSTALL" -eq 1 ]]; then
   fi
   git -C "$REPO_ROOT" config --local --unset core.hooksPath
   git -C "$REPO_ROOT" config --local --unset dvandva.hooksAdoptedAt >/dev/null 2>&1 || true
+  git -C "$REPO_ROOT" config --local --unset dvandva.hooksAdoptedAtInclusive >/dev/null 2>&1 || true
   echo "install-dvandva-hooks: unset core.hooksPath (was: $current) in $REPO_ROOT"
   exit 0
 fi

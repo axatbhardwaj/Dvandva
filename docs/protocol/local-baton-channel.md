@@ -69,6 +69,10 @@ stamps `Dvandva-Checkpoint`; and `scripts/dvandva-drift-lint.sh` reports
 unstamped commits from the hook-adoption baseline floor when present, so a
 later stamped checkpoint cannot hide a `--no-verify` bypass. This is
 shell/git-hook enforcement only. There is no daemon or hidden orchestrator.
+For git work-gating, terminal `done`, `human_question`, and `human_decision`
+batons are inactive: the commit gate allows them, and drift lint only reports
+off-protocol commits while at least one non-terminal baton is active or when
+checkpoint history gives it a scan floor.
 
 Run 4 standalone-agent retirement is intentionally Dvandva-only: it covers only
 Dvandva-covered workflows with functional parity via Runs 1-4 usage. The

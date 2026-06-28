@@ -335,6 +335,7 @@ cmd_restore() {
 
   printf '=== Dvandva Standalone Agent Retirement (RESTORE) ===\n'
   printf 'Reading manifest: %s\n\n' "$manifest_file"
+  printf 'Allowlist validation: restore will only move Dvandva retirement entries for the 5 approved standalone agent symlinks.\n\n'
 
   local restored=0
   local attempted=0

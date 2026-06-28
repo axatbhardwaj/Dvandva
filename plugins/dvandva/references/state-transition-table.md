@@ -70,6 +70,10 @@ checks `DVANDVA_ROLE` against baton `assignee` / `active_roles`,
 hook-adoption baseline floor when present, so a later checkpoint cannot hide an
 unstamped sandwich bypass. This is shell/git-hook enforcement only; it does not
 create a daemon, scheduler, or hidden central process.
+For git work-gating, terminal `done`, `human_question`, and `human_decision`
+batons are inactive: the commit gate allows them, and drift lint only reports
+off-protocol commits while at least one non-terminal baton is active or when
+checkpoint history gives it a scan floor.
 
 Run 4 retirement is Dvandva-only. It may retire only Dvandva-covered standalone
 Claude symlink workflows with functional parity via Runs 1-4 usage:

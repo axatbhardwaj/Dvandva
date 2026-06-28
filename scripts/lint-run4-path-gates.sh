@@ -177,6 +177,21 @@ require_slurp_match \
   'dvandva-drift-lint.sh must honor hook-adoption baseline'
 
 require_slurp_match \
+  scripts/install-dvandva-hooks.sh \
+  '__DVANDVA_ROOT_PENDING__' \
+  'install-dvandva-hooks.sh must record pending root baseline for unborn repos'
+
+require_slurp_match \
+  scripts/dvandva-drift-lint.sh \
+  '__DVANDVA_ROOT_PENDING__.*rev-list|rev-list.*__DVANDVA_ROOT_PENDING__' \
+  'dvandva-drift-lint.sh must backfill pending root baseline'
+
+require_slurp_match \
+  scripts/dvandva-drift-lint.sh \
+  'hooksAdoptedAtInclusive.*scan_log_shas|scan_log_shas.*hooksAdoptedAtInclusive' \
+  'dvandva-drift-lint.sh must preserve inclusive root-baseline scans'
+
+require_slurp_match \
   plugins/dvandva/skills/vadi/SKILL.md \
   'install-dvandva-hooks\.sh.*core\.hooksPath=.*\.githooks|core\.hooksPath=.*\.githooks.*install-dvandva-hooks\.sh' \
   'vadi skill preflight must enforce repo-local Dvandva hooks'
@@ -207,6 +222,8 @@ require_slurp_match \
   'prativadi skill preflight must assert DVANDVA_ROLE=prativadi'
 
 for rel in scripts/dvandva-commit-gate.sh scripts/dvandva-drift-lint.sh .githooks/prepare-commit-msg; do
+  # These resolver files are not byte-identical. They must share only the
+  # invariants that make multi-run active-baton resolution fail closed.
   require_slurp_match \
     "$rel" \
     '\.dvandva/runs.*baton\.json|baton\.json.*\.dvandva/runs' \
@@ -219,6 +236,13 @@ for rel in scripts/dvandva-commit-gate.sh scripts/dvandva-drift-lint.sh .githook
     "$rel" \
     'jq empty' \
     "$rel must fail closed on malformed baton JSON"
+done
+
+for rel in README.md product.md docs/protocol/local-baton-channel.md plugins/dvandva/references/state-transition-table.md; do
+  require_slurp_match \
+    "$rel" \
+    'done.*human_question.*human_decision.*inactive|inactive.*done.*human_question.*human_decision' \
+    "$rel must document terminal statuses as inactive for git work-gating"
 done
 
 require_slurp_match \

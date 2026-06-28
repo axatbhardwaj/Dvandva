@@ -37,12 +37,14 @@ write_path_fixture() {
 Run 4 path-gate contract: live work_split implementation chunks declare
 write_paths. Bare paths remain a backward-compatible write intent only for
 implementation/cross_fixing chunks.
+Git work-gating treats done human_question human_decision as inactive.
 EOF
 
   cat > "$root/product.md" <<'EOF'
 Run 4 generalizes the safe_rel_path validator from generated agent instances to
 work_split, paths, read_paths, and write_paths. It remains a baton protocol with
 no daemon and no hidden central process.
+The git work gate treats done human_question human_decision as inactive.
 EOF
 
   cat > "$root/docs/protocol/local-baton-channel.md" <<'EOF'
@@ -52,6 +54,7 @@ set is a union.
 Overlaps require a shared conflict_group and explicit depends_on serialization.
 cross_review is read-only unless explicit write_paths are present.
 The Dvandva shell gate is local; there is no daemon or hidden orchestrator.
+Git work-gating treats done human_question human_decision batons as inactive.
 EOF
 
   cat > "$root/plugins/dvandva/references/state-transition-table.md" <<'EOF'
@@ -59,6 +62,7 @@ Run 4 validates work_split write_paths with safe_rel_path. Live overlapping
 chunks are rejected unless they share conflict_group and depends_on serialization.
 Closed or terminal historical chunks can reuse paths later because work_split
 has no base_checkpoint wave model.
+Git work-gating treats done human_question human_decision batons as inactive.
 EOF
 
   cat > "$root/plugins/dvandva/references/baton-schema-v2.json" <<'EOF'
@@ -128,6 +132,8 @@ EOF
   cat > "$root/scripts/dvandva-drift-lint.sh" <<'EOF'
 #!/usr/bin/env bash
 echo "drift lint Dvandva-Checkpoint dvandva.hooksAdoptedAt .dvandva/runs baton.json done human_question human_decision"
+echo "__DVANDVA_ROOT_PENDING__ rev-list"
+echo "hooksAdoptedAtInclusive scan_log_shas"
 jq empty "$1" 2>/dev/null || exit 1
 EOF
 
@@ -135,6 +141,7 @@ EOF
 #!/usr/bin/env bash
 echo ".githooks core.hooksPath"
 echo "dvandva.hooksAdoptedAt"
+echo "__DVANDVA_ROOT_PENDING__"
 EOF
 }
 
@@ -255,6 +262,32 @@ expect_fail \
   "$CASE" \
   "install-dvandva-hooks.sh must record hook-adoption baseline"
 
+CASE="$TMP_DIR/no-empty-root-pending"
+write_path_fixture "$CASE"
+perl -0pi -e 's/__DVANDVA_ROOT_PENDING__//g' "$CASE/scripts/install-dvandva-hooks.sh"
+expect_fail \
+  "path-gate lint rejects installer without pending root baseline" \
+  "$CASE" \
+  "install-dvandva-hooks.sh must record pending root baseline for unborn repos"
+
+CASE="$TMP_DIR/no-drift-root-backfill"
+write_path_fixture "$CASE"
+perl -0pi -e 's/__DVANDVA_ROOT_PENDING__ rev-list/dvandva root pending/g' \
+  "$CASE/scripts/dvandva-drift-lint.sh"
+expect_fail \
+  "path-gate lint rejects drift lint without pending root backfill" \
+  "$CASE" \
+  "dvandva-drift-lint.sh must backfill pending root baseline"
+
+CASE="$TMP_DIR/no-inclusive-root-scan"
+write_path_fixture "$CASE"
+perl -0pi -e 's/hooksAdoptedAtInclusive scan_log_shas/inclusive root scan/g' \
+  "$CASE/scripts/dvandva-drift-lint.sh"
+expect_fail \
+  "path-gate lint rejects drift lint without inclusive root scan" \
+  "$CASE" \
+  "dvandva-drift-lint.sh must preserve inclusive root-baseline scans"
+
 CASE="$TMP_DIR/no-vadi-hook-preflight"
 write_path_fixture "$CASE"
 perl -0pi -e 's#scripts/install-dvandva-hooks\.sh#install hooks#g' \
@@ -342,6 +375,18 @@ for rel in "${resolver_files[@]}"; do
     "$CASE" \
     "$rel must fail closed on malformed baton JSON"
 done
+
+CASE="$TMP_DIR/no-terminal-inactive-doc"
+write_path_fixture "$CASE"
+perl -0pi -e 's/Git work-gating treats done human_question human_decision (batons )?as inactive\.//g' \
+  "$CASE/README.md" \
+  "$CASE/product.md" \
+  "$CASE/docs/protocol/local-baton-channel.md" \
+  "$CASE/plugins/dvandva/references/state-transition-table.md"
+expect_fail \
+  "path-gate lint rejects missing terminal-inactive documentation" \
+  "$CASE" \
+  "README.md must document terminal statuses as inactive for git work-gating"
 
 if [[ "$FAILURES" -gt 0 ]]; then
   exit 1

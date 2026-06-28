@@ -364,6 +364,12 @@ test_apply_and_restore() {
     fail "[restore] output does not mention RESTORED; got: $restore_output"
   fi
 
+  if printf '%s\n' "$restore_output" | grep -qi "allowlist"; then
+    pass "[restore] output mentions allowlist validation"
+  else
+    fail "[restore] output should mention allowlist validation; got: $restore_output"
+  fi
+
   # A second restore is not a successful no-op.  It should fail loudly so an
   # operator does not treat an already-consumed backup as fresh evidence.
   local second_restore_output second_restore_rc

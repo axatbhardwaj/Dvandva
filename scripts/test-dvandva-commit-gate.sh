@@ -17,6 +17,8 @@
 #      and drift-lint catches the first active-baton bypass commit
 #  (k) --no-verify cannot stamp an arbitrary checkpoint under multi-run ambiguity
 #  (l) empty git repo has no drift
+#  (m) hook adoption in an unborn repo is backfilled to the root commit
+#      and still catches an unstamped root commit when an active baton exists
 set -u
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -469,6 +471,61 @@ git -C "$BOX" init --quiet
 out="$(cd "$BOX" && "$DRIFT_LINT" 2>&1)"; rc=$?
 check "(l) drift lint exits 0 in empty git repo" 0 "$rc" "$out"
 check_msg "(l) empty git repo reports no checkpoint history" 0 "$rc" "$out" "no checkpointed commits"
+
+# ===========================================================================
+# (m) Installing hooks in an unborn repo cannot know the future root commit yet,
+#     but it must leave a pending marker that gets backfilled as soon as a root
+#     commit exists.  Otherwise an adopted-from-empty run loses its adoption
+#     floor until the installer happens to be run again.
+# ===========================================================================
+BOX="$TMP_DIR/m-empty-install-backfill"
+mkdir -p "$BOX"
+git -C "$BOX" init --quiet
+git -C "$BOX" config user.email "test@dvandva.test"
+git -C "$BOX" config user.name "Dvandva Test"
+
+out="$(cd "$BOX" && "$INSTALLER" 2>&1)"; rc=$?
+check "(m) empty repo install exits 0" 0 "$rc" "$out"
+pending_baseline="$(git -C "$BOX" config --local dvandva.hooksAdoptedAt 2>/dev/null || echo "")"
+if [[ "$pending_baseline" == "__DVANDVA_ROOT_PENDING__" ]]; then
+  echo "PASS: (m) empty repo install records pending root baseline"
+else
+  echo "FAIL: (m) empty repo install expected pending root baseline, got '$pending_baseline'"
+  failures=$((failures + 1))
+fi
+
+touch "$BOX/root.txt"
+git -C "$BOX" add root.txt
+git -C "$BOX" commit --quiet -m "$(printf 'feat: root checkpoint\n\nDvandva-Checkpoint: 1')"
+root_sha="$(git -C "$BOX" rev-parse HEAD)"
+
+out="$(cd "$BOX" && "$DRIFT_LINT" 2>&1)"; rc=$?
+check "(m) drift lint backfills pending baseline" 0 "$rc" "$out"
+backfilled_baseline="$(git -C "$BOX" config --local dvandva.hooksAdoptedAt 2>/dev/null || echo "")"
+if [[ "$backfilled_baseline" == "$root_sha" ]]; then
+  echo "PASS: (m) pending baseline backfilled to root commit"
+else
+  echo "FAIL: (m) expected dvandva.hooksAdoptedAt=$root_sha, got '$backfilled_baseline'"
+  failures=$((failures + 1))
+fi
+
+BOX="$TMP_DIR/m-empty-install-unstamped-root"
+mkdir -p "$BOX"
+git -C "$BOX" init --quiet
+git -C "$BOX" config user.email "test@dvandva.test"
+git -C "$BOX" config user.name "Dvandva Test"
+make_gate_baton "$BOX/.dvandva/baton.json" "implementing" "vadi" 1
+out="$(cd "$BOX" && "$INSTALLER" 2>&1)"; rc=$?
+check "(m) empty active repo install exits 0" 0 "$rc" "$out"
+
+touch "$BOX/root-bypass.txt"
+git -C "$BOX" add root-bypass.txt
+out="$(cd "$BOX" && git commit --no-verify --quiet -m "root bypass without trailer" 2>&1)"; rc=$?
+check "(m) unstamped root bypass commit succeeds for drift probe" 0 "$rc" "$out"
+out="$(cd "$BOX" && "$DRIFT_LINT" 2>&1)"; rc=$?
+check_msg "(m) drift lint flags unstamped root after pending baseline" 1 "$rc" "$out" "root bypass without trailer"
+out="$(cd "$BOX" && "$DRIFT_LINT" 2>&1)"; rc=$?
+check_msg "(m) persisted root baseline remains inclusive" 1 "$rc" "$out" "root bypass without trailer"
 
 # ===========================================================================
 # Summary

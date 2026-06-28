@@ -22,6 +22,8 @@
 set -u
 
 WARN_ONLY=0
+PENDING_ROOT_BASELINE="__DVANDVA_ROOT_PENDING__"
+ADOPTION_BASELINE_INCLUSIVE=0
 for arg in "$@"; do
   case "$arg" in
     --warn) WARN_ONLY=1 ;;
@@ -86,6 +88,16 @@ hook_adoption_baseline() {
   baseline="$(git -C "$REPO_ROOT" config --local dvandva.hooksAdoptedAt 2>/dev/null || echo "")"
   [[ -n "$baseline" ]] || return 1
 
+  if [[ "$baseline" == "$PENDING_ROOT_BASELINE" ]]; then
+    local root_sha=""
+    root_sha="$(git -C "$REPO_ROOT" rev-list --max-parents=0 --reverse HEAD 2>/dev/null | head -n 1 || true)"
+    [[ -n "$root_sha" ]] || return 1
+    git -C "$REPO_ROOT" config --local dvandva.hooksAdoptedAt "$root_sha"
+    git -C "$REPO_ROOT" config --local dvandva.hooksAdoptedAtInclusive true
+    printf '%s\n' "$root_sha"
+    return 0
+  fi
+
   if git -C "$REPO_ROOT" cat-file -e "$baseline^{commit}" 2>/dev/null; then
     printf '%s\n' "$baseline"
     return 0
@@ -93,6 +105,26 @@ hook_adoption_baseline() {
 
   echo "DVANDVA_DRIFT warning: invalid dvandva.hooksAdoptedAt baseline: $baseline" >&2
   return 1
+}
+
+hook_adoption_baseline_inclusive() {
+  if [[ "$(git -C "$REPO_ROOT" config --bool --local dvandva.hooksAdoptedAtInclusive 2>/dev/null || echo false)" == "true" ]]; then
+    printf '1\n'
+  else
+    printf '0\n'
+  fi
+}
+
+scan_log_shas() {
+  local base="${1:-}" include_base="${2:-0}"
+  if [[ -z "$base" ]]; then
+    git -C "$REPO_ROOT" log --format="%H" 2>/dev/null
+  elif [[ "$include_base" -eq 1 ]]; then
+    git -C "$REPO_ROOT" log --format="%H" "${base}..HEAD" 2>/dev/null
+    printf '%s\n' "$base"
+  else
+    git -C "$REPO_ROOT" log --format="%H" "${base}..HEAD" 2>/dev/null
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -104,9 +136,9 @@ LAST_CHECKPOINT_NUM=""
 while IFS= read -r sha; do
   [[ -z "$sha" ]] && continue
   body="$(git -C "$REPO_ROOT" show -s --format="%B" "$sha" 2>/dev/null)" || continue
-  if echo "$body" | grep -qE "^Dvandva-Checkpoint:[[:space:]]+[0-9]+"; then
+  if printf '%s\n' "$body" | grep -qE "^Dvandva-Checkpoint:[[:space:]]+[0-9]+"; then
     LAST_CHECKPOINT_SHA="$sha"
-    LAST_CHECKPOINT_NUM="$(echo "$body" | grep -oE "^Dvandva-Checkpoint:[[:space:]]+[0-9]+" | grep -oE "[0-9]+$" | head -1)"
+    LAST_CHECKPOINT_NUM="$(printf '%s\n' "$body" | grep -oE "^Dvandva-Checkpoint:[[:space:]]+[0-9]+" | grep -oE "[0-9]+$" | head -1)"
     break
   fi
 done < <(git -C "$REPO_ROOT" log --format="%H" 2>/dev/null)
@@ -124,21 +156,18 @@ if [[ -z "$LAST_CHECKPOINT_SHA" ]]; then
     ADOPTION_BASELINE_SHA=""
     ADOPTION_CONTEXT="while an active baton exists and no checkpoint baseline exists"
     if ADOPTION_BASELINE_SHA="$(hook_adoption_baseline)"; then
+      ADOPTION_BASELINE_INCLUSIVE="$(hook_adoption_baseline_inclusive)"
       ADOPTION_CONTEXT="since hook adoption baseline $ADOPTION_BASELINE_SHA"
     fi
 
     DRIFT_SHAS=()
-    LOG_ARGS=(--format="%H")
-    if [[ -n "$ADOPTION_BASELINE_SHA" ]]; then
-      LOG_ARGS+=("${ADOPTION_BASELINE_SHA}..HEAD")
-    fi
     while IFS= read -r sha; do
       [[ -z "$sha" ]] && continue
       body="$(git -C "$REPO_ROOT" show -s --format="%B" "$sha" 2>/dev/null)" || continue
-      if ! echo "$body" | grep -qE "^Dvandva-Checkpoint:[[:space:]]"; then
+      if ! printf '%s\n' "$body" | grep -qE "^Dvandva-Checkpoint:[[:space:]]"; then
         DRIFT_SHAS+=("$sha")
       fi
-    done < <(git -C "$REPO_ROOT" log "${LOG_ARGS[@]}" 2>/dev/null)
+    done < <(scan_log_shas "$ADOPTION_BASELINE_SHA" "$ADOPTION_BASELINE_INCLUSIVE")
 
     if [[ ${#DRIFT_SHAS[@]} -eq 0 ]]; then
       echo "DVANDVA_DRIFT ok: no off-protocol commits $ADOPTION_CONTEXT."
@@ -165,13 +194,17 @@ fi
 
 SCAN_BASE_SHA="$LAST_CHECKPOINT_SHA"
 SCAN_CONTEXT="since checkpoint $LAST_CHECKPOINT_NUM ($LAST_CHECKPOINT_SHA)"
+SCAN_BASE_INCLUSIVE=0
 ADOPTION_BASELINE_SHA=""
 if ADOPTION_BASELINE_SHA="$(hook_adoption_baseline)"; then
+  ADOPTION_BASELINE_INCLUSIVE="$(hook_adoption_baseline_inclusive)"
   if git -C "$REPO_ROOT" merge-base --is-ancestor "$ADOPTION_BASELINE_SHA" "$LAST_CHECKPOINT_SHA" 2>/dev/null; then
     SCAN_BASE_SHA="$ADOPTION_BASELINE_SHA"
+    SCAN_BASE_INCLUSIVE="$ADOPTION_BASELINE_INCLUSIVE"
     SCAN_CONTEXT="since hook adoption baseline $ADOPTION_BASELINE_SHA (checkpoint $LAST_CHECKPOINT_NUM at $LAST_CHECKPOINT_SHA)"
   elif git -C "$REPO_ROOT" merge-base --is-ancestor "$LAST_CHECKPOINT_SHA" "$ADOPTION_BASELINE_SHA" 2>/dev/null; then
     SCAN_BASE_SHA="$LAST_CHECKPOINT_SHA"
+    SCAN_BASE_INCLUSIVE=0
     SCAN_CONTEXT="since checkpoint $LAST_CHECKPOINT_NUM ($LAST_CHECKPOINT_SHA), before later hook adoption baseline $ADOPTION_BASELINE_SHA"
   else
     echo "DVANDVA_DRIFT warning: dvandva.hooksAdoptedAt baseline is not in checkpoint ancestry: $ADOPTION_BASELINE_SHA" >&2
@@ -185,10 +218,10 @@ DRIFT_SHAS=()
 while IFS= read -r sha; do
   [[ -z "$sha" ]] && continue
   body="$(git -C "$REPO_ROOT" show -s --format="%B" "$sha" 2>/dev/null)" || continue
-  if ! echo "$body" | grep -qE "^Dvandva-Checkpoint:[[:space:]]"; then
+  if ! printf '%s\n' "$body" | grep -qE "^Dvandva-Checkpoint:[[:space:]]"; then
     DRIFT_SHAS+=("$sha")
   fi
-done < <(git -C "$REPO_ROOT" log --format="%H" "${SCAN_BASE_SHA}..HEAD" 2>/dev/null)
+done < <(scan_log_shas "$SCAN_BASE_SHA" "$SCAN_BASE_INCLUSIVE")
 
 # ---------------------------------------------------------------------------
 # Report
