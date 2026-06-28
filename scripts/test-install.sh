@@ -121,6 +121,8 @@ grep -q "Claude Code install complete" "$OUTPUT" \
   || fail "installer output should report Claude completion"
 grep -q "Codex install complete" "$OUTPUT" \
   || fail "installer output should report Codex completion"
+grep -q "dvandva:research" "$OUTPUT" \
+  || fail "installer output should tell users to verify Dvandva research skill"
 grep -q "dvandva:testing" "$OUTPUT" \
   || fail "installer output should tell users to verify absorbed testing skill"
 grep -q "dvandva:understanding" "$OUTPUT" \

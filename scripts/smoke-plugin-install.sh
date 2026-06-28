@@ -28,6 +28,7 @@ require_codex_skill_surface() {
   for skill in \
     dvandva:prativadi \
     dvandva:vadi \
+    dvandva:research \
     dvandva:testing \
     dvandva:understanding \
     dvandva:worktree-setup; do
@@ -99,10 +100,11 @@ grep -q '^/goal You are Dvandva prativadi' "$PLUGIN_DIR/commands/prativadi.md" |
 echo "SMOKE: dvandva slash commands bundled correctly"
 
 # Phase 4b: verify absorbed skill directories ship with a non-empty SKILL.md.
+test -s "$PLUGIN_DIR/skills/research/SKILL.md" || { echo "FAIL: dvandva skills/research/SKILL.md missing or empty from bundled plugin" >&2; exit 1; }
 test -s "$PLUGIN_DIR/skills/understanding/SKILL.md" || { echo "FAIL: dvandva skills/understanding/SKILL.md missing or empty from bundled plugin" >&2; exit 1; }
 test -s "$PLUGIN_DIR/skills/testing/SKILL.md" || { echo "FAIL: dvandva skills/testing/SKILL.md missing or empty from bundled plugin" >&2; exit 1; }
 test -s "$PLUGIN_DIR/skills/worktree-setup/SKILL.md" || { echo "FAIL: dvandva skills/worktree-setup/SKILL.md missing or empty from bundled plugin" >&2; exit 1; }
-echo "SMOKE: absorbed skills (understanding, testing, worktree-setup) bundled correctly"
+echo "SMOKE: runtime skills (research, understanding, testing, worktree-setup) bundled correctly"
 
 # Phase 5: re-install via scripts/install.sh into fresh Claude/Codex homes
 # to confirm the user-facing dual-engine one-liner works end-to-end.

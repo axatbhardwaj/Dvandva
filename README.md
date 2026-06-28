@@ -37,7 +37,8 @@ Codex `0.130.0` required app-server RPC, while current Codex exposes
 `codex plugin add`.
 
 After install, `/skills` should list `dvandva:vadi`, `dvandva:prativadi`,
-`dvandva:testing`, `dvandva:understanding`, and `dvandva:worktree-setup`.
+`dvandva:research`, `dvandva:testing`, `dvandva:understanding`, and
+`dvandva:worktree-setup`.
 The role slash commands `/dvandva:vadi` and `/dvandva:prativadi` should also
 appear.
 
@@ -184,14 +185,14 @@ claude plugin validate .
 The smoke script builds a temp marketplace, validates the Claude plugin path,
 adds and installs the marketplace in Codex with `codex plugin add` under an
 isolated `CODEX_HOME`, runs the dual Claude/Codex installer and Codex-only
-helper under isolated homes, checks that Codex renders all five Dvandva skills,
+helper under isolated homes, checks that Codex renders all six Dvandva skills,
 runs both bundled wait helpers, and checks standalone development copies.
 
 ## Release Checklist
 
 1. Bump `.claude-plugin/marketplace.json`, `plugins/dvandva/.claude-plugin/plugin.json`, and `plugins/dvandva/.codex-plugin/plugin.json` together.
 2. Run the validation commands above.
-3. Run `bash scripts/install.sh <repo-or-path>` from isolated `HOME` and `CODEX_HOME`, then verify `/skills` exposes `dvandva:vadi`, `dvandva:prativadi`, `dvandva:testing`, `dvandva:understanding`, and `dvandva:worktree-setup` in the installed engines.
+3. Run `bash scripts/install.sh <repo-or-path>` from isolated `HOME` and `CODEX_HOME`, then verify `/skills` exposes `dvandva:vadi`, `dvandva:prativadi`, `dvandva:research`, `dvandva:testing`, `dvandva:understanding`, and `dvandva:worktree-setup` in the installed engines.
 4. If testing engine-specific fallback paths, run `bash scripts/install-codex.sh <repo-or-path>` from an isolated `CODEX_HOME` and `HOME`.
 5. Tag the release, for example `v0.1.0`.
 6. Push the branch and tag only after both Dvandva roles approve the final diff.

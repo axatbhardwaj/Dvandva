@@ -95,6 +95,8 @@ if grep -q "app-server" "$CODEX_LOG"; then
 fi
 grep -q "codex plugin add dvandva@dvandva" "$OUTPUT" \
   || fail "installer output should explain the current Codex install command"
+grep -q "dvandva:research" "$OUTPUT" \
+  || fail "installer output should tell users to verify Dvandva research skill"
 grep -q "dvandva:testing" "$OUTPUT" \
   || fail "installer output should tell users to verify absorbed testing skill"
 grep -q "dvandva:understanding" "$OUTPUT" \
@@ -173,6 +175,8 @@ grep -q "app-server --listen stdio://" "$FALLBACK_LOG" \
   || fail "fallback fixture did not invoke codex app-server"
 grep -q "OK: dvandva@dvandva installed via app-server RPC" "$FALLBACK_OUTPUT" \
   || fail "fallback output should report app-server RPC success"
+grep -q "dvandva:research" "$FALLBACK_OUTPUT" \
+  || fail "fallback output should tell users to verify Dvandva research skill"
 grep -q "dvandva:testing" "$FALLBACK_OUTPUT" \
   || fail "fallback output should tell users to verify absorbed testing skill"
 grep -q "dvandva:understanding" "$FALLBACK_OUTPUT" \

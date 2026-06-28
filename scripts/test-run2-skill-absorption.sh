@@ -72,6 +72,27 @@ require_text() {
   fi
 }
 
+require_no_testing_skill_recreation() {
+  local file="$1" label="$2"
+  local offenders
+
+  if [[ ! -f "$file" ]]; then
+    fail "$label cannot be checked; missing ${file#$ROOT_DIR/}"
+    return
+  fi
+
+  offenders="$(
+    grep -Ein -- '(create|recreate|write|persist|store).*\.testing-skill/' "$file" \
+      | grep -Fv 'Do not recreate `.testing-skill/`' \
+      || true
+  )"
+  if [[ -z "$offenders" ]]; then
+    pass "$label"
+  else
+    fail "$label; unexpected .testing-skill/ recreation text in ${file#$ROOT_DIR/}: $offenders"
+  fi
+}
+
 check_testing() {
   local skill="$ROOT_DIR/plugins/dvandva/skills/testing/SKILL.md"
   local agent="$ROOT_DIR/plugins/dvandva/agents/test-creator.md"
@@ -104,6 +125,7 @@ check_testing() {
   require_text "$skill" "UNVERIFIABLE" "testing skill records blocked probes as unverifiable"
   require_text "$skill" "tests only for confirmed issues" "testing skill writes tests only for confirmed gaps"
   require_text "$skill" 'Do not recreate `.testing-skill/`' "testing skill explicitly rejects old state directory recreation"
+  require_no_testing_skill_recreation "$skill" "testing skill forbids contradictory state directory recreation"
   require_text "$skill" "subagent_tracks" "testing skill maps old state to subagent tracks"
   require_text "$skill" "verification_matrix" "testing skill maps coverage to verification matrix"
   require_text "$skill" "Do not implement production behavior" "testing skill keeps production fixes out of testing"
@@ -252,11 +274,12 @@ FIXTURE
 
 self_test() {
   local script="${BASH_SOURCE[0]}"
-  local good bad malformed
+  local good bad malformed contradiction
   good="$(mktemp -d)"
   bad="$(mktemp -d)"
   malformed="$(mktemp -d)"
-  trap 'rm -rf "$good" "$bad" "$malformed"' RETURN
+  contradiction="$(mktemp -d)"
+  trap 'rm -rf "$good" "$bad" "$malformed" "$contradiction"' RETURN
 
   make_fixture "$good"
   if DVANDVA_RUN2_ABSORPTION_ROOT="$good" bash "$script" --scope all >/dev/null; then
@@ -284,6 +307,16 @@ self_test() {
     pass "self-test malformed-present requirement fails"
   else
     fail "self-test malformed-present requirement should fail and mention exact false-positive filter contract"
+  fi
+
+  make_fixture "$contradiction"
+  printf '%s\n' 'Later, recreate `.testing-skill/` for local state.' >> "$contradiction/plugins/dvandva/skills/testing/SKILL.md"
+  output="$(DVANDVA_RUN2_ABSORPTION_ROOT="$contradiction" bash "$script" --scope testing 2>&1)"
+  rc=$?
+  if [[ "$rc" -ne 0 && "$output" == *"unexpected .testing-skill/ recreation text"* ]]; then
+    pass "self-test contradictory state recreation fails"
+  else
+    fail "self-test contradictory state recreation should fail"
   fi
 
   output="$(DVANDVA_RUN2_ABSORPTION_ROOT="$bad/does-not-exist" bash "$script" --scope testing 2>&1)"
