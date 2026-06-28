@@ -195,6 +195,8 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
       (.agent_kind // "") == "generated" and
       ((.status // "") != "rejected") and
       ((.status // "") != "collapsed");
+    def live($agent):
+      (($agent.status // "") == "planned") or (($agent.status // "") == "running");
     def path_overlap($left; $right):
       ($left == $right) or
       ($left | startswith($right + "/")) or
@@ -211,7 +213,7 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
       range($i + 1; ($instances | length)) as $j |
       ($instances[$i]) as $a |
       ($instances[$j]) as $b |
-      select(($a.base_checkpoint == $b.base_checkpoint) and overlap($a; $b) and (serialized($a; $b) | not))
+      select((($a.base_checkpoint == $b.base_checkpoint) or (live($a) and live($b))) and overlap($a; $b) and (serialized($a; $b) | not))
     ] | length == 0
   ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
     echo "DVANDVA_WRITE bad_agent_instances_write_paths candidate=$CANDIDATE_FILE" >&2

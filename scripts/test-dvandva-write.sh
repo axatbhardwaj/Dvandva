@@ -1059,6 +1059,18 @@ make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
 run_case_contains "v2 closed agent_instances sharing base checkpoint still collide" 23 "DVANDVA_WRITE bad_agent_instances_write_paths" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+BOX="$(new_box v2-running-agent-instances-prior-base-collision)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].status = "running"' \
+  '.agent_instances[0].base_checkpoint = 5' \
+  '.agent_instances[0].spawned_at_checkpoint = 5' \
+  '.agent_instances[0].write_paths = ["scripts/test-dvandva-write.sh"]' \
+  '.agent_instances[0].evidence_refs = ["subagent:r3-generated-dynamic-review"]' \
+  '.agent_instances += [(.agent_instances[0] | .id = "r3-generated-dynamic-review-b" | .status = "running" | .base_checkpoint = 12 | .spawned_at_checkpoint = 12 | .write_paths = ["scripts/test-dvandva-write.sh"] | .evidence_refs = ["subagent:r3-generated-dynamic-review-b"] | .output_refs = ["subagent_track:r3-generated-dynamic-review-b"])]'
+run_case_contains "v2 running historical agent_instances sharing write paths still collide" 23 "DVANDVA_WRITE bad_agent_instances_write_paths" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
 BOX="$(new_box v2-closed-agent-instances-prior-base-reuse-paths)"
 make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
   "$(v2_dynamic_agent_instances_filter)" \
