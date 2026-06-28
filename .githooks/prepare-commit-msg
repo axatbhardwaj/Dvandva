@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# Dvandva prepare-commit-msg hook.
+# Appends a Dvandva-Checkpoint: <N> trailer when the current DVANDVA_ROLE
+# is allowed to commit (assignee or in active_roles).  Idempotent: skips
+# if the trailer is already present.
+#
+# This hook does NOT call dvandva-commit-gate.sh to avoid a dependency on
+# the gate script being installed at scripts/dvandva-commit-gate.sh.  It
+# replicates the minimal baton-read + role-check logic inline so the hook
+# works both in the real repo and in test clone setups where only the
+# hook file itself is present.
+#
+# Signature: prepare-commit-msg <msg-file> [<commit-source> [<sha1>]]
+#   commit-source: message, template, merge, squash, commit
+set -u
+
+COMMIT_MSG_FILE="${1:-}"
+COMMIT_SOURCE="${2:-}"
+
+# Do not modify merge or squash commits — they have auto-generated messages.
+case "$COMMIT_SOURCE" in
+  merge|squash) exit 0 ;;
+esac
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+
+# DVANDVA_ROLE must be set; if not, pre-commit already blocked (or no baton).
+ROLE="${DVANDVA_ROLE:-}"
+[[ -z "$ROLE" ]] && exit 0
+
+# ---------------------------------------------------------------------------
+# Inline terminal-status test (mirrors dvandva-commit-gate.sh)
+# ---------------------------------------------------------------------------
+_is_terminal() {
+  case "$1" in
+    done|human_question|human_decision) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+# ---------------------------------------------------------------------------
+# Inline baton probe: find an active baton where ROLE is allowed, extract checkpoint
+# ---------------------------------------------------------------------------
+CHECKPOINT=""
+
+_probe_baton() {
+  local f="$1"
+  [[ -f "$f" ]] || return
+  jq empty "$f" 2>/dev/null || return
+  local status
+  status="$(jq -r '.status // ""' "$f")"
+  _is_terminal "$status" && return
+  # Check role permission (matches gate logic)
+  local allowed
+  allowed="$(jq --arg role "$ROLE" '
+    ($role == .assignee) or
+    ((.active_roles | type) == "array" and
+     ((.active_roles | index($role)) != null))
+  ' "$f")"
+  [[ "$allowed" == "true" ]] || return
+  CHECKPOINT="$(jq -r '.checkpoint // ""' "$f")"
+}
+
+# Legacy baton path
+_probe_baton "$REPO_ROOT/.dvandva/baton.json"
+
+# Run-scoped baton paths (first matching active baton wins)
+if [[ -z "$CHECKPOINT" && -d "$REPO_ROOT/.dvandva/runs" ]]; then
+  while IFS= read -r -d '' bp; do
+    _probe_baton "$bp"
+    [[ -n "$CHECKPOINT" ]] && break
+  done < <(find "$REPO_ROOT/.dvandva/runs" -maxdepth 2 -name "baton.json" -print0 2>/dev/null)
+fi
+
+# No active baton where ROLE is allowed → nothing to stamp.
+[[ -z "$CHECKPOINT" ]] && exit 0
+
+# ---------------------------------------------------------------------------
+# Skip if the trailer is already present
+# ---------------------------------------------------------------------------
+grep -qE "^Dvandva-Checkpoint:[[:space:]]" "$COMMIT_MSG_FILE" 2>/dev/null && exit 0
+
+# ---------------------------------------------------------------------------
+# Append the trailer.
+# Two leading newlines ensure a blank-line separator from the body,
+# which is what git's trailer convention requires.
+# ---------------------------------------------------------------------------
+printf '\n\nDvandva-Checkpoint: %s\n' "$CHECKPOINT" >> "$COMMIT_MSG_FILE"
+exit 0

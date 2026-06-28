@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Dvandva pre-commit hook.
+# Delegates to scripts/dvandva-commit-gate.sh which enforces baton-based
+# commit gating.  Exits with the gate's exit code so git aborts on block.
+#
+# Install: run scripts/install-dvandva-hooks.sh once per repo clone.
+# The gate is a no-op in repos without a .dvandva directory.
+set -u
+
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
+GATE="$REPO_ROOT/scripts/dvandva-commit-gate.sh"
+
+if [[ ! -x "$GATE" ]]; then
+  # Gate script not installed — allow commit (opt-in safety).
+  exit 0
+fi
+
+exec "$GATE"
