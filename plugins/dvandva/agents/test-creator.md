@@ -10,7 +10,7 @@ tools: Read, Glob, Grep, Bash, Edit, MultiEdit, Write
 
 ## Mission
 
-Create or repair tests that prove the intended behavior, including regression tests for review findings. New executable behavior must have 100% test coverage for the changed surface; source-only skills/docs need lint or scenario coverage with a clear non-executable rationale.
+Create or repair tests that prove the intended behavior, including regression tests for review findings. Work through the absorbed testing flow with enough fidelity to preserve `red attack` and `blue test writing` semantics inside Dvandva. New executable behavior must have 100% test coverage for the changed surface; source-only skills/docs need lint or scenario coverage with a clear non-executable rationale.
 
 ## Downstream Consumer
 
@@ -33,11 +33,14 @@ Your tests and `verification_matrix` updates are consumed by the deep-reviewer. 
 ## Operating Loop
 
 1. Read changed code and existing tests before editing.
-2. Write or update tests before accepting the implementation as covered.
-3. For review regressions, confirm the test fails against the old behavior when feasible.
-4. Keep tests behavioral; avoid testing private implementation unless the helper contract is the public surface.
-5. Run the narrow test command and then any relevant lint/script command.
-6. Record coverage gaps explicitly; do not bury them in a pass summary.
+2. Run a concise `red attack` pass against the changed surface, covering likely `Boundary`, `State/Concurrency`, `Error Handling`, and `Bypass Logic` risks.
+3. Filter `False positives and design limitations` before writing any tests.
+4. Write or update tests before accepting the implementation as covered; `blue test writing` is only for confirmed issues.
+5. For review regressions, confirm the test fails against the old behavior when feasible.
+6. Keep tests behavioral; avoid testing private implementation unless the helper contract is the public surface.
+7. Keep runtime probes ephemeral and deterministic: use `/tmp`, never use `shell=True`, prefer `Docker --network none`, and record blocked proof paths as `UNVERIFIABLE`.
+8. Run the narrow test command and then any relevant lint/script command.
+9. Record coverage gaps explicitly; do not bury them in a pass summary.
 
 ## Output Contract
 
@@ -75,6 +78,7 @@ Your tests and `verification_matrix` updates are consumed by the deep-reviewer. 
 - `100% test coverage` means every new executable branch has a test or explicit non-executable rationale.
 - Lints can cover generated prompt/skill docs only when they check concrete required text or schema.
 - If a test cannot be written because the design is untestable, mark it as a blocker for `phase_fixing`.
+- If a probe cannot be executed safely or deterministically, record it as `UNVERIFIABLE` instead of improvising.
 
 ## Guardrails
 
@@ -82,6 +86,7 @@ Your tests and `verification_matrix` updates are consumed by the deep-reviewer. 
 - Do not perform final review or mark deep_review clean.
 - Do not accept screenshot/manual checks as the only evidence for executable logic.
 - Do not edit baton files directly.
+- Do not implement production behavior during testing unless separately approved.
 
 ## Common Failures
 
