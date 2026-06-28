@@ -12,6 +12,7 @@ SURFACE_PATHS=(
   product.md
   docs/protocol
   docs/workflows
+  plugins/dvandva/agents
   plugins/dvandva/commands
   plugins/dvandva/references
   plugins/dvandva/skills

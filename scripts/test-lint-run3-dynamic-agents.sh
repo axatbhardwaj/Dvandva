@@ -29,6 +29,7 @@ make_case() {
     "$box/scripts" \
     "$box/docs/protocol" \
     "$box/docs/workflows" \
+    "$box/plugins/dvandva/agents" \
     "$box/plugins/dvandva/commands" \
     "$box/plugins/dvandva/references" \
     "$box/plugins/dvandva/skills/research"
@@ -42,6 +43,21 @@ make_case() {
 write_contract_surface() {
   local box="$1"
   cat > "$box/plugins/dvandva/skills/research/SKILL.md" <<'SURFACE'
+Dvandva uses agent_instances for Run 3 dynamic agent records.
+The static roster is the seed roster for run-scoped dynamic agents.
+Explicit closure is required; every generated handle must be explicitly closed before completion.
+Dynamic write-path disjointness is required unless conflict_group serialization applies.
+There is no daemon and no mailbox.
+There is no hidden scheduler or hidden central process.
+Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models.
+Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`.
+generated agents must never own assignee, active_roles, or transitions.
+SURFACE
+}
+
+write_agent_contract_surface() {
+  local box="$1"
+  cat > "$box/plugins/dvandva/agents/implementer.md" <<'SURFACE'
 Dvandva uses agent_instances for Run 3 dynamic agent records.
 The static roster is the seed roster for run-scoped dynamic agents.
 Explicit closure is required; every generated handle must be explicitly closed before completion.
@@ -80,6 +96,11 @@ run_expect() {
 BOX="$(make_case pass-surface)"
 write_contract_surface "$BOX"
 run_expect "run3 lint accepts complete contract surface" 0 "Run 3 dynamic-agent lint passed." \
+  "$BOX/scripts/lint-run3-dynamic-agents.sh"
+
+BOX="$(make_case agents-surface)"
+write_agent_contract_surface "$BOX"
+run_expect "run3 lint scans seed agent contracts" 0 "Run 3 dynamic-agent lint passed." \
   "$BOX/scripts/lint-run3-dynamic-agents.sh"
 
 BOX="$(make_case missing-agent-instances)"

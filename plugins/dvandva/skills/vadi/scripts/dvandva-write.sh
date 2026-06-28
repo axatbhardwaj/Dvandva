@@ -56,7 +56,7 @@ v2_expected_assignee() {
     research_review|spec_review|deep_review|phase_review|counter_review)
       echo "prativadi"
       ;;
-    human_question|human_decision)
+    human_question|human_decision|done)
       echo "human"
       ;;
     *)
@@ -249,21 +249,30 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
       test("^dvandva-(researcher|architect|implementer|test-creator|cross-reviewer|adversarial-analyst|deep-reviewer|deslopper|sandbox-verifier|baton-auditor|security-auditor|integration-checker|debugger|doc-verifier|pattern-mapper)$");
     def legacy_owner:
       test("^(adversarial-analyst|quality-reviewer|sandbox-executor|architect|developer)$");
-    def closed_agent_instance($owner):
+    def coordinator_owner:
+      . == "vadi" or . == "prativadi" or . == "team" or . == "human";
+    def closed_agent_instance($track):
       any($root.agent_instances[]?;
-        (.id == $owner) and
+        (.id == $track.owner) and
         ((.agent_kind // "") == "generated") and
+        (
+          (($track.owner_role // "") == "") or
+          (($track.owner_role // "") == (.parent_role // ""))
+        ) and
         (.status == "closed") and
         ((.output_refs | length) > 0) and
         ((.evidence_refs | length) > 0) and
         any(.evidence_refs[]; (type == "string") and startswith("closed:"))
       );
     all(.subagent_tracks[];
-      if .parallelized then
-        (((.owner | static_owner) or (.owner | legacy_owner) or closed_agent_instance(.owner)) and
-          (((.outputs | length) > 0) or ((.evidence_refs | length) > 0)))
+      if ((.owner | coordinator_owner) or (.owner | static_owner) or (.owner | legacy_owner)) then
+        if .parallelized then
+          (((.outputs | length) > 0) or ((.evidence_refs | length) > 0))
+        else
+          true
+        end
       else
-        true
+        (closed_agent_instance(.) and (((.outputs | length) > 0) or ((.evidence_refs | length) > 0)))
       end
     )
   ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
@@ -273,7 +282,6 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
       def legacy_owner:
         test("^(adversarial-analyst|quality-reviewer|sandbox-executor|architect|developer)$");
       any(.subagent_tracks[];
-        .parallelized and
         ((.owner | static_owner) | not) and
         ((.owner | legacy_owner) | not) and
         ((.owner == "vadi" or .owner == "prativadi" or .owner == "team" or .owner == "human") | not)

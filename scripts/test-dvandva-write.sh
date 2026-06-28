@@ -92,7 +92,7 @@ v2_review_angles_filter() {
     "phase": "deep_review",
     "status": "completed",
     "track": "correctness-regression",
-	    "owner": "dvandva-deep-reviewer",
+    "owner": "dvandva-deep-reviewer",
     "parallelized": true,
     "rationale": "Independent correctness and regression review can run without editing shared files.",
     "inputs": ["candidate diff"],
@@ -105,7 +105,7 @@ v2_review_angles_filter() {
     "phase": "deep_review",
     "status": "completed",
     "track": "test-evidence",
-	    "owner": "dvandva-deep-reviewer",
+    "owner": "dvandva-deep-reviewer",
     "parallelized": true,
     "rationale": "Independent test evidence review can run beside correctness and protocol review.",
     "inputs": ["verification output"],
@@ -118,7 +118,7 @@ v2_review_angles_filter() {
     "phase": "deep_review",
     "status": "completed",
     "track": "protocol-handoff",
-	    "owner": "dvandva-baton-auditor",
+    "owner": "dvandva-baton-auditor",
     "parallelized": true,
     "rationale": "Independent protocol handoff review checks baton and docs without editing code.",
     "inputs": ["baton candidate"],
@@ -252,8 +252,153 @@ v2_dynamic_parallel_track_filter() {
   cat <<'JQ'
 .subagent_tracks[0].parallelized = true
 | .subagent_tracks[0].owner = "r3-generated-dynamic-review"
+| .subagent_tracks[0].owner_role = "vadi"
 | .subagent_tracks[0].outputs = ["Generated dynamic review completed."]
 | .subagent_tracks[0].evidence_refs = ["subagent:r3-generated-dynamic-review", "closed:r3-generated-dynamic-review"]
+JQ
+}
+
+v2_many_agent_instances_filter() {
+  cat <<'JQ'
+.agent_instances = [
+  {
+    "id": "r3-gen-0",
+    "parent_role": "vadi",
+    "spawned_by": "dvandva-implementer",
+    "spawned_at_checkpoint": 0,
+    "phase": 1,
+    "purpose": "Collapsed generated instance included to exercise large dynamic registries.",
+    "agent_kind": "generated",
+    "seed_agent": "dvandva-implementer",
+    "model_class": "sonnet-class|gpt-5.4",
+    "permission_class": "edit-scoped",
+    "status": "collapsed",
+    "work_item_ids": [],
+    "read_paths": ["src/gen-0"],
+    "write_paths": [],
+    "depends_on": [],
+    "conflict_group": "many-0",
+    "base_checkpoint": 0,
+    "output_refs": [],
+    "evidence_refs": [],
+    "result": "collapsed"
+  },
+  {
+    "id": "r3-gen-1",
+    "parent_role": "vadi",
+    "spawned_by": "dvandva-implementer",
+    "spawned_at_checkpoint": 0,
+    "phase": 1,
+    "purpose": "Closed generated instance 1 for large dynamic registry coverage.",
+    "agent_kind": "generated",
+    "seed_agent": "dvandva-implementer",
+    "model_class": "sonnet-class|gpt-5.4",
+    "permission_class": "edit-scoped",
+    "status": "closed",
+    "work_item_ids": ["chunk-1"],
+    "read_paths": ["src/gen-1"],
+    "write_paths": ["src/gen-1"],
+    "depends_on": [],
+    "conflict_group": "many-1",
+    "base_checkpoint": 0,
+    "output_refs": ["subagent_track:r3-gen-1"],
+    "evidence_refs": ["subagent:r3-gen-1", "closed:r3-gen-1"],
+    "closed_at": "2026-06-28T00:00:00Z",
+    "result": "passed"
+  },
+  {
+    "id": "r3-gen-2",
+    "parent_role": "prativadi",
+    "spawned_by": "dvandva-implementer",
+    "spawned_at_checkpoint": 0,
+    "phase": 1,
+    "purpose": "Closed generated instance 2 for large dynamic registry coverage.",
+    "agent_kind": "generated",
+    "seed_agent": "dvandva-implementer",
+    "model_class": "sonnet-class|gpt-5.4",
+    "permission_class": "edit-scoped",
+    "status": "closed",
+    "work_item_ids": ["chunk-2"],
+    "read_paths": ["src/gen-2"],
+    "write_paths": ["src/gen-2"],
+    "depends_on": [],
+    "conflict_group": "many-2",
+    "base_checkpoint": 0,
+    "output_refs": ["subagent_track:r3-gen-2"],
+    "evidence_refs": ["subagent:r3-gen-2", "closed:r3-gen-2"],
+    "closed_at": "2026-06-28T00:00:00Z",
+    "result": "passed"
+  },
+  {
+    "id": "r3-gen-3",
+    "parent_role": "vadi",
+    "spawned_by": "dvandva-implementer",
+    "spawned_at_checkpoint": 0,
+    "phase": 1,
+    "purpose": "Closed generated instance 3 for large dynamic registry coverage.",
+    "agent_kind": "generated",
+    "seed_agent": "dvandva-implementer",
+    "model_class": "sonnet-class|gpt-5.4",
+    "permission_class": "edit-scoped",
+    "status": "closed",
+    "work_item_ids": ["chunk-3"],
+    "read_paths": ["src/gen-3"],
+    "write_paths": ["src/gen-3"],
+    "depends_on": [],
+    "conflict_group": "many-3",
+    "base_checkpoint": 0,
+    "output_refs": ["subagent_track:r3-gen-3"],
+    "evidence_refs": ["subagent:r3-gen-3", "closed:r3-gen-3"],
+    "closed_at": "2026-06-28T00:00:00Z",
+    "result": "passed"
+  },
+  {
+    "id": "r3-gen-4",
+    "parent_role": "prativadi",
+    "spawned_by": "dvandva-implementer",
+    "spawned_at_checkpoint": 0,
+    "phase": 1,
+    "purpose": "Closed generated instance 4 for large dynamic registry coverage.",
+    "agent_kind": "generated",
+    "seed_agent": "dvandva-implementer",
+    "model_class": "sonnet-class|gpt-5.4",
+    "permission_class": "edit-scoped",
+    "status": "closed",
+    "work_item_ids": ["chunk-4"],
+    "read_paths": ["src/gen-4"],
+    "write_paths": ["src/gen-4"],
+    "depends_on": [],
+    "conflict_group": "many-4",
+    "base_checkpoint": 0,
+    "output_refs": ["subagent_track:r3-gen-4"],
+    "evidence_refs": ["subagent:r3-gen-4", "closed:r3-gen-4"],
+    "closed_at": "2026-06-28T00:00:00Z",
+    "result": "passed"
+  },
+  {
+    "id": "r3-gen-5",
+    "parent_role": "vadi",
+    "spawned_by": "dvandva-implementer",
+    "spawned_at_checkpoint": 0,
+    "phase": 1,
+    "purpose": "Closed generated instance 5 for large dynamic registry coverage.",
+    "agent_kind": "generated",
+    "seed_agent": "dvandva-implementer",
+    "model_class": "sonnet-class|gpt-5.4",
+    "permission_class": "edit-scoped",
+    "status": "closed",
+    "work_item_ids": ["chunk-5"],
+    "read_paths": ["src/gen-5"],
+    "write_paths": ["src/gen-5"],
+    "depends_on": [],
+    "conflict_group": "many-5",
+    "base_checkpoint": 0,
+    "output_refs": ["subagent_track:r3-gen-5"],
+    "evidence_refs": ["subagent:r3-gen-5", "closed:r3-gen-5"],
+    "closed_at": "2026-06-28T00:00:00Z",
+    "result": "passed"
+  }
+]
 JQ
 }
 
@@ -674,6 +819,14 @@ make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
 run_case_contains "v2 dynamic owner requires agent_instance" 23 "DVANDVA_WRITE bad_agent_instances" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+BOX="$(new_box v2-nonparallel-dynamic-owner-missing-agent-instance)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_parallel_track_filter)" \
+  '.subagent_tracks[0].parallelized = false' \
+  '.agent_instances = []'
+run_case_contains "v2 nonparallel dynamic owner requires agent_instance" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
 BOX="$(new_box v2-dynamic-owner-missing-closure)"
 make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
   "$(v2_dynamic_agent_instances_filter)" \
@@ -688,6 +841,22 @@ make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
   "$(v2_dynamic_agent_instances_filter)" \
   "$(v2_dynamic_parallel_track_filter)"
 run_case "v2 dynamic owner with closed agent_instance is accepted" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-nonparallel-dynamic-owner-accepted)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  "$(v2_dynamic_parallel_track_filter)" \
+  '.subagent_tracks[0].parallelized = false'
+run_case "v2 nonparallel dynamic owner with closed agent_instance is accepted" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-dynamic-owner-parent-role-mismatch)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  "$(v2_dynamic_parallel_track_filter)" \
+  '.subagent_tracks[0].owner_role = "prativadi"'
+run_case_contains "v2 dynamic owner_role must match parent_role" 23 "DVANDVA_WRITE bad_agent_instances" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-agent-instance-bad-parent-role)"
@@ -846,6 +1015,20 @@ make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
   '.agent_instances[0].write_paths = ["src/a"]' \
   '.agent_instances += [(.agent_instances[0] | .id = "r3-generated-dynamic-review-b" | .write_paths = ["src/ab"] | .evidence_refs = ["subagent:r3-generated-dynamic-review-b", "closed:r3-generated-dynamic-review-b"] | .output_refs = ["subagent_track:r3-generated-dynamic-review-b"])]'
 run_case "v2 agent_instance sibling prefix paths are accepted" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-six-agent-instances-accepted)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_many_agent_instances_filter)"
+run_case "v2 six generated agent_instances with collapsed mix are accepted" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-six-agent-instances-late-collision)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_many_agent_instances_filter)" \
+  '.agent_instances[4].write_paths = ["src/late"]' \
+  '.agent_instances[5].write_paths = ["src/late/sub"]'
+run_case_contains "v2 six generated agent_instances catch late path collision" 23 "DVANDVA_WRITE bad_agent_instances_write_paths" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-agent-instance-serialized-conflict)"
@@ -1185,6 +1368,12 @@ BOX="$(new_box v2-done-valid-run-explainer)"
 make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4
 make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"'
 run_case "v2 done accepts valid run_explainer_ref path" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-done-rejects-generated-assignee)"
+make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4
+make_baton_v2 "$BOX/baton.next.json" "done" "r3-generated-dynamic-review" 5 '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"'
+run_case_contains "v2 done requires human assignee" 23 "bad_assignee_owner" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-deep-review-missing-angles)"
