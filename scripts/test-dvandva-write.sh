@@ -690,6 +690,105 @@ make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
 run_case "v2 dynamic owner with closed agent_instance is accepted" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+BOX="$(new_box v2-agent-instance-bad-parent-role)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].parent_role = "team"'
+run_case_contains "v2 agent_instance bad parent_role exits 23" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-agent-instance-blank-spawned-by)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].spawned_by = "   "'
+run_case_contains "v2 agent_instance blank spawned_by exits 23" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-agent-instance-bad-spawn-checkpoint)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].spawned_at_checkpoint = "0"'
+run_case_contains "v2 agent_instance bad spawned checkpoint exits 23" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-agent-instance-empty-phase)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].phase = ""'
+run_case_contains "v2 agent_instance empty phase exits 23" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-agent-instance-blank-purpose)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].purpose = "   "'
+run_case_contains "v2 agent_instance blank purpose exits 23" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-agent-instance-wrong-kind)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].agent_kind = "static"'
+run_case_contains "v2 agent_instance wrong kind exits 23" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-agent-instance-bad-status)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].status = "done"'
+run_case_contains "v2 agent_instance bad status exits 23" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-agent-instance-unsafe-read-path)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].read_paths = ["/absolute"]'
+run_case_contains "v2 agent_instance unsafe read path exits 23" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-agent-instance-bad-depends-on)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].depends_on = "r3-other"'
+run_case_contains "v2 agent_instance bad depends_on exits 23" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-agent-instance-bad-output-refs)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].output_refs = "subagent_track:r3-generated-dynamic-review"'
+run_case_contains "v2 agent_instance bad output_refs exits 23" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-agent-instance-bad-base-checkpoint)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].base_checkpoint = "0"'
+run_case_contains "v2 agent_instance bad base_checkpoint exits 23" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-agent-instance-closed-missing-result)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].result = ""'
+run_case_contains "v2 closed agent_instance missing result exits 23" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-agent-instance-closed-empty-work-items)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.agent_instances[0].work_item_ids = []'
+run_case_contains "v2 closed agent_instance empty work_item_ids exits 23" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-dynamic-owner-missing-output-refs)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  "$(v2_dynamic_agent_instances_filter)" \
+  "$(v2_dynamic_parallel_track_filter)" \
+  '.agent_instances[0].output_refs = []'
+run_case_contains "v2 dynamic owner requires output_refs" 23 "DVANDVA_WRITE bad_agent_instances" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
 BOX="$(new_box v2-duplicate-agent-instance-id)"
 make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
   "$(v2_dynamic_agent_instances_filter)" \
