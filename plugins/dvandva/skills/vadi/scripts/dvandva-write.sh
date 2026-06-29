@@ -77,6 +77,20 @@ v2_expected_assignee() {
   esac
 }
 
+canonical_mode() {
+  case "$1" in
+    development|feature-pr)
+      printf '%s\n' "development"
+      ;;
+    research|review)
+      printf '%s\n' "$1"
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 if [[ ! -f "$CANDIDATE_FILE" ]]; then
   echo "DVANDVA_WRITE missing candidate=$CANDIDATE_FILE" >&2
   exit 21
@@ -119,8 +133,14 @@ done
 
 new_status="$(jq -r '.status // ""' "$CANDIDATE_FILE")"
 new_assignee="$(jq -r '.assignee // ""' "$CANDIDATE_FILE")"
+new_mode="$(jq -r '.mode // ""' "$CANDIDATE_FILE")"
+new_effective_mode=""
 
 if [[ "$schema" == "dvandva.baton.v2" ]]; then
+  if ! new_effective_mode="$(canonical_mode "$new_mode")"; then
+    echo "DVANDVA_WRITE bad_mode mode=$new_mode candidate=$CANDIDATE_FILE" >&2
+    exit 23
+  fi
   new_run_id="$(jq -r '.run_id // ""' "$CANDIDATE_FILE")"
   if ! jq -e '(.run_id | type) == "string" and (.run_id | length) > 0' "$CANDIDATE_FILE" >/dev/null 2>&1 || ! is_safe_run_id "$new_run_id"; then
     echo "DVANDVA_WRITE bad_run_id candidate=$CANDIDATE_FILE" >&2
@@ -434,18 +454,37 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
     echo "DVANDVA_WRITE bad_research_ref candidate=$CANDIDATE_FILE" >&2
     exit 23
   fi
-  if [[ "$new_status" == "done" ]] \
-    && ! jq -e '(.run_explainer_ref | type) == "string" and (.run_explainer_ref | test("^\\./superpowers/run-reports/[0-9]{4}-[0-9]{2}-[0-9]{2}-[A-Za-z0-9._-]+-explainer\\.html$"))' "$CANDIDATE_FILE" >/dev/null 2>&1; then
-    echo "DVANDVA_WRITE bad_run_explainer_ref candidate=$CANDIDATE_FILE" >&2
-    exit 23
-  fi
   if [[ "$new_status" == "done" ]]; then
-    explainer_ref="$(jq -r '.run_explainer_ref' "$CANDIDATE_FILE")"
-    explainer_run_id="$(printf '%s\n' "$explainer_ref" | sed -E 's#^\./superpowers/run-reports/[0-9]{4}-[0-9]{2}-[0-9]{2}-(.*)-explainer\.html$#\1#')"
-    if [[ "$explainer_run_id" != "$new_run_id" ]]; then
-      echo "DVANDVA_WRITE bad_run_explainer_ref candidate=$CANDIDATE_FILE" >&2
-      exit 23
-    fi
+    case "$new_effective_mode" in
+      development)
+        if ! jq -e '(.run_explainer_ref | type) == "string" and (.run_explainer_ref | test("^\\./superpowers/run-reports/[0-9]{4}-[0-9]{2}-[0-9]{2}-[A-Za-z0-9._-]+-explainer\\.html$"))' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+          echo "DVANDVA_WRITE bad_run_explainer_ref candidate=$CANDIDATE_FILE" >&2
+          exit 23
+        fi
+        explainer_ref="$(jq -r '.run_explainer_ref' "$CANDIDATE_FILE")"
+        explainer_run_id="$(printf '%s\n' "$explainer_ref" | sed -E 's#^\./superpowers/run-reports/[0-9]{4}-[0-9]{2}-[0-9]{2}-(.*)-explainer\.html$#\1#')"
+        if [[ "$explainer_run_id" != "$new_run_id" ]]; then
+          echo "DVANDVA_WRITE bad_run_explainer_ref candidate=$CANDIDATE_FILE" >&2
+          exit 23
+        fi
+        ;;
+      research)
+        if ! jq -e '
+          (.research_outcome == null or .research_outcome == "exploratory" or .research_outcome == "seed_development") and
+          (.research_ref | type) == "string" and (.research_ref | length) > 0 and
+          (((.research_outcome // "exploratory") != "seed_development") or ((.plan_ref | type) == "string" and (.plan_ref | length) > 0))
+        ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+          echo "DVANDVA_WRITE bad_research_done_ref candidate=$CANDIDATE_FILE" >&2
+          exit 23
+        fi
+        ;;
+      review)
+        if ! jq -e '(.review_ref | type) == "string" and (.review_ref | length) > 0' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+          echo "DVANDVA_WRITE bad_review_ref candidate=$CANDIDATE_FILE" >&2
+          exit 23
+        fi
+        ;;
+    esac
   fi
 fi
 
@@ -482,21 +521,41 @@ case "$schema:$new_status" in
 esac
 
 if [[ "$schema" == "dvandva.baton.v2" ]]; then
-  case "$new_status" in
-    research_drafting|research_review|research_revision)
+  case "$new_effective_mode:$new_status" in
+    *:human_question|*:human_decision)
+      ;;
+    development:research_drafting|development:research_review|development:research_revision)
       if ! jq -e '.phase == "research"' "$CANDIDATE_FILE" >/dev/null 2>&1; then
         echo "DVANDVA_WRITE bad_phase_status status=$new_status candidate=$CANDIDATE_FILE" >&2
         exit 23
       fi
       ;;
-    spec_drafting|spec_review|spec_revision)
+    development:spec_drafting|development:spec_review|development:spec_revision)
       if ! jq -e '.phase == "spec"' "$CANDIDATE_FILE" >/dev/null 2>&1; then
         echo "DVANDVA_WRITE bad_phase_status status=$new_status candidate=$CANDIDATE_FILE" >&2
         exit 23
       fi
       ;;
-    implementing|parallel_implementing|test_creation|cross_review|cross_fixing|deep_review|deslop|termination_review|phase_review|phase_fixing|review_of_review|counter_review|done)
+    development:implementing|development:parallel_implementing|development:test_creation|development:cross_review|development:cross_fixing|development:deep_review|development:deslop|development:termination_review|development:phase_review|development:phase_fixing|development:review_of_review|development:counter_review|development:done)
       if ! jq -e '(.phase | type) == "number"' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+        echo "DVANDVA_WRITE bad_phase_status status=$new_status candidate=$CANDIDATE_FILE" >&2
+        exit 23
+      fi
+      ;;
+    research:research_drafting|research:research_review|research:research_revision)
+      if ! jq -e '.phase == "research"' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+        echo "DVANDVA_WRITE bad_phase_status status=$new_status candidate=$CANDIDATE_FILE" >&2
+        exit 23
+      fi
+      ;;
+    research:*)
+      if ! jq -e '.phase == "spec"' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+        echo "DVANDVA_WRITE bad_phase_status status=$new_status candidate=$CANDIDATE_FILE" >&2
+        exit 23
+      fi
+      ;;
+    review:*)
+      if ! jq -e '.phase == "review"' "$CANDIDATE_FILE" >/dev/null 2>&1; then
         echo "DVANDVA_WRITE bad_phase_status status=$new_status candidate=$CANDIDATE_FILE" >&2
         exit 23
       fi
@@ -720,11 +779,11 @@ else
 
   # Use a non-whitespace delimiter: bash collapses adjacent IFS whitespace,
   # which would shift run_id when resume fields are empty.
-  if ! cur="$(jq -r '[.schema // "", .status // "", (.checkpoint // -1 | tostring), (.master_plan_locked // false | tostring), .resume_assignee // "", .resume_status // "", .run_id // "", (.phase | tostring), (.vadi_final_approval // false | tostring), (.prativadi_final_approval // false | tostring)] | join("\u001f")' "$BATON_FILE" 2>/dev/null)"; then
+  if ! cur="$(jq -r '[.schema // "", .status // "", (.checkpoint // -1 | tostring), (.master_plan_locked // false | tostring), .resume_assignee // "", .resume_status // "", .run_id // "", (.phase | tostring), (.vadi_final_approval // false | tostring), (.prativadi_final_approval // false | tostring), .mode // ""] | join("\u001f")' "$BATON_FILE" 2>/dev/null)"; then
     echo "DVANDVA_WRITE current_baton_unparseable file=$BATON_FILE refusing_to_overwrite=true" >&2
     exit 25
   fi
-  IFS=$'\x1f' read -r cur_schema cur_status cur_checkpoint cur_locked cur_resume_assignee cur_resume_status cur_run_id cur_phase cur_vadi_final_approval cur_prativadi_final_approval <<< "$cur"
+  IFS=$'\x1f' read -r cur_schema cur_status cur_checkpoint cur_locked cur_resume_assignee cur_resume_status cur_run_id cur_phase cur_vadi_final_approval cur_prativadi_final_approval cur_mode <<< "$cur"
 
   case "$cur_schema" in
     dvandva.baton.v1|dvandva.baton.v2) ;;
@@ -742,6 +801,13 @@ else
   if [[ "$cur_schema" == "dvandva.baton.v2" ]] && ! is_safe_run_id "$cur_run_id"; then
     echo "DVANDVA_WRITE current_baton_unparseable file=$BATON_FILE bad_run_id=$cur_run_id" >&2
     exit 25
+  fi
+  cur_effective_mode=""
+  if [[ "$cur_schema" == "dvandva.baton.v2" ]]; then
+    if ! cur_effective_mode="$(canonical_mode "$cur_mode")"; then
+      echo "DVANDVA_WRITE current_baton_unparseable file=$BATON_FILE bad_mode=$cur_mode" >&2
+      exit 25
+    fi
   fi
 
   approval_reason=""
@@ -765,6 +831,8 @@ else
     reason="schema_change current=$cur_schema candidate=$schema"
   elif [[ "$schema" == "dvandva.baton.v2" && "$cur_run_id" != "$new_run_id" ]]; then
     reason="run_id_change current=$cur_run_id candidate=$new_run_id"
+  elif [[ "$schema" == "dvandva.baton.v2" && "$cur_effective_mode" != "$new_effective_mode" ]]; then
+    reason="mode_change current=$cur_mode candidate=$new_mode"
   elif [[ "$new_checkpoint" -le "$cur_checkpoint" ]]; then
     echo "DVANDVA_WRITE stale_checkpoint current=$cur_checkpoint candidate=$new_checkpoint" >&2
     exit 27
@@ -833,12 +901,31 @@ else
         esac
         ;;
       dvandva.baton.v2)
-        case "${cur_status}:${new_status}" in
-          research_drafting:research_review|research_review:research_revision|research_revision:research_review|research_review:spec_drafting) legal=1 ;;
-          spec_drafting:spec_review|spec_review:spec_revision|spec_review:parallel_implementing|spec_revision:spec_review) legal=1 ;;
-          parallel_implementing:test_creation|test_creation:cross_review|cross_review:cross_fixing|cross_fixing:test_creation|cross_review:deep_review) legal=1 ;;
-          deep_review:phase_fixing|deep_review:deslop|phase_fixing:test_creation|deslop:phase_fixing|deslop:parallel_implementing|deslop:termination_review|termination_review:phase_fixing|termination_review:done) legal=1 ;;
-          *) reason="no legal edge ${cur_status}->${new_status}" ;;
+        case "$cur_effective_mode" in
+          development)
+            case "${cur_status}:${new_status}" in
+              research_drafting:research_review|research_review:research_revision|research_revision:research_review|research_review:spec_drafting) legal=1 ;;
+              spec_drafting:spec_review|spec_review:spec_revision|spec_review:parallel_implementing|spec_revision:spec_review) legal=1 ;;
+              parallel_implementing:test_creation|test_creation:cross_review|cross_review:cross_fixing|cross_fixing:test_creation|cross_review:deep_review) legal=1 ;;
+              deep_review:phase_fixing|deep_review:deslop|phase_fixing:test_creation|deslop:phase_fixing|deslop:parallel_implementing|deslop:termination_review|termination_review:phase_fixing|termination_review:done) legal=1 ;;
+              *) reason="no legal edge ${cur_status}->${new_status}" ;;
+            esac
+            ;;
+          research)
+            case "${cur_status}:${new_status}" in
+              research_drafting:research_review|research_review:research_revision|research_revision:research_review|research_review:spec_drafting) legal=1 ;;
+              spec_drafting:spec_review|spec_review:spec_revision|spec_revision:spec_review) legal=1 ;;
+              research_review:termination_review|spec_review:termination_review|termination_review:phase_fixing|phase_fixing:research_review|termination_review:done) legal=1 ;;
+              *) reason="no legal edge ${cur_status}->${new_status}" ;;
+            esac
+            ;;
+          review)
+            case "${cur_status}:${new_status}" in
+              research_drafting:research_review|research_review:research_revision|research_revision:research_review) legal=1 ;;
+              research_review:deep_review|deep_review:deslop|deslop:termination_review|termination_review:phase_fixing|phase_fixing:deep_review|termination_review:done) legal=1 ;;
+              *) reason="no legal edge ${cur_status}->${new_status}" ;;
+            esac
+            ;;
         esac
         ;;
     esac
