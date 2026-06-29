@@ -2451,6 +2451,260 @@ else
   failures=$((failures + 1))
 fi
 
+# --- run-modes F3 matrix (alias/enum/immutability, per-mode edges, phase-type,
+#     mode-conditional done, 244f2e2 every mode, 6f4f9ff every mode, backcompat) ---
+
+# ---- F3.1  alias / enum / immutability ----
+
+# feature-pr on a development edge must be accepted (canonical_mode treats it as development)
+BOX="$(new_box mode-feature-pr-dev-edge)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 '.mode = "feature-pr"'
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 '.mode = "feature-pr"'
+run_case "mode feature-pr on development edge is legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# bogus mode string must fail the enum check before reaching any edge logic
+BOX="$(new_box mode-bogus-exits-23)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 '.mode = "bogus"'
+run_case_contains "mode bogus exits 23 bad_mode" 23 "DVANDVA_WRITE bad_mode" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# cross-mode mutation development→research must be rejected (immutability)
+BOX="$(new_box mode-dev-to-research-mutation)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 '.mode = "development"'
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 '.mode = "research"'
+run_case_contains "development to research mode mutation rejected" 24 "mode_change" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# feature-pr current + development candidate → canonical equal → must not count as mutation
+BOX="$(new_box mode-feature-pr-to-development-immutable-equal)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 '.mode = "feature-pr"'
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 '.mode = "development"'
+run_case "feature-pr current and development candidate are immutable-equal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# development current + feature-pr candidate → same canonical → must not count as mutation
+BOX="$(new_box mode-development-to-feature-pr-immutable-equal)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 '.mode = "development"'
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 '.mode = "feature-pr"'
+run_case "development current and feature-pr candidate are immutable-equal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# ---- F3.2  per-mode edges ----
+
+# research positive: spec_review→termination_review is in the research 12-edge table
+BOX="$(new_box research-spec-review-termination-review)"
+make_baton_v2 "$BOX/baton.json" "spec_review" "prativadi" 4 '.mode = "research"'
+make_baton_v2 "$BOX/baton.next.json" "termination_review" "team" 5 \
+  '.mode = "research"' \
+  '.phase = "spec"' \
+  '.active_roles = ["vadi", "prativadi"]'
+run_case "research mode spec_review:termination_review is legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# review positive: research_review→deep_review is in the review 9-edge table
+BOX="$(new_box review-research-review-deep-review)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 \
+  '.mode = "review"' '.phase = "review"'
+make_baton_v2 "$BOX/baton.next.json" "deep_review" "prativadi" 5 \
+  '.mode = "review"' '.phase = "review"'
+run_case "review mode research_review:deep_review is legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# research negative: spec_review→parallel_implementing is a code-phase edge absent from research table
+BOX="$(new_box research-spec-review-parallel-implementing)"
+make_baton_v2 "$BOX/baton.json" "spec_review" "prativadi" 4 '.mode = "research"'
+make_baton_v2 "$BOX/baton.next.json" "parallel_implementing" "team" 5 \
+  '.mode = "research"' \
+  '.phase = "spec"' \
+  '.active_roles = ["vadi", "prativadi"]'
+run_case_contains "research mode spec_review:parallel_implementing exits 24" 24 "no legal edge spec_review->parallel_implementing" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# review negative: parallel_implementing→test_creation is a code-phase edge absent from review table
+BOX="$(new_box review-parallel-implementing-test-creation)"
+make_baton_v2 "$BOX/baton.json" "parallel_implementing" "team" 4 \
+  '.mode = "review"' '.phase = "review"' '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "test_creation" "vadi" 5 \
+  '.mode = "review"' '.phase = "review"'
+run_case_contains "review mode parallel_implementing:test_creation exits 24" 24 "no legal edge parallel_implementing->test_creation" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# research negative: cross_review→termination_review — no wildcard; cross_review not in research table
+BOX="$(new_box research-cross-review-termination-review)"
+make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 \
+  '.mode = "research"' '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "termination_review" "team" 5 \
+  '.mode = "research"' '.phase = "spec"' '.active_roles = ["vadi", "prativadi"]'
+run_case_contains "research mode cross_review:termination_review exits 24 no wildcard" 24 "no legal edge cross_review->termination_review" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# ---- F3.3  phase-type ----
+
+# review positive: deslop→termination_review with phase="review" accepted
+BOX="$(new_box review-deslop-termination-review-phase-review)"
+make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4 \
+  '.mode = "review"' '.phase = "review"'
+make_baton_v2 "$BOX/baton.next.json" "termination_review" "team" 5 \
+  '.mode = "review"' '.phase = "review"' '.active_roles = ["vadi", "prativadi"]'
+run_case "review mode deslop:termination_review with phase review is legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# development negative: deep_review with a string phase must fail bad_phase_status
+# (development gate requires numeric phase for these statuses)
+BOX="$(new_box v2-dev-deep-review-string-phase)"
+make_baton_v2 "$BOX/baton.next.json" "deep_review" "prativadi" 0 '.phase = "deep-review-string"'
+run_case_contains "dev mode deep_review with string phase exits 23 bad_phase_status" 23 "DVANDVA_WRITE bad_phase_status" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# ---- F3.4  mode-conditional done artifact gate ----
+
+# research seed_development done: needs research_ref (always present) + plan_ref
+BOX="$(new_box research-done-seed-development)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.mode = "research"' \
+  '.phase = "spec"' \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
+  '.mode = "research"' \
+  '.phase = "spec"' \
+  '.research_outcome = "seed_development"' \
+  '.plan_ref = "./superpowers/plans/2026-06-29-run-modes-plan.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+run_case "research done with seed_development outcome and plan_ref is legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# research exploratory done: research_outcome=exploratory only needs research_ref
+BOX="$(new_box research-done-exploratory)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.mode = "research"' \
+  '.phase = "spec"' \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
+  '.mode = "research"' \
+  '.phase = "spec"' \
+  '.research_outcome = "exploratory"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+run_case "research done with exploratory outcome needs only research_ref" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# review done: needs review_ref (plus the always-required research_ref)
+BOX="$(new_box review-done-with-review-ref)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.mode = "review"' \
+  '.phase = "review"' \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
+  '.mode = "review"' \
+  '.phase = "review"' \
+  '.review_ref = "./superpowers/reviews/review-run-modes-PR-1.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+run_case "review done with review_ref is legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# research seed_development done missing plan_ref must fail bad_research_done_ref
+BOX="$(new_box research-done-seed-development-missing-plan-ref)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.mode = "research"' \
+  '.phase = "spec"' \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
+  '.mode = "research"' \
+  '.phase = "spec"' \
+  '.research_outcome = "seed_development"' \
+  '.plan_ref = null' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+run_case_contains "research done seed_development without plan_ref exits 23" 23 "DVANDVA_WRITE bad_research_done_ref" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# review done missing review_ref must fail bad_review_ref
+BOX="$(new_box review-done-missing-review-ref)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.mode = "review"' \
+  '.phase = "review"' \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
+  '.mode = "review"' \
+  '.phase = "review"' \
+  '.review_ref = null' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+run_case_contains "review done without review_ref exits 23" 23 "DVANDVA_WRITE bad_review_ref" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# ---- F3.5  244f2e2 preserved for every mode ----
+
+# research done from non-termination_review current status must hit the done-source gate
+BOX="$(new_box research-done-from-non-termination-review)"
+make_baton_v2 "$BOX/baton.json" "spec_review" "prativadi" 4 '.mode = "research"'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
+  '.mode = "research"' '.phase = "spec"' \
+  '.vadi_final_approval = true' '.prativadi_final_approval = true'
+run_case_contains "research done from non-termination_review exits 24" 24 "done requires current status termination_review" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# research done with only one prior approval must hit the both-approvals gate
+BOX="$(new_box research-done-with-one-approval)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.mode = "research"' '.phase = "spec"' \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.vadi_final_approval = true' '.prativadi_final_approval = false'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
+  '.mode = "research"' '.phase = "spec"' \
+  '.vadi_final_approval = true' '.prativadi_final_approval = true'
+run_case_contains "research done with one approval exits 24" 24 "done requires current termination_review with both final approvals" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# ---- F3.6  6f4f9ff preserved for every mode ----
+
+# research mode: DVANDVA_ROLE=vadi trying to raise prativadi_final_approval must be rejected
+BOX="$(new_box research-vadi-raises-prativadi-approval)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.mode = "research"' '.phase = "spec"' \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.vadi_final_approval = true' '.prativadi_final_approval = false'
+make_baton_v2 "$BOX/baton.next.json" "termination_review" "team" 5 \
+  '.mode = "research"' '.phase = "spec"' \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Vadi cannot approve for prativadi in research mode."' \
+  '.next_action = "Prativadi must independently set its final approval."' \
+  '.vadi_final_approval = true' '.prativadi_final_approval = true'
+run_case_contains "research mode vadi cannot raise prativadi approval exits 24" 24 "final approval ownership" \
+  env DVANDVA_ROLE=vadi "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# ---- F3.7  schema backcompat: optional fields absent must not block transitions ----
+
+# v2 scaffold with research_outcome / review_ref / review_intake deleted must succeed
+# (proves they are not in REQUIRED_KEYS and code uses // null guards)
+BOX="$(new_box v2-backcompat-scaffold-missing-optional-fields)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  'del(.research_outcome) | del(.review_ref) | del(.review_intake)'
+run_case "v2 scaffold missing research_outcome/review_ref/review_intake is legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# v2 transition with those same fields absent must succeed
+BOX="$(new_box v2-backcompat-transition-missing-optional-fields)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 \
+  'del(.research_outcome) | del(.review_ref) | del(.review_intake)'
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 \
+  'del(.research_outcome) | del(.review_ref) | del(.review_intake)'
+run_case "v2 transition missing research_outcome/review_ref/review_intake is legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
 # --- usage and hygiene ---
 
 run_case "usage error without args exits 2" 2 "$SCRIPT"

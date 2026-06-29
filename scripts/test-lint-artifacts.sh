@@ -75,6 +75,50 @@ ${body}
 HTML
 }
 
+write_pr_review() {
+  local file="$1"
+  local body="$2"
+  mkdir -p "$(dirname "$file")"
+  cat > "$file" <<HTML
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>PR Review</title>
+  <style>:root{color-scheme: dark;--bg:#090b10}body{background:var(--bg);color:#eef3f8}</style>
+</head>
+<body>
+${body}
+<script type="application/json" id="dvandva-artifact-meta">
+{"schema":"dvandva.artifact.pr_review.v1","artifact_type":"pr_review"}
+</script>
+</body>
+</html>
+HTML
+}
+
+write_bug_rca() {
+  local file="$1"
+  local body="$2"
+  mkdir -p "$(dirname "$file")"
+  cat > "$file" <<HTML
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Bug RCA</title>
+  <style>:root{color-scheme: dark;--bg:#090b10}body{background:var(--bg);color:#eef3f8}</style>
+</head>
+<body>
+${body}
+<script type="application/json" id="dvandva-artifact-meta">
+{"schema":"dvandva.artifact.bug_rca.v1","artifact_type":"bug_rca"}
+</script>
+</body>
+</html>
+HTML
+}
+
 GOOD_PROSE="$TMP_DIR/good-prose"
 write_artifact "$GOOD_PROSE/report.html" '<p>Source inventory: https://github.com/axatbhardwaj/Dvandva</p>'
 run_case "prose source URL is allowed" 0 bash "$LINTER" "$GOOD_PROSE"
@@ -169,6 +213,67 @@ write_run_explainer "$BAD_RUN_META_ID/run-reports/2026-06-28-run-a-explainer.htm
   <section id="diagrams"><svg viewBox="0 0 10 10"></svg></section>'
 sed -i 's/"run_id":"run-a"/"run_id":"other-run"/' "$BAD_RUN_META_ID/run-reports/2026-06-28-run-a-explainer.html"
 run_case "run explainer metadata run_id must match filename" 1 bash "$LINTER" "$BAD_RUN_META_ID"
+
+# --- pr_review cases ---
+
+GOOD_PR="$TMP_DIR/good-pr"
+write_pr_review "$GOOD_PR/report.html" '
+  <section id="verdict"><h2>Verdict</h2></section>
+  <section id="severity"><h2>Severity</h2></section>
+  <section id="findings"><h2>Findings</h2></section>
+  <section id="ground-truth"><h2>Ground Truth</h2></section>'
+run_case "valid pr_review artifact is accepted" 0 bash "$LINTER" "$GOOD_PR"
+
+BAD_PR_SECTION="$TMP_DIR/bad-pr-section"
+write_pr_review "$BAD_PR_SECTION/report.html" '
+  <section id="verdict"><h2>Verdict</h2></section>
+  <section id="severity"><h2>Severity</h2></section>
+  <section id="ground-truth"><h2>Ground Truth</h2></section>'
+run_case "pr_review missing findings section is rejected" 1 bash "$LINTER" "$BAD_PR_SECTION"
+
+BAD_PR_EXT="$TMP_DIR/bad-pr-ext"
+write_pr_review "$BAD_PR_EXT/report.html" '
+  <link href="https://cdn.example.com/style.css" rel="stylesheet">
+  <section id="verdict"><h2>Verdict</h2></section>
+  <section id="severity"><h2>Severity</h2></section>
+  <section id="findings"><h2>Findings</h2></section>
+  <section id="ground-truth"><h2>Ground Truth</h2></section>'
+run_case "pr_review external https resource is rejected" 1 bash "$LINTER" "$BAD_PR_EXT"
+
+BAD_PR_TRAVERSAL="$TMP_DIR/bad-pr-traversal"
+write_pr_review "$BAD_PR_TRAVERSAL/report.html" '
+  <link href="../styles.css" rel="stylesheet">
+  <section id="verdict"><h2>Verdict</h2></section>
+  <section id="severity"><h2>Severity</h2></section>
+  <section id="findings"><h2>Findings</h2></section>
+  <section id="ground-truth"><h2>Ground Truth</h2></section>'
+run_case "pr_review path-traversal ref is rejected" 1 bash "$LINTER" "$BAD_PR_TRAVERSAL"
+
+BAD_PR_SCHEMA="$TMP_DIR/bad-pr-schema"
+write_pr_review "$BAD_PR_SCHEMA/report.html" '
+  <section id="verdict"><h2>Verdict</h2></section>
+  <section id="severity"><h2>Severity</h2></section>
+  <section id="findings"><h2>Findings</h2></section>
+  <section id="ground-truth"><h2>Ground Truth</h2></section>'
+sed -i 's/"schema":"dvandva.artifact.pr_review.v1"/"schema":"dvandva.artifact.bogus.v1"/' "$BAD_PR_SCHEMA/report.html"
+run_case "pr_review with wrong schema is rejected" 1 bash "$LINTER" "$BAD_PR_SCHEMA"
+
+# --- bug_rca cases ---
+
+GOOD_RCA="$TMP_DIR/good-rca"
+write_bug_rca "$GOOD_RCA/report.html" '
+  <section id="symptom"><h2>Symptom</h2></section>
+  <section id="hypotheses"><h2>Hypotheses</h2></section>
+  <section id="root-cause"><h2>Root Cause</h2></section>
+  <section id="fix-direction"><h2>Fix Direction</h2></section>'
+run_case "valid bug_rca artifact is accepted" 0 bash "$LINTER" "$GOOD_RCA"
+
+BAD_RCA_SECTION="$TMP_DIR/bad-rca-section"
+write_bug_rca "$BAD_RCA_SECTION/report.html" '
+  <section id="symptom"><h2>Symptom</h2></section>
+  <section id="hypotheses"><h2>Hypotheses</h2></section>
+  <section id="fix-direction"><h2>Fix Direction</h2></section>'
+run_case "bug_rca missing root-cause section is rejected" 1 bash "$LINTER" "$BAD_RCA_SECTION"
 
 if [[ "$failures" -gt 0 ]]; then
   exit 1
