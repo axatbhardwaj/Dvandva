@@ -567,6 +567,17 @@ LOCK_ACQUIRED=0
 # this generous default never trips for healthy writers; it only breaks a
 # deadlock left by a SIGKILLed writer. Override via DVANDVA_LOCK_TIMEOUT (seconds).
 LOCK_TIMEOUT="${DVANDVA_LOCK_TIMEOUT:-30}"
+# Validate early: LOCK_TIMEOUT is used in shell arithmetic inside the lock loop
+# ([[ "$age" -ge "$LOCK_TIMEOUT" ]]). Under bash set -u a non-numeric value is
+# expanded as a variable name in arithmetic, causing an unbound-variable crash
+# (rc=1). A negative value makes age(>=0) always satisfy the comparison, so the
+# acquire loop steals ANY held lock immediately, defeating the locking protocol.
+# Reject non-numeric and negative values before any lock work; fail closed with
+# exit 2 (same bucket as other usage/validation errors). Do NOT clamp silently.
+if [[ ! "${LOCK_TIMEOUT}" =~ ^[0-9]+$ ]]; then
+  echo "DVANDVA_WRITE bad_lock_timeout value=${LOCK_TIMEOUT}" >&2
+  exit 2
+fi
 
 # Fencing token: a value unique to THIS invocation, written into the lock dir at
 # acquire and re-verified immediately before the irreversible mv-install. If a

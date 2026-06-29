@@ -2171,6 +2171,62 @@ else
   failures=$((failures + 1))
 fi
 
+# --- PFX-TIMEOUT: DVANDVA_LOCK_TIMEOUT input validation ----------------------
+# The acquire_lock loop uses LOCK_TIMEOUT in shell arithmetic ([[ "$age" -ge
+# "$LOCK_TIMEOUT" ]]). Without early validation:
+#   (a) A non-numeric value like "abc" is expanded as a variable name in bash
+#       arithmetic under set -u → unbound-variable crash (rc=1, unstructured
+#       error). The baton is NOT installed but the error is invisible/confusing.
+#   (b) A negative value like "-5" makes age(>=0) always satisfy the comparison
+#       → immediate steal of ANY held (even live) lock → write succeeds, defeating
+#       the locking protocol entirely.
+# Fix: validate LOCK_TIMEOUT as ^[0-9]+$ before the lock loop; emit
+# "DVANDVA_WRITE bad_lock_timeout" and exit 2 for any invalid value.
+
+# Case (a): non-numeric DVANDVA_LOCK_TIMEOUT with a live contended lock.
+# Current: bash crashes with "abc: unbound variable" (rc=1), not a clean error.
+# Fixed:   exit 2 + "bad_lock_timeout" before the lock loop.
+BOX="$(new_box lock-timeout-non-numeric)"
+make_baton "$BOX/baton.json" "implementing" "vadi" 4
+make_baton "$BOX/baton.next.json" "phase_review" "prativadi" 5
+mkdir -p "$BOX/.baton.lock.d"
+printf '%s' "$(date +%s)" > "$BOX/.baton.lock.d/started_at"
+printf '%s' "foreign-token-abc" > "$BOX/.baton.lock.d/owner"
+lock_abc_output="$(DVANDVA_LOCK_TIMEOUT=abc "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json" 2>&1)"
+lock_abc_exit=$?
+if [[ "$lock_abc_exit" -eq 2 && "$lock_abc_output" == *"bad_lock_timeout"* ]]; then
+  echo "PASS: non-numeric DVANDVA_LOCK_TIMEOUT=abc fails closed exit 2 with bad_lock_timeout"
+else
+  echo "FAIL: non-numeric DVANDVA_LOCK_TIMEOUT=abc expected exit 2 + bad_lock_timeout, got exit=$lock_abc_exit output='$lock_abc_output'"
+  failures=$((failures + 1))
+fi
+
+# Case (b): negative DVANDVA_LOCK_TIMEOUT with a live contended lock.
+# Current: age(0) >= -5 is true → immediate steal of the live lock → exit 0
+#          (bypass: write succeeds even though someone else holds the lock).
+# Fixed:   exit 2 + "bad_lock_timeout" before the lock loop; live lock intact.
+BOX="$(new_box lock-timeout-negative)"
+make_baton "$BOX/baton.json" "implementing" "vadi" 4
+make_baton "$BOX/baton.next.json" "phase_review" "prativadi" 5
+mkdir -p "$BOX/.baton.lock.d"
+printf '%s' "$(date +%s)" > "$BOX/.baton.lock.d/started_at"
+printf '%s' "foreign-token-neg5" > "$BOX/.baton.lock.d/owner"
+lock_neg5_output="$(DVANDVA_LOCK_TIMEOUT=-5 "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json" 2>&1)"
+lock_neg5_exit=$?
+if [[ "$lock_neg5_exit" -eq 2 && "$lock_neg5_output" == *"bad_lock_timeout"* ]]; then
+  echo "PASS: negative DVANDVA_LOCK_TIMEOUT=-5 fails closed exit 2 with bad_lock_timeout"
+else
+  echo "FAIL: negative DVANDVA_LOCK_TIMEOUT=-5 expected exit 2 + bad_lock_timeout, got exit=$lock_neg5_exit output='$lock_neg5_output'"
+  failures=$((failures + 1))
+fi
+ckpt_after_neg5="$(jq -r '.checkpoint // "missing"' "$BOX/baton.json" 2>/dev/null)"
+if [[ "$ckpt_after_neg5" == "4" ]]; then
+  echo "PASS: negative DVANDVA_LOCK_TIMEOUT did not steal live lock (baton still at checkpoint 4)"
+else
+  echo "FAIL: negative DVANDVA_LOCK_TIMEOUT stole live lock; baton checkpoint=$ckpt_after_neg5 (expected 4)"
+  failures=$((failures + 1))
+fi
+
 # --- usage and hygiene ---
 
 run_case "usage error without args exits 2" 2 "$SCRIPT"
