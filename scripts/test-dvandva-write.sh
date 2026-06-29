@@ -1514,12 +1514,20 @@ fi
 
 # GAP 2 (fencing / live-lock): writer A acquires the lock, reads checkpoint=4,
 # judges its 5 candidate legal, then PARKS at the install barrier still holding
-# the lock and still believing checkpoint=4. Writer B (DVANDVA_LOCK_TIMEOUT=0)
-# steals A's still-LIVE lock, installs 5, and exits 0. When A is released it must
-# detect its fencing token is gone and abort fail-closed (exit 29) rather than
-# clobber B's write. Net: exactly one checkpoint+1 install survives even though a
-# live writer's lock was stolen. (DVANDVA_WRITE_BARRIER is a test-only seam that
-# only touches/stats sentinel files; it is unset in production.)
+# the lock and still believing checkpoint=4. Writer B steals A's still-LIVE lock,
+# installs 5, and exits 0. When A is released it must detect its fencing token is
+# gone and abort fail-closed (exit 29) rather than clobber B's write. Net: exactly
+# one checkpoint+1 install survives even though a live writer's lock was stolen.
+# (DVANDVA_WRITE_BARRIER is a test-only seam that only touches/stats sentinel files;
+# it is unset in production.)
+#
+# NOTE: the prior approach used DVANDVA_LOCK_TIMEOUT=0 to force an instant steal.
+# That value is now correctly rejected as invalid (zero ≡ "steal everything immediately").
+# Instead we: (a) let writer A acquire the lock normally (started_at = now), (b) wait
+# until A arrives at the barrier, (c) backdate A's lock started_at to epoch 1 so the
+# computed age is astronomically large, then (d) run writer B with DVANDVA_LOCK_TIMEOUT=1.
+# Writer B sees age >> 1 and steals immediately on the first loop iteration — same
+# deterministic outcome, no reliance on the now-prohibited zero value.
 BOX="$(new_box v2-fencing-stolen-lock)"
 make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 \
   "$(v2_cross_review_chunks_filter)" \
@@ -1543,7 +1551,11 @@ while [[ ! -e "$fence_barrier.arrived" && "$fence_waited" -lt 200 ]]; do
   sleep 0.05
   fence_waited=$((fence_waited + 1))
 done
-DVANDVA_LOCK_TIMEOUT=0 "$SCRIPT" "$BOX/baton.json" "$BOX/cand-b.json" >/dev/null 2>&1
+# Writer A is now parked at the barrier while holding the lock. Backdate the lock's
+# started_at to epoch 1 so writer B computes a huge age (>> LOCK_TIMEOUT=1) and
+# steals immediately on the first iteration without needing DVANDVA_LOCK_TIMEOUT=0.
+printf '%s' "1" > "$BOX/.baton.lock.d/started_at"
+DVANDVA_LOCK_TIMEOUT=1 "$SCRIPT" "$BOX/baton.json" "$BOX/cand-b.json" >/dev/null 2>&1
 fence_rc_b=$?
 : > "$fence_barrier.release"
 wait "$fence_pid_a"; fence_rc_a=$?
@@ -2224,6 +2236,107 @@ if [[ "$ckpt_after_neg5" == "4" ]]; then
   echo "PASS: negative DVANDVA_LOCK_TIMEOUT did not steal live lock (baton still at checkpoint 4)"
 else
   echo "FAIL: negative DVANDVA_LOCK_TIMEOUT stole live lock; baton checkpoint=$ckpt_after_neg5 (expected 4)"
+  failures=$((failures + 1))
+fi
+
+# Case (c): DVANDVA_LOCK_TIMEOUT=08 - leading-zero octal-invalid value.
+# Under bash arithmetic, 08 is an invalid octal literal. In [[ age -ge 08 ]] bash
+# prints "value too great for base" and the comparison returns false, so the steal
+# path is NEVER taken and the script spin-sleeps until killed by an external timeout.
+# Fixed: ^[1-9][0-9]*$ rejects 08 → exit 2 + "bad_lock_timeout" immediately.
+BOX="$(new_box lock-timeout-leading-zero-08)"
+make_baton "$BOX/baton.json" "implementing" "vadi" 4
+make_baton "$BOX/baton.next.json" "phase_review" "prativadi" 5
+mkdir -p "$BOX/.baton.lock.d"
+printf '%s' "$(date +%s)" > "$BOX/.baton.lock.d/started_at"
+printf '%s' "foreign-token-08" > "$BOX/.baton.lock.d/owner"
+lock_08_output="$(DVANDVA_LOCK_TIMEOUT=08 timeout 3 "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json" 2>&1)"
+lock_08_exit=$?
+if [[ "$lock_08_exit" -eq 2 && "$lock_08_output" == *"bad_lock_timeout"* ]]; then
+  echo "PASS: DVANDVA_LOCK_TIMEOUT=08 fails closed exit 2 with bad_lock_timeout"
+else
+  echo "FAIL: DVANDVA_LOCK_TIMEOUT=08 expected exit 2 + bad_lock_timeout, got exit=$lock_08_exit output='$lock_08_output'"
+  failures=$((failures + 1))
+fi
+
+# Case (d): DVANDVA_LOCK_TIMEOUT=09 - leading-zero octal-invalid value (same class as 08).
+BOX="$(new_box lock-timeout-leading-zero-09)"
+make_baton "$BOX/baton.json" "implementing" "vadi" 4
+make_baton "$BOX/baton.next.json" "phase_review" "prativadi" 5
+mkdir -p "$BOX/.baton.lock.d"
+printf '%s' "$(date +%s)" > "$BOX/.baton.lock.d/started_at"
+printf '%s' "foreign-token-09" > "$BOX/.baton.lock.d/owner"
+lock_09_output="$(DVANDVA_LOCK_TIMEOUT=09 timeout 3 "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json" 2>&1)"
+lock_09_exit=$?
+if [[ "$lock_09_exit" -eq 2 && "$lock_09_output" == *"bad_lock_timeout"* ]]; then
+  echo "PASS: DVANDVA_LOCK_TIMEOUT=09 fails closed exit 2 with bad_lock_timeout"
+else
+  echo "FAIL: DVANDVA_LOCK_TIMEOUT=09 expected exit 2 + bad_lock_timeout, got exit=$lock_09_exit output='$lock_09_output'"
+  failures=$((failures + 1))
+fi
+
+# Case (e): DVANDVA_LOCK_TIMEOUT=0 - zero timeout means age(0) >= 0 is always true,
+# so any held lock (even a fresh live one) is stolen immediately → baton installs → rc=0.
+# This reopens the exact lock-bypass the negative-value fix was supposed to close.
+# Fixed: ^[1-9][0-9]*$ rejects 0 → exit 2 + "bad_lock_timeout".
+BOX="$(new_box lock-timeout-zero)"
+make_baton "$BOX/baton.json" "implementing" "vadi" 4
+make_baton "$BOX/baton.next.json" "phase_review" "prativadi" 5
+mkdir -p "$BOX/.baton.lock.d"
+printf '%s' "$(date +%s)" > "$BOX/.baton.lock.d/started_at"
+printf '%s' "foreign-token-zero" > "$BOX/.baton.lock.d/owner"
+lock_zero_output="$(DVANDVA_LOCK_TIMEOUT=0 "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json" 2>&1)"
+lock_zero_exit=$?
+if [[ "$lock_zero_exit" -eq 2 && "$lock_zero_output" == *"bad_lock_timeout"* ]]; then
+  echo "PASS: DVANDVA_LOCK_TIMEOUT=0 fails closed exit 2 with bad_lock_timeout"
+else
+  echo "FAIL: DVANDVA_LOCK_TIMEOUT=0 expected exit 2 + bad_lock_timeout, got exit=$lock_zero_exit output='$lock_zero_output'"
+  failures=$((failures + 1))
+fi
+ckpt_after_zero="$(jq -r '.checkpoint // "missing"' "$BOX/baton.json" 2>/dev/null)"
+if [[ "$ckpt_after_zero" == "4" ]]; then
+  echo "PASS: DVANDVA_LOCK_TIMEOUT=0 did not steal live lock (baton still at checkpoint 4)"
+else
+  echo "FAIL: DVANDVA_LOCK_TIMEOUT=0 stole live lock; baton checkpoint=$ckpt_after_zero (expected 4)"
+  failures=$((failures + 1))
+fi
+
+# Case (f): DVANDVA_LOCK_TIMEOUT=00 - double-zero leading form; 00 is valid octal (= 0)
+# so [[ age -ge 00 ]] ≡ [[ age -ge 0 ]] → instant steal, same bypass as case (e).
+# Fixed: ^[1-9][0-9]*$ rejects 00 → exit 2 + "bad_lock_timeout".
+BOX="$(new_box lock-timeout-double-zero)"
+make_baton "$BOX/baton.json" "implementing" "vadi" 4
+make_baton "$BOX/baton.next.json" "phase_review" "prativadi" 5
+mkdir -p "$BOX/.baton.lock.d"
+printf '%s' "$(date +%s)" > "$BOX/.baton.lock.d/started_at"
+printf '%s' "foreign-token-00" > "$BOX/.baton.lock.d/owner"
+lock_00_output="$(DVANDVA_LOCK_TIMEOUT=00 "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json" 2>&1)"
+lock_00_exit=$?
+if [[ "$lock_00_exit" -eq 2 && "$lock_00_output" == *"bad_lock_timeout"* ]]; then
+  echo "PASS: DVANDVA_LOCK_TIMEOUT=00 fails closed exit 2 with bad_lock_timeout"
+else
+  echo "FAIL: DVANDVA_LOCK_TIMEOUT=00 expected exit 2 + bad_lock_timeout, got exit=$lock_00_exit output='$lock_00_output'"
+  failures=$((failures + 1))
+fi
+ckpt_after_00="$(jq -r '.checkpoint // "missing"' "$BOX/baton.json" 2>/dev/null)"
+if [[ "$ckpt_after_00" == "4" ]]; then
+  echo "PASS: DVANDVA_LOCK_TIMEOUT=00 did not steal live lock (baton still at checkpoint 4)"
+else
+  echo "FAIL: DVANDVA_LOCK_TIMEOUT=00 stole live lock; baton checkpoint=$ckpt_after_00 (expected 4)"
+  failures=$((failures + 1))
+fi
+
+# Case (g): valid DVANDVA_LOCK_TIMEOUT=5 (canonical positive decimal) must still be
+# accepted; uncontended write must succeed so we don't break the normal code path.
+BOX="$(new_box lock-timeout-valid-5)"
+make_baton "$BOX/baton.json" "implementing" "vadi" 4
+make_baton "$BOX/baton.next.json" "phase_review" "prativadi" 5
+lock_valid5_output="$(DVANDVA_LOCK_TIMEOUT=5 "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json" 2>&1)"
+lock_valid5_exit=$?
+if [[ "$lock_valid5_exit" -eq 0 ]]; then
+  echo "PASS: valid DVANDVA_LOCK_TIMEOUT=5 succeeds (canonical positive decimal accepted)"
+else
+  echo "FAIL: valid DVANDVA_LOCK_TIMEOUT=5 rejected; got exit=$lock_valid5_exit output='$lock_valid5_output'"
   failures=$((failures + 1))
 fi
 

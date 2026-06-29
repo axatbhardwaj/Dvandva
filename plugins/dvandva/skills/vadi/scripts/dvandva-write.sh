@@ -567,14 +567,23 @@ LOCK_ACQUIRED=0
 # this generous default never trips for healthy writers; it only breaks a
 # deadlock left by a SIGKILLed writer. Override via DVANDVA_LOCK_TIMEOUT (seconds).
 LOCK_TIMEOUT="${DVANDVA_LOCK_TIMEOUT:-30}"
-# Validate early: LOCK_TIMEOUT is used in shell arithmetic inside the lock loop
-# ([[ "$age" -ge "$LOCK_TIMEOUT" ]]). Under bash set -u a non-numeric value is
-# expanded as a variable name in arithmetic, causing an unbound-variable crash
-# (rc=1). A negative value makes age(>=0) always satisfy the comparison, so the
-# acquire loop steals ANY held lock immediately, defeating the locking protocol.
-# Reject non-numeric and negative values before any lock work; fail closed with
-# exit 2 (same bucket as other usage/validation errors). Do NOT clamp silently.
-if [[ ! "${LOCK_TIMEOUT}" =~ ^[0-9]+$ ]]; then
+# Validate early: LOCK_TIMEOUT is used in bash arithmetic inside the lock loop
+# ([[ "$age" -ge "$LOCK_TIMEOUT" ]]). Three hazard classes must be caught here:
+#   (a) Non-numeric (e.g. "abc"): under set -u causes an unbound-variable crash
+#       (rc=1, unstructured error output, not a clean bad_lock_timeout).
+#   (b) Negative (e.g. "-5"): age(>=0) always satisfies the comparison → the loop
+#       steals ANY held lock immediately, defeating the locking protocol.
+#   (c) Zero or leading-zero forms (0, 00, 08, 09, ...): zero makes age(0) >= 0
+#       always true — same instant-steal bypass as negative. Leading-zero forms
+#       (08, 09) are invalid octal literals in bash arithmetic; [[ age -ge 08 ]]
+#       prints "value too great for base" and returns false, so the steal never
+#       fires and the acquire loop spins until an external timeout kills it.
+# Fix: require CANONICAL POSITIVE DECIMAL — ^[1-9][0-9]*$ — which rejects all
+# three hazard classes while accepting any legitimate positive integer. The default
+# (30) matches because it is set before this guard and 30 satisfies the regex.
+# Fail closed with exit 2 (same bucket as other usage/validation errors); do NOT
+# clamp or guess silently.
+if [[ ! "${LOCK_TIMEOUT}" =~ ^[1-9][0-9]*$ ]]; then
   echo "DVANDVA_WRITE bad_lock_timeout value=${LOCK_TIMEOUT}" >&2
   exit 2
 fi
