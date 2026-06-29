@@ -114,7 +114,7 @@ rm -f "$RESOLVE_ERR"
 case "$resolve_out" in
   "ASK "*)
     echo "DVANDVA_PREFLIGHT role=$ROLE result=ask selected_by=$(selected_by) choices=${resolve_out#ASK }"
-    [[ "$resolve_rc" -eq 12 ]] || [[ -z "$resolve_err" ]]
+    [[ -n "$resolve_err" ]] && printf '%s\n' "$resolve_err"
     exit 12
     ;;
   "CREATE "*)

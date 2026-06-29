@@ -97,6 +97,19 @@ else
   echo "PASS: ask does not run hook stage"
 fi
 
+# cr-c2-ask-stderr: ASK on a corrupt baton must surface the resolver's stderr so
+# the operator can see WHY choices are ambiguous (e.g. a parse error).
+BOX="$TMP_DIR/ask-with-stderr"
+mkdir -p "$BOX/repo"
+stage_stubbed_runtime \
+  "$BOX/runtime" \
+  "$VADI_PREFLIGHT" \
+  'printf "ASK [{\"run_id\":\"a\"}]\n"; printf "reason: baton json unparseable at key=status\n" >&2; exit 12' \
+  'echo "HOOK_CALLED" > "$PWD/hook-called.txt"'
+out="$(cd "$BOX/repo" && DVANDVA_ROLE=vadi bash "$BOX/runtime/dvandva-preflight.sh" --role vadi 2>&1)"; rc=$?
+check_msg "ask-with-stderr exits 12" 12 "$rc" "$out" "result=ask"
+check_msg "ask-with-stderr surfaces resolver reason" 12 "$rc" "$out" "baton json unparseable"
+
 BOX="$TMP_DIR/create"
 mkdir -p "$BOX/repo"
 stage_stubbed_runtime \

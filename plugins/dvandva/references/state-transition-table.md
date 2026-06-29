@@ -84,13 +84,34 @@ checkpoint history gives it a scan floor.
 ## Concurrent advance and stale writes
 
 Two roles can advance the baton concurrently in team-owned states. The following
-exit codes guard against consistency failures:
+exit codes guard against consistency failures.
+
+Exit codes 2, 23, 27, 28, and 29 (`lock_lost`) are `dvandva-write.sh` codes.
+Exit code 29 (`split_brain`) is a `dvandva-wait.sh` code. The two exit-29 codes
+are distinct and must not be confused: `lock_lost` fires when a write-time
+fencing-token mismatch aborts an install; `split_brain` fires when the wait
+helper detects two concurrent active runs that both claim the same role.
 
 | Exit code | Name | Meaning and recovery |
 |---|---|---|
+| `2` | `bad_lock_timeout` | `dvandva-write.sh`: `DVANDVA_LOCK_TIMEOUT` is not a canonical positive decimal (`^[1-9][0-9]*$`). Zero, negative, leading-zero forms (`08`, `09`), and non-numeric values all fail closed before the lock loop fires. Fix or unset `DVANDVA_LOCK_TIMEOUT` (default is `30` seconds), then rerun. |
 | `23` | `bad_run_id_dir` | `dvandva-write.sh`: the baton at `.dvandva/runs/<seg>/baton.json` has `schema==v2` but its `run_id` field is null, missing, empty, or mismatches `<seg>`. Fix the candidate `run_id` and rerun; do not edit the installed baton directly. |
-| `27` | `stale_checkpoint` | `dvandva-write.sh`: `new_checkpoint <= cur_checkpoint` — the peer advanced while this candidate was being prepared. Re-read the installed baton, re-derive the next state from the mode table, rewrite the candidate, and rerun the helper. Never bump past the peer's checkpoint. |
-| `29` | `split_brain` | `dvandva-wait.sh`: a sibling active baton has `assignee == my role` while the selected baton is waiting on a peer — two simultaneous active runs both think they own the same role. Reconcile selector choice; park the stale duplicate to `human_decision`. Suppress with `DVANDVA_CONCURRENT=1` only when explicitly running two independent parallel Dvandva loops in the same worktree. |
+| `27` | `stale_checkpoint` | `dvandva-write.sh`: emits `DVANDVA_WRITE stale_checkpoint current=<c> candidate=<n>` when `new_checkpoint <= cur_checkpoint` — the peer advanced while this candidate was being prepared. Re-read the installed baton, re-derive the next state from the mode table, rewrite the candidate, and rerun the helper. Never bump past the peer's checkpoint. |
+| `28` | `lock_unavailable` | `dvandva-write.sh`: a non-directory (e.g. a leftover file or a squatter) occupies the lock path `<baton-dir>/.baton.lock.d`; the critical section never runs unlocked. Fail closed. Investigate and remove the squatter, then rerun. |
+| `29` | `lock_lost` (`dvandva-write.sh`) | `dvandva-write.sh`: the fencing token was overwritten by a peer that age-stole the lock while this writer was slow. The install is aborted fail-closed; the baton is unchanged. Re-read the baton and re-derive the next state before retrying. **Distinct from** `dvandva-wait.sh` exit `29` (`split_brain`). |
+| `29` | `split_brain` (`dvandva-wait.sh`) | `dvandva-wait.sh`: a sibling active baton has `assignee == my role` while the selected baton is waiting on a peer — two simultaneous active runs both think they own the same role. Reconcile selector choice; park the stale duplicate to `human_decision`. Suppress with `DVANDVA_CONCURRENT=1` only when explicitly running two independent parallel Dvandva loops in the same worktree. **Distinct from** `dvandva-write.sh` exit `29` (`lock_lost`). |
+
+### Test-only seam: `DVANDVA_WRITE_BARRIER`
+
+`dvandva-write.sh` contains a synchronization seam gated on the `DVANDVA_WRITE_BARRIER`
+environment variable. When the variable is unset (all production runs), the `if`
+branch is never entered — it is a no-op, a single string test. When set by a
+test harness, the helper touches and stats sentinel files named
+`${DVANDVA_WRITE_BARRIER}.arrived` and `${DVANDVA_WRITE_BARRIER}.release` in
+order to let `scripts/test-dvandva-write.sh` park a writer after the transition
+check but before the atomic install, exercising the fencing-token and stale-
+checkpoint guarantees deterministically. The seam never reads or executes arbitrary
+input. This is an accepted test-only seam; no behavior change is required.
 
 Run 4 retirement is Dvandva-only. It may retire only Dvandva-covered standalone
 Claude symlink workflows with functional parity via Runs 1-4 usage:
