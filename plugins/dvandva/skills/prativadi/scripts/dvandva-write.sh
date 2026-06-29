@@ -538,6 +538,95 @@ read -r cand_q_null cand_ra_null cand_rs_null <<< "$(jq -r '[(.question == null)
 legal=0
 reason=""
 
+# --- Concurrency guard: PORTABLE atomic mutual exclusion ----------------------
+# Two engines share one worktree and may run this helper at the same time. Without
+# a lock both writers could read the same on-disk checkpoint=N, both build a
+# checkpoint=N+1 candidate, both pass the (N+1 > N) guard, and both mv their
+# candidate into place -- the later mv silently clobbers the earlier accepted
+# write (a lost update / TOCTOU stale-write race). We therefore serialize the
+# read-current-state -> validate-transition -> mv-install -> snapshot section.
+#
+# The lock primitive is mkdir: it is atomic and POSIX-portable (works on stock
+# macOS, unlike flock, which we deliberately do NOT depend on). The race loser
+# acquires the lock only after the winner releases it, re-reads the now-advanced
+# checkpoint (N+1), finds its own N+1 candidate stale (N+1 <= N+1) and exits
+# 27 stale_checkpoint -- fail-closed, with no lost update.
+#
+# Pure candidate-schema checks above ran outside the lock (they do not depend on
+# current on-disk state); everything from here through the snapshot is inside it.
+BATON_DIR="$(dirname "$BATON_FILE")"
+mkdir -p "$BATON_DIR"
+LOCK_DIR="$BATON_DIR/.baton.lock.d"
+LOCK_ACQUIRED=0
+# Bounded wait before a held lock is presumed abandoned by a crashed writer. A
+# live writer holds the lock only for one validate+mv+snapshot (sub-second), so
+# this generous default never trips for healthy writers; it only breaks a
+# deadlock left by a SIGKILLed writer. Override via DVANDVA_LOCK_TIMEOUT (seconds).
+LOCK_TIMEOUT="${DVANDVA_LOCK_TIMEOUT:-30}"
+
+release_lock() {
+  if [[ "$LOCK_ACQUIRED" -eq 1 ]]; then
+    rm -rf "$LOCK_DIR" 2>/dev/null
+    LOCK_ACQUIRED=0
+  fi
+}
+
+cleanup_and_exit() {
+  release_lock
+  exit "$1"
+}
+
+# Release on every exit path (normal, error, or signal). release_lock is
+# idempotent, so the EXIT trap firing after a signal handler is harmless.
+trap 'release_lock' EXIT
+trap 'cleanup_and_exit 130' INT
+trap 'cleanup_and_exit 143' TERM
+
+acquire_lock() {
+  local now lock_started age first_seen
+  first_seen="$(date +%s 2>/dev/null || echo 0)"
+  while true; do
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+      LOCK_ACQUIRED=1
+      # Record acquisition wall-clock so a later waiter can age out a crash.
+      date +%s > "$LOCK_DIR/started_at" 2>/dev/null || true
+      return 0
+    fi
+    # mkdir failed. If the lock dir does not exist, the failure is environmental
+    # (e.g. a read-only baton dir), not contention -- give up on locking and let
+    # the real install fail with its own exit code rather than spin forever.
+    if [[ ! -d "$LOCK_DIR" ]]; then
+      return 1
+    fi
+    # Contention: another writer holds the lock. Age it out only if it looks
+    # abandoned (started_at older than LOCK_TIMEOUT, or -- if started_at is
+    # missing because the holder crashed mid-creation -- we have observed the
+    # contention ourselves for longer than LOCK_TIMEOUT).
+    now="$(date +%s 2>/dev/null || echo 0)"
+    lock_started="$(cat "$LOCK_DIR/started_at" 2>/dev/null || echo "")"
+    if [[ "$lock_started" =~ ^[0-9]+$ ]]; then
+      age=$(( now - lock_started ))
+    else
+      age=$(( now - first_seen ))
+    fi
+    if [[ "$age" -ge "$LOCK_TIMEOUT" ]]; then
+      # Steal atomically: rename the stale dir aside (directory rename is atomic,
+      # so concurrent stealers cannot both win) then remove it, before retrying.
+      stale_dir="$LOCK_DIR.stale.$$"
+      if mv "$LOCK_DIR" "$stale_dir" 2>/dev/null; then
+        rm -rf "$stale_dir" 2>/dev/null
+      fi
+      first_seen="$(date +%s 2>/dev/null || echo 0)"
+      continue
+    fi
+    sleep 0.1
+  done
+}
+
+# Best-effort acquire: if locking is impossible (read-only dir) we proceed
+# unlocked so the unchanged install path reports its own failure exit code.
+acquire_lock || true
+
 if [[ ! -f "$BATON_FILE" ]]; then
   # Scaffold: only the vadi may create the very first baton.
   if [[ "$schema" == "dvandva.baton.v1" && "$new_status" == "spec_drafting" && "$new_assignee" == "vadi" && "$new_checkpoint" -eq 0 ]]; then
@@ -797,11 +886,10 @@ if [[ "$legal" -ne 1 ]]; then
   exit 24
 fi
 
-BATON_DIR="$(dirname "$BATON_FILE")"
-mkdir -p "$BATON_DIR"
+# BATON_DIR was computed and created above when the lock was acquired.
 # Sweep tmp files orphaned by a killed writer; inert to readers but clutter.
-# Note: the glob would also hit a LIVE concurrent writer's tmp — acceptable
-# because the protocol's assignee field makes writes single-owner by design.
+# The concurrency lock above means no LIVE concurrent writer's tmp can exist in
+# this window, so the glob only ever reaps abandoned tmp files.
 rm -f "$BATON_DIR"/.baton.json.tmp.* 2>/dev/null
 TMP_FILE="$BATON_DIR/.baton.json.tmp.$$"
 

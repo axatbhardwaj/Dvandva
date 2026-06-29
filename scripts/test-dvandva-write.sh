@@ -1404,6 +1404,55 @@ make_baton_v2 "$BOX/baton.next.json" "parallel_implementing" "team" 5 \
 run_case "v2 implementation chunk with explicit empty write_paths keeps paths write intent" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+# --- concurrent writers: lost-update / TOCTOU stale-write race guard ---------
+# Two engines share one worktree and may invoke this helper at the same time.
+# Without a lock both read on-disk checkpoint=N, both build a checkpoint=N+1
+# candidate, both pass the (N+1 > N) guard, and both mv their candidate into
+# place -- the later mv silently clobbers the earlier accepted write (a lost
+# update). The fix serializes read-state -> validate -> mv -> snapshot so that
+# exactly one writer installs N+1 and the loser, re-reading the now-advanced
+# state, fails closed with exit 27 stale_checkpoint. Two concurrent valid
+# same-status team-sync candidates at N+1 must therefore yield exactly one
+# exit 0 and one exit 27 -- never two exit 0.
+BOX="$(new_box v2-concurrent-write-race)"
+make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 \
+  "$(v2_cross_review_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/cand-a.json" "cross_review" "team" 5 \
+  "$(v2_cross_review_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Concurrent writer A team sync."' \
+  '.next_action = "Team: continue after writer A wins the race."'
+make_baton_v2 "$BOX/cand-b.json" "cross_review" "team" 5 \
+  "$(v2_cross_review_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Concurrent writer B team sync."' \
+  '.next_action = "Team: continue after writer B wins the race."'
+
+"$SCRIPT" "$BOX/baton.json" "$BOX/cand-a.json" >/dev/null 2>&1 &
+race_pid_a=$!
+"$SCRIPT" "$BOX/baton.json" "$BOX/cand-b.json" >/dev/null 2>&1 &
+race_pid_b=$!
+wait "$race_pid_a"; race_rc_a=$?
+wait "$race_pid_b"; race_rc_b=$?
+
+race_zeros=0
+race_staled=0
+for race_rc in "$race_rc_a" "$race_rc_b"; do
+  case "$race_rc" in
+    0) race_zeros=$((race_zeros + 1)) ;;
+    27) race_staled=$((race_staled + 1)) ;;
+  esac
+done
+
+if [[ "$race_zeros" -eq 1 && "$race_staled" -eq 1 ]] \
+  && jq -e '.checkpoint == 5 and .status == "cross_review"' "$BOX/baton.json" >/dev/null 2>&1; then
+  echo "PASS: concurrent writers serialize (one 0, one 27, surviving baton at checkpoint 5)"
+else
+  echo "FAIL: concurrent writers raced (rc_a=$race_rc_a rc_b=$race_rc_b zeros=$race_zeros stale=$race_staled checkpoint=$(jq -r '.checkpoint // "?"' "$BOX/baton.json" 2>/dev/null))"
+  failures=$((failures + 1))
+fi
+
 for owner in \
   dvandva-security-auditor \
   dvandva-integration-checker \
