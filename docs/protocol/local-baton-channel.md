@@ -272,7 +272,7 @@ Model classes are vendor-neutral: `opus-class|gpt-5.5` for architecture/planning
 ### Accepted v2 modes
 
 - `development` — full research -> planning -> implementation -> review flow.
-  The accepted development table remains the current 21-edge v2 table.
+  The accepted development table remains the current 26-edge v2 table.
 - `research` — research-only run. It may optionally emit a seed-development
   plan when `research_outcome == seed_development`, but the run still terminates
   as research.
@@ -281,7 +281,7 @@ Model classes are vendor-neutral: `opus-class|gpt-5.5` for architecture/planning
   `termination_review` gate before `done`.
 - `feature-pr` — legacy alias for `development` on older batons.
 
-### Development mode (v2, 21 edges)
+### Development mode (v2, 26 edges)
 
 - v2: `deslop` → `phase: N+1, parallel_implementing` is the non-final
   phase-advance edge. Final phases route to `termination_review` instead.
@@ -299,7 +299,12 @@ Model classes are vendor-neutral: `opus-class|gpt-5.5` for architecture/planning
 - `cross_fixing` -> `test_creation`
 - `cross_review` -> `deep_review`
 - `deep_review` -> `phase_fixing`
+- `deep_review` -> `review_of_review`
 - `deep_review` -> `deslop`
+- `review_of_review` -> `counter_review`
+- `review_of_review` -> `deslop`
+- `counter_review` -> `review_of_review`
+- `counter_review` -> `deslop`
 - `phase_fixing` -> `test_creation`
 - `deslop` -> `phase_fixing`
 - `deslop` -> `parallel_implementing`

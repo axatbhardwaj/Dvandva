@@ -205,7 +205,7 @@ early. Scalar-owner states still reject same-status rewrites.
 }
 ```
 
-## Development Mode (v2, 21 edges)
+## Development Mode (v2, 26 edges)
 
 This is the currently enforced v2 development table from
 `scripts/test-dvandva-write.sh` (`V2_EDGES`). It remains unchanged. Every route
@@ -228,7 +228,12 @@ into `termination_review` is explicit; there is no wildcard
 | `cross_fixing` | `test_creation` | Cross-review findings were fixed and tests/evidence must be refreshed. |
 | `cross_review` | `deep_review` | Both roles recorded completed cross-review tracks for peer-owned chunks. |
 | `deep_review` | `phase_fixing` | Prativadi finds bugs, missing tests, verification gaps, or substantive review issues. |
+| `deep_review` | `review_of_review, review_target: prativadi_fixups` | Prativadi applied narrow fixups after the required review angles; vadi must inspect the fixup diff before cleanup continues. |
 | `deep_review` | `deslop` | Prativadi accepts behavior and tests after the required review angles are complete. |
+| `review_of_review (prativadi_fixups)` | `counter_review, review_target: vadi_counter` | Vadi disapproves prativadi fixups and writes a counter-change. |
+| `review_of_review (prativadi_fixups)` | `deslop` | Vadi approves prativadi fixups; v2 returns to cleanup rather than advancing or terminating directly. |
+| `counter_review (vadi_counter)` | `review_of_review, review_target: prativadi_fixups` | Prativadi disapproves the counter and applies a different narrow fixup. |
+| `counter_review (vadi_counter)` | `deslop` | Prativadi approves the counter; v2 returns to cleanup rather than advancing or terminating directly. |
 | `phase_fixing` | `test_creation` | Vadi fixed behavior, tests, or verification gaps and must refresh test evidence. |
 | `deslop` | `phase_fixing` | Cleanup finds behavior, test, or review blockers. |
 | `deslop` | `phase: N+1, status: "parallel_implementing"` | A non-final phase is clean and the next development phase begins. |

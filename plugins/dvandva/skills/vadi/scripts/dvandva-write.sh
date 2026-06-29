@@ -915,7 +915,7 @@ else
               research_drafting:research_review|research_review:research_revision|research_revision:research_review|research_review:spec_drafting) legal=1 ;;
               spec_drafting:spec_review|spec_review:spec_revision|spec_review:parallel_implementing|spec_revision:spec_review) legal=1 ;;
               parallel_implementing:test_creation|test_creation:cross_review|cross_review:cross_fixing|cross_fixing:test_creation|cross_review:deep_review) legal=1 ;;
-              deep_review:phase_fixing|deep_review:deslop|phase_fixing:test_creation|deslop:phase_fixing|deslop:parallel_implementing|deslop:termination_review|termination_review:phase_fixing|termination_review:done) legal=1 ;;
+              deep_review:phase_fixing|deep_review:review_of_review|deep_review:deslop|review_of_review:counter_review|review_of_review:deslop|counter_review:review_of_review|counter_review:deslop|phase_fixing:test_creation|deslop:phase_fixing|deslop:parallel_implementing|deslop:termination_review|termination_review:phase_fixing|termination_review:done) legal=1 ;;
               *) reason="no legal edge ${cur_status}->${new_status}" ;;
             esac
             ;;
@@ -1042,7 +1042,18 @@ else
     fi
   fi
 
-  if [[ "$legal" -eq 1 && "$schema" == "dvandva.baton.v2" && "$cur_status" == "deep_review" && "$new_status" == "deslop" ]]; then
+  if [[ "$legal" -eq 1 && "$schema" == "dvandva.baton.v2" && "$new_status" == "review_of_review" ]]; then
+    if ! jq -e '
+      (.narrow_fixups | type) == "array" and
+      ((.narrow_fixups | length) > 0) and
+      all(.narrow_fixups[]; (type == "string") and test("\\S"))
+    ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+      legal=0
+      reason="review_of_review requires non-empty narrow_fixups"
+    fi
+  fi
+
+  if [[ "$legal" -eq 1 && "$schema" == "dvandva.baton.v2" && "$cur_status" == "deep_review" && ( "$new_status" == "deslop" || "$new_status" == "review_of_review" ) ]]; then
     if ! jq -e '
       def done_angle($name):
         any(.subagent_tracks[];

@@ -1684,7 +1684,7 @@ done
 
 # --- transitions: documented v2 edges are legal ---
 
-V2_EDGES="research_drafting:research_review research_review:research_revision research_revision:research_review research_review:spec_drafting spec_drafting:spec_review spec_review:spec_revision spec_review:parallel_implementing spec_revision:spec_review parallel_implementing:test_creation test_creation:cross_review cross_review:cross_fixing cross_fixing:test_creation cross_review:deep_review deep_review:phase_fixing deep_review:deslop phase_fixing:test_creation deslop:phase_fixing deslop:parallel_implementing deslop:termination_review termination_review:phase_fixing termination_review:done"
+V2_EDGES="research_drafting:research_review research_review:research_revision research_revision:research_review research_review:spec_drafting spec_drafting:spec_review spec_review:spec_revision spec_review:parallel_implementing spec_revision:spec_review parallel_implementing:test_creation test_creation:cross_review cross_review:cross_fixing cross_fixing:test_creation cross_review:deep_review deep_review:phase_fixing deep_review:review_of_review deep_review:deslop review_of_review:counter_review review_of_review:deslop counter_review:review_of_review counter_review:deslop phase_fixing:test_creation deslop:phase_fixing deslop:parallel_implementing deslop:termination_review termination_review:phase_fixing termination_review:done"
 i=0
 for edge in $V2_EDGES; do
   i=$((i + 1))
@@ -1693,8 +1693,24 @@ for edge in $V2_EDGES; do
   BOX="$(new_box "v2-edge-$i")"
   cur_extras=()
   extras=()
-  if [[ "$edge" == "deep_review:deslop" ]]; then
+  if [[ "$edge" == "deep_review:deslop" || "$edge" == "deep_review:review_of_review" ]]; then
     extras+=("$(v2_review_angles_filter)")
+  fi
+  if [[ "$cur" == "review_of_review" ]]; then
+    cur_extras+=('.review_target = "prativadi_fixups"')
+    cur_extras+=('.narrow_fixups = ["test fixup"]')
+  fi
+  if [[ "$cur" == "counter_review" ]]; then
+    cur_extras+=('.review_target = "vadi_counter"')
+    cur_extras+=('.vadi_counter = ["counter change"]')
+  fi
+  if [[ "$new" == "review_of_review" ]]; then
+    extras+=('.review_target = "prativadi_fixups"')
+    extras+=('.narrow_fixups = ["test fixup"]')
+  fi
+  if [[ "$new" == "counter_review" ]]; then
+    extras+=('.review_target = "vadi_counter"')
+    extras+=('.vadi_counter = ["counter change"]')
   fi
   if [[ "$new" == "parallel_implementing" ]]; then
     extras+=("$(v2_parallel_chunks_filter)")
@@ -2147,6 +2163,31 @@ BOX="$(new_box v2-deep-review-with-angles)"
 make_baton_v2 "$BOX/baton.json" "deep_review" "prativadi" 4
 make_baton_v2 "$BOX/baton.next.json" "deslop" "vadi" 5 "$(v2_review_angles_filter)"
 run_case "v2 deep_review->deslop accepts three review angles" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-deep-review-review-of-review-missing-fixups)"
+make_baton_v2 "$BOX/baton.json" "deep_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "review_of_review" "vadi" 5 \
+  "$(v2_review_angles_filter)" \
+  '.review_target = "prativadi_fixups"'
+run_case_contains "v2 deep_review->review_of_review requires narrow fixups" 24 "review_of_review requires non-empty narrow_fixups" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-deep-review-review-of-review-missing-angles)"
+make_baton_v2 "$BOX/baton.json" "deep_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "review_of_review" "vadi" 5 \
+  '.review_target = "prativadi_fixups"' \
+  '.narrow_fixups = ["test fixup"]'
+run_case_contains "v2 deep_review->review_of_review requires three review angles" 24 "three completed review-angle subagent_tracks" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-deep-review-review-of-review-with-angles)"
+make_baton_v2 "$BOX/baton.json" "deep_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "review_of_review" "vadi" 5 \
+  "$(v2_review_angles_filter)" \
+  '.review_target = "prativadi_fixups"' \
+  '.narrow_fixups = ["test fixup"]'
+run_case "v2 deep_review->review_of_review accepts angles and fixups" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-illegal-skip)"
