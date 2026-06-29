@@ -101,12 +101,12 @@ EOF
 
   cat > "$root/plugins/dvandva/skills/vadi/SKILL.md" <<'EOF'
 Preflight runs export DVANDVA_ROLE=vadi, asserts DVANDVA_ROLE=vadi,
-runs scripts/install-dvandva-hooks.sh, and asserts core.hooksPath=.githooks.
+runs dvandva-preflight.sh --role vadi (resolve-first turn-gate).
 EOF
 
   cat > "$root/plugins/dvandva/skills/prativadi/SKILL.md" <<'EOF'
 Preflight runs export DVANDVA_ROLE=prativadi, asserts DVANDVA_ROLE=prativadi,
-runs scripts/install-dvandva-hooks.sh, and asserts core.hooksPath=.githooks.
+runs dvandva-preflight.sh --role prativadi (resolve-first turn-gate).
 EOF
 
   cat > "$root/.githooks/pre-commit" <<'EOF'
@@ -139,7 +139,7 @@ EOF
 
   cat > "$root/scripts/install-dvandva-hooks.sh" <<'EOF'
 #!/usr/bin/env bash
-echo ".githooks core.hooksPath"
+echo ".dvandva/githooks core.hooksPath"
 echo "dvandva.hooksAdoptedAt"
 echo "__DVANDVA_ROOT_PENDING__"
 EOF
@@ -290,12 +290,12 @@ expect_fail \
 
 CASE="$TMP_DIR/no-vadi-hook-preflight"
 write_path_fixture "$CASE"
-perl -0pi -e 's#scripts/install-dvandva-hooks\.sh#install hooks#g' \
+perl -0pi -e 's/dvandva-preflight\.sh/preflight tool/g' \
   "$CASE/plugins/dvandva/skills/vadi/SKILL.md"
 expect_fail \
   "path-gate lint rejects vadi skill without hook preflight" \
   "$CASE" \
-  "vadi skill preflight must enforce repo-local Dvandva hooks"
+  "vadi skill preflight must invoke the unified dvandva-preflight.sh turn-gate"
 
 CASE="$TMP_DIR/no-vadi-role-export"
 write_path_fixture "$CASE"
@@ -317,12 +317,12 @@ expect_fail \
 
 CASE="$TMP_DIR/no-prativadi-hook-preflight"
 write_path_fixture "$CASE"
-perl -0pi -e 's/core\.hooksPath=\.githooks/hooks enabled/g' \
+perl -0pi -e 's/dvandva-preflight\.sh/preflight tool/g' \
   "$CASE/plugins/dvandva/skills/prativadi/SKILL.md"
 expect_fail \
   "path-gate lint rejects prativadi skill without hook preflight" \
   "$CASE" \
-  "prativadi skill preflight must enforce repo-local Dvandva hooks"
+  "prativadi skill preflight must invoke the unified dvandva-preflight.sh turn-gate"
 
 CASE="$TMP_DIR/no-prativadi-role-export"
 write_path_fixture "$CASE"
