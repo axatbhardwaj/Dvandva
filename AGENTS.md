@@ -33,5 +33,8 @@ Each agent handoff must answer:
 - What exact command or prompt should the next agent run?
 
 No silent handoffs. No model-turn polling. In walkaway mode, foreground shell
-polling is continuous and stops only when the baton reaches `done`,
-`human_question`, or `human_decision`, or when the user interrupts.
+polling is continuous and stops for completion only when the baton reaches
+post-handshake `done`. `human_question` and `human_decision` pause for human
+intervention. Final approval alone is not a stop condition; `termination_review`
+keeps both roles active so they either keep polling or stop together after both
+approve.

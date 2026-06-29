@@ -53,6 +53,20 @@ else
   failures=$((failures + 1))
 fi
 
+# Case 2a: termination_review is active, not terminal; history only, no archive.
+DVANDVA_DIR2a="$TMP_DIR/case2a/.dvandva"
+mkdir -p "$DVANDVA_DIR2a"
+write_baton "$DVANDVA_DIR2a/baton.json" "team" "termination_review" 9 "feature-x"
+"$SCRIPT" "$DVANDVA_DIR2a/baton.json"
+EXPECTED_TERMINATION_HISTORY="$DVANDVA_DIR2a/history/9-termination_review-team.json"
+UNEXPECTED_TERMINATION_ARCHIVE="$DVANDVA_DIR2a/baton.feature-x-9-termination_review.json"
+if [[ -f "$EXPECTED_TERMINATION_HISTORY" ]] && [[ ! -e "$UNEXPECTED_TERMINATION_ARCHIVE" ]]; then
+  echo "PASS: termination_review writes history only, no terminal archive"
+else
+  echo "FAIL: termination_review snapshot/archive classification wrong"
+  failures=$((failures + 1))
+fi
+
 RUNS_ROOT="$TMP_DIR/case2-runs/.dvandva/runs"
 ALPHA_DIR="$RUNS_ROOT/alpha"
 BETA_DIR="$RUNS_ROOT/beta"

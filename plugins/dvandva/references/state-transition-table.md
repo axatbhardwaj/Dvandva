@@ -25,9 +25,14 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
 - `verification_matrix`: planned evidence map from claims and risks to checks, owners, expected results, command or inspection, result, evidence refs, and the 100% test coverage target for new behavior.
 - `turn_cap`: default `60`; passive shell wait heartbeats do not count as
   active model-work turns.
+- `termination_review`: v2's multipart termination state. It is team-owned
+  (`assignee: "team"`, `active_roles: ["vadi", "prativadi"]`) so both roles
+  keep polling and explicitly decide whether to stop. `done` is legal only from
+  `termination_review` after both final approvals are true.
 - `dvandva-wait.sh`: continuous polling is the hard rule. `--max-wait` is the
   heartbeat interval by default, and the helper keeps polling until role
-  ownership, `done`, `human_question`, `human_decision`, or user interrupt.
+  ownership, shared terminal `done`, `human_question`, `human_decision`, or user
+  interrupt. `termination_review` is not terminal; it wakes both roles.
   `--persist` is accepted for older snippets and is redundant. Optional
   `--persist-max <seconds>` is a total wall-clock cap; the wait-helper persist cap exit 23 is not a terminal baton state and must re-enter wait unless the
   user interrupts. Explicit `--finite` compatibility mode is the only path to
@@ -131,7 +136,7 @@ Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`) m
   "run_mode": "walkaway | supervised",
   "phase": "spec | 1 | 2 | ... | done",
   "total_phases": "integer, set during spec phase, immutable thereafter unless human edits",
-  "status": "spec_drafting | spec_review | spec_revision | human_question | implementing | parallel_implementing | test_creation | cross_review | cross_fixing | deep_review | deslop | phase_review | phase_fixing | review_of_review | counter_review | human_decision | done",
+  "status": "spec_drafting | spec_review | spec_revision | human_question | implementing | parallel_implementing | test_creation | cross_review | cross_fixing | deep_review | deslop | termination_review | phase_review | phase_fixing | review_of_review | counter_review | human_decision | done",
   "assignee": "non-empty string; v1 conventions are vadi | prativadi | human; v2 status-owner pairs include team for concurrent states",
   "active_roles": "v2 concurrent roles array, usually [] or [\"vadi\", \"prativadi\"]",
   "current_engine": "optional; claude | codex | null. Records which CLI wrote the most recent baton; traceability only.",
@@ -214,7 +219,9 @@ Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`) m
 | `phase_fixing` | `test_creation` | v2: Vadi fixed behavior, tests, or verification gaps and must refresh test evidence before review |
 | `deslop` | `phase_fixing` | v2: Cleanup finds behavior, test, or review blockers |
 | `deslop` | `phase: N+1, status: parallel_implementing, disagreement_round: 0` | v2: no nits, low/minor bugs, stale wording, or unclear instructions remain except explicitly accepted `deferred` items |
-| `deslop` | final `done` | v2: final phase passed implementation, test_creation, deep_review, deslop, uses a coordinator assignee (`human`, `team`, `vadi`, or `prativadi`), has both final approvals true, and `run_explainer_ref` points to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html` |
+| `deslop` | `termination_review` | v2 final phase passed implementation, test_creation, deep_review, and deslop. The writer records its own final approval, keeps `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`, and keeps polling because stop is not yet shared. |
+| `termination_review` | final `done` | v2: both roles have explicitly decided to stop (`vadi_final_approval == true` and `prativadi_final_approval == true`), `run_explainer_ref` points to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`, and the final commit/push gates have run. |
+| `termination_review` | `phase_fixing` | One role rejects final stop because behavior, tests, docs, or run artifacts still need work. |
 | `phase: N, implementing` | `human_decision` | Vadi blocked |
 | `phase_review (impl)` | `phase_fixing` | Prativadi hands back substantive findings |
 | `phase_review (impl)` | `review_of_review, review_target: prativadi_fixups` | Prativadi applied narrow fixups, mutual review owed |
@@ -263,15 +270,15 @@ writes:
 - Vadi-owned: `research_drafting`, `research_revision`, `spec_drafting`,
   `spec_revision`, `implementing`, `test_creation`, `deslop`, `phase_fixing`,
   `review_of_review`.
-- Team-owned: `parallel_implementing`, `cross_review`, `cross_fixing`; these
-  require `active_roles: ["vadi", "prativadi"]`.
+- Team-owned: `parallel_implementing`, `cross_review`, `cross_fixing`,
+  `termination_review`; these require `active_roles: ["vadi", "prativadi"]`.
 - Prativadi-owned: `research_review`, `spec_review`, `deep_review`,
   `phase_review`, `counter_review`.
 - Human-owned: `human_question`, `human_decision`.
 - Terminal `done` has no status owner. It is accepted as terminal for a
-  coordinator assignee (`human`, `team`, `vadi`, or `prativadi`) while the final
-  gate still requires both final approvals and the run explainer; wait helpers
-  stop on `done`.
+  coordinator assignee (`human`, `team`, `vadi`, or `prativadi`) only from
+  `termination_review`, while the final gate still requires both final
+  approvals and the run explainer; wait helpers stop on `done`.
 
 Any other transition is illegal in v1 or v2 and must be rejected by the writing
 agent.

@@ -4,8 +4,9 @@
 # Wakes early on baton-directory inotify events when inotifywait is
 # available; otherwise sleeps INTERVAL between checks. By default it keeps
 # waiting across heartbeat intervals until the role is assigned, the baton
-# reaches a terminal state, or the user interrupts. Use --finite only for
-# compatibility tests or harnesses that must cap one helper invocation.
+# reaches post-handshake done, enters a human-intervention state, or the user
+# interrupts. Use --finite only for compatibility tests or harnesses that must
+# cap one helper invocation.
 #
 # This helper is bundled as a real executable inside each runtime skill:
 #   plugins/dvandva/skills/vadi/scripts/dvandva-wait.sh
@@ -70,8 +71,9 @@ underscore, or dash; no slash or '..'.
 Wakes early on baton-directory changes when inotifywait is available;
 otherwise sleeps INTERVAL between checks. The default mode is continuous:
 --max-wait is a heartbeat interval, not a stop condition, and the helper
-keeps polling until this role owns the baton, the baton reaches done /
-human_question / human_decision, or the user interrupts.
+keeps polling until this role owns the baton, the baton reaches post-handshake
+done, the baton enters human_question / human_decision, or the user interrupts.
+termination_review is an active handoff state and is not terminal.
 
 With --allow-missing, a missing baton file does not exit 21 immediately;
 the helper instead sleeps INTERVAL and retries until the file appears
@@ -262,12 +264,13 @@ scan_sibling_runs() {
     sibling_run_id="$(derive_run_id "$sibling_file")"
     sibling_state="$(jq -r '[.status // "", .assignee // "", ((.active_roles // []) | join(","))] | join("\u001f")' "$sibling_file" 2>/dev/null)" || continue
     IFS=$'\x1f' read -r sibling_status sibling_assignee sibling_active_roles <<< "$sibling_state"
-    # Terminal / intervention states are not active runs competing for my role.
-    # For WAIT split-brain, done AND human_decision / human_question are all
-    # terminal: a sibling parked there is paused on a human, so a stale assignee or
-    # active_roles still naming my role must not count as active or fire exit 29.
-    # (This is independent of the resolver DISCOVERY taxonomy, where human_* is
-    # resumable -- that classification is correct there and unchanged here.)
+    # Completed / intervention states are not active runs competing for my role.
+    # For WAIT split-brain, done is completed; human_decision / human_question
+    # are paused on a human. A stale assignee or active_roles still naming my
+    # role in those states must not count as active or fire exit 29.
+    # termination_review is deliberately absent: it is an active multipart
+    # termination handoff, so both roles must wake instead of treating it as
+    # completed.
     case "$sibling_status" in
       done|human_decision|human_question)
         continue

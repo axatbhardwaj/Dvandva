@@ -38,7 +38,7 @@ make_baton_v2() {
     spec_drafting|spec_review|spec_revision)
       phase_json='"spec"'
       ;;
-    implementing|parallel_implementing|test_creation|cross_review|cross_fixing|deep_review|deslop|phase_review|phase_fixing|review_of_review|counter_review|done)
+    implementing|parallel_implementing|test_creation|cross_review|cross_fixing|deep_review|deslop|termination_review|phase_review|phase_fixing|review_of_review|counter_review|done)
       phase_json='1'
       ;;
   esac
@@ -69,7 +69,7 @@ v2_status_owner() {
     research_drafting|research_revision|spec_drafting|spec_revision|implementing|test_creation|deslop|phase_fixing|review_of_review)
       echo "vadi"
       ;;
-    parallel_implementing|cross_review|cross_fixing)
+    parallel_implementing|cross_review|cross_fixing|termination_review)
       echo "team"
       ;;
     research_review|spec_review|deep_review|phase_review|counter_review)
@@ -1633,13 +1633,14 @@ done
 
 # --- transitions: documented v2 edges are legal ---
 
-V2_EDGES="research_drafting:research_review research_review:research_revision research_revision:research_review research_review:spec_drafting spec_drafting:spec_review spec_review:spec_revision spec_review:parallel_implementing spec_revision:spec_review parallel_implementing:test_creation test_creation:cross_review cross_review:cross_fixing cross_fixing:test_creation cross_review:deep_review deep_review:phase_fixing deep_review:deslop phase_fixing:test_creation deslop:phase_fixing deslop:parallel_implementing deslop:done"
+V2_EDGES="research_drafting:research_review research_review:research_revision research_revision:research_review research_review:spec_drafting spec_drafting:spec_review spec_review:spec_revision spec_review:parallel_implementing spec_revision:spec_review parallel_implementing:test_creation test_creation:cross_review cross_review:cross_fixing cross_fixing:test_creation cross_review:deep_review deep_review:phase_fixing deep_review:deslop phase_fixing:test_creation deslop:phase_fixing deslop:parallel_implementing deslop:termination_review termination_review:phase_fixing termination_review:done"
 i=0
 for edge in $V2_EDGES; do
   i=$((i + 1))
   cur="${edge%%:*}"
   new="${edge##*:}"
   BOX="$(new_box "v2-edge-$i")"
+  cur_extras=()
   extras=()
   if [[ "$edge" == "deep_review:deslop" ]]; then
     extras+=("$(v2_review_angles_filter)")
@@ -1649,6 +1650,10 @@ for edge in $V2_EDGES; do
   fi
   if [[ "$new" == "cross_review" || "$new" == "cross_fixing" ]]; then
     extras+=('.active_roles = ["vadi", "prativadi"]')
+  fi
+  if [[ "$new" == "termination_review" ]]; then
+    extras+=('.active_roles = ["vadi", "prativadi"]')
+    extras+=('.vadi_final_approval = true')
   fi
   if [[ "$edge" == "test_creation:cross_review" ]]; then
     extras+=("$(v2_test_creation_track_filter)")
@@ -1664,12 +1669,15 @@ for edge in $V2_EDGES; do
   if [[ "$edge" == "cross_review:deep_review" ]]; then
     extras+=("$(v2_cross_review_tracks_filter)")
   fi
-  if [[ "$edge" == "deslop:done" ]]; then
+  if [[ "$edge" == "termination_review:done" ]]; then
+    cur_extras+=('.active_roles = ["vadi", "prativadi"]')
+    cur_extras+=('.vadi_final_approval = true')
+    cur_extras+=('.prativadi_final_approval = true')
     extras+=('.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"')
     extras+=('.vadi_final_approval = true')
     extras+=('.prativadi_final_approval = true')
   fi
-  make_baton_v2 "$BOX/baton.json" "$cur" "$(v2_status_owner "$cur")" 4
+  make_baton_v2 "$BOX/baton.json" "$cur" "$(v2_status_owner "$cur")" 4 "${cur_extras[@]}"
   make_baton_v2 "$BOX/baton.next.json" "$new" "$(v2_status_owner "$new")" 5 "${extras[@]}"
   run_case "v2 edge $edge is legal" 0 \
     "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
@@ -1829,7 +1837,7 @@ make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
   '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
   '.vadi_final_approval = true' \
   '.prativadi_final_approval = true'
-run_case_contains "v2 phase_review->done rejects legacy terminal review" 24 "no legal edge phase_review->done" \
+run_case_contains "v2 phase_review->done rejects legacy terminal review" 24 "done requires current status termination_review" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-reject-legacy-review-of-review-done)"
@@ -1838,7 +1846,7 @@ make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
   '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
   '.vadi_final_approval = true' \
   '.prativadi_final_approval = true'
-run_case_contains "v2 review_of_review->done rejects legacy terminal review" 24 "no legal edge review_of_review->done" \
+run_case_contains "v2 review_of_review->done rejects legacy terminal review" 24 "done requires current status termination_review" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-reject-legacy-counter-review-done)"
@@ -1847,7 +1855,7 @@ make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
   '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
   '.vadi_final_approval = true' \
   '.prativadi_final_approval = true'
-run_case_contains "v2 counter_review->done rejects legacy terminal review" 24 "no legal edge counter_review->done" \
+run_case_contains "v2 counter_review->done rejects legacy terminal review" 24 "done requires current status termination_review" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-team-cross-fixing-sync)"
@@ -1894,27 +1902,55 @@ run_case_contains "v2 non-team same-status rewrite still rejects" 24 "same-statu
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-done-missing-run-explainer)"
-make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 '.active_roles = ["vadi", "prativadi"]'
 make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 '.run_explainer_ref = null'
 run_case_contains "v2 done requires run_explainer_ref" 23 "bad_run_explainer_ref" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-done-invalid-run-explainer-path)"
-make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 '.active_roles = ["vadi", "prativadi"]'
 make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 '.run_explainer_ref = "../run-a-explainer.html"'
 run_case_contains "v2 done rejects invalid run_explainer_ref path" 23 "bad_run_explainer_ref" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-done-mismatched-run-explainer)"
-make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4 '.run_id = "alpha"'
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 '.run_id = "alpha" | .active_roles = ["vadi", "prativadi"]'
 make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
   '.run_id = "alpha"' \
   '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-beta-explainer.html"'
 run_case_contains "v2 done rejects run_explainer_ref for different run_id" 23 "bad_run_explainer_ref" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
-BOX="$(new_box v2-done-valid-run-explainer)"
+BOX="$(new_box v2-reject-direct-deslop-done)"
 make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+run_case_contains "v2 deslop->done requires termination_review first" 24 "done requires current status termination_review" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-reject-human-decision-done)"
+make_baton_v2 "$BOX/baton.json" "human_decision" "human" 4
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+run_case_contains "v2 human_decision->done still requires termination_review first" 24 "done requires current status termination_review" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-termination-review-missing-active-roles)"
+make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4
+make_baton_v2 "$BOX/baton.next.json" "termination_review" "team" 5 \
+  '.vadi_final_approval = true'
+run_case_contains "v2 termination_review keeps both roles polling" 23 "bad_active_roles" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-done-valid-run-explainer)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
 make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
   '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
   '.vadi_final_approval = true' \
@@ -1924,7 +1960,10 @@ run_case "v2 done accepts valid run_explainer_ref path" 0 \
 
 for done_owner in human team vadi prativadi; do
   BOX="$(new_box "v2-done-accepts-$done_owner")"
-  make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4
+  make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+    '.active_roles = ["vadi", "prativadi"]' \
+    '.vadi_final_approval = true' \
+    '.prativadi_final_approval = true'
   make_baton_v2 "$BOX/baton.next.json" "done" "$done_owner" 5 \
     '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
     '.vadi_final_approval = true' \
@@ -1934,7 +1973,7 @@ for done_owner in human team vadi prativadi; do
 done
 
 BOX="$(new_box v2-done-rejects-missing-final-approval)"
-make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 '.active_roles = ["vadi", "prativadi"]'
 make_baton_v2 "$BOX/baton.next.json" "done" "team" 5 \
   '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
   '.vadi_final_approval = true' \
@@ -1942,8 +1981,20 @@ make_baton_v2 "$BOX/baton.next.json" "done" "team" 5 \
 run_case_contains "v2 done requires both final approvals" 23 "DVANDVA_WRITE bad_done_state" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+BOX="$(new_box v2-done-rejects-same-checkpoint-final-approval)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = false'
+make_baton_v2 "$BOX/baton.next.json" "done" "team" 5 \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+run_case_contains "v2 done requires approvals before terminal checkpoint" 24 "done requires current termination_review with both final approvals" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
 BOX="$(new_box v2-done-rejects-generated-assignee)"
-make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 '.active_roles = ["vadi", "prativadi"]'
 make_baton_v2 "$BOX/baton.next.json" "done" "r3-generated-dynamic-review" 5 \
   '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
   '.vadi_final_approval = true' \

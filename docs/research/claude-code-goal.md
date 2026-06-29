@@ -41,8 +41,9 @@ The Claude docs recommend conditions with:
 Dvandva's current walkaway goal conditions should therefore include:
 
 ```text
-Continue until .dvandva/baton.json status is "done", "human_question", or "human_decision".
+Continue until .dvandva/baton.json reaches post-handshake status "done" or enters human-intervention status "human_question" or "human_decision".
 If the baton assigns work to the other role, run ${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh in the foreground and re-read the baton when it returns ready.
+Do not treat final approval as a stop condition; termination_review is an active shared handoff where both roles keep polling until both approve stopping.
 Before each checkpoint, surface BATON_STATE, changed files, verification commands and outcomes, and final approval fields.
 Never create a PR. Stop after the baton turn_cap and set status "human_decision" if blocked.
 ```

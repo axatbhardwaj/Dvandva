@@ -126,6 +126,12 @@ seed_baton "$BOX_E/.dvandva/runs/finished/baton.json" "finished" "done" "human" 
 assert_line "only done archive -> CREATE" 0 "CREATE .dvandva/runs/run/baton.json" \
   "$SCRIPT" --role vadi --cwd "$BOX_E"
 
+# (e0) one termination_review -> RESOLVED (shared stop handoff), NOT CREATE.
+BOX_E0="$TMP_DIR/e0-termination-review"
+seed_baton "$BOX_E0/.dvandva/runs/finalize/baton.json" "finalize" "termination_review" "team" "2026-06-29T10:00:00Z"
+assert_line "termination_review is resumable -> RESOLVED" 0 "RESOLVED .dvandva/runs/finalize/baton.json" \
+  "$SCRIPT" --role vadi --cwd "$BOX_E0"
+
 # (e2) done archive named 'run' forces a deterministic non-colliding slug.
 BOX_E2="$TMP_DIR/e2-done-named-run"
 seed_baton "$BOX_E2/.dvandva/runs/run/baton.json" "run" "done" "human" "2026-06-29T10:00:00Z"

@@ -69,10 +69,10 @@ stamps `Dvandva-Checkpoint`; and `scripts/dvandva-drift-lint.sh` reports
 unstamped commits from the hook-adoption baseline floor when present, so a
 later stamped checkpoint cannot hide a `--no-verify` bypass. This is
 shell/git-hook enforcement only. There is no daemon or hidden orchestrator.
-For git work-gating, terminal `done`, `human_question`, and `human_decision`
-batons are inactive: the commit gate allows them, and drift lint only reports
-off-protocol commits while at least one non-terminal baton is active or when
-checkpoint history gives it a scan floor.
+For git work-gating, completed `done` batons and human-intervention
+`human_question` / `human_decision` batons are inactive: the commit gate allows
+them, and drift lint only reports off-protocol commits while at least one active
+baton is present or when checkpoint history gives it a scan floor.
 
 Run 4 standalone-agent retirement is intentionally Dvandva-only: it covers only
 Dvandva-covered workflows with functional parity via Runs 1-4 usage. The
@@ -81,7 +81,7 @@ allowlist is the five Claude symlink agents `adversarial-analyst`, `architect`,
 are reported as no-op, skill directories are not touched, and the helper writes
 a backup manifest so `--restore` can reverse an apply run.
 
-Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`) may write same-status sync checkpoints when both roles remain active. Use them to record partial completion, task distribution, or peer wait state without advancing the lifecycle early. Scalar-owner states still reject same-status rewrites.
+Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`, `termination_review`) may write same-status sync checkpoints when both roles remain active. Use them to record partial completion, task distribution, peer wait state, or shared stop-review evidence without advancing the lifecycle early. Scalar-owner states still reject same-status rewrites.
 
 ```json
 {
@@ -307,7 +307,9 @@ Model classes are vendor-neutral: `opus-class|gpt-5.5` for architecture/planning
 - v2: `deep_review (impl)` → `deslop` when implementation and tests are substantively accepted and `subagent_tracks` contains the three completed review angles
 - v2: `deep_review (impl)` → `phase_fixing` when bugs, missing tests, or verification gaps remain
 - v2: `phase_fixing` → `test_creation` when fixes changed behavior, tests, or verification evidence
-- v2: `deslop` → `phase: N+1, parallel_implementing` or terminal `done` when no nits, low/minor bugs, stale wording, or unclear instructions remain except explicitly accepted `deferred` items; terminal `done` also requires a coordinator assignee (`human`, `team`, `vadi`, or `prativadi`), `run_explainer_ref` pointing to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`, `vadi_final_approval == true`, and `prativadi_final_approval == true`
+- v2: `deslop` → `phase: N+1, parallel_implementing` or `termination_review` when no nits, low/minor bugs, stale wording, or unclear instructions remain except explicitly accepted `deferred` items; `termination_review` uses `assignee: "team"` and `active_roles: ["vadi", "prativadi"]` so both roles keep polling while deciding whether to stop
+- v2: `termination_review` → terminal `done` only after the installed current baton already has `vadi_final_approval == true` and `prativadi_final_approval == true`; terminal `done` also requires a coordinator assignee (`human`, `team`, `vadi`, or `prativadi`) and `run_explainer_ref` pointing to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`
+- v2: `termination_review` → `phase_fixing` when either role finds behavior, test, documentation, artifact, or protocol work still owed
 - v2: `deslop` → `phase_fixing` when cleanup finds behavior, test, or review blockers
 - `phase: N, implementing` → `human_decision`
 - `phase_review (impl)` → `phase_fixing` (substantive findings)
@@ -341,10 +343,12 @@ For v2 candidates, `assignee` is status-owned: vadi owns
 `implementing`, `test_creation`, `deslop`, `phase_fixing`, and
 `review_of_review`; prativadi owns `research_review`, `spec_review`,
 `deep_review`, `phase_review`, and `counter_review`; human owns
-`human_question` and `human_decision`. Terminal `done` has no status owner: it
-may use a coordinator assignee (`human`, `team`, `vadi`, or `prativadi`) while
-the final gate still requires both approvals and the run explainer. Existing
-batons cannot change schema or v2 `run_id` mid-run.
+`human_question` and `human_decision`; team owns `parallel_implementing`,
+`cross_review`, `cross_fixing`, and `termination_review`. Terminal `done` has no
+status owner: it may use a coordinator assignee (`human`, `team`, `vadi`, or
+`prativadi`) only from `termination_review`, while the final gate still requires
+both approvals and the run explainer. Existing batons cannot change schema or
+v2 `run_id` mid-run.
 
 Any other transition is illegal in v1 or v2. The writing agent must reject
 illegal transitions and route to `human_decision` instead.
@@ -366,23 +370,24 @@ logical change per commit, semantic prefix, and a subject of 50 characters or
 fewer. Record the commit hash in `verification` or `summary` as
 `checkpoint_commit=<hash>`.
 
-Checkpoint commits are local. Do not push until final ship, both final approvals
-are true, and `allow_push == true`. If a later review rejects a checkpointed
-change, fix it with a new commit rather than rewriting history unless the human
-explicitly asks for history surgery.
+Checkpoint commits are local. Do not push until final ship, the
+`termination_review` handoff has converged with both final approvals true on the
+installed baton, and `allow_push == true`. If a later review rejects a
+checkpointed change, fix it with a new commit rather than rewriting history
+unless the human explicitly asks for history surgery.
 
 This is the core anti-token-polling rule:
 
 - The vadi does not spend model turns asking whether the prativadi moved.
 - The prativadi does not spend model turns asking whether the vadi moved.
 - In walkaway mode, the assigned-away agent runs `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role <vadi|prativadi> --interval 60 --max-wait 540`.
-- Continuous polling is the hard rule: `--max-wait` is a heartbeat interval, not a stop condition, and the helper keeps polling until this role owns the baton, the baton reaches `done`/`human_question`/`human_decision`, or the user interrupts.
+- Continuous polling is the hard rule: `--max-wait` is a heartbeat interval, not a stop condition, and the helper keeps polling until this role owns the baton, the baton reaches post-handshake `done`, the baton enters `human_question`/`human_decision`, or the user interrupts. `termination_review` is active and wakes both roles; final approval alone is not a stop condition.
 - `--persist` is accepted for older call sites and is now redundant. `--persist-max <seconds>` is the optional total wall-clock cap; the wait-helper persist cap exit 23 means the cap was reached, not that the peer is done. Re-enter the wait unless the user interrupts. Explicit `--finite` compatibility mode is the only path to timeout exit 20 and is not valid for normal walkaway loops.
 - The write-helper validation exit 23 means a baton candidate failed schema, required-key, safe-run-id, v2 status-owner, status, or enum validation. Fix the candidate and rerun the write helper; do not edit the installed baton directly.
 - Claude Code has a Bash-tool wall-clock cap around 600 seconds, so Claude-hosted sessions must relaunch the wait if a harness cap stops the shell before a terminal baton state. Codex-hosted sessions may use unbounded default continuous polling or pass `--persist` for older snippets.
 - In supervised mode, the assigned-away agent exits and the human invokes the next role manually.
 - When the helper exits 0, the agent re-reads the baton and resumes.
-- When the helper exits 10, 11, or 12, the agent surfaces `done`, `human_decision`, or `human_question` and stops. For `human_question`, the helper also prints `question`, `resume_assignee`, and `resume_status`.
+- When the helper exits 10, the agent surfaces post-handshake `done` and stops. When it exits 11 or 12, the agent surfaces the human-intervention `human_decision` or `human_question` state and pauses for the human. For `human_question`, the helper also prints `question`, `resume_assignee`, and `resume_status`.
 
 ## Goal Conditions
 

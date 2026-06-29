@@ -62,7 +62,7 @@ v2_expected_assignee() {
     research_drafting|research_revision|spec_drafting|spec_revision|implementing|test_creation|deslop|phase_fixing|review_of_review)
       echo "vadi"
       ;;
-    parallel_implementing|cross_review|cross_fixing)
+    parallel_implementing|cross_review|cross_fixing|termination_review)
       echo "team"
       ;;
     research_review|spec_review|deep_review|phase_review|counter_review)
@@ -472,7 +472,7 @@ new_phase="$(jq -r '.phase' "$CANDIDATE_FILE")"
 
 case "$schema:$new_status" in
   dvandva.baton.v1:spec_drafting|dvandva.baton.v1:spec_review|dvandva.baton.v1:spec_revision|dvandva.baton.v1:human_question|dvandva.baton.v1:implementing|dvandva.baton.v1:phase_review|dvandva.baton.v1:phase_fixing|dvandva.baton.v1:review_of_review|dvandva.baton.v1:counter_review|dvandva.baton.v1:human_decision|dvandva.baton.v1:done) ;;
-  dvandva.baton.v2:research_drafting|dvandva.baton.v2:research_review|dvandva.baton.v2:research_revision|dvandva.baton.v2:spec_drafting|dvandva.baton.v2:spec_review|dvandva.baton.v2:spec_revision|dvandva.baton.v2:human_question|dvandva.baton.v2:implementing|dvandva.baton.v2:parallel_implementing|dvandva.baton.v2:test_creation|dvandva.baton.v2:cross_review|dvandva.baton.v2:cross_fixing|dvandva.baton.v2:deep_review|dvandva.baton.v2:deslop|dvandva.baton.v2:phase_review|dvandva.baton.v2:phase_fixing|dvandva.baton.v2:review_of_review|dvandva.baton.v2:counter_review|dvandva.baton.v2:human_decision|dvandva.baton.v2:done) ;;
+  dvandva.baton.v2:research_drafting|dvandva.baton.v2:research_review|dvandva.baton.v2:research_revision|dvandva.baton.v2:spec_drafting|dvandva.baton.v2:spec_review|dvandva.baton.v2:spec_revision|dvandva.baton.v2:human_question|dvandva.baton.v2:implementing|dvandva.baton.v2:parallel_implementing|dvandva.baton.v2:test_creation|dvandva.baton.v2:cross_review|dvandva.baton.v2:cross_fixing|dvandva.baton.v2:deep_review|dvandva.baton.v2:deslop|dvandva.baton.v2:termination_review|dvandva.baton.v2:phase_review|dvandva.baton.v2:phase_fixing|dvandva.baton.v2:review_of_review|dvandva.baton.v2:counter_review|dvandva.baton.v2:human_decision|dvandva.baton.v2:done) ;;
   *)
     echo "DVANDVA_WRITE bad_status status=$new_status candidate=$CANDIDATE_FILE" >&2
     exit 23
@@ -493,7 +493,7 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
         exit 23
       fi
       ;;
-    implementing|parallel_implementing|test_creation|cross_review|cross_fixing|deep_review|deslop|phase_review|phase_fixing|review_of_review|counter_review|done)
+    implementing|parallel_implementing|test_creation|cross_review|cross_fixing|deep_review|deslop|termination_review|phase_review|phase_fixing|review_of_review|counter_review|done)
       if ! jq -e '(.phase | type) == "number"' "$CANDIDATE_FILE" >/dev/null 2>&1; then
         echo "DVANDVA_WRITE bad_phase_status status=$new_status candidate=$CANDIDATE_FILE" >&2
         exit 23
@@ -514,7 +514,7 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
     exit 23
   fi
   case "$new_status" in
-    parallel_implementing|cross_review|cross_fixing)
+    parallel_implementing|cross_review|cross_fixing|termination_review)
       if ! jq -e '
         (.assignee == "team") and
         ((.active_roles | sort) == ["prativadi", "vadi"])
@@ -718,11 +718,11 @@ else
 
   # Use a non-whitespace delimiter: bash collapses adjacent IFS whitespace,
   # which would shift run_id when resume fields are empty.
-  if ! cur="$(jq -r '[.schema // "", .status // "", (.checkpoint // -1 | tostring), (.master_plan_locked // false | tostring), .resume_assignee // "", .resume_status // "", .run_id // "", (.phase | tostring)] | join("\u001f")' "$BATON_FILE" 2>/dev/null)"; then
+  if ! cur="$(jq -r '[.schema // "", .status // "", (.checkpoint // -1 | tostring), (.master_plan_locked // false | tostring), .resume_assignee // "", .resume_status // "", .run_id // "", (.phase | tostring), (.vadi_final_approval // false | tostring), (.prativadi_final_approval // false | tostring)] | join("\u001f")' "$BATON_FILE" 2>/dev/null)"; then
     echo "DVANDVA_WRITE current_baton_unparseable file=$BATON_FILE refusing_to_overwrite=true" >&2
     exit 25
   fi
-  IFS=$'\x1f' read -r cur_schema cur_status cur_checkpoint cur_locked cur_resume_assignee cur_resume_status cur_run_id cur_phase <<< "$cur"
+  IFS=$'\x1f' read -r cur_schema cur_status cur_checkpoint cur_locked cur_resume_assignee cur_resume_status cur_run_id cur_phase cur_vadi_final_approval cur_prativadi_final_approval <<< "$cur"
 
   case "$cur_schema" in
     dvandva.baton.v1|dvandva.baton.v2) ;;
@@ -761,7 +761,7 @@ else
   elif [[ "$new_status" == "$cur_status" ]]; then
     if [[ "$schema" == "dvandva.baton.v2" ]]; then
       case "$new_status" in
-        parallel_implementing|cross_review|cross_fixing)
+        parallel_implementing|cross_review|cross_fixing|termination_review)
           if [[ "$new_phase" != "$cur_phase" ]]; then
             reason="same-status team sync cannot change phase current=$cur_phase candidate=$new_phase"
           elif jq -e '
@@ -790,10 +790,14 @@ else
     else
       reason="human_question resume must restore status=$cur_resume_status assignee=$cur_resume_assignee and clear question/resume fields"
     fi
+  elif [[ "$schema" == "dvandva.baton.v2" && "$new_status" == "done" && "$cur_status" != "termination_review" ]]; then
+    reason="done requires current status termination_review"
+  elif [[ "$schema" == "dvandva.baton.v2" && "$new_status" == "done" && ( "$cur_vadi_final_approval" != "true" || "$cur_prativadi_final_approval" != "true" ) ]]; then
+    reason="done requires current termination_review with both final approvals"
   elif [[ "$new_status" == "human_decision" ]]; then
     legal=1   # universal escalation
   elif [[ "$cur_status" == "human_decision" ]]; then
-    legal=1   # human-authorized resume to any state
+    legal=1   # human-authorized resume to any non-terminal protocol state
   elif [[ "$new_status" == "human_question" ]]; then
     if [[ "$cur_locked" == "true" ]]; then
       reason="human_question is only legal before master_plan_locked"
@@ -819,7 +823,7 @@ else
           research_drafting:research_review|research_review:research_revision|research_revision:research_review|research_review:spec_drafting) legal=1 ;;
           spec_drafting:spec_review|spec_review:spec_revision|spec_review:parallel_implementing|spec_revision:spec_review) legal=1 ;;
           parallel_implementing:test_creation|test_creation:cross_review|cross_review:cross_fixing|cross_fixing:test_creation|cross_review:deep_review) legal=1 ;;
-          deep_review:phase_fixing|deep_review:deslop|phase_fixing:test_creation|deslop:phase_fixing|deslop:parallel_implementing|deslop:done) legal=1 ;;
+          deep_review:phase_fixing|deep_review:deslop|phase_fixing:test_creation|deslop:phase_fixing|deslop:parallel_implementing|deslop:termination_review|termination_review:phase_fixing|termination_review:done) legal=1 ;;
           *) reason="no legal edge ${cur_status}->${new_status}" ;;
         esac
         ;;

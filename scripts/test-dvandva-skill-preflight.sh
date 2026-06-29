@@ -6,6 +6,8 @@ set -u
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 VADI="$ROOT_DIR/plugins/dvandva/skills/vadi/SKILL.md"
 PRATIVADI="$ROOT_DIR/plugins/dvandva/skills/prativadi/SKILL.md"
+COMMAND_VADI="$ROOT_DIR/plugins/dvandva/commands/vadi.md"
+COMMAND_PRATIVADI="$ROOT_DIR/plugins/dvandva/commands/prativadi.md"
 STATE_REF="$ROOT_DIR/plugins/dvandva/references/state-transition-table.md"
 
 failures=0
@@ -73,6 +75,28 @@ for file in "$VADI" "$PRATIVADI"; do
   reject_match "$file" \
     'bash[[:space:]]+scripts/install-dvandva-hooks\.sh' \
     "$role skill does not require target-repo scripts/install-dvandva-hooks.sh"
+  require_match "$file" \
+    'termination_review' \
+    "$role skill documents the multipart termination review state"
+  require_match "$file" \
+    'both roles.*stop|stop.*both roles|shared termination|multipart termination' \
+    "$role skill says terminal stop is a shared two-role decision"
+done
+
+for file in "$COMMAND_VADI" "$COMMAND_PRATIVADI"; do
+  command_role="$(basename "$file" .md)"
+  require_match "$file" \
+    'post-handshake "done"|post-handshake done' \
+    "$command_role command distinguishes post-handshake done from final approval"
+  require_match "$file" \
+    'termination_review' \
+    "$command_role command documents termination_review as active"
+  require_match "$file" \
+    'keep polling or stop together|both roles keep polling|both approve' \
+    "$command_role command says roles stop together only after shared approval"
+  reject_match "$file" \
+    'Continue the walkaway run until the resolved Dvandva baton status is "done", "human_question", or "human_decision"' \
+    "$command_role command rejects one-step terminal stop wording"
 done
 
 require_match "$VADI" \
@@ -88,6 +112,12 @@ reject_match "$STATE_REF" \
 require_match "$STATE_REF" \
   'Checkpoint commits require Dvandva hook adoption' \
   "state reference gates checkpoint commits on adopted hooks"
+require_match "$STATE_REF" \
+  'termination_review' \
+  "state reference documents termination_review"
+require_match "$STATE_REF" \
+  'deslop.*termination_review|termination_review.*done' \
+  "state reference routes final done through termination_review"
 
 # Static README coverage: reject stale Run-4 guidance that predates the
 # delegating-wrapper coexistence model.
@@ -116,6 +146,9 @@ reject_match "$README" \
 require_match "$README" \
   'plugins/dvandva/skills/<role>/scripts/dvandva-preflight\.sh|per-role.*dvandva-preflight\.sh|dvandva-preflight\.sh.*ships per-role' \
   "README documents the per-role/skill-invoked turn preflight path"
+require_match "$README" \
+  'termination_review' \
+  "README documents multipart termination review"
 
 if [[ "$failures" -gt 0 ]]; then
   exit 1

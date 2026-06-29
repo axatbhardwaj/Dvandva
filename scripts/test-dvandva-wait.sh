@@ -113,6 +113,24 @@ write_active_roles_baton() {
 JSON
 }
 
+write_termination_review_baton() {
+  local file="$1"
+  mkdir -p "$(dirname "$file")"
+  cat > "$file" <<JSON
+{
+  "schema": "dvandva.baton.v2",
+  "assignee": "team",
+  "active_roles": ["vadi", "prativadi"],
+  "status": "termination_review",
+  "phase": 1,
+  "checkpoint": 10,
+  "question": null,
+  "resume_assignee": null,
+  "resume_status": null
+}
+JSON
+}
+
 run_case() {
   local name="$1"
   local expected_exit="$2"
@@ -141,6 +159,18 @@ run_case "returns 0 for vadi active_roles concurrent baton" 0 \
   "$SCRIPT" --role vadi --file "$BATON_ACTIVE_ROLES" --interval 0 --max-wait 0
 run_case "returns 0 for prativadi active_roles concurrent baton" 0 \
   "$PRATIVADI_SCRIPT" --role prativadi --file "$BATON_ACTIVE_ROLES" --interval 0 --max-wait 0
+
+BATON_TERMINATION_REVIEW="$TMP_DIR/termination-review.json"
+write_termination_review_baton "$BATON_TERMINATION_REVIEW"
+run_case "returns 0 for vadi termination_review active_roles" 0 \
+  "$SCRIPT" --role vadi --file "$BATON_TERMINATION_REVIEW" --interval 0 --max-wait 0
+run_case "returns 0 for prativadi termination_review active_roles" 0 \
+  "$PRATIVADI_SCRIPT" --role prativadi --file "$BATON_TERMINATION_REVIEW" --interval 0 --max-wait 0
+
+BATON_TERMINATION_REVIEW_WAIT="$TMP_DIR/termination-review-wait.json"
+write_baton "$BATON_TERMINATION_REVIEW_WAIT" "team" "termination_review"
+run_case "termination_review is not terminal done" 20 \
+  "$SCRIPT" --role vadi --file "$BATON_TERMINATION_REVIEW_WAIT" --interval 0 --max-wait 0 --finite
 
 BATON_DONE="$TMP_DIR/done.json"
 write_baton "$BATON_DONE" "human" "done"

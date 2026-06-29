@@ -66,7 +66,7 @@ Target shape:
 - One branch.
 - Two persistent agent sessions.
 - Master plan first, with voluntary human Q&A until plan lock.
-- Phase implementation/review loops until `done` or `human_decision`.
+- Phase implementation/review loops until post-handshake `done` or `human_decision`.
 - `run_mode: "walkaway"` for two sessions; `run_mode: "supervised"` for single-engine serial fallback.
 - PR comments only for human-facing summaries if a human chooses to write them.
 
@@ -78,7 +78,7 @@ Protocol:
 4. Vadi implements a phase and writes `.dvandva/baton.json` with `assignee: "prativadi"`.
 5. Prativadi reviews and optionally applies narrow fixups.
 6. Assigned-away agents block in the wait helper, not in model turns. In supervised mode they exit and the human invokes the next role.
-7. After the final phase, both roles must set final approval. If `allow_commit` and `allow_push` are true, the active agent may commit and push. It must not create a PR.
+7. After the final phase, both roles enter `termination_review`. Final approval alone is not a stop condition; both sessions keep polling until both roles approve stopping and the post-handshake `done` checkpoint is written. If `allow_commit` and `allow_push` are true, final ship happens only after that shared stop decision. It must not create a PR.
 
 Noise limits:
 
@@ -110,7 +110,7 @@ Protocol:
    - deferred items,
    - next recommended batch.
 5. Vadi resumes when the wait helper sees the baton assign work to vadi.
-6. Stop at `DONE` or `HUMAN_DECISION`.
+6. Stop at post-handshake `DONE` or `HUMAN_DECISION`.
 
 Campaign-specific rules:
 
