@@ -13,11 +13,21 @@ The bundled `dvandva-write.sh` helper enforces v1 and v2 transition subsets dete
 letters, numbers, dot, underscore, or dash; no slash, backslash, or `..`; once a
 v2 baton exists, its `run_id` is immutable for that run. v2 adds:
 
+- accepted run modes: `development`, `research`, and `review`. Older batons
+  may still serialize `feature-pr`; treat it as a legacy alias for
+  `development`. `campaign` is legacy wording and not the current public enum.
 - `run_id`: stable non-empty safe identifier shared by both role sessions.
 - `original_ask`: the user's original request, surfaced in preflight so long
   goal loops do not drift.
 - `research_ref`: path to the generated user-facing HTML research artifact.
 - `run_explainer_ref`: path to the final run explainer HTML under `./superpowers/run-reports/`, required before terminal `done`.
+- `research_outcome`: optional nullable v2 field recording the accepted
+  research result, including `seed_development` when a research run also emits
+  a seed plan for a future development run.
+- `review_ref`: optional nullable v2 field pointing to the generated user-facing
+  HTML review artifact for review-mode runs.
+- `review_intake`: optional nullable v2 field capturing the review-mode intake
+  package or selector used to scope the review.
 - `active_roles`: v2 concurrent role list. Team-owned statuses use `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; scalar statuses use an empty array.
 - `work_split`: planned ownership map for vadi, prativadi, human, or subagents; records phase, owner, scope, paths, read_paths, write_paths, status, artifact refs, parallelism rationale, dependencies, and optional conflict_group serialization.
 - `agent_instances`: first-class registry for generated run-scoped agent instances, including provenance, model/permission class, read/write paths, work item IDs, base checkpoint, output refs, evidence refs, lifecycle status, and closure result. Generated instance IDs must not collide with coordinator owners (`vadi`, `prativadi`, `team`, `human`), seed-roster owners such as `dvandva-implementer`, or legacy standalone owner names such as `adversarial-analyst`. `spawned_by` is executable provenance; `seed_agent` is advisory metadata for humans and brief generation. Dynamic write-path disjointness is checked among generated instances sharing the same `base_checkpoint` and among any two live (`planned`/`running`) instances regardless of base_checkpoint; closed historical instances from earlier base checkpoints do not block later sequential path reuse.
@@ -47,11 +57,18 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
 
 Legacy `.dvandva/baton.json` may continue using `dvandva.baton.v1`. The live
 v2 write-helper enforcement requires safe `run_id`, `original_ask`,
-`run_explainer_ref`, `active_roles`, `work_split`, `agent_instances`, `subagent_tracks`, and `verification_matrix`; it also requires a
-non-empty `research_ref` before advancing beyond the initial research draft,
-except that `human_question` and `human_decision` remain legal early-escalation
-targets before `research_ref` exists. Existing batons cannot change schema or v2
-`run_id` mid-run. Terminal `done` requires a coordinator assignee (`human`, `team`, `vadi`, or `prativadi`), `vadi_final_approval == true`, `prativadi_final_approval == true`, and `run_explainer_ref` pointing to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`.
+`run_explainer_ref`, `active_roles`, `work_split`, `agent_instances`,
+`subagent_tracks`, and `verification_matrix`; it also requires a non-empty
+`research_ref` before advancing beyond the initial research draft, except that
+`human_question` and `human_decision` remain legal early-escalation targets
+before `research_ref` exists. Existing batons cannot change schema or v2
+`run_id` mid-run. Accepted v2 docs use mode-conditional terminal artifact
+gates: development runs require `run_explainer_ref`; research runs require
+`research_ref` and additionally `plan_ref` iff `research_outcome ==
+seed_development`; review runs require `review_ref`. In all v2 modes, terminal
+`done` still requires a coordinator assignee (`human`, `team`, `vadi`, or
+`prativadi`), both final approvals, and an installed current baton already at
+`termination_review`.
 
 implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. After `test_creation`, the baton enters `cross_review`; `cross_review` may route to `cross_fixing`, and only completed cross-review evidence for both roles can advance to `deep_review`. Phase convention: implementation-chunk tracks use the numeric implementation phase, while cross-review and deep-review gate tracks use the status-name phase such as `phase: "cross_review"` or `phase: "deep_review"`.
 
@@ -127,7 +144,11 @@ Claude symlink workflows with functional parity via Runs 1-4 usage:
 `sandbox-executor`. Codex agent-axis retirement is a no-op, skills are out of
 scope, and backup manifest restore keeps the action reversible.
 
-Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`) may write same-status sync checkpoints when both roles remain active. Use them to record partial completion, task distribution, or peer wait state without advancing the lifecycle early. Scalar-owner states still reject same-status rewrites.
+Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`,
+`termination_review`) may write same-status sync checkpoints when both roles
+remain active. Use them to record partial completion, task distribution, peer
+wait state, or shared stop-review evidence without advancing the lifecycle
+early. Scalar-owner states still reject same-status rewrites.
 
 ## Schema Fields
 
@@ -135,17 +156,20 @@ Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`) m
 {
   "schema": "dvandva.baton.v1",
   "updated_at": "ISO-8601 UTC timestamp, set by the agent that last wrote the baton",
-  "mode": "feature-pr | campaign",
+  "mode": "development | research | review | feature-pr (legacy alias for development)",
   "run_mode": "walkaway | supervised",
-  "phase": "spec | 1 | 2 | ... | done",
+  "phase": "research | spec | review | 1 | 2 | ... | done",
   "total_phases": "integer, set during spec phase, immutable thereafter unless human edits",
   "status": "spec_drafting | spec_review | spec_revision | human_question | implementing | parallel_implementing | test_creation | cross_review | cross_fixing | deep_review | deslop | termination_review | phase_review | phase_fixing | review_of_review | counter_review | human_decision | done",
   "assignee": "non-empty string; v1 conventions are vadi | prativadi | human; v2 status-owner pairs include team for concurrent states",
   "active_roles": "v2 concurrent roles array, usually [] or [\"vadi\", \"prativadi\"]",
   "current_engine": "optional; claude | codex | null. Records which CLI wrote the most recent baton; traceability only.",
-  "review_target": "spec | implementation | prativadi_fixups | vadi_counter | null",
+  "review_target": "research | spec | implementation | prativadi_fixups | vadi_counter | null",
   "research_ref": "v2 path to gitignored generated HTML research file under ./superpowers/research/, set during research phase",
-  "run_explainer_ref": "v2 path to gitignored final run explainer HTML under ./superpowers/run-reports/, required before terminal done",
+  "run_explainer_ref": "v2 path to gitignored final run explainer HTML under ./superpowers/run-reports/, required before terminal done for development mode",
+  "research_outcome": "nullable v2 field; accepted research result, including seed_development when a research run seeds a future development run",
+  "review_ref": "nullable v2 path to gitignored generated HTML review artifact under ./superpowers/reviews/",
+  "review_intake": "nullable v2 field carrying review-mode intake scope or selector",
   "plan_ref": "path to gitignored generated HTML plan file under ./superpowers/plans/, set during spec phase",
   "work_split": "v2 array/object describing planned ownership by phase, owner, scope, paths, read_paths, write_paths, conflict_group, depends_on, status, and artifact refs",
   "agent_instances": "v2 array recording generated run-scoped agent instances, provenance, model/permission class, read/write paths, work item IDs, base checkpoint, output refs, evidence refs, lifecycle status, and closure result",
@@ -181,78 +205,111 @@ Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`) m
 }
 ```
 
-## Spec Phase
+## Development Mode (v2, 21 edges)
+
+This is the currently enforced v2 development table from
+`scripts/test-dvandva-write.sh` (`V2_EDGES`). It remains unchanged. Every route
+into `termination_review` is explicit; there is no wildcard
+`* -> termination_review`.
 
 | From | To | Trigger |
 |---|---|---|
-| no legacy baton, legacy explicitly selected | `phase: "spec", status: "spec_drafting"` | Vadi first run on the legacy v1 fallback only |
-| `spec_drafting` | `spec_review` | Vadi hands plan to prativadi for Q&A |
-| `spec_review` | `spec_revision` | Prativadi surfaces Q&A back to vadi |
-| `spec_review` | `phase: 1, status: implementing` | Legacy v1 path: prativadi accepts plan and freezes `total_phases` on the baton |
-| `spec_review` | `phase: 1, status: parallel_implementing` | v2 path: prativadi accepts plan, freezes `total_phases`, and activates both roles |
-| `spec_revision` | `spec_review` | Vadi answers Q&A, hands back |
-| any spec state while `master_plan_locked: false` | `human_question` | Either agent needs one human answer before master plan lock |
-| `human_question` | `resume_status` with `assignee: resume_assignee` | Human answers and the receiving skill clears question fields |
-| any spec state | `human_decision` | Either agent escalates |
-
-## Research Phase (v2)
-
-| From | To | Trigger |
-|---|---|---|
-| no named-run baton | `phase: "research", status: "research_drafting"` | Vadi first run for a v2 named run |
-| `research_drafting` | `research_review` | Vadi writes `research_ref` and hands to prativadi |
-| `research_review` | `research_revision` | Prativadi surfaces research findings back to vadi |
-| `research_revision` | `research_review` | Vadi addresses research findings and hands back |
-| `research_review` | `phase: "spec", status: "spec_drafting"` | Prativadi accepts research and starts spec drafting |
-| any research state while `master_plan_locked: false` | `human_question` | Either agent needs one human answer before spec lock |
-| any research state | `human_decision` | Either agent escalates |
-
-## Implementation Phase
-
-| From | To | Trigger |
-|---|---|---|
-| `phase: N, implementing` | `phase: N, status: phase_review, review_target: implementation` | Legacy v1 direct review path only |
-| `phase: N, parallel_implementing` | `test_creation` | v2: both roles completed implementation chunks and recorded implementation-chunk subagent evidence |
-| `test_creation` | `cross_review` | v2: Vadi records tests, 100% test coverage evidence for new behavior, and verification results |
-| `cross_review` | `cross_fixing` | v2: one or both reciprocal cross-review tracks found peer-owned chunk defects |
-| `cross_fixing` | `test_creation` | v2: cross-review findings were fixed and tests must be refreshed |
-| `cross_review` | `deep_review` | v2: both roles recorded completed cross-review tracks for peer-owned chunks |
-| `deep_review` | `phase_fixing` | v2: Prativadi finds bugs, missing tests, verification gaps, or substantive review issues |
-| `deep_review` | `deslop` | v2: Prativadi accepts behavior and tests after at least three angle-specific reviewers/tracks in `subagent_tracks` (`correctness-regression`, `test-evidence`, `protocol-handoff`), then routes cleanup |
-| `phase_fixing` | `test_creation` | v2: Vadi fixed behavior, tests, or verification gaps and must refresh test evidence before review |
-| `deslop` | `phase_fixing` | v2: Cleanup finds behavior, test, or review blockers |
-| `deslop` | `phase: N+1, status: parallel_implementing, disagreement_round: 0` | v2: no nits, low/minor bugs, stale wording, or unclear instructions remain except explicitly accepted `deferred` items |
-| `deslop` | `termination_review` | v2 final phase passed implementation, test_creation, deep_review, and deslop. The writer records its own final approval, keeps `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`, and keeps polling because stop is not yet shared. |
-| `termination_review` | final `done` | v2: both roles have explicitly decided to stop (`vadi_final_approval == true` and `prativadi_final_approval == true`), each approval bit was raised by its owning `DVANDVA_ROLE`, `run_explainer_ref` points to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`, and the final commit/push gates have run. |
+| `research_drafting` | `research_review` | Vadi writes `research_ref` and hands to prativadi. |
+| `research_review` | `research_revision` | Prativadi surfaces research findings back to vadi. |
+| `research_revision` | `research_review` | Vadi addresses research findings and hands back. |
+| `research_review` | `phase: "spec", status: "spec_drafting"` | Prativadi accepts research and starts development planning. |
+| `spec_drafting` | `spec_review` | Vadi hands the development plan to prativadi for Q&A. |
+| `spec_review` | `spec_revision` | Prativadi surfaces planning Q&A back to vadi. |
+| `spec_revision` | `spec_review` | Vadi answers Q&A and re-hands the plan. |
+| `spec_review` | `phase: 1, status: "parallel_implementing"` | Prativadi accepts the plan, freezes `total_phases`, and activates both roles. |
+| `phase: N, parallel_implementing` | `test_creation` | Both roles completed implementation chunks and recorded implementation evidence. |
+| `test_creation` | `cross_review` | Vadi records tests, 100% coverage evidence for new behavior, and verification results. |
+| `cross_review` | `cross_fixing` | One or both reciprocal cross-review tracks found peer-owned chunk defects. |
+| `cross_fixing` | `test_creation` | Cross-review findings were fixed and tests/evidence must be refreshed. |
+| `cross_review` | `deep_review` | Both roles recorded completed cross-review tracks for peer-owned chunks. |
+| `deep_review` | `phase_fixing` | Prativadi finds bugs, missing tests, verification gaps, or substantive review issues. |
+| `deep_review` | `deslop` | Prativadi accepts behavior and tests after the required review angles are complete. |
+| `phase_fixing` | `test_creation` | Vadi fixed behavior, tests, or verification gaps and must refresh test evidence. |
+| `deslop` | `phase_fixing` | Cleanup finds behavior, test, or review blockers. |
+| `deslop` | `phase: N+1, status: "parallel_implementing"` | A non-final phase is clean and the next development phase begins. |
+| `deslop` | `termination_review` | The final development phase is clean; the run enters the shared stop-review gate. |
 | `termination_review` | `phase_fixing` | One role rejects final stop because behavior, tests, docs, or run artifacts still need work. |
-| `phase: N, implementing` | `human_decision` | Vadi blocked |
-| `phase_review (impl)` | `phase_fixing` | Prativadi hands back substantive findings |
-| `phase_review (impl)` | `review_of_review, review_target: prativadi_fixups` | Prativadi applied narrow fixups, mutual review owed |
-| `phase_review (impl)` | `phase: N+1, status: implementing, disagreement_round: 0` | Legacy v1: Prativadi approves, no changes |
-| `phase_review (impl)` | final `done` | Legacy v1 final phase approved by both roles; optional commit/push complete; PR creation remains false |
-| `phase_review (impl)` | `human_decision` | Prativadi escalates |
-| `phase_fixing` | `phase_review (impl)` | Vadi addressed findings, re-hands |
-| `phase_fixing` | `human_decision` | Vadi blocked during fix |
+| `termination_review` | final `done` | Both roles explicitly decide to stop, both approval bits are true, and `run_explainer_ref` is set. |
 
-## Mutual Review And Disagreement
+## Research Mode (v2, 12 edges)
 
-| From | To | Trigger |
-|---|---|---|
-| `review_of_review (prativadi_fixups)` | `phase: N+1, status: implementing, disagreement_round: 0` | Legacy v1: Vadi approves prativadi fixups |
-| `review_of_review (prativadi_fixups)` | final `done` | Legacy v1: final phase fixups approved by both roles; optional commit/push complete |
-| `review_of_review (prativadi_fixups)` | `counter_review, review_target: vadi_counter` | Vadi disapproves, writes counter, increments `disagreement_round` |
-| `review_of_review (prativadi_fixups)` | `human_decision` | `disagreement_round >= disagreement_cap` |
-| `counter_review (vadi_counter)` | `phase: N+1, status: implementing, disagreement_round: 0` | Legacy v1: Prativadi approves counter |
-| `counter_review (vadi_counter)` | final `done` | Legacy v1: final phase counter approved by both roles; optional commit/push complete |
-| `counter_review (vadi_counter)` | `review_of_review, review_target: prativadi_fixups` | Prativadi disapproves counter, applies a different fix, increments `disagreement_round` |
-| `counter_review (vadi_counter)` | `human_decision` | `disagreement_round >= disagreement_cap` |
-
-## Universal
+Research mode ends as research. It may optionally produce a seed-development
+plan before termination; when it does, set `research_outcome:
+"seed_development"` and populate `plan_ref`. Required phases are mode-specific:
+`research_*` statuses use `phase: "research"`; seed-plan statuses,
+`phase_fixing`, `termination_review`, and terminal `done` use `phase: "spec"`.
 
 | From | To | Trigger |
 |---|---|---|
-| any state | `human_decision` | Escalation, cap hit, blocker, malformed input, or unsafe dirty tree |
-| `human_decision` | any state | Human edits baton or prompts an agent with a decision |
+| `research_drafting` | `research_review` | Vadi writes `research_ref` and hands to prativadi. |
+| `research_review` | `research_revision` | Prativadi surfaces research findings back to vadi. |
+| `research_revision` | `research_review` | Vadi addresses research findings and hands back. |
+| `research_review` | `spec_drafting` | Accepted outcome is `seed_development`; vadi must draft a seed plan before the research run can terminate. |
+| `spec_drafting` | `spec_review` | Vadi hands the seed-development plan to prativadi for Q&A. |
+| `spec_review` | `spec_revision` | Prativadi surfaces seed-plan Q&A back to vadi. |
+| `spec_revision` | `spec_review` | Vadi answers Q&A and re-hands the seed plan. |
+| `spec_review` | `termination_review` | The seed-development plan is accepted; `plan_ref` is set and the research run enters shared stop review. |
+| `research_review` | `termination_review` | The accepted research outcome is not `seed_development`; `research_ref` is sufficient to enter shared stop review. |
+| `termination_review` | `phase_fixing` | Shared stop review finds research or seed-plan gaps and routes to a focused fixing pass. |
+| `phase_fixing` | `research_review` | The focused fix is complete and the research package must be re-reviewed. |
+| `termination_review` | final `done` | Both roles explicitly decide to stop; `research_ref` exists, and `plan_ref` also exists iff `research_outcome == seed_development`. |
+
+## Review Mode (v2, 9 edges)
+
+Review mode reuses the existing research statuses for intake and the existing
+review statuses for the review package. Set `review_intake` and `review_target`
+before the first `deep_review`, and produce `review_ref` before shared
+termination. Every review-mode status uses `phase: "review"`.
+
+| From | To | Trigger |
+|---|---|---|
+| `research_drafting` | `research_review` | Vadi writes review scope/intake research and hands to prativadi. |
+| `research_review` | `research_revision` | Prativadi finds intake gaps and routes back to vadi. |
+| `research_revision` | `research_review` | Vadi fixes intake gaps and hands back. |
+| `research_review` | `deep_review` | Intake is sufficient and the review package can be evaluated. |
+| `deep_review` | `deslop` | Substantive review passes and only cleanup or wording polish remains. |
+| `deslop` | `termination_review` | Review cleanup is complete and `review_ref` is ready for the shared stop gate. |
+| `termination_review` | `phase_fixing` | Shared stop review finds review-package work still owed. |
+| `phase_fixing` | `deep_review` | Requested fixes or evidence refreshes are complete and the review must be rerun. |
+| `termination_review` | final `done` | Both roles explicitly decide to stop and `review_ref` is set. |
+
+## Legacy v1 explicit fallback
+
+| From | To | Trigger |
+|---|---|---|
+| no legacy baton, legacy explicitly selected | `phase: "spec", status: "spec_drafting"` | Vadi first run on the legacy v1 fallback only. |
+| `spec_drafting` | `spec_review` | Vadi hands plan to prativadi for Q&A. |
+| `spec_review` | `spec_revision` | Prativadi surfaces Q&A back to vadi. |
+| `spec_review` | `phase: 1, status: implementing` | Legacy v1 path: prativadi accepts plan and freezes `total_phases` on the baton. |
+| `spec_revision` | `spec_review` | Vadi answers Q&A and re-hands the plan. |
+| `phase: N, implementing` | `phase: N, status: phase_review, review_target: implementation` | Legacy v1 direct review path only. |
+| `phase_review (impl)` | `phase_fixing` | Prativadi hands back substantive findings. |
+| `phase_review (impl)` | `review_of_review, review_target: prativadi_fixups` | Prativadi applied narrow fixups and mutual review is owed. |
+| `phase_review (impl)` | `phase: N+1, status: implementing, disagreement_round: 0` | Legacy v1: prativadi approves with no changes. |
+| `phase_review (impl)` | final `done` | Legacy v1 final phase approved by both roles; optional commit/push complete. |
+| `phase_fixing` | `phase_review (impl)` | Vadi addressed findings and re-handed. |
+| `review_of_review (prativadi_fixups)` | `phase: N+1, status: implementing, disagreement_round: 0` | Legacy v1: vadi approves prativadi fixups. |
+| `review_of_review (prativadi_fixups)` | final `done` | Legacy v1: final phase fixups approved by both roles; optional commit/push complete. |
+| `review_of_review (prativadi_fixups)` | `counter_review, review_target: vadi_counter` | Vadi disapproves, writes counter, increments `disagreement_round`. |
+| `review_of_review (prativadi_fixups)` | `human_decision` | `disagreement_round >= disagreement_cap`. |
+| `counter_review (vadi_counter)` | `phase: N+1, status: implementing, disagreement_round: 0` | Legacy v1: prativadi approves counter. |
+| `counter_review (vadi_counter)` | final `done` | Legacy v1: final phase counter approved by both roles; optional commit/push complete. |
+| `counter_review (vadi_counter)` | `review_of_review, review_target: prativadi_fixups` | Prativadi disapproves counter, applies a different fix, increments `disagreement_round`. |
+| `counter_review (vadi_counter)` | `human_decision` | `disagreement_round >= disagreement_cap`. |
+
+## Shared intervention edges
+
+| From | To | Trigger |
+|---|---|---|
+| development or research planning state with `master_plan_locked: false` | `human_question` | Either agent needs one human answer before plan lock. |
+| `human_question` | `resume_status` with `assignee: resume_assignee` | Human answers and the receiving skill clears question fields. |
+| any state | `human_decision` | Escalation, cap hit, blocker, malformed input, or unsafe dirty tree. |
+| `human_decision` | any mode-owned state chosen by the human | Human edits baton or prompts an agent with a decision. |
 
 ## Regular checkpoint commits
 
@@ -280,10 +337,13 @@ writes:
 - Human-owned: `human_question`, `human_decision`.
 - Terminal `done` has no status owner. It is accepted as terminal for a
   coordinator assignee (`human`, `team`, `vadi`, or `prativadi`) only from
-  `termination_review`, while the final gate still requires both final
-  approvals and the run explainer; wait helpers stop on `done`. Raising
-  `vadi_final_approval` requires `DVANDVA_ROLE=vadi`; raising
-  `prativadi_final_approval` requires `DVANDVA_ROLE=prativadi`.
+  `termination_review` in any v2 mode. The final gate still requires both
+  final approvals plus the mode-conditional terminal artifact:
+  `run_explainer_ref` for development, `research_ref` plus `plan_ref` iff
+  `research_outcome == seed_development` for research, and `review_ref` for
+  review. Wait helpers stop on `done`. Raising `vadi_final_approval` requires
+  `DVANDVA_ROLE=vadi`; raising `prativadi_final_approval` requires
+  `DVANDVA_ROLE=prativadi`.
 
 Any other transition is illegal in v1 or v2 and must be rejected by the writing
 agent.

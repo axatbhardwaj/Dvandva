@@ -7,7 +7,13 @@ description: Use when a Dvandva run is in research_drafting, research_review, or
 
 ## Overview
 
-Use this skill to turn the user's `original_ask` into source-backed preparation before planning or implementation. The output is a generated user-facing HTML artifact at `research_ref`, plus baton fields that let both agents work without rediscovering the same context.
+Use this skill to turn the user's `original_ask` into source-backed preparation before planning, implementation, or review. It covers all three accepted v2 run intents while the baton is still in `research_drafting`, `research_review`, or `research_revision`:
+
+- **Development mode** writes `research_ref`, reconciles independent research from both engines, and prepares `work_split`, `subagent_tracks`, plus `verification_matrix` before spec drafting and implementation.
+- **Research mode** writes `research_ref` plus the baton fields needed to decide whether the run stays exploratory or seeds later development.
+- **Review mode** reuses the same research statuses for scope and intake analysis before the actual review lifecycle begins.
+
+The output is always a generated user-facing HTML artifact at `research_ref`, plus baton fields that let both agents work without rediscovering the same context.
 
 ## Research Artifact
 
@@ -18,6 +24,18 @@ Write research output as a generated user-facing HTML artifact:
 - Metadata: include `schema`, `run_id`, `original_ask`, `research_ref`, `work_split`, `verification_matrix`, source inventory, generated timestamp, and open questions.
 - Source/platform Markdown files such as `SKILL.md`, command files, README/source docs, and protocol references remain Markdown; generated research reports do not.
 
+In review mode, `research_ref` is the scope and intake analysis artifact. It is not the final review deliverable.
+
+## Accepted Run Intents
+
+| Intent | Research-stage contract | Later contract |
+|---|---|---|
+| `development` | Reuse `research_drafting` / `research_review` / `research_revision` to build `research_ref`, distribute work, reconcile independent research from both engines, and map verification before planning. | Accepted research advances to `phase: "spec", status: "spec_drafting"` before any implementation work. |
+| `research` | Reuse `research_drafting` / `research_review` / `research_revision` to build `research_ref`, `work_split`, and `verification_matrix`, then record `research_outcome` as `exploratory` or `seed_development`. | `exploratory` may stop after accepted research. `seed_development` must continue through the existing planning lifecycle and cannot reach terminal `done` without `plan_ref`. |
+| `review` | Reuse the same research statuses for scoping and intake analysis. Produce `research_ref` for scope/intake, populate structured `review_intake`, and keep `review_target` as the existing string selector for the later review subject. | The actual review deliverable is `review_ref`, produced later by the existing `deep_review` / `deslop` review lifecycle, not by the initial research pass. |
+
+No new status names are introduced here. Research-stage work always stays inside the existing `research_drafting`, `research_review`, and `research_revision` statuses, then hands off into the later mode-specific existing statuses.
+
 ## Baton Fields
 
 Carry these fields forward on every baton:
@@ -25,7 +43,11 @@ Carry these fields forward on every baton:
 | Field | Meaning |
 |---|---|
 | `original_ask` | Full user request and constraints, preserved from the first baton. |
-| `research_ref` | Path to the generated HTML research artifact. |
+| `research_ref` | Path to the generated HTML research artifact. In review mode, this is the scope/intake analysis, not the final review deliverable. |
+| `research_outcome` | Research-mode fork: `exploratory` or `seed_development`. If the run is `seed_development`, it must not reach terminal `done` without `plan_ref`. |
+| `review_intake` | Structured review-mode intake captured during the research statuses. Use it for scope, baseline, acceptance criteria, risks, and review-specific constraints. |
+| `review_target` | Existing string selector for the later review subject. Preserve it as a selector; do not overload it with structured intake data. |
+| `review_ref` | Path to the final review deliverable HTML. Do not write this during the initial research pass; it is produced later by `deep_review` / `deslop`. |
 | `work_split` | Planned responsibilities for vadi, prativadi, human, or subagents; include owner, scope, paths, status, and artifact refs. |
 | `verification_matrix` | Planned evidence for claims and risks; include owner, phase, command or inspection, expected result, current result, evidence refs, and the 100% test coverage target for newly created behavior. |
 
@@ -91,26 +113,33 @@ These skills are available within the Dvandva run context. Use each only when it
 
 ### research_drafting
 
-The vadi runs research first for a named v2 run:
+The vadi runs first for any named v2 run that is still in the research statuses:
 
-1. Re-read `original_ask` and repo instructions.
+1. Re-read `original_ask` and repo instructions, then identify whether the run is in `development`, `research`, or `review` mode. Development-mode research is mandatory and is not replaced by the lightweight research/review run modes.
 2. Dispatch parallel subagents or perform the same tracks directly.
 3. Create or update `research_ref` as the HTML artifact.
-4. Populate `work_split` and `verification_matrix`, including `test_creation`, `deep_review`, and `deslop` entries.
-5. Hand to prativadi with `phase: "research"`, `status: "research_review"`, `assignee: "prativadi"`, `review_target: "research"`.
+4. In development mode, reconcile independent research inputs and populate implementation-ready `work_split`, `subagent_tracks`, and `verification_matrix` before handing to review.
+5. In research mode, set `research_outcome` to `exploratory` or `seed_development`. If the run is `seed_development`, plan the downstream path to `plan_ref`.
+6. In review mode, populate structured `review_intake`, keep `review_target` as the existing string selector, and do not write `review_ref`.
+7. Populate `work_split` and `verification_matrix`, including `test_creation`, `deep_review`, and `deslop` entries when those later existing statuses are expected.
+8. Hand to prativadi with mode-correct phase: `phase: "research"` for development/research modes, or `phase: "review"` for review mode, and `status: "research_review"`.
 
 ### research_review
 
-The prativadi performs independent research review. Do not rely solely on the vadi's research_ref.
+The prativadi performs independent research review. Do not rely solely on the vadi's `research_ref`.
 
 1. Re-read `original_ask`.
-2. Open `research_ref`.
+2. Open `research_ref`. In review mode, also inspect `review_intake` and confirm `review_target` still names the intended later review subject.
 3. Independently inspect relevant code, docs, tests, and local commands.
 4. Use parallel subagents when available.
-5. Compare independent findings against `research_ref`, `work_split`, `subagent_tracks`, and `verification_matrix`.
+5. Compare independent findings against `research_ref`, `work_split`, `subagent_tracks`, `verification_matrix`, and any mode-specific baton fields already set.
 6. Confirm test creation is separate from review and that new code/behavior has a 100% test coverage plan or an explicit documented reason why executable coverage is impossible.
 7. If gaps remain, write `findings` and route to `research_revision`.
-8. If research is sufficient, advance to `phase: "spec", status: "spec_drafting"`, `assignee: "vadi"`, preserving `research_ref`, `run_explainer_ref`, `work_split`, `subagent_tracks`, `verification_matrix`, and `plan_ref`.
+8. If research is sufficient, route according to the accepted intent:
+   - Development mode: advance to `phase: "spec", status: "spec_drafting"`, preserving `research_ref`, `run_explainer_ref`, `work_split`, `subagent_tracks`, `verification_matrix`, and `plan_ref`.
+   - Research mode + `research_outcome: "seed_development"`: advance to `phase: "spec", status: "spec_drafting"`, preserving `research_ref`, `run_explainer_ref`, `work_split`, `subagent_tracks`, `verification_matrix`, and `plan_ref`.
+   - Research mode + `research_outcome: "exploratory"`: advance to shared `termination_review` with `phase: "spec"`, `assignee: "team"`, and both active roles; do not invent another non-spec research path.
+   - Review mode: advance to `phase: "review", status: "deep_review"` for the selected `review_target`. Do not produce `review_ref` yet; that deliverable belongs to `deep_review` / `deslop`.
 
 ### research_revision
 
@@ -118,8 +147,10 @@ The vadi addresses prativadi research findings:
 
 1. Read every finding.
 2. Re-run targeted research tracks or subagents as needed.
-3. Update the HTML artifact, `work_split`, `subagent_tracks`, and `verification_matrix`.
-4. Clear resolved findings and hand back to `research_review`.
+3. Update the HTML artifact plus any affected mode fields: development-mode work/verification planning, `research_outcome` for research mode, or `review_intake` while preserving `review_target` for review mode.
+4. Update `work_split`, `subagent_tracks`, and `verification_matrix`.
+5. Do not produce `review_ref` during this revision loop.
+6. Clear resolved findings and hand back to `research_review`.
 
 ## Common Mistakes
 
@@ -130,5 +161,8 @@ The vadi addresses prativadi research findings:
 | Claiming unavailable subagents were used | Record the direct fallback in `work_split`. |
 | Writing generated research as Markdown | Generated human-facing research is HTML; source/platform docs remain Markdown. |
 | Starting implementation from research | Research must feed spec drafting and verification planning before implementation. |
+| Using `review_target` as a structured intake blob | Keep `review_target` as the existing string selector and store structured intake in `review_intake`. |
+| Writing `review_ref` during intake research | Initial research writes `research_ref`; the later review lifecycle writes `review_ref`. |
+| Reaching `done` from `seed_development` without a plan | `research_outcome: "seed_development"` requires `plan_ref` before terminal completion. |
 | Combining tests and review | Keep `test_creation` and `deep_review` as separate responsibilities. |
 | Shipping low-quality residue | Run `deslop` until nits, low/minor bugs, and stale wording are fixed or explicitly accepted in `deferred`. |

@@ -6,6 +6,10 @@ Because the protocol is just files and shell helpers, it needs zero infrastructu
 
 Superpowers is a hard runtime dependency. Dvandva owns baton state, role handoff, phase gates, and cross-agent review; Superpowers owns the active-work discipline inside each turn: using skills before action, brainstorming before design, TDD before implementation, verification before completion, skill-writing discipline when skills change, and subagent-driven execution when parallel tracks are available. Dvandva uses conditional parallelism: parallelize only genuinely disjoint tracks, record actual work in `subagent_tracks`, and record what was not parallelized and why when a direct pass is safer. Codex subagent handles must be closed explicitly after their results are consumed, because completed agents can remain open and keep counting against the thread limit. If the engine running a Dvandva role cannot see the Superpowers skills, that role must stop and surface setup instructions instead of continuing with a weakened workflow.
 
+Accepted v2 baton modes are `development`, `research`, and `review`.
+`feature-pr` remains a legacy alias for `development` on older batons. Public
+docs no longer treat `campaign` as the current mode enum.
+
 Dvandva model classes are vendor-neutral. Agent frontmatter uses `model: opus` and `model: sonnet` as class labels, not Anthropic-only product IDs. Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models. Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`. Do not use `haiku` for Dvandva subagents.
 
 Dvandva ships as an installable plugin for both engines. The repo lives at https://github.com/axatbhardwaj/Dvandva.
@@ -45,8 +49,15 @@ appear.
 Then start a feature-branch worktree and open both sessions:
 
 ```text
-Claude: Implement <small feature> with Codex review. Use Dvandva walkaway.
-Codex:  Review the Dvandva baton.
+Claude: Implement <small feature> with Codex review. Start a Dvandva development run in walkaway mode.
+Codex:  Join the same Dvandva development run and review the baton.
+```
+
+Other accepted v2 run-mode prompts:
+
+```text
+Claude: Research <topic> with Codex review. Start a Dvandva research run.
+Claude: Review <diff or artifact> with Codex cross-checking. Start a Dvandva review run.
 ```
 
 Claude plugin invocation fallback:
@@ -157,7 +168,13 @@ the backstop for that explicit bypass. While a baton is active, drift lint also
 reports unstamped commits when no earlier checkpoint baseline exists, so a first
 bypass commit is still visible.
 
-Before post-handshake terminal `done`, a v2 run must write a dark self-contained explainer report at `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html` and set `run_explainer_ref` on the baton. The report captures decisions, development, architecture, verification, and diagrams for the completed run.
+Before post-handshake terminal `done`, a v2 run must satisfy the
+mode-conditional terminal artifact gate: development runs write
+`./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html` and set
+`run_explainer_ref`; research runs require `research_ref` and additionally
+`plan_ref` iff `research_outcome == seed_development`; review runs require
+`review_ref`. In all cases, terminal `done` still routes through shared
+`termination_review` with both final approvals set.
 
 ## History
 
