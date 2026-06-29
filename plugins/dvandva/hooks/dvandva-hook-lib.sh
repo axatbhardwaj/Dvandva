@@ -30,6 +30,21 @@ dvandva_hook_selfcheck() {
   return 0
 }
 
+# _dv_cfg_get <gitdir> <key>
+#   Per-worktree-correct config read, mirroring the installer: the Dvandva hook
+#   state lives at --worktree scope once extensions.worktreeConfig is enabled (so
+#   a sibling worktree never inherits a hooksPath aimed at a dir it lacks).  Falls
+#   back to --local for a pre-adoption foreign value or a legacy --local install.
+_dv_cfg_get() {
+  local gd="$1" key="$2" v
+  if [[ "$(git -C "$gd" config --bool extensions.worktreeConfig 2>/dev/null || echo false)" == "true" ]] \
+     && v="$(git -C "$gd" config --worktree --get "$key" 2>/dev/null)"; then
+    printf '%s\n' "$v"
+    return 0
+  fi
+  git -C "$gd" config --local --get "$key" 2>/dev/null || true
+}
+
 # resolve_prior_hook <name>
 #   Resolution of the prior hooks directory mirrors the installer's record:
 #     dvandva.priorHooksPath empty | __DVANDVA_DEFAULT__ -> the repo's TRUE
@@ -49,7 +64,7 @@ resolve_prior_hook() {
   local gitc="${root:-.}"
   local prior dir hook
 
-  prior="$(git -C "$gitc" config --local dvandva.priorHooksPath 2>/dev/null || echo "")"
+  prior="$(_dv_cfg_get "$gitc" dvandva.priorHooksPath)"
 
   if [[ -z "$prior" || "$prior" == "__DVANDVA_DEFAULT__" ]]; then
     dir="$(git -C "$gitc" rev-parse --git-common-dir 2>/dev/null || echo "")/hooks"

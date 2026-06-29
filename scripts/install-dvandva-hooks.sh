@@ -72,6 +72,70 @@ fi
 HOOK_DIR_ABS="$REPO_ROOT/$HOOK_REL"
 
 # ---------------------------------------------------------------------------
+# Per-worktree config scoping (fixes the linked-worktree fail-open bypass).
+#
+# core.hooksPath written with `git config --local` lives in the SHARED
+# .git/config, so adopting in one worktree would point EVERY worktree at the
+# relative .dvandva/githooks while only the adopting worktree materializes that
+# dir.  A sibling worktree is then left aiming at a missing dir and git silently
+# runs NO hooks (neither the Dvandva gate nor the prior chain).  We instead keep
+# the hook state at --worktree scope (extensions.worktreeConfig) so each
+# worktree is self-contained: a worktree we never adopted keeps its own
+# default/prior hooks.  Reads fall back to --local so a pre-adoption foreign
+# hooksPath (Husky's shared core.hooksPath) and legacy --local installs are
+# still observed and migrated.  dvandva.hooksAdoptedAt stays at --local (shared)
+# because the drift-lint baseline tracks commit history, not worktree identity.
+# ---------------------------------------------------------------------------
+dv_wt_enabled() {
+  [[ "$(git -C "$REPO_ROOT" config --bool extensions.worktreeConfig 2>/dev/null || echo false)" == "true" ]]
+}
+dv_enable_wt() {
+  dv_wt_enabled || git -C "$REPO_ROOT" config extensions.worktreeConfig true
+}
+dv_cfg_get() {                       # dv_cfg_get <key>  (worktree value, else --local)
+  local key="$1" v
+  if dv_wt_enabled && v="$(git -C "$REPO_ROOT" config --worktree --get "$key" 2>/dev/null)"; then
+    printf '%s\n' "$v"
+    return 0
+  fi
+  git -C "$REPO_ROOT" config --local --get "$key" 2>/dev/null || true
+}
+dv_cfg_set() {                       # dv_cfg_set <key> <value>  (worktree scope)
+  git -C "$REPO_ROOT" config --worktree "$1" "$2"
+}
+dv_cfg_unset_wt() {
+  git -C "$REPO_ROOT" config --worktree --unset "$1" >/dev/null 2>&1 || true
+}
+dv_cfg_unset_local() {
+  git -C "$REPO_ROOT" config --local --unset "$1" >/dev/null 2>&1 || true
+}
+dv_local_get() {
+  git -C "$REPO_ROOT" config --local --get "$1" 2>/dev/null || echo ""
+}
+
+# Pin every per-worktree Dvandva key at --worktree scope, migrating then dropping
+# any legacy shared --local copies so a sibling worktree never inherits our
+# hooksPath via the shared config.  Never clears a FOREIGN --local core.hooksPath
+# (that is the recorded prior we restore on uninstall).
+pin_state_worktree() {
+  dv_enable_wt
+  # Migrate a legacy shared prior into worktree scope before cleaning it.
+  if ! git -C "$REPO_ROOT" config --worktree --get dvandva.priorHooksPath >/dev/null 2>&1; then
+    local local_prior
+    local_prior="$(dv_local_get dvandva.priorHooksPath)"
+    [[ -n "$local_prior" ]] && dv_cfg_set dvandva.priorHooksPath "$local_prior"
+  fi
+  dv_cfg_set core.hooksPath "$HOOK_REL"
+  dv_cfg_set dvandva.hooksAdopted true
+  dv_cfg_set dvandva.hookDir "$HOOK_REL"
+  # Drop legacy shared copies (only our own hooksPath value, never a foreign one).
+  [[ "$(dv_local_get core.hooksPath)" == "$HOOK_REL" ]] && dv_cfg_unset_local core.hooksPath
+  dv_cfg_unset_local dvandva.hooksAdopted
+  dv_cfg_unset_local dvandva.hookDir
+  dv_cfg_unset_local dvandva.priorHooksPath
+}
+
+# ---------------------------------------------------------------------------
 # Adoption baseline (unchanged semantics; drift-lint depends on these keys).
 # ---------------------------------------------------------------------------
 record_hook_adoption_baseline() {
@@ -110,16 +174,32 @@ record_hook_adoption_baseline() {
 # ---------------------------------------------------------------------------
 restore_prior_state() {
   local prior
-  prior="$(git -C "$REPO_ROOT" config --local dvandva.priorHooksPath 2>/dev/null || echo "")"
-  if [[ -z "$prior" || "$prior" == "$SENTINEL_DEFAULT" ]]; then
-    git -C "$REPO_ROOT" config --local --unset core.hooksPath >/dev/null 2>&1 || true
-  else
-    git -C "$REPO_ROOT" config --local core.hooksPath "$prior"
+  prior="$(dv_cfg_get dvandva.priorHooksPath)"
+  # Drop our per-worktree hooksPath override first.
+  dv_cfg_unset_wt core.hooksPath
+  # Remove any shared --local hooksPath that points at OUR dir (legacy install or
+  # stray double-set) so sibling worktrees never inherit a dangling path.  A
+  # FOREIGN --local value is the recorded prior and is left intact.
+  [[ "$(dv_local_get core.hooksPath)" == "$HOOK_REL" ]] && dv_cfg_unset_local core.hooksPath
+  if [[ -n "$prior" && "$prior" != "$SENTINEL_DEFAULT" ]]; then
+    # Re-pin the prior per-worktree only when --local does not already provide it
+    # (it usually does: a foreign owner like Husky records it in shared config).
+    if [[ "$(dv_local_get core.hooksPath)" != "$prior" ]]; then
+      if dv_wt_enabled; then
+        dv_cfg_set core.hooksPath "$prior"
+      else
+        git -C "$REPO_ROOT" config --local core.hooksPath "$prior"
+      fi
+    fi
   fi
   rm -rf "$HOOK_DIR_ABS"
   local k
-  for k in priorHooksPath hooksAdopted hookDir hooksAdoptedAt hooksAdoptedAtInclusive; do
-    git -C "$REPO_ROOT" config --local --unset "dvandva.$k" >/dev/null 2>&1 || true
+  for k in priorHooksPath hooksAdopted hookDir; do
+    dv_cfg_unset_wt "dvandva.$k"
+    dv_cfg_unset_local "dvandva.$k"
+  done
+  for k in hooksAdoptedAt hooksAdoptedAtInclusive; do
+    dv_cfg_unset_local "dvandva.$k"
   done
 }
 
@@ -127,8 +207,8 @@ restore_prior_state() {
 # --uninstall: restore the recorded prior owner (or default), drop our state.
 # ---------------------------------------------------------------------------
 if [[ "$UNINSTALL" -eq 1 ]]; then
-  prior_seen="$(git -C "$REPO_ROOT" config --local dvandva.priorHooksPath 2>/dev/null || echo "")"
-  current_seen="$(git -C "$REPO_ROOT" config --local core.hooksPath 2>/dev/null || echo "")"
+  prior_seen="$(dv_cfg_get dvandva.priorHooksPath)"
+  current_seen="$(dv_cfg_get core.hooksPath)"
   if [[ -z "$prior_seen" && "$current_seen" != "$HOOK_REL" && ! -d "$HOOK_DIR_ABS" ]]; then
     echo "install-dvandva-hooks: nothing to uninstall (no Dvandva hook adoption found)."
     exit 0
@@ -176,7 +256,7 @@ materialize_file() {
 # ---------------------------------------------------------------------------
 installer_prior_dir() {
   local prior dir
-  prior="$(git -C "$REPO_ROOT" config --local dvandva.priorHooksPath 2>/dev/null || echo "")"
+  prior="$(dv_cfg_get dvandva.priorHooksPath)"
   if [[ -z "$prior" || "$prior" == "$SENTINEL_DEFAULT" ]]; then
     dir="$(git -C "$REPO_ROOT" rev-parse --git-common-dir 2>/dev/null || echo "")/hooks"
   elif [[ "$prior" == /* ]]; then
@@ -253,18 +333,21 @@ materialize_file "$SRC_ROOT/hooks/prepare-commit-msg"      "$HOOK_DIR_ABS/prepar
 materialize_file "$SRC_ROOT/scripts/dvandva-commit-gate.sh" "$HOOK_DIR_ABS/dvandva-commit-gate.sh"
 materialize_file "$SRC_ROOT/scripts/dvandva-drift-lint.sh"  "$HOOK_DIR_ABS/dvandva-drift-lint.sh"
 
-adopted="$(git -C "$REPO_ROOT" config --bool --local dvandva.hooksAdopted 2>/dev/null || echo false)"
-current="$(git -C "$REPO_ROOT" config --local core.hooksPath 2>/dev/null || echo "")"
-recorded_prior="$(git -C "$REPO_ROOT" config --local dvandva.priorHooksPath 2>/dev/null || echo "")"
+adopted="$(dv_cfg_get dvandva.hooksAdopted)"
+current="$(dv_cfg_get core.hooksPath)"
+recorded_prior="$(dv_cfg_get dvandva.priorHooksPath)"
 
 # ---------------------------------------------------------------------------
 # Double-wrap guard: already adopted + pointing at our dir -> refresh + reprobe.
-# Never re-record the prior (would self-loop).
+# Never re-record the prior (would self-loop).  pin_state_worktree also migrates
+# any legacy shared --local install to the per-worktree scope.
 # ---------------------------------------------------------------------------
 if [[ "$adopted" == "true" && "$current" == "$HOOK_REL" ]]; then
+  pin_state_worktree
   materialize_stubs
   record_hook_adoption_baseline
   if functional_probe; then
+    recorded_prior="$(dv_cfg_get dvandva.priorHooksPath)"
     echo "install-dvandva-hooks: already adopted; refreshed scripts + stubs and re-probed (prior=$recorded_prior)."
     exit 0
   fi
@@ -275,18 +358,19 @@ fi
 # ---------------------------------------------------------------------------
 # Fresh adoption (or re-pointing from a foreign owner).
 # Record the prior owner exactly once; never record our own dir as the prior.
+# State is written at --worktree scope so a sibling worktree is never left with
+# core.hooksPath aimed at a .dvandva/githooks dir it lacks (silent fail-open).
 # ---------------------------------------------------------------------------
 if [[ -z "$recorded_prior" ]]; then
+  dv_enable_wt
   if [[ -z "$current" || "$current" == "$HOOK_REL" ]]; then
-    git -C "$REPO_ROOT" config --local dvandva.priorHooksPath "$SENTINEL_DEFAULT"
+    dv_cfg_set dvandva.priorHooksPath "$SENTINEL_DEFAULT"
   else
-    git -C "$REPO_ROOT" config --local dvandva.priorHooksPath "$current"
+    dv_cfg_set dvandva.priorHooksPath "$current"
   fi
 fi
 
-git -C "$REPO_ROOT" config --local core.hooksPath "$HOOK_REL"
-git -C "$REPO_ROOT" config --local dvandva.hooksAdopted true
-git -C "$REPO_ROOT" config --local dvandva.hookDir "$HOOK_REL"
+pin_state_worktree
 record_hook_adoption_baseline
 materialize_stubs
 
@@ -296,6 +380,6 @@ if ! functional_probe; then
   exit 1
 fi
 
-recorded_prior="$(git -C "$REPO_ROOT" config --local dvandva.priorHooksPath 2>/dev/null || echo "")"
+recorded_prior="$(dv_cfg_get dvandva.priorHooksPath)"
 echo "install-dvandva-hooks: adopted core.hooksPath=$HOOK_REL (prior=$recorded_prior) in $REPO_ROOT"
 exit 0

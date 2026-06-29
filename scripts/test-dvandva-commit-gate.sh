@@ -90,6 +90,19 @@ count_in_file() {
   echo "$n"
 }
 
+# Per-worktree-correct config read (mirrors the installer/lib/preflight): the
+# adopted hook state lives at --worktree scope once extensions.worktreeConfig is
+# enabled, falling back to --local for foreign / pre-adoption values.
+box_cfg_get() {
+  local box="$1" key="$2" v
+  if [[ "$(git -C "$box" config --bool extensions.worktreeConfig 2>/dev/null || echo false)" == "true" ]] \
+     && v="$(git -C "$box" config --worktree --get "$key" 2>/dev/null)"; then
+    printf '%s' "$v"
+    return 0
+  fi
+  git -C "$box" config --local --get "$key" 2>/dev/null || true
+}
+
 # ---------------------------------------------------------------------------
 # Helper: write a minimal baton JSON (gate only needs status/assignee/checkpoint/active_roles)
 # ---------------------------------------------------------------------------
@@ -311,14 +324,14 @@ new_git_repo "$BOX"
 
 out="$(cd "$BOX" && "$INSTALLER" 2>&1)"; rc=$?
 check "(h) fresh install: exits 0" 0 "$rc" "$out"
-current="$(git -C "$BOX" config --local core.hooksPath 2>/dev/null || echo "")"
+current="$(box_cfg_get "$BOX" core.hooksPath)"
 if [[ "$current" == ".dvandva/githooks" ]]; then
   echo "PASS: (h) fresh install: core.hooksPath=.dvandva/githooks"
 else
   echo "FAIL: (h) fresh install: expected .dvandva/githooks, got '$current'"
   failures=$((failures + 1))
 fi
-prior="$(git -C "$BOX" config --local dvandva.priorHooksPath 2>/dev/null || echo "")"
+prior="$(box_cfg_get "$BOX" dvandva.priorHooksPath)"
 if [[ "$prior" == "__DVANDVA_DEFAULT__" ]]; then
   echo "PASS: (h) default-unset repo records __DVANDVA_DEFAULT__ sentinel"
 else
@@ -358,8 +371,8 @@ check_msg "(h) selfcheck prepare-commit-msg prints DVANDVA_PREPARE_WIRED" 0 "$rc
 # Idempotent: second install leaves prior + hooksPath unchanged.
 out="$(cd "$BOX" && "$INSTALLER" 2>&1)"; rc=$?
 check "(h) second install idempotent: exits 0" 0 "$rc" "$out"
-prior2="$(git -C "$BOX" config --local dvandva.priorHooksPath 2>/dev/null || echo "")"
-current2="$(git -C "$BOX" config --local core.hooksPath 2>/dev/null || echo "")"
+prior2="$(box_cfg_get "$BOX" dvandva.priorHooksPath)"
+current2="$(box_cfg_get "$BOX" core.hooksPath)"
 if [[ "$prior2" == "__DVANDVA_DEFAULT__" && "$current2" == ".dvandva/githooks" ]]; then
   echo "PASS: (h) idempotent: prior + hooksPath unchanged on re-install"
 else
@@ -370,7 +383,7 @@ fi
 # --uninstall restores the default (unset) + removes dir + clears dvandva.* keys.
 out="$(cd "$BOX" && "$INSTALLER" --uninstall 2>&1)"; rc=$?
 check "(h) --uninstall: exits 0" 0 "$rc" "$out"
-current="$(git -C "$BOX" config --local core.hooksPath 2>/dev/null || echo "")"
+current="$(box_cfg_get "$BOX" core.hooksPath)"
 if [[ -z "$current" ]]; then
   echo "PASS: (h) --uninstall: core.hooksPath cleared (default restored)"
 else
@@ -383,7 +396,8 @@ else
   echo "FAIL: (h) --uninstall: hook dir remains"
   failures=$((failures + 1))
 fi
-leftover="$(git -C "$BOX" config --local --get-regexp '^dvandva\.(priorHooksPath|hooksAdopted)' 2>/dev/null || echo "")"
+# Keys are cleared from BOTH scopes (worktree-scoped state + any legacy --local).
+leftover="$( { git -C "$BOX" config --worktree --get-regexp '^dvandva\.(priorHooksPath|hooksAdopted)' 2>/dev/null; git -C "$BOX" config --local --get-regexp '^dvandva\.(priorHooksPath|hooksAdopted)' 2>/dev/null; } || true )"
 if [[ -z "$leftover" ]]; then
   echo "PASS: (h) --uninstall: dvandva.* keys cleared"
 else
@@ -614,7 +628,7 @@ new_husky_repo "$BOX"
 make_gate_baton "$BOX/.dvandva/baton.json" "implementing" "vadi" 5
 out="$(cd "$BOX" && "$INSTALLER" 2>&1)"; rc=$?
 check "(n) install wraps foreign Husky hooksPath: exits 0" 0 "$rc" "$out"
-recorded="$(git -C "$BOX" config --local dvandva.priorHooksPath 2>/dev/null || echo "")"
+recorded="$(box_cfg_get "$BOX" dvandva.priorHooksPath)"
 if [[ "$recorded" == ".husky/_" ]]; then
   echo "PASS: (n) prior Husky hooksPath recorded (.husky/_)"
 else
@@ -644,7 +658,7 @@ new_husky_repo "$BOX"
 make_gate_baton "$BOX/.dvandva/baton.json" "implementing" "vadi" 8
 out="$(cd "$BOX" && "$INSTALLER" 2>&1)"; rc=$?
 check "(o) install in Husky repo: exits 0" 0 "$rc" "$out"
-current="$(git -C "$BOX" config --local core.hooksPath 2>/dev/null || echo "")"
+current="$(box_cfg_get "$BOX" core.hooksPath)"
 if [[ "$current" == ".dvandva/githooks" ]]; then
   echo "PASS: (o) core.hooksPath repointed to .dvandva/githooks"
 else
@@ -713,7 +727,7 @@ fi
 # Idempotent re-install: prior unchanged, no recursion (single marker per hook).
 out="$(cd "$BOX" && "$INSTALLER" 2>&1)"; rc=$?
 check "(o) second install idempotent: exits 0" 0 "$rc" "$out"
-recorded2="$(git -C "$BOX" config --local dvandva.priorHooksPath 2>/dev/null || echo "")"
+recorded2="$(box_cfg_get "$BOX" dvandva.priorHooksPath)"
 if [[ "$recorded2" == ".husky/_" ]]; then
   echo "PASS: (o) idempotent: prior still .husky/_ (no self-wrap)"
 else
@@ -764,7 +778,7 @@ chmod +x "$BOX/.husky/_/commit-msg"
 # Uninstall restores Husky ownership; all three foreign hooks fire again.
 out="$(cd "$BOX" && "$INSTALLER" --uninstall 2>&1)"; rc=$?
 check "(o) uninstall: exits 0" 0 "$rc" "$out"
-current="$(git -C "$BOX" config --local core.hooksPath 2>/dev/null || echo "")"
+current="$(box_cfg_get "$BOX" core.hooksPath)"
 if [[ "$current" == ".husky/_" ]]; then
   echo "PASS: (o) uninstall restored core.hooksPath=.husky/_"
 else
@@ -807,7 +821,7 @@ chmod +x "$ABS_HOOKS/pre-commit"
 git -C "$BOX" config core.hooksPath "$ABS_HOOKS"   # absolute path
 out="$(cd "$BOX" && "$INSTALLER" 2>&1)"; rc=$?
 check "(p) install over absolute prior: exits 0" 0 "$rc" "$out"
-recorded="$(git -C "$BOX" config --local dvandva.priorHooksPath 2>/dev/null || echo "")"
+recorded="$(box_cfg_get "$BOX" dvandva.priorHooksPath)"
 if [[ "$recorded" == "$ABS_HOOKS" ]]; then
   echo "PASS: (p) absolute prior recorded verbatim"
 else
@@ -826,7 +840,7 @@ else
 fi
 out="$(cd "$BOX" && "$INSTALLER" --uninstall 2>&1)"; rc=$?
 check "(p) uninstall: exits 0" 0 "$rc" "$out"
-current="$(git -C "$BOX" config --local core.hooksPath 2>/dev/null || echo "")"
+current="$(box_cfg_get "$BOX" core.hooksPath)"
 if [[ "$current" == "$ABS_HOOKS" ]]; then
   echo "PASS: (p) uninstall restored absolute prior hooksPath"
 else
@@ -863,8 +877,9 @@ BOX="$TMP_DIR/r-self-loop"
 new_git_repo "$BOX"
 out="$(cd "$BOX" && "$INSTALLER" 2>&1)"; rc=$?
 check "(r) install: exits 0" 0 "$rc" "$out"
-# Poison the recorded prior to point at our own dir.
-git -C "$BOX" config --local dvandva.priorHooksPath ".dvandva/githooks"
+# Poison the recorded prior to point at our own dir.  The installer keeps this
+# state at --worktree scope, so poison it there (where the wrapper reads it).
+git -C "$BOX" config --worktree dvandva.priorHooksPath ".dvandva/githooks"
 touch "$BOX/r.txt"; git -C "$BOX" add r.txt
 out="$(cd "$BOX" && timeout 20 env DVANDVA_ROLE=vadi git commit -m "self loop" 2>&1)"; rc=$?
 if [[ "$rc" -ne 124 ]]; then
@@ -988,6 +1003,90 @@ else
 
   # Clean up linked worktree to avoid leaving dangling worktree metadata.
   git -C "$BOX_T_MAIN" worktree remove --force "$BOX_T_LINKED" 2>/dev/null || true
+fi
+
+# ===========================================================================
+# (u) Linked-worktree hooksPath isolation (HIGH: silent fail-open bypass).
+#
+# core.hooksPath set in the SHARED .git/config is visible to every worktree, but
+# a relative .dvandva/githooks dir is materialized per-worktree.  If installing
+# in ONE worktree leaves a SIBLING worktree pointing at a .dvandva/githooks dir
+# it lacks, git finds NO hooks there and silently runs neither the Dvandva gate
+# NOR the prior hook chain.  The installer must guarantee no worktree is left
+# with core.hooksPath aimed at a dir it does not have.
+#
+# Both directions are exercised, asserting BEHAVIOR (not config scope) so the
+# case reproduces the bug against the pre-fix installer and proves the fix:
+#   (u-fwd) install in the LINKED worktree   -> commit in MAIN  fires MAIN prior
+#   (u-rev) install in the MAIN  worktree    -> commit in LINKED fires the prior
+# A prior pre-commit lives in the common .git/hooks (the real default for both
+# worktrees); its marker firing proves the worktree was NOT silently bypassed.
+# ===========================================================================
+plant_common_prior() {              # plant_common_prior <main-repo> <log>
+  mkdir -p "$1/.git/hooks"
+  cat > "$1/.git/hooks/pre-commit" <<PRIOR
+#!/usr/bin/env bash
+echo "COMMON_PRIOR_FIRED" >> "$2"
+exit 0
+PRIOR
+  chmod +x "$1/.git/hooks/pre-commit"
+}
+
+# --- (u-fwd) install in linked, commit in main ---------------------------------
+U_MAIN="$TMP_DIR/u-fwd-main"; U_LINKED="$TMP_DIR/u-fwd-linked"; U_LOG="$TMP_DIR/u-fwd.log"
+new_git_repo "$U_MAIN"
+plant_common_prior "$U_MAIN" "$U_LOG"
+if git -C "$U_MAIN" worktree add -b u-fwd-branch "$U_LINKED" 2>/dev/null; then
+  # The Dvandva run lives in the linked worktree.
+  make_gate_baton "$U_LINKED/.dvandva/baton.json" "implementing" "vadi" 40
+  out="$(cd "$U_LINKED" && "$INSTALLER" 2>&1)"; rc=$?
+  check "(u-fwd) install in linked worktree exits 0" 0 "$rc" "$out"
+
+  # Gate must enforce in the worktree we actually installed in.
+  touch "$U_LINKED/wrong.txt"; git -C "$U_LINKED" add wrong.txt
+  out="$(cd "$U_LINKED" && DVANDVA_ROLE=prativadi git commit -m "wrong role" 2>&1)"; rc=$?
+  check_msg "(u-fwd) gate enforces in the installed (linked) worktree" 1 "$rc" "$out" "DVANDVA_GATE blocked"
+
+  # Commit in MAIN must NOT be a silent bypass: main's prior pre-commit fires.
+  : > "$U_LOG"
+  touch "$U_MAIN/m.txt"; git -C "$U_MAIN" add m.txt
+  out="$(cd "$U_MAIN" && git commit -m "main commit after linked install" 2>&1)"; rc=$?
+  check "(u-fwd) main commit succeeds" 0 "$rc" "$out"
+  if [[ "$(count_in_file 'COMMON_PRIOR_FIRED' "$U_LOG")" -ge 1 ]]; then
+    echo "PASS: (u-fwd) main prior pre-commit still fires (no silent bypass)"
+  else
+    echo "FAIL: (u-fwd) main prior pre-commit BYPASSED after linked-worktree install"
+    failures=$((failures + 1))
+  fi
+  git -C "$U_MAIN" worktree remove --force "$U_LINKED" 2>/dev/null || true
+else
+  echo "SKIP: (u-fwd) git worktree add failed — linked-worktree fixture infeasible"
+fi
+
+# --- (u-rev) install in main, commit in linked ---------------------------------
+U2_MAIN="$TMP_DIR/u-rev-main"; U2_LINKED="$TMP_DIR/u-rev-linked"; U2_LOG="$TMP_DIR/u-rev.log"
+new_git_repo "$U2_MAIN"
+plant_common_prior "$U2_MAIN" "$U2_LOG"
+if git -C "$U2_MAIN" worktree add -b u-rev-branch "$U2_LINKED" 2>/dev/null; then
+  # The Dvandva run lives in the main worktree this time.
+  make_gate_baton "$U2_MAIN/.dvandva/baton.json" "implementing" "vadi" 41
+  out="$(cd "$U2_MAIN" && "$INSTALLER" 2>&1)"; rc=$?
+  check "(u-rev) install in main worktree exits 0" 0 "$rc" "$out"
+
+  # Commit in the LINKED worktree must NOT be a silent bypass.
+  : > "$U2_LOG"
+  touch "$U2_LINKED/l.txt"; git -C "$U2_LINKED" add l.txt
+  out="$(cd "$U2_LINKED" && git commit -m "linked commit after main install" 2>&1)"; rc=$?
+  check "(u-rev) linked commit succeeds" 0 "$rc" "$out"
+  if [[ "$(count_in_file 'COMMON_PRIOR_FIRED' "$U2_LOG")" -ge 1 ]]; then
+    echo "PASS: (u-rev) linked prior pre-commit still fires (no silent bypass)"
+  else
+    echo "FAIL: (u-rev) linked prior pre-commit BYPASSED after main-worktree install"
+    failures=$((failures + 1))
+  fi
+  git -C "$U2_MAIN" worktree remove --force "$U2_LINKED" 2>/dev/null || true
+else
+  echo "SKIP: (u-rev) git worktree add failed — linked-worktree fixture infeasible"
 fi
 
 # ===========================================================================

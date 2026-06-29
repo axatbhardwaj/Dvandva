@@ -99,6 +99,18 @@ check_absent() {
   echo "PASS: $name"
 }
 
+# Per-worktree-correct config read (mirrors the installer/preflight): adopted
+# hook state lives at --worktree scope once extensions.worktreeConfig is enabled.
+box_cfg_get() {
+  local box="$1" key="$2" v
+  if [[ "$(git -C "$box" config --bool extensions.worktreeConfig 2>/dev/null || echo false)" == "true" ]] \
+     && v="$(git -C "$box" config --worktree --get "$key" 2>/dev/null)"; then
+    printf '%s' "$v"
+    return 0
+  fi
+  git -C "$box" config --local --get "$key" 2>/dev/null || true
+}
+
 if cmp -s "$VADI_HELPER" "$PRATIVADI_HELPER"; then
   echo "PASS: vadi and prativadi hook preflight helpers are byte-identical"
 else
@@ -113,9 +125,9 @@ out="$(DVANDVA_ROLE=prativadi bash "$HELPER" --role prativadi --repo "$BOX" 2>&1
 check_msg "auto mode succeeds in foreign-hook repo" 0 "$rc" "$out" "DVANDVA_HOOK_PREFLIGHT"
 check_msg "auto mode reports ok result" 0 "$rc" "$out" "result=ok"
 check_msg "auto mode reports probe sentinel" 0 "$rc" "$out" "sentinel=DVANDVA_GATE_WIRED"
-current="$(git -C "$BOX" config --local core.hooksPath 2>/dev/null || echo "")"
+current="$(box_cfg_get "$BOX" core.hooksPath)"
 check_value "auto mode repoints core.hooksPath to delegated wrapper" ".dvandva/githooks" "$current"
-prior="$(git -C "$BOX" config --local dvandva.priorHooksPath 2>/dev/null || echo "")"
+prior="$(box_cfg_get "$BOX" dvandva.priorHooksPath)"
 check_value "auto mode records prior foreign hooksPath" ".husky/_" "$prior"
 probe="$(cd "$BOX" && DVANDVA_HOOK_SELFCHECK=1 .dvandva/githooks/pre-commit 2>&1)"; probe_rc=$?
 check_msg "active pre-commit selfcheck stays reachable" 0 "$probe_rc" "$probe" "DVANDVA_GATE_WIRED"

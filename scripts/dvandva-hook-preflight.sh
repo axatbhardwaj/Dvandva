@@ -26,9 +26,23 @@ resolve_repo_root() {
   git rev-parse --show-toplevel 2>/dev/null
 }
 
+# Per-worktree-correct config read (mirrors install-dvandva-hooks.sh): the hook
+# state lives at --worktree scope once extensions.worktreeConfig is enabled, so a
+# sibling worktree is never left aiming at a .dvandva/githooks dir it lacks.
+# Falls back to --local for a foreign / pre-adoption value or a legacy install.
+pf_cfg_get() {
+  local key="$1" v
+  if [[ "$(git -C "$REPO_ROOT" config --bool extensions.worktreeConfig 2>/dev/null || echo false)" == "true" ]] \
+     && v="$(git -C "$REPO_ROOT" config --worktree --get "$key" 2>/dev/null)"; then
+    printf '%s\n' "$v"
+    return 0
+  fi
+  git -C "$REPO_ROOT" config --local --get "$key" 2>/dev/null || true
+}
+
 active_hook_dir() {
   local current git_common
-  current="$(git -C "$REPO_ROOT" config --local core.hooksPath 2>/dev/null || echo "")"
+  current="$(pf_cfg_get core.hooksPath)"
   if [[ -z "$current" ]]; then
     git_common="$(git -C "$REPO_ROOT" rev-parse --git-common-dir 2>/dev/null || echo "")"
     printf '%s/hooks\n' "$git_common"
@@ -127,7 +141,7 @@ if [[ "$probe_rc" -ne 0 || "$probe_out" != *"$SENTINEL"* ]]; then
   exit 1
 fi
 
-CURRENT_HOOKS="$(git -C "$REPO_ROOT" config --local core.hooksPath 2>/dev/null || echo "")"
-PRIOR_HOOKS="$(git -C "$REPO_ROOT" config --local dvandva.priorHooksPath 2>/dev/null || echo "")"
+CURRENT_HOOKS="$(pf_cfg_get core.hooksPath)"
+PRIOR_HOOKS="$(pf_cfg_get dvandva.priorHooksPath)"
 echo "DVANDVA_HOOK_PREFLIGHT role=$ROLE mode=$MODE result=ok repo=$REPO_ROOT hooks_path=${CURRENT_HOOKS:-default} prior_hooks_path=${PRIOR_HOOKS:-unset} active_pre_commit=$(realpath -m "$PRE_COMMIT") sentinel=$SENTINEL"
 exit 0
