@@ -387,6 +387,28 @@ else
   echo "PASS: legacy human_decision sibling with stale my-role assignee is terminal (no split-brain, not counted)"
 fi
 
+# Case 3b: legacy .dvandva/baton.json parked in human_question with a stale
+# my-role assignee is also terminal -> the PFX3 legacy path must skip it, not
+# fire exit 29. Symmetry coverage for Case 3 (human_decision). human_question
+# entered the terminal set in the same PFX3b fix; this test closes the gap that
+# existed only for the legacy-baton path.
+LEGACY_TERMINAL_QUESTION_BOX="$TMP_DIR/legacy-terminal-question-box"
+write_named_observed_baton "$LEGACY_TERMINAL_QUESTION_BOX/.dvandva/runs/alpha/baton.json" "alpha" "prativadi" "phase_review" "2026-06-29T19:10:00Z" "codex"
+write_baton "$LEGACY_TERMINAL_QUESTION_BOX/.dvandva/baton.json" "vadi" "human_question"
+legacy_terminal_question_output="$(env DVANDVA_RUN_ID="alpha" timeout 3 bash -c 'cd "$1" && "$2" --role vadi --persist --interval 1 --max-wait 1' _ "$LEGACY_TERMINAL_QUESTION_BOX" "$SCRIPT" 2>&1)"
+legacy_terminal_question_exit=$?
+if [[ "$legacy_terminal_question_exit" -ne 124 ]]; then
+  echo "FAIL: legacy human_question sibling must not fire split-brain; expected timeout exit 124, got $legacy_terminal_question_exit"
+  echo "$legacy_terminal_question_output"
+  failures=$((failures + 1))
+elif [[ "$legacy_terminal_question_output" == *"split_brain"* || "$legacy_terminal_question_output" != *"sibling_active_runs=0"* ]]; then
+  echo "FAIL: legacy human_question sibling wrongly counted active or fired split_brain"
+  echo "$legacy_terminal_question_output"
+  failures=$((failures + 1))
+else
+  echo "PASS: legacy human_question sibling with stale my-role assignee is terminal (no split-brain, not counted)"
+fi
+
 # Case 4 (regression boundary): a genuinely active, non-terminal sibling assigned to
 # my role must STILL fire exit 29 -- the terminal set is exactly done/human_decision/
 # human_question, so a non-terminal status like phase_review (not just implementing)
