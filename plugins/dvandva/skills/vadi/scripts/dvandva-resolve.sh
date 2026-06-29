@@ -180,7 +180,20 @@ for cf in "${candidate_files[@]}"; do
       status: (.status // ""),
       assignee: (.assignee // ""),
       updated_at: (.updated_at // "")
-    }' "$cf" 2>/dev/null)" || continue
+    }' "$cf" 2>/dev/null)" || {
+    # FAIL CLOSED: baton is not valid JSON — cannot safely determine run state.
+    # Silently skipping it could hide an active run and allow a wrong CREATE or
+    # RESOLVED of a sibling.  Emit ASK (STOP) naming the corrupt path so the
+    # operator can repair it or choose an explicit selector to bypass discovery.
+    printf 'ASK []\n'
+    {
+      echo "DVANDVA_RESOLVE corrupt_baton path=$cf role=$ROLE"
+      echo "ERROR: baton at '$cf' is not valid JSON; cannot safely discover runs."
+      echo "Hint: inspect/repair the file or bypass discovery with an explicit selector"
+      echo "      (DVANDVA_RUN_ID, DVANDVA_RUN_DIR, or DVANDVA_BATON_FILE)."
+    } >&2
+    exit 12
+  }
   [[ -n "$cf_obj" ]] || continue
   cf_status="$(printf '%s' "$cf_obj" | jq -r '.status')"
   if [[ "$cf_status" != "done" ]]; then

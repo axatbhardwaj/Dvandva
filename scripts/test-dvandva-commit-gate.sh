@@ -910,6 +910,87 @@ else
 fi
 
 # ===========================================================================
+# (t) GAP 3: Linked-worktree delegation.
+#
+# Install Dvandva inside a linked worktree; verify the gate fires there and
+# that resolve_prior_hook uses --git-common-dir to reach the main .git/hooks
+# directory so the prior pre-commit chain fires even though the prior hooks
+# live in the main repository's default hooks directory.
+#
+# Setup:
+#   - Main repo with a prior pre-commit hook at .git/hooks/pre-commit
+#   - Linked worktree on a separate branch (git worktree add -b ...)
+#   - Installer run inside the linked worktree
+#
+# Contracts verified:
+#   1. Installer exits 0 inside a linked worktree.
+#   2. --git-common-dir in the linked worktree points at the main .git dir.
+#   3. Wrong-role commit is blocked by the gate (gate fires in linked wt).
+#   4. Correct-role commit succeeds AND prior pre-commit fires (delegation
+#      via resolve_prior_hook / --git-common-dir).
+# ===========================================================================
+BOX_T_MAIN="$TMP_DIR/t-linked-main"
+BOX_T_LINKED="$TMP_DIR/t-linked-wt"
+PRIOR_HOOK_LOG="$TMP_DIR/t-prior-hook.log"
+
+new_git_repo "$BOX_T_MAIN"
+
+# Plant a prior pre-commit hook in the main .git/hooks directory (default hooks dir).
+mkdir -p "$BOX_T_MAIN/.git/hooks"
+cat > "$BOX_T_MAIN/.git/hooks/pre-commit" <<PRIOR_HOOK
+#!/usr/bin/env bash
+echo "PRIOR_PRECOMMIT_FIRED" >> "$PRIOR_HOOK_LOG"
+exit 0
+PRIOR_HOOK
+chmod +x "$BOX_T_MAIN/.git/hooks/pre-commit"
+
+# Create a linked worktree on a new branch.
+git -C "$BOX_T_MAIN" worktree add -b t-linked-branch "$BOX_T_LINKED" 2>/dev/null
+linked_wt_ok=$?
+if [[ "$linked_wt_ok" -ne 0 ]]; then
+  echo "SKIP: (t) git worktree add failed (exit $linked_wt_ok) — linked-worktree fixture infeasible in this environment"
+else
+  # Verify --git-common-dir in the linked worktree resolves to the main .git.
+  got_common_dir="$(git -C "$BOX_T_LINKED" rev-parse --git-common-dir 2>/dev/null)"
+  if [[ "$got_common_dir" == "$BOX_T_MAIN/.git" ]]; then
+    echo "PASS: (t) --git-common-dir in linked worktree → main .git"
+  else
+    echo "FAIL: (t) --git-common-dir expected $BOX_T_MAIN/.git, got '$got_common_dir'"
+    failures=$((failures + 1))
+  fi
+
+  # Seed an active baton in the linked worktree (untracked; the gate reads from
+  # REPO_ROOT which resolves to BOX_T_LINKED inside the linked wt context).
+  make_gate_baton "$BOX_T_LINKED/.dvandva/baton.json" "implementing" "vadi" 20
+
+  # Run the installer from inside the linked worktree.
+  out="$(cd "$BOX_T_LINKED" && "$INSTALLER" 2>&1)"; rc=$?
+  check "(t) installer in linked worktree: exits 0" 0 "$rc" "$out"
+
+  # Wrong-role commit must be blocked by the gate inside the linked worktree.
+  touch "$BOX_T_LINKED/t1.txt"; git -C "$BOX_T_LINKED" add t1.txt
+  out="$(cd "$BOX_T_LINKED" && DVANDVA_ROLE=prativadi git commit -m "wrong role in linked wt" 2>&1)"; rc=$?
+  check_msg "(t) gate blocks wrong role in linked worktree" 1 "$rc" "$out" "DVANDVA_GATE blocked"
+
+  # Correct-role commit must succeed AND the prior pre-commit must fire
+  # (delegation via resolve_prior_hook using --git-common-dir).
+  : > "$PRIOR_HOOK_LOG"
+  touch "$BOX_T_LINKED/t2.txt"; git -C "$BOX_T_LINKED" add t2.txt
+  out="$(cd "$BOX_T_LINKED" && DVANDVA_ROLE=vadi git commit -m "vadi in linked wt" 2>&1)"; rc=$?
+  check "(t) correct role allowed in linked worktree" 0 "$rc" "$out"
+
+  if [[ "$(count_in_file 'PRIOR_PRECOMMIT_FIRED' "$PRIOR_HOOK_LOG")" -ge 1 ]]; then
+    echo "PASS: (t) prior hook at main .git/hooks fires via --git-common-dir resolution"
+  else
+    echo "FAIL: (t) prior hook at main .git/hooks did not fire (--git-common-dir resolution broken)"
+    failures=$((failures + 1))
+  fi
+
+  # Clean up linked worktree to avoid leaving dangling worktree metadata.
+  git -C "$BOX_T_MAIN" worktree remove --force "$BOX_T_LINKED" 2>/dev/null || true
+fi
+
+# ===========================================================================
 # Summary
 # ===========================================================================
 echo ""

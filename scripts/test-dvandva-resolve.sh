@@ -254,6 +254,107 @@ seed_baton "$BOX_L/.dvandva/baton.json" "legacy-run" "implementing" "vadi" "2026
 assert_line "legacy baton resolves as the single resumable run" 0 "RESOLVED .dvandva/baton.json" \
   "$SCRIPT" --role vadi --cwd "$BOX_L"
 
+# ===========================================================================
+# GAP 1: Fail-closed on corrupt baton during discovery.
+#
+# A corrupt (invalid-JSON) baton.json must never be silently skipped —
+# skipping it could turn an active broken run invisible and allow a wrong
+# CREATE or RESOLVED of a sibling run.  The resolver must exit 12 (ASK /
+# STOP) and name the corrupt path so the operator can repair or choose an
+# explicit selector.  Explicit selectors (DVANDVA_RUN_ID etc.) bypass
+# discovery entirely and must still succeed even when corrupt siblings exist.
+# ===========================================================================
+
+# (m1) valid resumable run + one corrupt baton, no selector
+#   TDD RED: current code silently skips the corrupt file via `|| continue`
+#   and returns "RESOLVED .dvandva/runs/valid/baton.json" (exit 0).
+#   After the fix it must return exit 12 with ASK and name the corrupt path.
+BOX_M1="$TMP_DIR/m1-corrupt-discover"
+seed_baton "$BOX_M1/.dvandva/runs/valid/baton.json" "valid" "implementing" "vadi" "2026-06-29T10:00:00Z"
+mkdir -p "$BOX_M1/.dvandva/runs/corrupt"
+printf '{ not valid json\n' > "$BOX_M1/.dvandva/runs/corrupt/baton.json"
+m1_combined="$("$SCRIPT" --role vadi --cwd "$BOX_M1" 2>&1)"
+m1_exit=$?
+if [[ "$m1_exit" -ne 12 ]]; then
+  echo "FAIL: (m1) corrupt baton during discovery must exit 12, got $m1_exit (out: $m1_combined)"
+  failures=$((failures + 1))
+elif [[ "$m1_combined" != *"ASK"* ]]; then
+  echo "FAIL: (m1) corrupt baton must emit ASK in output, got: $m1_combined"
+  failures=$((failures + 1))
+elif [[ "$m1_combined" != *"corrupt"* ]]; then
+  echo "FAIL: (m1) corrupt baton ASK must name the corrupt path, got: $m1_combined"
+  failures=$((failures + 1))
+else
+  echo "PASS: (m1) corrupt baton during discovery → exit 12 ASK naming corrupt path"
+fi
+
+# (m2) only corrupt baton, no selector
+#   TDD RED: current code would return "CREATE .dvandva/runs/run/baton.json" (exit 0).
+#   After the fix it must return exit 12.
+BOX_M2="$TMP_DIR/m2-corrupt-only"
+mkdir -p "$BOX_M2/.dvandva/runs/broken"
+printf '{ bad json, entirely\n' > "$BOX_M2/.dvandva/runs/broken/baton.json"
+m2_combined="$("$SCRIPT" --role vadi --cwd "$BOX_M2" 2>&1)"
+m2_exit=$?
+if [[ "$m2_exit" -ne 12 ]]; then
+  echo "FAIL: (m2) lone corrupt baton during discovery must exit 12, got $m2_exit (out: $m2_combined)"
+  failures=$((failures + 1))
+elif [[ "$m2_combined" != *"ASK"* ]]; then
+  echo "FAIL: (m2) lone corrupt baton must emit ASK in output, got: $m2_combined"
+  failures=$((failures + 1))
+else
+  echo "PASS: (m2) lone corrupt baton → exit 12 ASK (fail-closed; not CREATE)"
+fi
+
+# (m3) corrupt baton + explicit DVANDVA_RUN_ID selector
+#   Explicit selector short-circuits before discovery → must still RESOLVED.
+#   This test should be GREEN both before and after the fix; it locks the contract.
+BOX_M3="$TMP_DIR/m3-corrupt-explicit"
+mkdir -p "$BOX_M3/.dvandva/runs/corrupt"
+printf '{ bad json\n' > "$BOX_M3/.dvandva/runs/corrupt/baton.json"
+assert_line "corrupt baton + explicit DVANDVA_RUN_ID → RESOLVED (selector bypasses discovery)" \
+  0 "RESOLVED .dvandva/runs/target/baton.json" \
+  env DVANDVA_RUN_ID="target" "$SCRIPT" --role vadi --cwd "$BOX_M3"
+
+# (m4) corrupt legacy baton (.dvandva/baton.json), no selector
+#   The legacy path participates in discovery; a corrupt legacy baton must also
+#   fail closed — not be silently skipped as with regular run-scoped batons.
+BOX_M4="$TMP_DIR/m4-corrupt-legacy"
+mkdir -p "$BOX_M4/.dvandva"
+printf '{ bad\n' > "$BOX_M4/.dvandva/baton.json"
+m4_combined="$("$SCRIPT" --role vadi --cwd "$BOX_M4" 2>&1)"
+m4_exit=$?
+if [[ "$m4_exit" -ne 12 ]]; then
+  echo "FAIL: (m4) corrupt legacy baton during discovery must exit 12, got $m4_exit"
+  failures=$((failures + 1))
+elif [[ "$m4_combined" != *"ASK"* ]]; then
+  echo "FAIL: (m4) corrupt legacy baton must emit ASK, got: $m4_combined"
+  failures=$((failures + 1))
+else
+  echo "PASS: (m4) corrupt legacy .dvandva/baton.json → exit 12 ASK (fail-closed)"
+fi
+
+# ===========================================================================
+# GAP 2: Explicit selector RESOLVED without existence check (intentional).
+#
+# An explicit DVANDVA_RUN_ID/RUN_DIR/BATON_FILE always short-circuits to
+# RESOLVED regardless of whether the target file exists.  This mirrors the
+# --allow-missing scaffolding model: callers that want to initialize a new
+# run pass an explicit id and receive back the deterministic path to write.
+# ===========================================================================
+
+# (n1) DVANDVA_RUN_ID for a run that does not exist yet → RESOLVED unconditionally.
+BOX_N1="$TMP_DIR/n1-new-run-id"
+mkdir -p "$BOX_N1"
+assert_line "DVANDVA_RUN_ID=newrun (no file) → RESOLVED unconditionally (allow-missing)" \
+  0 "RESOLVED .dvandva/runs/newrun/baton.json" \
+  env DVANDVA_RUN_ID="newrun" "$SCRIPT" --role vadi --cwd "$BOX_N1"
+
+# (n2) DVANDVA_BATON_FILE pointing at a non-existent path → RESOLVED unconditionally.
+assert_line "DVANDVA_BATON_FILE (no file) → RESOLVED unconditionally" \
+  0 "RESOLVED /tmp/no-such-dvandva-baton.json" \
+  env DVANDVA_BATON_FILE="/tmp/no-such-dvandva-baton.json" "$SCRIPT" --role vadi --cwd "$BOX_N1"
+
 if [[ "$failures" -gt 0 ]]; then
   echo "TOTAL FAILURES: $failures"
   exit 1
