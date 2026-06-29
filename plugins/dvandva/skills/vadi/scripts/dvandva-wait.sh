@@ -262,9 +262,17 @@ scan_sibling_runs() {
     sibling_run_id="$(derive_run_id "$sibling_file")"
     sibling_state="$(jq -r '[.status // "", .assignee // "", ((.active_roles // []) | join(","))] | join("\u001f")' "$sibling_file" 2>/dev/null)" || continue
     IFS=$'\x1f' read -r sibling_status sibling_assignee sibling_active_roles <<< "$sibling_state"
-    if [[ "$sibling_status" == "done" ]]; then
-      continue
-    fi
+    # Terminal / intervention states are not active runs competing for my role.
+    # For WAIT split-brain, done AND human_decision / human_question are all
+    # terminal: a sibling parked there is paused on a human, so a stale assignee or
+    # active_roles still naming my role must not count as active or fire exit 29.
+    # (This is independent of the resolver DISCOVERY taxonomy, where human_* is
+    # resumable -- that classification is correct there and unchanged here.)
+    case "$sibling_status" in
+      done|human_decision|human_question)
+        continue
+        ;;
+    esac
     SIBLING_ACTIVE_COUNT=$((SIBLING_ACTIVE_COUNT + 1))
     if [[ "${DVANDVA_CONCURRENT:-0}" != "1" ]] && [[ "$selected_assignee" == "$(peer_role)" ]] && { [[ "$sibling_assignee" == "$ROLE" ]] || contains_role "$sibling_active_roles"; }; then
       SPLIT_BRAIN_SIBLING_RUN_ID="$sibling_run_id"

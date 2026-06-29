@@ -295,6 +295,119 @@ else
   echo "PASS: self-skip is path-based; stale .run_id field does not hide sibling beta (exit 29)"
 fi
 
+# MED fix: for WAIT split-brain, human_decision and human_question are terminal /
+# intervention states, not active runs competing for my role. A sibling parked in
+# human_decision/human_question that still carries a STALE assignee or active_roles
+# naming my role must NOT be counted as active and must NOT fire exit 29 (resolver
+# DISCOVERY taxonomy treating human_* as resumable is separate and unchanged). The
+# selected named run alpha waits on the peer while sibling beta is parked terminal.
+
+# Case 1: sibling in human_decision with a stale assignee=my role -> heartbeat, not 29.
+TERMINAL_DECISION_BOX="$TMP_DIR/terminal-decision-box"
+write_named_observed_baton "$TERMINAL_DECISION_BOX/.dvandva/runs/alpha/baton.json" "alpha" "prativadi" "phase_review" "2026-06-29T18:00:00Z" "codex"
+write_named_observed_baton "$TERMINAL_DECISION_BOX/.dvandva/runs/beta/baton.json" "beta" "vadi" "human_decision" "2026-06-29T18:01:00Z" "claude"
+terminal_decision_output="$(env DVANDVA_RUN_ID="alpha" timeout 3 bash -c 'cd "$1" && "$2" --role vadi --persist --interval 1 --max-wait 1' _ "$TERMINAL_DECISION_BOX" "$SCRIPT" 2>&1)"
+terminal_decision_exit=$?
+if [[ "$terminal_decision_exit" -ne 124 ]]; then
+  echo "FAIL: human_decision sibling must not fire split-brain; expected timeout exit 124, got $terminal_decision_exit"
+  echo "$terminal_decision_output"
+  failures=$((failures + 1))
+elif [[ "$terminal_decision_output" == *"split_brain"* || "$terminal_decision_output" != *"sibling_active_runs=0"* ]]; then
+  echo "FAIL: human_decision sibling wrongly counted active or fired split_brain"
+  echo "$terminal_decision_output"
+  failures=$((failures + 1))
+else
+  echo "PASS: human_decision sibling with stale my-role assignee is terminal (no split-brain, not counted)"
+fi
+
+# Case 2: sibling in human_question with a stale assignee=my role -> heartbeat, not 29.
+TERMINAL_QUESTION_BOX="$TMP_DIR/terminal-question-box"
+write_named_observed_baton "$TERMINAL_QUESTION_BOX/.dvandva/runs/alpha/baton.json" "alpha" "prativadi" "phase_review" "2026-06-29T18:10:00Z" "codex"
+write_named_observed_baton "$TERMINAL_QUESTION_BOX/.dvandva/runs/beta/baton.json" "beta" "vadi" "human_question" "2026-06-29T18:11:00Z" "claude"
+terminal_question_output="$(env DVANDVA_RUN_ID="alpha" timeout 3 bash -c 'cd "$1" && "$2" --role vadi --persist --interval 1 --max-wait 1' _ "$TERMINAL_QUESTION_BOX" "$SCRIPT" 2>&1)"
+terminal_question_exit=$?
+if [[ "$terminal_question_exit" -ne 124 ]]; then
+  echo "FAIL: human_question sibling must not fire split-brain; expected timeout exit 124, got $terminal_question_exit"
+  echo "$terminal_question_output"
+  failures=$((failures + 1))
+elif [[ "$terminal_question_output" == *"split_brain"* || "$terminal_question_output" != *"sibling_active_runs=0"* ]]; then
+  echo "FAIL: human_question sibling wrongly counted active or fired split_brain"
+  echo "$terminal_question_output"
+  failures=$((failures + 1))
+else
+  echo "PASS: human_question sibling with stale my-role assignee is terminal (no split-brain, not counted)"
+fi
+
+# Case 2b: a terminal sibling whose active_roles (not assignee) lists my role must
+# also be skipped -- the contains_role branch of the fire condition is gated too.
+TERMINAL_ACTIVE_ROLES_BOX="$TMP_DIR/terminal-active-roles-box"
+write_named_observed_baton "$TERMINAL_ACTIVE_ROLES_BOX/.dvandva/runs/alpha/baton.json" "alpha" "prativadi" "phase_review" "2026-06-29T18:20:00Z" "codex"
+mkdir -p "$TERMINAL_ACTIVE_ROLES_BOX/.dvandva/runs/beta"
+cat > "$TERMINAL_ACTIVE_ROLES_BOX/.dvandva/runs/beta/baton.json" <<JSON
+{
+  "schema": "dvandva.baton.v2",
+  "run_id": "beta",
+  "assignee": "human",
+  "active_roles": ["vadi", "prativadi"],
+  "status": "human_decision",
+  "phase": 2,
+  "checkpoint": 8
+}
+JSON
+terminal_active_roles_output="$(env DVANDVA_RUN_ID="alpha" timeout 3 bash -c 'cd "$1" && "$2" --role vadi --persist --interval 1 --max-wait 1' _ "$TERMINAL_ACTIVE_ROLES_BOX" "$SCRIPT" 2>&1)"
+terminal_active_roles_exit=$?
+if [[ "$terminal_active_roles_exit" -ne 124 ]]; then
+  echo "FAIL: terminal sibling with my role in active_roles must not fire split-brain; expected timeout exit 124, got $terminal_active_roles_exit"
+  echo "$terminal_active_roles_output"
+  failures=$((failures + 1))
+elif [[ "$terminal_active_roles_output" == *"split_brain"* || "$terminal_active_roles_output" != *"sibling_active_runs=0"* ]]; then
+  echo "FAIL: terminal sibling with my role in active_roles wrongly counted active or fired split_brain"
+  echo "$terminal_active_roles_output"
+  failures=$((failures + 1))
+else
+  echo "PASS: terminal sibling listing my role in active_roles is skipped (no split-brain, not counted)"
+fi
+
+# Case 3: legacy .dvandva/baton.json parked in human_decision with a stale my-role
+# assignee is terminal too -> the PFX3 legacy path must skip it, not fire exit 29.
+LEGACY_TERMINAL_BOX="$TMP_DIR/legacy-terminal-box"
+write_named_observed_baton "$LEGACY_TERMINAL_BOX/.dvandva/runs/alpha/baton.json" "alpha" "prativadi" "phase_review" "2026-06-29T19:00:00Z" "codex"
+write_baton "$LEGACY_TERMINAL_BOX/.dvandva/baton.json" "vadi" "human_decision"
+legacy_terminal_output="$(env DVANDVA_RUN_ID="alpha" timeout 3 bash -c 'cd "$1" && "$2" --role vadi --persist --interval 1 --max-wait 1' _ "$LEGACY_TERMINAL_BOX" "$SCRIPT" 2>&1)"
+legacy_terminal_exit=$?
+if [[ "$legacy_terminal_exit" -ne 124 ]]; then
+  echo "FAIL: legacy human_decision sibling must not fire split-brain; expected timeout exit 124, got $legacy_terminal_exit"
+  echo "$legacy_terminal_output"
+  failures=$((failures + 1))
+elif [[ "$legacy_terminal_output" == *"split_brain"* || "$legacy_terminal_output" != *"sibling_active_runs=0"* ]]; then
+  echo "FAIL: legacy human_decision sibling wrongly counted active or fired split_brain"
+  echo "$legacy_terminal_output"
+  failures=$((failures + 1))
+else
+  echo "PASS: legacy human_decision sibling with stale my-role assignee is terminal (no split-brain, not counted)"
+fi
+
+# Case 4 (regression boundary): a genuinely active, non-terminal sibling assigned to
+# my role must STILL fire exit 29 -- the terminal set is exactly done/human_decision/
+# human_question, so a non-terminal status like phase_review (not just implementing)
+# remains a live competing run. Guards against the fix over-skipping.
+REGRESSION_NONTERMINAL_BOX="$TMP_DIR/regression-nonterminal-box"
+write_named_observed_baton "$REGRESSION_NONTERMINAL_BOX/.dvandva/runs/alpha/baton.json" "alpha" "prativadi" "phase_review" "2026-06-29T19:30:00Z" "codex"
+write_named_observed_baton "$REGRESSION_NONTERMINAL_BOX/.dvandva/runs/beta/baton.json" "beta" "vadi" "phase_review" "2026-06-29T19:31:00Z" "claude"
+regression_nonterminal_output="$(env DVANDVA_RUN_ID="alpha" timeout 5 bash -c 'cd "$1" && "$2" --role vadi --persist --interval 1 --max-wait 1' _ "$REGRESSION_NONTERMINAL_BOX" "$SCRIPT" 2>&1)"
+regression_nonterminal_exit=$?
+if [[ "$regression_nonterminal_exit" -ne 29 ]]; then
+  echo "FAIL: non-terminal phase_review sibling assigned to my role must still fire exit 29, got $regression_nonterminal_exit"
+  echo "$regression_nonterminal_output"
+  failures=$((failures + 1))
+elif [[ "$regression_nonterminal_output" != *"split_brain"* || "$regression_nonterminal_output" != *"selected_run_id=alpha"* || "$regression_nonterminal_output" != *"sibling_run_id=beta"* ]]; then
+  echo "FAIL: non-terminal sibling split-brain output missing run identifiers"
+  echo "$regression_nonterminal_output"
+  failures=$((failures + 1))
+else
+  echo "PASS: non-terminal sibling assigned to my role still fires split-brain (exit 29)"
+fi
+
 persist_max_output="$("$SCRIPT" --role vadi --file "$BATON_WAIT" --persist --persist-max 1 --interval 1 --max-wait 1 2>&1)"
 persist_max_exit=$?
 if [[ "$persist_max_exit" -ne 23 ]]; then
