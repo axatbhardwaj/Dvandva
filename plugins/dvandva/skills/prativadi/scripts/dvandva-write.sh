@@ -29,6 +29,7 @@
 #   24 illegal state transition (incl. checkpoint and question-field rules)
 #   25 current baton exists but is unparseable (never overwritten)
 #   26 install failed (cp/mv error; baton unchanged)
+#   27 stale checkpoint (candidate is same or older than current baton)
 #   30 candidate installed but snapshot failed (baton IS updated)
 set -u
 
@@ -43,6 +44,13 @@ CANDIDATE_FILE="$2"
 is_safe_run_id() {
   local value="$1"
   [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [[ "$value" != *".."* ]]
+}
+
+named_run_dir_id() {
+  local path="$1"
+  if [[ "$path" =~ (^|/)\.dvandva/runs/([^/]+)/baton\.json$ ]]; then
+    printf '%s\n' "${BASH_REMATCH[2]}"
+  fi
 }
 
 v2_expected_assignee() {
@@ -83,6 +91,15 @@ case "$schema" in
     exit 23
     ;;
 esac
+
+named_run_id="$(named_run_dir_id "$BATON_FILE")"
+if [[ -n "$named_run_id" ]]; then
+  candidate_named_run_id="$(jq -r 'if (has("run_id") and (.run_id | type) == "string") then .run_id else "" end' "$CANDIDATE_FILE")"
+  if [[ "$schema" != "dvandva.baton.v2" || "$candidate_named_run_id" != "$named_run_id" ]]; then
+    echo "DVANDVA_WRITE bad_run_id_dir baton=$BATON_FILE candidate_run_id=$candidate_named_run_id expected_run_id=$named_run_id schema=$schema" >&2
+    exit 23
+  fi
+fi
 
 REQUIRED_KEYS=(schema updated_at mode run_mode phase total_phases status assignee current_engine review_target plan_ref master_plan_locked question resume_assignee resume_status disagreement_round disagreement_cap turn_cap branch checkpoint allow_commit allow_push allow_pr vadi_final_approval prativadi_final_approval final_commit pushed_ref summary changed_paths verification findings narrow_fixups vadi_counter deferred blockers next_action)
 if [[ "$schema" == "dvandva.baton.v2" ]]; then
@@ -566,15 +583,19 @@ else
   fi
 
   # Precedence is load-bearing — do not reorder:
-  #   1. checkpoint+1   2. same-status team-sync gate   3. from-human_question
-  #   4. to-human_decision (universal)   5. from-human_decision
-  #   6. to-human_question (spec-only, unlocked, fields set)   7. edge whitelist
+  #   1. stale checkpoint guard   2. checkpoint+1
+  #   3. same-status team-sync gate   4. from-human_question
+  #   5. to-human_decision (universal)   6. from-human_decision
+  #   7. to-human_question (spec-only, unlocked, fields set)   8. edge whitelist
   # e.g. moving the same-status ban below the human branches would silently
   # legalize human_decision->human_decision rewrites.
   if [[ "$cur_schema" != "$schema" ]]; then
     reason="schema_change current=$cur_schema candidate=$schema"
   elif [[ "$schema" == "dvandva.baton.v2" && "$cur_run_id" != "$new_run_id" ]]; then
     reason="run_id_change current=$cur_run_id candidate=$new_run_id"
+  elif [[ "$new_checkpoint" -le "$cur_checkpoint" ]]; then
+    echo "DVANDVA_WRITE stale_checkpoint current=$cur_checkpoint candidate=$new_checkpoint" >&2
+    exit 27
   elif [[ "$new_checkpoint" -ne $((cur_checkpoint + 1)) ]]; then
     reason="checkpoint must be $((cur_checkpoint + 1)), got $new_checkpoint"
   elif [[ "$new_status" == "$cur_status" ]]; then

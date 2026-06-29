@@ -699,20 +699,56 @@ fi
 RUNS_BOX="$(new_box run-isolation)"
 ALPHA_DIR="$RUNS_BOX/.dvandva/runs/alpha"
 BETA_DIR="$RUNS_BOX/.dvandva/runs/beta"
-make_baton "$ALPHA_DIR/baton.next.json" "spec_drafting" "vadi" 0 '.branch = "alpha-branch"'
-make_baton "$BETA_DIR/baton.next.json" "spec_drafting" "vadi" 0 '.branch = "beta-branch"'
-run_case "run alpha scaffold writes only alpha baton" 0 \
+make_baton_v2 "$ALPHA_DIR/baton.next.json" "research_drafting" "vadi" 0 '.branch = "alpha-branch" | .run_id = "alpha"'
+make_baton_v2 "$BETA_DIR/baton.next.json" "research_drafting" "vadi" 0 '.branch = "beta-branch" | .run_id = "beta"'
+run_case "run alpha v2 scaffold writes only alpha baton" 0 \
   "$SCRIPT" "$ALPHA_DIR/baton.json" "$ALPHA_DIR/baton.next.json"
-run_case "run beta scaffold writes only beta baton" 0 \
+run_case "run beta v2 scaffold writes only beta baton" 0 \
   "$SCRIPT" "$BETA_DIR/baton.json" "$BETA_DIR/baton.next.json"
-if [[ -f "$ALPHA_DIR/baton.json" && -f "$ALPHA_DIR/history/0-spec_drafting-vadi.json" \
-  && -f "$BETA_DIR/baton.json" && -f "$BETA_DIR/history/0-spec_drafting-vadi.json" \
+if [[ -f "$ALPHA_DIR/baton.json" && -f "$ALPHA_DIR/history/0-research_drafting-vadi.json" \
+  && -f "$BETA_DIR/baton.json" && -f "$BETA_DIR/history/0-research_drafting-vadi.json" \
   && ! -e "$RUNS_BOX/.dvandva/history" ]]; then
   echo "PASS: two named runs keep batons and histories isolated"
 else
   echo "FAIL: two named runs collided or wrote shared history"
   failures=$((failures + 1))
 fi
+
+BOX="$(new_box legacy-v1-dot-dvandva)"
+mkdir -p "$BOX/.dvandva"
+make_baton "$BOX/.dvandva/baton.next.json" "spec_drafting" "vadi" 0
+run_case "legacy .dvandva/baton.json v1 scaffold remains allowed" 0 \
+  "$SCRIPT" "$BOX/.dvandva/baton.json" "$BOX/.dvandva/baton.next.json"
+
+BOX="$(new_box named-run-v1-schema)"
+mkdir -p "$BOX/.dvandva/runs/alpha"
+make_baton "$BOX/.dvandva/runs/alpha/baton.next.json" "spec_drafting" "vadi" 0
+run_case_contains "named run v1 scaffold exits 23" 23 "DVANDVA_WRITE bad_run_id_dir" \
+  "$SCRIPT" "$BOX/.dvandva/runs/alpha/baton.json" "$BOX/.dvandva/runs/alpha/baton.next.json"
+
+BOX="$(new_box named-run-v2-run-id-mismatch)"
+mkdir -p "$BOX/.dvandva/runs/alpha"
+make_baton_v2 "$BOX/.dvandva/runs/alpha/baton.next.json" "research_drafting" "vadi" 0 '.run_id = "beta"'
+run_case_contains "named run v2 run_id mismatch exits 23" 23 "DVANDVA_WRITE bad_run_id_dir" \
+  "$SCRIPT" "$BOX/.dvandva/runs/alpha/baton.json" "$BOX/.dvandva/runs/alpha/baton.next.json"
+
+BOX="$(new_box named-run-v2-run-id-null)"
+mkdir -p "$BOX/.dvandva/runs/alpha"
+make_baton_v2 "$BOX/.dvandva/runs/alpha/baton.next.json" "research_drafting" "vadi" 0 '.run_id = null'
+run_case_contains "named run v2 null run_id exits 23" 23 "DVANDVA_WRITE bad_run_id_dir" \
+  "$SCRIPT" "$BOX/.dvandva/runs/alpha/baton.json" "$BOX/.dvandva/runs/alpha/baton.next.json"
+
+BOX="$(new_box named-run-v2-run-id-missing)"
+mkdir -p "$BOX/.dvandva/runs/alpha"
+make_baton_v2 "$BOX/.dvandva/runs/alpha/baton.next.json" "research_drafting" "vadi" 0 'del(.run_id)'
+run_case_contains "named run v2 missing run_id exits 23" 23 "DVANDVA_WRITE bad_run_id_dir" \
+  "$SCRIPT" "$BOX/.dvandva/runs/alpha/baton.json" "$BOX/.dvandva/runs/alpha/baton.next.json"
+
+BOX="$(new_box named-run-v2-run-id-empty)"
+mkdir -p "$BOX/.dvandva/runs/alpha"
+make_baton_v2 "$BOX/.dvandva/runs/alpha/baton.next.json" "research_drafting" "vadi" 0 '.run_id = ""'
+run_case_contains "named run v2 empty run_id exits 23" 23 "DVANDVA_WRITE bad_run_id_dir" \
+  "$SCRIPT" "$BOX/.dvandva/runs/alpha/baton.json" "$BOX/.dvandva/runs/alpha/baton.next.json"
 
 BOX="$(new_box scaffold-bad)"
 make_baton "$BOX/baton.next.json" "implementing" "vadi" 0
@@ -1847,6 +1883,24 @@ else
   echo "FAIL: rejected write modified the baton"
   failures=$((failures + 1))
 fi
+
+BOX="$(new_box stale-checkpoint-same)"
+make_baton "$BOX/baton.json" "spec_drafting" "vadi" 4
+make_baton "$BOX/baton.next.json" "spec_review" "prativadi" 4
+run_case_contains "same checkpoint exits 27 stale_checkpoint" 27 "stale_checkpoint" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box stale-checkpoint-lower)"
+make_baton "$BOX/baton.json" "spec_drafting" "vadi" 4
+make_baton "$BOX/baton.next.json" "spec_review" "prativadi" 3
+run_case_contains "lower checkpoint exits 27 stale_checkpoint" 27 "stale_checkpoint" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box future-checkpoint-plus-two)"
+make_baton "$BOX/baton.json" "spec_drafting" "vadi" 4
+make_baton "$BOX/baton.next.json" "spec_review" "prativadi" 6
+run_case_contains "checkpoint plus two remains illegal_transition" 24 "DVANDVA_WRITE illegal_transition" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 # --- universal escalation and human resume ---
 
