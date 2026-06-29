@@ -64,9 +64,11 @@ gate `dvandva-preflight.sh --role <role>`. The preflight resolves the active run
 selector-first (stopping on exit 12 ASK), then runs the hook stage. The hook
 stage detects Dvandva hook adoption status via a functional probe: it installs a
 delegating wrapper under `.dvandva/githooks/` (gitignored) and sets only
-repo-local `git config core.hooksPath .dvandva/githooks`. A foreign `core.hooksPath`
-(e.g., set by Husky) must not be modified; the wrapper coexists by delegating to
-the prior hooks chain after the gate runs. The installer records
+repo-local `git config core.hooksPath .dvandva/githooks`. When a prior `core.hooksPath`
+exists (e.g., set by Husky), the installer records it as `dvandva.priorHooksPath`, the
+delegating wrapper execs the prior hook chain on every commit so the foreign owner keeps
+firing, and the prior `core.hooksPath` is restored on uninstall — the foreign owner is
+preserved through record, delegate, and restore. The installer records
 `dvandva.hooksAdoptedAt` as the local drift baseline.
 The delegating `pre-commit` wrapper runs the gate then execs the prior hook; the
 `prepare-commit-msg` wrapper delegates first then stamps `Dvandva-Checkpoint`.

@@ -62,8 +62,8 @@ for file in "$VADI" "$PRATIVADI"; do
     'detects?[[:space:]]+Dvandva hook adoption|hook adoption status' \
     "$role skill detects hook adoption instead of forcing it"
   require_match "$file" \
-    'foreign[[:space:]-]+hooksPath.*must not be modified|must not modify.*foreign[[:space:]-]+hooksPath' \
-    "$role skill preserves foreign hooksPath values"
+    'dvandva\.priorHooksPath' \
+    "$role skill records prior hooksPath as dvandva.priorHooksPath and restores on uninstall"
   require_match "$file" \
     'Checkpoint commits require Dvandva hook adoption' \
     "$role skill gates checkpoint commits on adopted hooks"
@@ -88,6 +88,16 @@ reject_match "$STATE_REF" \
 require_match "$STATE_REF" \
   'Checkpoint commits require Dvandva hook adoption' \
   "state reference gates checkpoint commits on adopted hooks"
+
+# Static README coverage: reject stale Run-4 guidance that predates the
+# delegating-wrapper coexistence model.
+README="$ROOT_DIR/README.md"
+reject_match "$README" \
+  'bash[[:space:]]+scripts/install-dvandva-hooks\.sh' \
+  "README does not document bash scripts/install-dvandva-hooks.sh as a user instruction"
+reject_match "$README" \
+  'core\.hooksPath=\.githooks' \
+  "README does not document core.hooksPath=.githooks as the adoption target"
 
 if [[ "$failures" -gt 0 ]]; then
   exit 1
