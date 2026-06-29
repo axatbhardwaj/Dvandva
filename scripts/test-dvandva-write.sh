@@ -2192,7 +2192,7 @@ fi
 #   (b) A negative value like "-5" makes age(>=0) always satisfy the comparison
 #       → immediate steal of ANY held (even live) lock → write succeeds, defeating
 #       the locking protocol entirely.
-# Fix: validate LOCK_TIMEOUT as ^[0-9]+$ before the lock loop; emit
+# Fix: validate LOCK_TIMEOUT as ^[1-9][0-9]*$ before the lock loop; emit
 # "DVANDVA_WRITE bad_lock_timeout" and exit 2 for any invalid value.
 
 # Case (a): non-numeric DVANDVA_LOCK_TIMEOUT with a live contended lock.
@@ -2275,7 +2275,25 @@ else
   failures=$((failures + 1))
 fi
 
-# Case (e): DVANDVA_LOCK_TIMEOUT=0 - zero timeout means age(0) >= 0 is always true,
+# Case (e): DVANDVA_LOCK_TIMEOUT=07 - another leading-zero positive-looking value.
+# This proves the canonical-positive-decimal guard rejects the whole leading-zero
+# class, not just the octal-invalid 08/09 values.
+BOX="$(new_box lock-timeout-leading-zero-07)"
+make_baton "$BOX/baton.json" "implementing" "vadi" 4
+make_baton "$BOX/baton.next.json" "phase_review" "prativadi" 5
+mkdir -p "$BOX/.baton.lock.d"
+printf '%s' "$(date +%s)" > "$BOX/.baton.lock.d/started_at"
+printf '%s' "foreign-token-07" > "$BOX/.baton.lock.d/owner"
+lock_07_output="$(DVANDVA_LOCK_TIMEOUT=07 timeout 3 "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json" 2>&1)"
+lock_07_exit=$?
+if [[ "$lock_07_exit" -eq 2 && "$lock_07_output" == *"bad_lock_timeout"* ]]; then
+  echo "PASS: DVANDVA_LOCK_TIMEOUT=07 fails closed exit 2 with bad_lock_timeout"
+else
+  echo "FAIL: DVANDVA_LOCK_TIMEOUT=07 expected exit 2 + bad_lock_timeout, got exit=$lock_07_exit output='$lock_07_output'"
+  failures=$((failures + 1))
+fi
+
+# Case (f): DVANDVA_LOCK_TIMEOUT=0 - zero timeout means age(0) >= 0 is always true,
 # so any held lock (even a fresh live one) is stolen immediately → baton installs → rc=0.
 # This reopens the exact lock-bypass the negative-value fix was supposed to close.
 # Fixed: ^[1-9][0-9]*$ rejects 0 → exit 2 + "bad_lock_timeout".
@@ -2301,7 +2319,7 @@ else
   failures=$((failures + 1))
 fi
 
-# Case (f): DVANDVA_LOCK_TIMEOUT=00 - double-zero leading form; 00 is valid octal (= 0)
+# Case (g): DVANDVA_LOCK_TIMEOUT=00 - double-zero leading form; 00 is valid octal (= 0)
 # so [[ age -ge 00 ]] ≡ [[ age -ge 0 ]] → instant steal, same bypass as case (e).
 # Fixed: ^[1-9][0-9]*$ rejects 00 → exit 2 + "bad_lock_timeout".
 BOX="$(new_box lock-timeout-double-zero)"
@@ -2326,7 +2344,7 @@ else
   failures=$((failures + 1))
 fi
 
-# Case (g): valid DVANDVA_LOCK_TIMEOUT=5 (canonical positive decimal) must still be
+# Case (h): valid DVANDVA_LOCK_TIMEOUT=5 (canonical positive decimal) must still be
 # accepted; uncontended write must succeed so we don't break the normal code path.
 BOX="$(new_box lock-timeout-valid-5)"
 make_baton "$BOX/baton.json" "implementing" "vadi" 4
