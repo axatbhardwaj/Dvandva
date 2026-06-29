@@ -23,11 +23,15 @@
 #   21 baton file missing
 #   22 baton JSON invalid
 #   23 persistent wait exceeded --persist-max
+#   29 split-brain detected: selected run waits on peer while sibling waits on me
 #   2  usage error
 set -u
 
 ROLE=""
 BATON_SOURCE="legacy"
+SELECTED_BY="legacy"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RESOLVER_SCRIPT="$SCRIPT_DIR/dvandva-resolve.sh"
 is_safe_run_id() {
   local value="$1"
   [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [[ "$value" != *".."* ]]
@@ -45,6 +49,7 @@ elif [[ -n "${DVANDVA_RUN_ID:-}" ]]; then
 else
   BATON_FILE=".dvandva/baton.json"
 fi
+SELECTED_BY="$BATON_SOURCE"
 INTERVAL=60
 MAX_WAIT=540
 ALLOW_MISSING=0
@@ -174,6 +179,122 @@ record_wait_elapsed() {
   enforce_persist_max
 }
 
+contains_role() {
+  local roles_csv="$1"
+  [[ ",$roles_csv," == *",$ROLE,"* ]]
+}
+
+peer_role() {
+  if [[ "$ROLE" == "vadi" ]]; then
+    printf '%s' "prativadi"
+  else
+    printf '%s' "vadi"
+  fi
+}
+
+derive_run_id() {
+  local file="$1"
+  local baton_run_id="${2:-}"
+  if [[ -n "$baton_run_id" ]]; then
+    printf '%s' "$baton_run_id"
+  elif [[ "$file" == ".dvandva/baton.json" ]]; then
+    printf '%s' "legacy"
+  elif [[ "$file" == */baton.json ]]; then
+    printf '%s' "$(basename "$(dirname "$file")")"
+  else
+    printf '%s' "unknown"
+  fi
+}
+
+derive_dvandva_root() {
+  local file="$1"
+  case "$file" in
+    .dvandva/baton.json|.dvandva/runs/*/baton.json)
+      printf '%s' ".dvandva"
+      ;;
+    */.dvandva/baton.json)
+      printf '%s' "${file%/baton.json}"
+      ;;
+    */.dvandva/runs/*/baton.json)
+      printf '%s' "${file%/runs/*/baton.json}"
+      ;;
+    *)
+      printf '%s' ""
+      ;;
+  esac
+}
+
+scan_sibling_runs() {
+  local selected_run_id="$1"
+  local selected_assignee="$2"
+  local sibling_root sibling_file sibling_state sibling_status sibling_assignee sibling_active_roles sibling_run_id
+  SIBLING_ACTIVE_COUNT=0
+  SPLIT_BRAIN_SIBLING_RUN_ID=""
+  sibling_root="$(derive_dvandva_root "$BATON_FILE")"
+  if [[ -z "$sibling_root" ]]; then
+    return 0
+  fi
+
+  shopt -s nullglob
+  for sibling_file in "$sibling_root"/runs/*/baton.json; do
+    sibling_run_id="$(basename "$(dirname "$sibling_file")")"
+    if [[ -n "$selected_run_id" && "$sibling_run_id" == "$selected_run_id" ]]; then
+      continue
+    fi
+    sibling_state="$(jq -r '[.status // "", .assignee // "", ((.active_roles // []) | join(","))] | join("\u001f")' "$sibling_file" 2>/dev/null)" || continue
+    IFS=$'\x1f' read -r sibling_status sibling_assignee sibling_active_roles <<< "$sibling_state"
+    if [[ "$sibling_status" == "done" ]]; then
+      continue
+    fi
+    SIBLING_ACTIVE_COUNT=$((SIBLING_ACTIVE_COUNT + 1))
+    if [[ "${DVANDVA_CONCURRENT:-0}" != "1" ]] && [[ "$selected_assignee" == "$(peer_role)" ]] && { [[ "$sibling_assignee" == "$ROLE" ]] || contains_role "$sibling_active_roles"; }; then
+      SPLIT_BRAIN_SIBLING_RUN_ID="$sibling_run_id"
+      shopt -u nullglob
+      return 0
+    fi
+  done
+  shopt -u nullglob
+}
+
+heartbeat_selector_meta() {
+  local run_id="$1"
+  printf 'run_id=%s file=%s selected_by=%s sibling_active_runs=%s' \
+    "$run_id" "$BATON_FILE" "$SELECTED_BY" "$SIBLING_ACTIVE_COUNT"
+}
+
+resolve_default_baton() {
+  [[ "$BATON_SOURCE" == "legacy" ]] || return 0
+  [[ -x "$RESOLVER_SCRIPT" ]] || { echo "ERROR: missing resolver at $RESOLVER_SCRIPT" >&2; exit 2; }
+
+  local resolver_stdout resolver_rc resolver_stderr_file
+  resolver_stderr_file="$(mktemp)"
+  resolver_stdout="$("$RESOLVER_SCRIPT" --role "$ROLE" --cwd "$PWD" 2>"$resolver_stderr_file")"
+  resolver_rc=$?
+  if [[ -s "$resolver_stderr_file" ]]; then
+    cat "$resolver_stderr_file" >&2
+  fi
+  rm -f "$resolver_stderr_file"
+
+  case "$resolver_rc:$resolver_stdout" in
+    0:RESOLVED\ *)
+      BATON_FILE="${resolver_stdout#RESOLVED }"
+      SELECTED_BY="resolve"
+      ;;
+    0:CREATE\ *)
+      BATON_FILE="${resolver_stdout#CREATE }"
+      SELECTED_BY="resolve_create"
+      ;;
+    12:ASK\ *)
+      echo "DVANDVA_WAIT selection_required role=$ROLE ${resolver_stdout}" >&2
+      exit 2
+      ;;
+    *)
+      [[ -n "$resolver_stdout" ]] && echo "$resolver_stdout" >&2
+      exit "${resolver_rc:-2}"
+      ;;
+  esac
+}
+
 wait_one_interval() {
   # Interruptible sleep: wake early on baton-directory events when
   # inotifywait exists. Watch the directory, not the file — an atomic
@@ -195,8 +316,12 @@ wait_one_interval() {
   fi
 }
 
+resolve_default_baton
+
 while true; do
   if [[ ! -f "$BATON_FILE" ]]; then
+    selected_run_id="$(derive_run_id "$BATON_FILE")"
+    scan_sibling_runs "$selected_run_id" ""
     if [[ "$ALLOW_MISSING" -eq 1 ]]; then
       if [[ "$elapsed" -ge "$MAX_WAIT" ]]; then
         if [[ "$PERSIST" -eq 1 ]]; then
@@ -204,7 +329,7 @@ while true; do
             echo "ERROR: continuous wait mode requires --interval > 0 when the baton is not ready; use --finite for an immediate heartbeat" >&2
             exit 2
           fi
-          echo "DVANDVA_WAIT heartbeat role=$ROLE waiting_for=baton file=$BATON_FILE elapsed=${elapsed}s"
+          echo "DVANDVA_WAIT heartbeat role=$ROLE waiting_for=baton $(heartbeat_selector_meta "$selected_run_id") elapsed=${elapsed}s"
           elapsed=0
           wait_one_interval
           record_wait_elapsed
@@ -221,7 +346,7 @@ while true; do
     exit 21
   fi
 
-  JQ_STATE='[.assignee // "", .status // "", .phase // "", (.checkpoint // 0 | tostring), .question // "", .resume_assignee // "", .resume_status // "", ((.active_roles // []) | join(","))] | join("\u001f")'
+  JQ_STATE='[.run_id // "", .assignee // "", .status // "", .phase // "", (.checkpoint // 0 | tostring), .question // "", .resume_assignee // "", .resume_status // "", ((.active_roles // []) | join(",")), .updated_at // "", .current_engine // ""] | join("\u001f")'
   if ! state="$(jq -r "$JQ_STATE" "$BATON_FILE" 2>/dev/null)"; then
     # Torn-read tolerance: a concurrent writer may be mid-replace. One retry.
     sleep 1
@@ -231,7 +356,8 @@ while true; do
     fi
   fi
 
-  IFS=$'\x1f' read -r assignee status phase checkpoint question resume_assignee resume_status active_roles <<< "$state"
+  IFS=$'\x1f' read -r baton_run_id assignee status phase checkpoint question resume_assignee resume_status active_roles updated_at current_engine <<< "$state"
+  selected_run_id="$(derive_run_id "$BATON_FILE" "$baton_run_id")"
 
   case "$status" in
     done)
@@ -264,9 +390,12 @@ while true; do
         echo "ERROR: continuous wait mode requires --interval > 0 when the baton is not ready; use --finite for an immediate heartbeat" >&2
         exit 2
       fi
-      updated_at="$(jq -r '.updated_at // ""' "$BATON_FILE" 2>/dev/null || true)"
-      current_engine="$(jq -r '.current_engine // ""' "$BATON_FILE" 2>/dev/null || true)"
-      echo "DVANDVA_WAIT heartbeat role=$ROLE waiting_on=$assignee phase=$phase status=$status checkpoint=$checkpoint active_roles=$active_roles elapsed=${elapsed}s last_seen_engine=$current_engine updated_at=$updated_at"
+      scan_sibling_runs "$selected_run_id" "$assignee"
+      if [[ -n "$SPLIT_BRAIN_SIBLING_RUN_ID" ]]; then
+        echo "DVANDVA_WAIT split_brain role=$ROLE selected_run_id=$selected_run_id sibling_run_id=$SPLIT_BRAIN_SIBLING_RUN_ID waiting_on=$assignee $(heartbeat_selector_meta "$selected_run_id")"
+        exit 29
+      fi
+      echo "DVANDVA_WAIT heartbeat role=$ROLE waiting_on=$assignee phase=$phase status=$status checkpoint=$checkpoint active_roles=$active_roles $(heartbeat_selector_meta "$selected_run_id") elapsed=${elapsed}s last_seen_engine=$current_engine updated_at=$updated_at"
       elapsed=0
       wait_one_interval
       record_wait_elapsed

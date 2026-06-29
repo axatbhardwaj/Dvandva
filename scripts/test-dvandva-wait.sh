@@ -70,6 +70,31 @@ write_observed_baton() {
 JSON
 }
 
+write_named_observed_baton() {
+  local file="$1"
+  local run_id="$2"
+  local assignee="$3"
+  local status="$4"
+  local updated_at="$5"
+  local current_engine="$6"
+  mkdir -p "$(dirname "$file")"
+  cat > "$file" <<JSON
+{
+  "schema": "dvandva.baton.v2",
+  "run_id": "$run_id",
+  "assignee": "$assignee",
+  "status": "$status",
+  "phase": 2,
+  "checkpoint": 8,
+  "question": null,
+  "resume_assignee": null,
+  "resume_status": null,
+  "updated_at": "$updated_at",
+  "current_engine": "$current_engine"
+}
+JSON
+}
+
 write_active_roles_baton() {
   local file="$1"
   mkdir -p "$(dirname "$file")"
@@ -148,6 +173,12 @@ write_baton "$BATON_WAIT" "prativadi" "phase_review"
 run_case "returns 20 on timeout while assigned away" 20 \
   "$SCRIPT" --role vadi --file "$BATON_WAIT" --interval 0 --max-wait 0 --finite
 
+RESOLVE_BOX="$TMP_DIR/resolve-box"
+write_named_observed_baton "$RESOLVE_BOX/.dvandva/runs/alpha/baton.json" "alpha" "vadi" "implementing" "2026-06-29T10:00:00Z" "codex"
+write_baton "$RESOLVE_BOX/.dvandva/baton.json" "human" "done"
+run_case "no-selector wait delegates to named-run resolver before legacy baton" 0 \
+  env -i PATH="$PATH" HOME="${HOME:-$TMP_DIR}" bash -c 'cd "$1" && "$2" --role vadi --interval 0 --max-wait 0' _ "$RESOLVE_BOX" "$SCRIPT"
+
 BATON_CONTINUOUS="$TMP_DIR/continuous.json"
 write_baton "$BATON_CONTINUOUS" "prativadi" "phase_review"
 ( sleep 2 && write_baton "$BATON_CONTINUOUS" "vadi" "implementing" ) &
@@ -173,6 +204,53 @@ elif [[ "$heartbeat_output" != *"last_seen_engine=codex"* || "$heartbeat_output"
   failures=$((failures + 1))
 else
   echo "PASS: --persist heartbeat includes last-seen metadata"
+fi
+
+HEARTBEAT_RESOLVE_BOX="$TMP_DIR/heartbeat-resolve-box"
+write_named_observed_baton "$HEARTBEAT_RESOLVE_BOX/.dvandva/runs/alpha/baton.json" "alpha" "prativadi" "phase_review" "2026-06-29T14:09:08Z" "codex"
+heartbeat_resolve_output="$(env -i PATH="$PATH" HOME="${HOME:-$TMP_DIR}" timeout 3 bash -c 'cd "$1" && "$2" --role vadi --persist --interval 1 --max-wait 1' _ "$HEARTBEAT_RESOLVE_BOX" "$SCRIPT" 2>&1)"
+heartbeat_resolve_exit=$?
+if [[ "$heartbeat_resolve_exit" -ne 124 ]]; then
+  echo "FAIL: resolver heartbeat selector metadata expected timeout exit 124, got $heartbeat_resolve_exit"
+  echo "$heartbeat_resolve_output"
+  failures=$((failures + 1))
+elif [[ "$heartbeat_resolve_output" != *"run_id=alpha"* || "$heartbeat_resolve_output" != *"file=.dvandva/runs/alpha/baton.json"* || "$heartbeat_resolve_output" != *"selected_by=resolve"* || "$heartbeat_resolve_output" != *"sibling_active_runs=0"* ]]; then
+  echo "FAIL: resolver heartbeat missing selector metadata"
+  echo "$heartbeat_resolve_output"
+  failures=$((failures + 1))
+else
+  echo "PASS: resolver heartbeat includes selector metadata"
+fi
+
+SPLIT_BRAIN_BOX="$TMP_DIR/split-brain-box"
+write_named_observed_baton "$SPLIT_BRAIN_BOX/.dvandva/runs/alpha/baton.json" "alpha" "prativadi" "phase_review" "2026-06-29T15:00:00Z" "codex"
+write_named_observed_baton "$SPLIT_BRAIN_BOX/.dvandva/runs/beta/baton.json" "beta" "vadi" "implementing" "2026-06-29T15:01:00Z" "claude"
+split_brain_output="$(env DVANDVA_RUN_ID="alpha" bash -c 'cd "$1" && "$2" --role vadi --persist --interval 1 --max-wait 1' _ "$SPLIT_BRAIN_BOX" "$SCRIPT" 2>&1)"
+split_brain_exit=$?
+if [[ "$split_brain_exit" -ne 29 ]]; then
+  echo "FAIL: split-brain guard expected exit 29, got $split_brain_exit"
+  echo "$split_brain_output"
+  failures=$((failures + 1))
+elif [[ "$split_brain_output" != *"split_brain"* || "$split_brain_output" != *"selected_run_id=alpha"* || "$split_brain_output" != *"sibling_run_id=beta"* ]]; then
+  echo "FAIL: split-brain guard output missing run identifiers"
+  echo "$split_brain_output"
+  failures=$((failures + 1))
+else
+  echo "PASS: split-brain guard exits 29 with selected and sibling run ids"
+fi
+
+split_brain_suppressed_output="$(env DVANDVA_RUN_ID="alpha" DVANDVA_CONCURRENT=1 timeout 3 bash -c 'cd "$1" && "$2" --role vadi --persist --interval 1 --max-wait 1' _ "$SPLIT_BRAIN_BOX" "$SCRIPT" 2>&1)"
+split_brain_suppressed_exit=$?
+if [[ "$split_brain_suppressed_exit" -ne 124 ]]; then
+  echo "FAIL: DVANDVA_CONCURRENT=1 suppression expected timeout exit 124, got $split_brain_suppressed_exit"
+  echo "$split_brain_suppressed_output"
+  failures=$((failures + 1))
+elif [[ "$split_brain_suppressed_output" != *"run_id=alpha"* || "$split_brain_suppressed_output" != *"selected_by=run_id"* || "$split_brain_suppressed_output" != *"sibling_active_runs=1"* ]]; then
+  echo "FAIL: DVANDVA_CONCURRENT=1 suppression heartbeat missing selector metadata"
+  echo "$split_brain_suppressed_output"
+  failures=$((failures + 1))
+else
+  echo "PASS: DVANDVA_CONCURRENT=1 suppresses split-brain exit"
 fi
 
 persist_max_output="$("$SCRIPT" --role vadi --file "$BATON_WAIT" --persist --persist-max 1 --interval 1 --max-wait 1 2>&1)"
