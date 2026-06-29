@@ -84,6 +84,9 @@ for file in "$VADI" "$PRATIVADI"; do
   require_match "$file" \
     'run_explainer_reviews' \
     "$role skill surfaces and gates final run explainer reviews"
+  require_match "$file" \
+    'approval and explainer-review ownership|explainer-review and approval ownership' \
+    "$role skill says helper-enforced ownership covers explainer reviews"
 done
 
 for file in "$COMMAND_VADI" "$COMMAND_PRATIVADI"; do
@@ -149,6 +152,9 @@ require_match "$STATE_REF" \
 require_match "$STATE_REF" \
   'run_explainer_reviews.*vadi.*prativadi|vadi.*prativadi.*run_explainer_reviews' \
   "state reference requires both final explainer reviews"
+require_match "$STATE_REF" \
+  'approval and explainer-review ownership|explainer-review ownership|run_explainer_reviews.{0,120}DVANDVA_ROLE.{0,120}ownership|DVANDVA_ROLE.{0,120}run_explainer_reviews.{0,120}ownership' \
+  "state reference documents DVANDVA_ROLE ownership for explainer reviews"
 
 # Static README coverage: reject stale Run-4 guidance that predates the
 # delegating-wrapper coexistence model.
@@ -180,6 +186,9 @@ require_match "$README" \
 require_match "$README" \
   'termination_review' \
   "README documents multipart termination review"
+require_match "$README" \
+  'approval and explainer-review ownership|explainer-review ownership|run_explainer_reviews.{0,120}DVANDVA_ROLE.{0,120}ownership|DVANDVA_ROLE.{0,120}run_explainer_reviews.{0,120}ownership' \
+  "README documents DVANDVA_ROLE ownership for explainer reviews"
 
 for file in "$ROOT_DIR/product.md" "$ROOT_DIR/docs/protocol/local-baton-channel.md" "$ROOT_DIR/plugins/dvandva/references/local-baton-channel.md"; do
   label="${file#$ROOT_DIR/}"

@@ -1763,8 +1763,10 @@ for edge in $V2_EDGES; do
   fi
   if [[ "$edge" == "termination_review:done" ]]; then
     cur_extras+=('.active_roles = ["vadi", "prativadi"]')
+    cur_extras+=('.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"')
     cur_extras+=('.vadi_final_approval = true')
     cur_extras+=('.prativadi_final_approval = true')
+    cur_extras+=("$(v2_run_explainer_reviews_filter)")
     extras+=('.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"')
     extras+=('.vadi_final_approval = true')
     extras+=('.prativadi_final_approval = true')
@@ -2052,8 +2054,10 @@ run_case_contains "v2 termination_review keeps both roles polling" 23 "bad_activ
 BOX="$(new_box v2-done-valid-run-explainer)"
 make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
   '.active_roles = ["vadi", "prativadi"]' \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
   '.vadi_final_approval = true' \
-  '.prativadi_final_approval = true'
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)"
 make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
   '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
   '.vadi_final_approval = true' \
@@ -2066,8 +2070,10 @@ for done_owner in human team vadi prativadi; do
   BOX="$(new_box "v2-done-accepts-$done_owner")"
   make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
     '.active_roles = ["vadi", "prativadi"]' \
+    '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
     '.vadi_final_approval = true' \
-    '.prativadi_final_approval = true'
+    '.prativadi_final_approval = true' \
+    "$(v2_run_explainer_reviews_filter)"
   make_baton_v2 "$BOX/baton.next.json" "done" "$done_owner" 5 \
     '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
     '.vadi_final_approval = true' \
@@ -2171,6 +2177,96 @@ make_baton_v2 "$BOX/baton.next.json" "done" "team" 5 \
   "$(v2_run_explainer_reviews_filter)" \
   '.run_explainer_reviews[1].evidence_refs = []'
 run_case_contains "v2 done requires run explainer review evidence" 23 "DVANDVA_WRITE bad_run_explainer_reviews" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-done-rejects-forged-prativadi-run-explainer-review)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "team" 5 \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)" \
+  '.run_explainer_reviews[1].summary = "FABRICATED by vadi."'
+run_case_contains "v2 vadi cannot forge prativadi run explainer review" 24 "run explainer review ownership" \
+  env DVANDVA_ROLE=vadi "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-termination-review-allows-vadi-own-run-explainer-review)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)" \
+  '.run_explainer_reviews |= map(select(.role == "prativadi"))'
+make_baton_v2 "$BOX/baton.next.json" "termination_review" "team" 5 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Vadi adds only its own run explainer review."' \
+  '.next_action = "Team: prativadi review was already installed; vadi review is now installed."' \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)"
+run_case "v2 vadi can add its own run explainer review" 0 \
+  env DVANDVA_ROLE=vadi "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-termination-review-allows-prativadi-own-run-explainer-review)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)" \
+  '.run_explainer_reviews |= map(select(.role == "vadi"))'
+make_baton_v2 "$BOX/baton.next.json" "termination_review" "team" 5 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Prativadi adds only its own run explainer review."' \
+  '.next_action = "Team: vadi review was already installed; prativadi review is now installed."' \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)"
+run_case "v2 prativadi can add its own run explainer review" 0 \
+  env DVANDVA_ROLE=prativadi "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-termination-review-rejects-vadi-editing-prativadi-run-explainer-review)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)" \
+  '.run_explainer_reviews |= map(select(.role == "prativadi"))'
+make_baton_v2 "$BOX/baton.next.json" "termination_review" "team" 5 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Vadi tries to rewrite prativadi review while adding its own."' \
+  '.next_action = "Team: this must fail because peer review entries are role-owned."' \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)" \
+  '.run_explainer_reviews[1].summary = "Mutated by vadi."'
+run_case_contains "v2 vadi cannot edit prativadi run explainer review" 24 "run explainer review ownership" \
+  env DVANDVA_ROLE=vadi "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-termination-review-requires-role-for-run-explainer-review-change)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "termination_review" "team" 5 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "A review entry change without DVANDVA_ROLE must fail."' \
+  '.next_action = "Team: retry with the writing role exported."' \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)" \
+  '.run_explainer_reviews |= map(select(.role == "vadi"))'
+run_case_contains "v2 run explainer review changes require DVANDVA_ROLE" 24 "run explainer review ownership" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-done-rejects-missing-final-approval)"

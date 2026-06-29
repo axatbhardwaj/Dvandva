@@ -842,11 +842,30 @@ else
     fi
   fi
 
+  review_ownership_reason=""
+  if [[ "$schema" == "dvandva.baton.v2" ]]; then
+    writer_role="${DVANDVA_ROLE:-}"
+    if ! jq -e -n --arg role "$writer_role" --slurpfile current "$BATON_FILE" --slurpfile candidate "$CANDIDATE_FILE" '
+      def reviews($doc):
+        if (($doc.run_explainer_reviews? // []) | type) == "array" then
+          ($doc.run_explainer_reviews? // [])
+        else
+          []
+        end;
+      def protected_reviews($doc):
+        [ reviews($doc)[]? | select((.role // "") != $role) | tojson ] | sort;
+      protected_reviews($current[0]) == protected_reviews($candidate[0])
+    ' >/dev/null 2>&1; then
+      review_ownership_reason="run explainer review ownership requires DVANDVA_ROLE=vadi/prativadi and only that role may change its own run_explainer_reviews entries"
+    fi
+  fi
+
   # Precedence is load-bearing — do not reorder:
   #   1. stale checkpoint guard   2. checkpoint+1
-  #   3. same-status team-sync gate   4. from-human_question
-  #   5. to-human_decision (universal)   6. from-human_decision
-  #   7. to-human_question (spec-only, unlocked, fields set)   8. edge whitelist
+  #   3. ownership gates   4. same-status team-sync gate
+  #   5. from-human_question   6. to-human_decision (universal)
+  #   7. from-human_decision
+  #   8. to-human_question (spec-only, unlocked, fields set)   9. edge whitelist
   # e.g. moving the same-status ban below the human branches would silently
   # legalize human_decision->human_decision rewrites.
   if [[ "$cur_schema" != "$schema" ]]; then
@@ -862,6 +881,8 @@ else
     reason="checkpoint must be $((cur_checkpoint + 1)), got $new_checkpoint"
   elif [[ -n "$approval_reason" ]]; then
     reason="$approval_reason"
+  elif [[ -n "$review_ownership_reason" && ( "$new_status" != "done" || ( "$cur_status" == "termination_review" && "$cur_vadi_final_approval" == "true" && "$cur_prativadi_final_approval" == "true" ) ) ]]; then
+    reason="$review_ownership_reason"
   elif [[ "$new_status" == "$cur_status" ]]; then
     if [[ "$schema" == "dvandva.baton.v2" ]]; then
       case "$new_status" in

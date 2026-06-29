@@ -40,9 +40,11 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
   (`assignee: "team"`, `active_roles: ["vadi", "prativadi"]`) so both roles
   keep polling and explicitly decide whether to stop. `done` is legal only from
   `termination_review` after both final approvals are true. The write helper
-  enforces approval ownership when a bit is raised: `DVANDVA_ROLE=vadi` may
-  raise only `vadi_final_approval`, and `DVANDVA_ROLE=prativadi` may raise only
-  `prativadi_final_approval`.
+  enforces approval and explainer-review ownership via `DVANDVA_ROLE`:
+  `DVANDVA_ROLE=vadi` may raise only `vadi_final_approval` and may add/change
+  only `run_explainer_reviews` entries with `role: "vadi"`;
+  `DVANDVA_ROLE=prativadi` may raise only `prativadi_final_approval` and may
+  add/change only entries with `role: "prativadi"`.
 - `dvandva-wait.sh`: continuous polling is the hard rule. `--max-wait` is the
   heartbeat interval by default, and the helper keeps polling until role
   ownership, shared terminal `done`, `human_question`, `human_decision`, or user
