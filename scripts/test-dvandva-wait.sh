@@ -253,6 +253,48 @@ else
   echo "PASS: DVANDVA_CONCURRENT=1 suppresses split-brain exit"
 fi
 
+# Bug A: an active legacy .dvandva/baton.json assigned to my role is a split-brain
+# sibling too. Selected named run alpha waits on the peer while the legacy baton
+# is mine -> the scan must include legacy and fire exit 29 (not loop to timeout).
+LEGACY_SIBLING_BOX="$TMP_DIR/legacy-sibling-box"
+write_named_observed_baton "$LEGACY_SIBLING_BOX/.dvandva/runs/alpha/baton.json" "alpha" "prativadi" "phase_review" "2026-06-29T16:00:00Z" "codex"
+write_baton "$LEGACY_SIBLING_BOX/.dvandva/baton.json" "vadi" "implementing"
+legacy_sibling_output="$(env DVANDVA_RUN_ID="alpha" timeout 5 bash -c 'cd "$1" && "$2" --role vadi --persist --interval 1 --max-wait 1' _ "$LEGACY_SIBLING_BOX" "$SCRIPT" 2>&1)"
+legacy_sibling_exit=$?
+if [[ "$legacy_sibling_exit" -ne 29 ]]; then
+  echo "FAIL: legacy sibling split-brain expected exit 29, got $legacy_sibling_exit"
+  echo "$legacy_sibling_output"
+  failures=$((failures + 1))
+elif [[ "$legacy_sibling_output" != *"split_brain"* || "$legacy_sibling_output" != *"selected_run_id=alpha"* || "$legacy_sibling_output" != *"sibling_run_id=legacy"* ]]; then
+  echo "FAIL: legacy sibling split-brain output missing run identifiers"
+  echo "$legacy_sibling_output"
+  failures=$((failures + 1))
+else
+  echo "PASS: active legacy baton counts as a split-brain sibling (exit 29)"
+fi
+
+# Bug B (cr-c6-selfskip): the self-skip must be path-based, not run-id-based.
+# Selected path alpha carries a stale .run_id=beta; the genuine sibling lives at
+# directory beta and is assigned to my role. A run-id self-skip would skip beta
+# (the bug) and loop; path identity (-ef) skips only the selected file itself, so
+# the genuine sibling beta is detected -> exit 29 with a path-truthful run id.
+SELFSKIP_BOX="$TMP_DIR/selfskip-box"
+write_named_observed_baton "$SELFSKIP_BOX/.dvandva/runs/alpha/baton.json" "beta" "prativadi" "phase_review" "2026-06-29T17:00:00Z" "codex"
+write_named_observed_baton "$SELFSKIP_BOX/.dvandva/runs/beta/baton.json" "beta" "vadi" "implementing" "2026-06-29T17:01:00Z" "claude"
+selfskip_output="$(env DVANDVA_RUN_ID="alpha" timeout 5 bash -c 'cd "$1" && "$2" --role vadi --persist --interval 1 --max-wait 1' _ "$SELFSKIP_BOX" "$SCRIPT" 2>&1)"
+selfskip_exit=$?
+if [[ "$selfskip_exit" -ne 29 ]]; then
+  echo "FAIL: path-vs-run_id self-skip expected exit 29, got $selfskip_exit"
+  echo "$selfskip_output"
+  failures=$((failures + 1))
+elif [[ "$selfskip_output" != *"split_brain"* || "$selfskip_output" != *"selected_run_id=alpha"* || "$selfskip_output" != *"sibling_run_id=beta"* ]]; then
+  echo "FAIL: path-vs-run_id self-skip output wrong run identifiers (must be path-truthful)"
+  echo "$selfskip_output"
+  failures=$((failures + 1))
+else
+  echo "PASS: self-skip is path-based; stale .run_id field does not hide sibling beta (exit 29)"
+fi
+
 persist_max_output="$("$SCRIPT" --role vadi --file "$BATON_WAIT" --persist --persist-max 1 --interval 1 --max-wait 1 2>&1)"
 persist_max_exit=$?
 if [[ "$persist_max_exit" -ne 23 ]]; then

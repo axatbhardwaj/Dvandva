@@ -193,14 +193,20 @@ peer_role() {
 }
 
 derive_run_id() {
+  # Path-authoritative: the baton's on-disk location is the source of truth for
+  # its run id. The optional .run_id field is only a fallback for paths the
+  # layout cannot classify. Trusting the field over the path lets a baton whose
+  # .run_id disagrees with its directory mis-skip a genuine sibling (the
+  # cr-c6-selfskip split-brain blind spot), so the path always wins when it is
+  # determinate.
   local file="$1"
   local baton_run_id="${2:-}"
-  if [[ -n "$baton_run_id" ]]; then
-    printf '%s' "$baton_run_id"
-  elif [[ "$file" == ".dvandva/baton.json" ]]; then
+  if [[ "$file" == ".dvandva/baton.json" || "$file" == */.dvandva/baton.json ]]; then
     printf '%s' "legacy"
   elif [[ "$file" == */baton.json ]]; then
     printf '%s' "$(basename "$(dirname "$file")")"
+  elif [[ -n "$baton_run_id" ]]; then
+    printf '%s' "$baton_run_id"
   else
     printf '%s' "unknown"
   fi
@@ -225,8 +231,10 @@ derive_dvandva_root() {
 }
 
 scan_sibling_runs() {
-  local selected_run_id="$1"
-  local selected_assignee="$2"
+  # selected_assignee is who the *selected* baton currently waits on; split-brain
+  # only matters when that is the peer. The selected run is identified by file
+  # path (-ef self-skip below), not by run id, so no run-id argument is needed.
+  local selected_assignee="$1"
   local sibling_root sibling_file sibling_state sibling_status sibling_assignee sibling_active_roles sibling_run_id
   SIBLING_ACTIVE_COUNT=0
   SPLIT_BRAIN_SIBLING_RUN_ID=""
@@ -236,11 +244,22 @@ scan_sibling_runs() {
   fi
 
   shopt -s nullglob
-  for sibling_file in "$sibling_root"/runs/*/baton.json; do
-    sibling_run_id="$(basename "$(dirname "$sibling_file")")"
-    if [[ -n "$selected_run_id" && "$sibling_run_id" == "$selected_run_id" ]]; then
+  # Scan the active legacy baton (.dvandva/baton.json) alongside the named
+  # runs/*/baton.json siblings: legacy is still a supported layout, so a
+  # non-terminal legacy baton assigned to my role is just as much a split-brain
+  # sibling as a named one. The legacy entry is a literal (not a glob), so guard
+  # it with an existence test for the common case where no legacy baton exists.
+  for sibling_file in "$sibling_root"/baton.json "$sibling_root"/runs/*/baton.json; do
+    [[ -f "$sibling_file" ]] || continue
+    # Self-skip by path identity (-ef), never by run id: the selected baton's
+    # directory is authoritative. A run-id comparison would skip a genuine
+    # sibling whose directory happens to match a stale .run_id field carried on
+    # the selected baton (cr-c6-selfskip). -ef compares device+inode, so it
+    # matches only the selected file itself.
+    if [[ "$sibling_file" -ef "$BATON_FILE" ]]; then
       continue
     fi
+    sibling_run_id="$(derive_run_id "$sibling_file")"
     sibling_state="$(jq -r '[.status // "", .assignee // "", ((.active_roles // []) | join(","))] | join("\u001f")' "$sibling_file" 2>/dev/null)" || continue
     IFS=$'\x1f' read -r sibling_status sibling_assignee sibling_active_roles <<< "$sibling_state"
     if [[ "$sibling_status" == "done" ]]; then
@@ -321,7 +340,7 @@ resolve_default_baton
 while true; do
   if [[ ! -f "$BATON_FILE" ]]; then
     selected_run_id="$(derive_run_id "$BATON_FILE")"
-    scan_sibling_runs "$selected_run_id" ""
+    scan_sibling_runs ""
     if [[ "$ALLOW_MISSING" -eq 1 ]]; then
       if [[ "$elapsed" -ge "$MAX_WAIT" ]]; then
         if [[ "$PERSIST" -eq 1 ]]; then
@@ -358,6 +377,13 @@ while true; do
 
   IFS=$'\x1f' read -r baton_run_id assignee status phase checkpoint question resume_assignee resume_status active_roles updated_at current_engine <<< "$state"
   selected_run_id="$(derive_run_id "$BATON_FILE" "$baton_run_id")"
+  # A baton whose .run_id field disagrees with its directory is itself suspect.
+  # Path is authoritative (selected_run_id is path-derived above), so fail loud
+  # by surfacing the inconsistent field rather than letting it drive any logic.
+  run_id_note=""
+  if [[ -n "$baton_run_id" && "$baton_run_id" != "$selected_run_id" ]]; then
+    run_id_note=" run_id_field_mismatch=$baton_run_id"
+  fi
 
   case "$status" in
     done)
@@ -390,12 +416,12 @@ while true; do
         echo "ERROR: continuous wait mode requires --interval > 0 when the baton is not ready; use --finite for an immediate heartbeat" >&2
         exit 2
       fi
-      scan_sibling_runs "$selected_run_id" "$assignee"
+      scan_sibling_runs "$assignee"
       if [[ -n "$SPLIT_BRAIN_SIBLING_RUN_ID" ]]; then
-        echo "DVANDVA_WAIT split_brain role=$ROLE selected_run_id=$selected_run_id sibling_run_id=$SPLIT_BRAIN_SIBLING_RUN_ID waiting_on=$assignee $(heartbeat_selector_meta "$selected_run_id")"
+        echo "DVANDVA_WAIT split_brain role=$ROLE selected_run_id=$selected_run_id sibling_run_id=$SPLIT_BRAIN_SIBLING_RUN_ID waiting_on=$assignee $(heartbeat_selector_meta "$selected_run_id")$run_id_note"
         exit 29
       fi
-      echo "DVANDVA_WAIT heartbeat role=$ROLE waiting_on=$assignee phase=$phase status=$status checkpoint=$checkpoint active_roles=$active_roles $(heartbeat_selector_meta "$selected_run_id") elapsed=${elapsed}s last_seen_engine=$current_engine updated_at=$updated_at"
+      echo "DVANDVA_WAIT heartbeat role=$ROLE waiting_on=$assignee phase=$phase status=$status checkpoint=$checkpoint active_roles=$active_roles $(heartbeat_selector_meta "$selected_run_id") elapsed=${elapsed}s last_seen_engine=$current_engine updated_at=$updated_at$run_id_note"
       elapsed=0
       wait_one_interval
       record_wait_elapsed
