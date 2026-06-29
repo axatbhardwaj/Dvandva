@@ -199,11 +199,17 @@ bash scripts/lint-protocol-phase1.sh
 bash scripts/lint-skill-phase3.sh
 bash scripts/lint-phase4-research.sh
 bash scripts/lint-artifacts.sh
+bash scripts/lint-artifacts.sh superpowers/plans
+bash scripts/lint-artifacts.sh superpowers/research
 bash scripts/test-lint-artifacts.sh
 bash scripts/test-lint-skills.sh
 for skill in vadi prativadi research testing understanding worktree-setup; do
   bash scripts/lint-skills.sh "plugins/dvandva/skills/$skill/SKILL.md"
 done
+bash scripts/test-dvandva-resolve.sh
+bash scripts/test-dvandva-preflight.sh
+bash scripts/test-dvandva-hook-preflight.sh
+bash scripts/test-dvandva-skill-preflight.sh
 bash scripts/test-dvandva-wait.sh
 bash scripts/test-dvandva-write.sh
 bash scripts/test-dvandva-snapshot.sh

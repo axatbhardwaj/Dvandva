@@ -59,21 +59,36 @@ and a declared `depends_on` edge serializes one chunk after the other. Closed or
 terminal historical chunks do not block later sequential reuse because
 work_split has no `base_checkpoint` wave model.
 
-Run 4 work-gating uses repo-local git hooks activated by role preflight:
-the active skill exports and asserts `DVANDVA_ROLE=<role>`,
-`scripts/install-dvandva-hooks.sh` sets and verifies `core.hooksPath=.githooks`,
-and the installer records `dvandva.hooksAdoptedAt` as the local drift baseline.
-`.githooks/pre-commit` delegates to `scripts/dvandva-commit-gate.sh`, the gate
-checks `DVANDVA_ROLE` against baton `assignee` / `active_roles`,
-`.githooks/prepare-commit-msg` stamps `Dvandva-Checkpoint`, and
-`scripts/dvandva-drift-lint.sh` detects unstamped commits from the
-hook-adoption baseline floor when present, so a later checkpoint cannot hide an
-unstamped sandwich bypass. This is shell/git-hook enforcement only; it does not
-create a daemon, scheduler, or hidden central process.
+Run 4 work-gating uses repo-local git hooks activated by the single turn-entry
+gate `dvandva-preflight.sh --role <role>`. The preflight resolves the active run
+selector-first (stopping on exit 12 ASK), then runs the hook stage. The hook
+stage detects Dvandva hook adoption status via a functional probe: it installs a
+delegating wrapper under `.dvandva/githooks/` (gitignored) and sets only
+repo-local `git config core.hooksPath .dvandva/githooks`. A foreign `core.hooksPath`
+(e.g., set by Husky) must not be modified; the wrapper coexists by delegating to
+the prior hooks chain after the gate runs. The installer records
+`dvandva.hooksAdoptedAt` as the local drift baseline.
+The delegating `pre-commit` wrapper runs the gate then execs the prior hook; the
+`prepare-commit-msg` wrapper delegates first then stamps `Dvandva-Checkpoint`.
+`scripts/dvandva-drift-lint.sh` detects unstamped commits from the hook-adoption
+baseline floor, so a later checkpoint cannot hide an unstamped sandwich bypass.
+This is shell/git-hook enforcement only; it does not create a daemon, scheduler,
+or hidden central process.
 For git work-gating, terminal `done`, `human_question`, and `human_decision`
 batons are inactive: the commit gate allows them, and drift lint only reports
 off-protocol commits while at least one non-terminal baton is active or when
 checkpoint history gives it a scan floor.
+
+## Concurrent advance and stale writes
+
+Two roles can advance the baton concurrently in team-owned states. The following
+exit codes guard against consistency failures:
+
+| Exit code | Name | Meaning and recovery |
+|---|---|---|
+| `23` | `bad_run_id_dir` | `dvandva-write.sh`: the baton at `.dvandva/runs/<seg>/baton.json` has `schema==v2` but its `run_id` field is null, missing, empty, or mismatches `<seg>`. Fix the candidate `run_id` and rerun; do not edit the installed baton directly. |
+| `27` | `stale_checkpoint` | `dvandva-write.sh`: `new_checkpoint <= cur_checkpoint` — the peer advanced while this candidate was being prepared. Re-read the installed baton, re-derive the next state from the mode table, rewrite the candidate, and rerun the helper. Never bump past the peer's checkpoint. |
+| `29` | `split_brain` | `dvandva-wait.sh`: a sibling active baton has `assignee == my role` while the selected baton is waiting on a peer — two simultaneous active runs both think they own the same role. Reconcile selector choice; park the stale duplicate to `human_decision`. Suppress with `DVANDVA_CONCURRENT=1` only when explicitly running two independent parallel Dvandva loops in the same worktree. |
 
 Run 4 retirement is Dvandva-only. It may retire only Dvandva-covered standalone
 Claude symlink workflows with functional parity via Runs 1-4 usage:
@@ -209,11 +224,13 @@ Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`) m
 ## Regular checkpoint commits
 
 Regular checkpoint commits are local commits made after verified logical slices
-when `allow_commit == true`. Commit only the baton's intended `changed_paths`
-union, excluding `.dvandva/` and `superpowers/`, and only when `git status
---short` has no unrelated dirty paths. Record the hash in `verification` or
-`summary` as `checkpoint_commit=<hash>`. Do not push checkpoint commits; final
-push remains gated by both final approvals and `allow_push == true`.
+when `allow_commit == true`. Checkpoint commits require Dvandva hook adoption (the
+delegating wrapper active and the turn preflight exit 0 before the commit).
+Commit only the baton's intended `changed_paths` union, excluding `.dvandva/` and
+`superpowers/`, and only when `git status --short` has no unrelated dirty paths.
+Record the hash in `verification` or `summary` as `checkpoint_commit=<hash>`. Do
+not push checkpoint commits; final push remains gated by both final approvals and
+`allow_push == true`.
 
 ## v2 Assignee Ownership
 
