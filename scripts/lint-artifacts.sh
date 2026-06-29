@@ -63,8 +63,18 @@ for file in "${html_files[@]}"; do
   fi
 
   artifact_type=""
+  artifact_schema=""
   if [[ -n "$meta" ]]; then
     artifact_type="$(echo "$meta" | jq -r '.artifact_type // ""' 2>/dev/null)"
+    artifact_schema="$(echo "$meta" | jq -r '.schema // ""' 2>/dev/null)"
+  fi
+
+  if [[ "$artifact_schema" == "dvandva.artifact.pr_review.v1" && "$artifact_type" != "pr_review" ]]; then
+    fail "$rel pr_review schema requires artifact_type pr_review"
+  fi
+
+  if [[ "$artifact_schema" == "dvandva.artifact.bug_rca.v1" && "$artifact_type" != "bug_rca" ]]; then
+    fail "$rel bug_rca schema requires artifact_type bug_rca"
   fi
 
   if [[ "$artifact_type" == "run_explainer" ]]; then
@@ -122,6 +132,12 @@ for file in "${html_files[@]}"; do
         fail "$rel missing #${section} section"
       fi
     done
+
+    if grep -Eiq '<table([[:space:]>])' "$file"; then
+      pass "$rel includes PR review severity table"
+    else
+      fail "$rel missing PR review severity table"
+    fi
   fi
 
   if [[ "$artifact_type" == "bug_rca" ]]; then
@@ -141,6 +157,12 @@ for file in "${html_files[@]}"; do
         fail "$rel missing #${section} section"
       fi
     done
+
+    if grep -Eiq '<svg([[:space:]>])' "$file"; then
+      pass "$rel includes bug RCA causal-chain SVG"
+    else
+      fail "$rel missing bug RCA causal-chain SVG"
+    fi
   fi
 
   if grep -Eiq '<script[^>]+src[[:space:]]*=[[:space:]]*["'\'']?https?://' "$file" \

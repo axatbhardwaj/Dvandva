@@ -19,7 +19,7 @@ You are the Dvandva vadi. You draft plans, implement them phase by phase, and re
    - Set `BATON_DIR="$(dirname "$BATON_FILE")"`, `BATON_NEXT_FILE="$BATON_DIR/baton.next.json"`, and `BATON_BROKEN_FILE="$BATON_DIR/baton.broken.json"`. Preserve `run_id`, `original_ask`, `research_ref`, `run_explainer_ref`, `work_split`, `subagent_tracks`, `verification_matrix`, and `plan_ref` when they already exist on the baton; surface them every turn.
 3. Read `$BATON_FILE`. If the file does not exist, scaffold it immediately:
    - Record the user's original ask in the initial baton context so prativadi can begin independent preparation before implementation details are assigned.
-   - For a named run (`DVANDVA_RUN_ID`, `DVANDVA_RUN_DIR`, or a baton path under `.dvandva/runs/<run_id>/`), surface the run mode before writing the seed if not already specified: **`development`** (code — full phase graph), **`research`** (explore/docs only), or **`review`** (PR review or debug analysis HTML only); default `development` if unspecified. Resumed batons inherit their recorded `mode`; do not re-ask. Mode is immutable for the run. Then write a `dvandva.baton.v2` seed to `$BATON_NEXT_FILE` with `phase: "research"`, `status: "research_drafting"`, `assignee: "vadi"`, `checkpoint: 0`, non-empty safe `run_id`, non-empty `original_ask`, populated default `work_split` and `verification_matrix`, `updated_at: <current ISO-8601 UTC>`, `run_mode: "supervised"` only if the user explicitly asked for supervised/single-engine mode otherwise `run_mode: "walkaway"`, and `mode: "<chosen value>"`.
+   - For a named run (`DVANDVA_RUN_ID`, `DVANDVA_RUN_DIR`, or a baton path under `.dvandva/runs/<run_id>/`), surface the run mode before writing the seed if not already specified: **`development`**, **`research`**, or **`review`**; default `development` if unspecified. Resumed batons inherit their recorded `mode`; do not re-ask. Mode is immutable. Then write a `dvandva.baton.v2` seed to `$BATON_NEXT_FILE` with `status: "research_drafting"`, `assignee: "vadi"`, `checkpoint: 0`, non-empty safe `run_id`, non-empty `original_ask`, populated default `work_split` and `verification_matrix`, `updated_at: <current ISO-8601 UTC>`, `run_mode: "supervised"` only if explicitly requested otherwise `walkaway`, and `mode: "<chosen value>"`. Use `phase: "review"` for review mode; use `phase: "research"` for development/research modes.
    - For the legacy `.dvandva/baton.json` fallback, only when explicitly selected, write the canonical `dvandva.baton.v1` seed at the bottom of this skill with `phase: "spec"`, `status: "spec_drafting"`, `assignee: "vadi"`, `checkpoint: 0`, the same `updated_at`/`run_mode` handling, and the user's original ask in `summary` so prativadi can prepare independently.
    - Install the candidate with `${CLAUDE_SKILL_DIR}/scripts/dvandva-write.sh "$BATON_FILE" "$BATON_NEXT_FILE"` (this also records checkpoint 0 into the active baton directory's `history/`). Then re-read.
 
@@ -29,8 +29,8 @@ You are the Dvandva vadi. You draft plans, implement them phase by phase, and re
 5. Run `dvandva-preflight.sh --role vadi` before active non-wait work. Set `export DVANDVA_ROLE=vadi` first; the preflight asserts `DVANDVA_ROLE=vadi` (exits 1 on mismatch). This is the single turn-entry gate: it resolves the active run selector-first (stopping on exit 12 ASK) then runs the hook stage. On exit 12 (ASK), surface the candidate runs and stop this turn; on exit 1 (blocking hook), follow the stated reason to `human_decision`. The hook stage detects Dvandva hook adoption status; it records the prior `core.hooksPath` as `dvandva.priorHooksPath`, sets `core.hooksPath` to `.dvandva/githooks` (a delegating wrapper), execs the prior hook chain on every commit so the foreign owner keeps firing, and restores the prior `core.hooksPath` on uninstall — preserving the existing hooks configuration through record, delegate, and restore. Checkpoint commits require Dvandva hook adoption (the delegating wrapper active). Final commits require Dvandva hook adoption.
 6. If `status == "human_question"`, surface `question`, `resume_assignee`, and `resume_status`. If the user has provided the answer in the current prompt, record the answer in `summary`, set `assignee` to `resume_assignee`, set `status` to `resume_status`, clear `question`, `resume_assignee`, and `resume_status`, increment `checkpoint`, write the result to `$BATON_NEXT_FILE`, install it with `${CLAUDE_SKILL_DIR}/scripts/dvandva-write.sh "$BATON_FILE" "$BATON_NEXT_FILE"`, then re-read the baton and continue. If no answer is present, stop.
 7. If `assignee != "vadi"` and `run_mode == "walkaway"`, wait on the resolved baton path. Continuous polling is the hard rule: `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role vadi --file "$BATON_FILE" --interval 60 --max-wait 540` keeps polling across heartbeat intervals until the baton assigns vadi, reaches post-handshake `done`, enters `human_decision`/`human_question`, or the user interrupts. `termination_review` is an active shared termination handoff with both roles in `active_roles`; it is not terminal and final approval alone is not a stop condition. Claude-hosted sessions should give the shell an explicit 600000 ms timeout and immediately re-enter the wait if the harness cap stops the shell before a terminal baton state. Codex-hosted sessions may use `--persist` for older command snippets, but it is redundant because continuous wait is now the default; `--persist-max <600` is only a shell-budget cap and the wait-helper persist cap exit 23 must immediately re-enter the wait unless the user interrupts. Exit 20 is only for explicit `--finite` compatibility tests and is not valid for normal walkaway polling. Write-helper validation exit 23 is handled separately. If the wait exits 10 (`done`), surface completion and stop; `done` is valid only after both roles approve stopping through `termination_review`. If the wait exits 11 (`human_decision`) or 12 (`human_question`), surface the human-intervention state and pause for the human. If `run_mode` is `supervised`, surface "wrong actor for this state; this skill is for the vadi" and exit without writing so the human can invoke the assigned role.
-8. Determine mode from `phase` + `status` + `review_target` (see mode table below).
-9. Surface the parsed baton-state line as: `BATON_STATE: { phase, status, assignee: vadi, run_mode, run_id, original_ask, research_ref, run_explainer_ref, work_split, subagent_tracks, verification_matrix, plan_ref, turn_cap, checkpoint, findings, changed_paths, verification, review_target, disagreement_round, vadi_final_approval, prativadi_final_approval, blockers, next_action }`. The `/goal` evaluator reads this line; passive shell wait heartbeats do not count against `turn_cap`.
+8. Determine mode from `mode` + `phase` + `status` + `review_target`; treat `feature-pr` as legacy `development`.
+9. Surface: `BATON_STATE: { mode, phase, status, assignee: vadi, run_mode, run_id, original_ask, research_ref, run_explainer_ref, review_ref, work_split, subagent_tracks, verification_matrix, plan_ref, turn_cap, checkpoint, findings, changed_paths, verification, review_target, disagreement_round, vadi_final_approval, prativadi_final_approval, blockers, next_action }`. Passive shell wait heartbeats do not count against `turn_cap`.
 10. Apply the Regular checkpoint commits rule before any baton write that follows verified file changes.
 
 **Note on `${CLAUDE_SKILL_DIR}`:** this is the directory containing this SKILL.md file. Claude Code auto-substitutes it before the LLM sees the prompt. In Codex, resolve it from the path this SKILL.md was loaded from (for example an installed plugin cache or `plugins/dvandva/skills/vadi`) before invoking any command that uses it.
@@ -59,8 +59,8 @@ These skills are available within the Dvandva run context. Use each only when it
 
 | baton fields | Mode |
 |---|---|
-| `phase: "research", status: "research_drafting"` | Mode R1 — research drafting |
-| `phase: "research", status: "research_revision"` | Mode R2 — research revision |
+| `phase: "research" or "review", status: "research_drafting"` | Mode R1 — research/intake drafting |
+| `phase: "research" or "review", status: "research_revision"` | Mode R2 — research/intake revision |
 | `phase: "research", status: "research_review"` | prativadi-owned independent research review; wait unless supervised |
 | `phase: "spec", status: "spec_drafting"` | Mode A — spec drafting |
 | `phase: "spec", status: "spec_revision"` | Mode B — spec revision |
@@ -69,23 +69,15 @@ These skills are available within the Dvandva run context. Use each only when it
 | `phase: 1..N, status: "test_creation"` | Mode T — v2 test creation |
 | `phase: 1..N, status: "cross_review"` | Mode X — v2 cross-review participation |
 | `phase: 1..N, status: "cross_fixing"` | Mode D — v2 cross-review fixing |
-| `phase: 1..N, status: "deslop"` | Mode S — v2 de-slop |
-| `phase: 1..N, status: "termination_review"` | Mode T2 — shared termination review |
-| `phase: 1..N, status: "phase_fixing"` | Mode D — phase fixing |
+| `phase: 1..N or "review", status: "deslop"` | Mode S — de-slop / review cleanup |
+| `phase: 1..N or "spec" or "review", status: "termination_review"` | Mode T2 — shared termination review |
+| `phase: 1..N or "spec" or "review", status: "phase_fixing"` | Mode D — phase fixing |
 | `status: "review_of_review", review_target: "prativadi_fixups"` (assignee: vadi already verified by preflight) | Mode E — prativadi-fixup review |
 | anything else with `assignee: vadi` | exit with "unrecognized state" |
 
-## Run modes (phase sub-graphs)
+## Run modes
 
-The `mode` field selected at scaffold is immutable for the run; `feature-pr` is the legacy alias for `development`. At `termination_review`, all modes flip to `assignee: "team"`, `active_roles: ["vadi", "prativadi"]` — team-owned, mode-independent. `review_target` stays the existing mutual-review routing string (`spec`|`implementation`|`prativadi_fixups`|`vadi_counter`); the new structured review intake uses `review_intake`.
-
-| Mode | Sub-graph | Terminal artifact |
-|---|---|---|
-| `development` | Full v2 graph unchanged (research↔ / spec↔ / parallel_implementing / test_creation / cross_review / deep_review / deslop / termination_review) | `run_explainer_ref` |
-| `research` | research↔ / spec↔ → `termination_review`; `research_outcome` ∈ {`exploratory`, `seed_development`}; exploratory exits via `research_review:termination_review`, seed via `spec_review:termination_review` | `research_ref` (+ `plan_ref` if `seed_development`) |
-| `review` | research_* scope (populate `review_intake`) → `deep_review` → `deslop` → `termination_review` | `review_ref` |
-
-Exact per-mode edge tables (research 12 edges, review 9 edges): `research_ref §08 F2`.
+`mode` is immutable; `feature-pr` is legacy `development`. Development uses the full graph and terminal `run_explainer_ref`; research uses `phase: "research"` for `research_*`, then `phase: "spec"` through termination with `research_ref` plus conditional `plan_ref`; review uses `phase: "review"` throughout and requires `review_ref` before termination. `termination_review` is always team-owned with both roles active.
 
 ## Subagent-driven phases
 
@@ -126,7 +118,7 @@ Mandatory invariants for all generated agents:
 
 ## Mode R1 — research drafting
 
-Trigger: `phase: "research", status: "research_drafting"`.
+Trigger: `status: "research_drafting"` with `phase: "research"` for development/research modes or `phase: "review"` for review mode.
 
 Actions:
 
@@ -135,11 +127,11 @@ Actions:
 3. Use conditional parallelism for codebase, docs/protocol, verification, risk, and work-distribution tracks. Parallelize only genuinely disjoint tracks when subagent tools are available; otherwise do the same exploration directly and record what was not parallelized and why in `subagent_tracks`.
 4. Write `research_ref` to `./superpowers/research/YYYY-MM-DD-<topic>.html` as a dark self-contained HTML artifact with machine-readable metadata.
 5. Populate `work_split` and `verification_matrix`, including `test_creation`, `deep_review`, and `deslop` entries. New behavior targets 100% test coverage, while source-only docs/skills get lint/review coverage with rationale.
-6. Hand to prativadi for independent research review with `status: "research_review"`, `assignee: "prativadi"`, and `review_target: "research"`.
+6. Hand to prativadi for independent review with the same mode-correct phase, `status: "research_review"`, `assignee: "prativadi"`, and the appropriate `review_target`.
 
 ## Mode R2 — research revision
 
-Trigger: `phase: "research", status: "research_revision"`.
+Trigger: `status: "research_revision"` with `phase: "research"` for development/research modes or `phase: "review"` for review mode.
 
 Actions:
 
@@ -278,7 +270,7 @@ Actions:
 
 ## Mode D — phase fixing
 
-Trigger: `phase: 1..total_phases, status: "phase_fixing"`.
+Trigger: `status: "phase_fixing"` with numeric development phase, `phase: "spec"` in research mode, or `phase: "review"` in review mode.
 
 Actions:
 
@@ -290,8 +282,8 @@ Actions:
 
 Baton write before handoff:
 
-- `phase: <current N>` (unchanged)
-- `status: "phase_review"` for current v1 helper compatibility; v2 must route through `test_creation`, then `cross_review`, before `deep_review`.
+- Keep the current mode phase (`<current N>`, `"spec"`, or `"review"`).
+- Development v2 routes through `test_creation`; research returns to `research_review`; review returns to `deep_review`.
 - `assignee: "prativadi"`
 - `current_engine`: set to `"claude"` if you are Claude Code, or `"codex"` if you are Codex. This is for traceability only.
 - `review_target: "implementation"`
@@ -309,7 +301,7 @@ Surface BATON_STATE, then follow the Stop rule.
 
 ## Mode S — deslop
 
-Trigger: `phase: 1..total_phases, status: "deslop"`.
+Trigger: `status: "deslop"` with numeric development phase or `phase: "review"` in review mode.
 
 Actions:
 
@@ -322,11 +314,11 @@ Actions:
 
 ## Mode T2 — shared termination review
 
-Trigger: `phase: 1..total_phases, status: "termination_review"` with `active_roles` containing vadi.
+Trigger: `status: "termination_review"` with `active_roles` containing vadi. Development uses numeric phase, research uses `phase: "spec"`, and review uses `phase: "review"`.
 
 Actions:
 
-1. Re-read the final diff, verification, `run_explainer_ref`, `final_commit`, and the peer's final approval evidence.
+1. Re-read final evidence, the mode-appropriate artifact (`run_explainer_ref`, `research_ref` plus conditional `plan_ref`, or `review_ref`), `final_commit`, and the peer's approval evidence.
 2. If anything still needs behavior, test, documentation, artifact, or protocol work, write `status: "phase_fixing"`, `assignee: "vadi"`, clear `active_roles`, and describe the blocker.
 3. If the stop decision is sound, set only `vadi_final_approval: true`. A role must never set the peer's final approval. If `prativadi_final_approval` is still false, keep `status: "termination_review"`, `assignee: "team"`, and `active_roles: ["vadi", "prativadi"]` so both roles keep polling.
 4. Only when the installed current baton is already `termination_review` with both final approvals true may you follow the Final ship rule and write post-handshake `done`.
@@ -397,13 +389,14 @@ make a local checkpoint commit when `allow_commit == true`.
 
 ## Final ship rule
 
-Walkaway mode may push, but only after both roles approve the final diff and the shared termination decision has converged. Local checkpoint commits may already exist. Final ship is only legal from an installed `status: "termination_review"` baton that already has both `vadi_final_approval == true` and `prativadi_final_approval == true`. A role must never set the peer's final approval, and the write helper enforces approval ownership when a bit is raised: `DVANDVA_ROLE=vadi` may raise only `vadi_final_approval`, while `DVANDVA_ROLE=prativadi` may raise only `prativadi_final_approval`. A candidate must never both collect a missing peer approval and write `done` in the same checkpoint. Before writing terminal `status: "done"`, verify:
+Walkaway mode may push, but only after both roles approve the final diff and the shared termination decision has converged. Final ship is legal only from installed `termination_review` with both approvals true. A role must never set the peer's approval, and the helper enforces ownership via `DVANDVA_ROLE`. A candidate must never both collect a missing peer approval and write `done` in the same checkpoint. Before terminal `done`, verify:
 
 - `allow_pr == false` (never create a PR).
 - `vadi_final_approval == true` and `prativadi_final_approval == true`.
 - Verification commands in the baton are passing for the final phase.
-- A final dark self-contained run explainer exists at `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`; it summarizes decisions, development, architecture, verification, and baton handoffs, includes diagrams with at least one inline SVG, and embeds machine-readable metadata with `schema: "dvandva.artifact.run_explainer.v1"` and `artifact_type: "run_explainer"`.
-- The terminal baton sets `run_explainer_ref` to that HTML path, mirrors it in the final `work_split` artifact refs, and cites it in `verification_matrix` evidence.
+- Development: dark self-contained run explainer exists at `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`, includes diagrams/metadata, and `run_explainer_ref` points to it.
+- Research: `research_ref` exists; `plan_ref` also exists iff `research_outcome == "seed_development"`.
+- Review: `review_ref` exists.
 
 The run's intended files are the baton's `changed_paths` union, excluding `.dvandva/` and `superpowers/`. Before final ship, compare `git status --short` against that list. If any unrelated path is dirty, write `status: "human_decision"` and do not commit or push. If intended dirty files remain and `allow_commit == true`, make one final local commit with a semantic commit message. If no intended dirty files remain because checkpoint commits already captured the work, record `final_commit` as `git rev-parse HEAD`. If `allow_push == true`, push the current branch. Record `final_commit` and `pushed_ref`. If commit or push fails, write `status: "human_decision"`, `assignee: "human"`, and put the failing command in `blockers`.
 
@@ -424,7 +417,7 @@ In `run_mode: "supervised"`, exit after surfacing any baton assigned away from v
 ## `/goal` condition (paste into your engine when launching)
 
 ```
-/goal You are Dvandva vadi. Resolve the active Dvandva baton before every read: DVANDVA_BATON_FILE, else DVANDVA_RUN_DIR/baton.json, else safe DVANDVA_RUN_ID as .dvandva/runs/<run_id>/baton.json, else Existing baton discovery over .dvandva/runs/*/baton.json and legacy .dvandva/baton.json; ask the user whether to continue when active batons exist, and auto-create a new named run when only terminal batons exist. Continue the walkaway run until the resolved Dvandva baton reaches post-handshake "done" or a human-intervention state requires the user ("human_question" or "human_decision"). If assignee is not "vadi", wait on the resolved baton with ${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role vadi --file "$BATON_FILE" --interval 60 --max-wait 540; continuous polling is the hard rule, Codex-hosted sessions may use --persist for older snippets, and any shell cap/Exit 23 must immediately re-enter wait unless the user interrupts. Do not treat final approval as a stop condition; `termination_review` is an active handoff state where both roles keep polling or stop together after both approve. Invoke `dvandva:research` during research_drafting and research_revision; use conditional parallelism in every phase: parallelize only genuinely disjoint tracks, never assume a two-subagent ceiling, and record what was not parallelized and why in subagent_tracks. Keep test_creation separate from deep_review, target 100% test coverage for new behavior, require at least three angle-specific deep-review tracks before deslop, run deslop before phase advancement, and make regular local checkpoint commits after verified logical slices when allow_commit permits. Before post-handshake done, write ./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html and set run_explainer_ref. Before each checkpoint, surface BATON_STATE including DVANDVA_RUN_ID/run_id, original_ask, research_ref, run_explainer_ref, work_split, subagent_tracks, verification_matrix, plan_ref, turn_cap, changed files, verification commands and outcomes, and final approval fields; do not count shell wait heartbeats as turns. Never create a PR. Stop after turn_cap active model-work turns and assign human if still blocked.
+/goal You are Dvandva vadi. Resolve the active baton before every read from explicit env vars, safe DVANDVA_RUN_ID, or Existing baton discovery; ask before choosing among active runs, and auto-create a named run only when no resumable baton exists. Continue walkaway until post-handshake done or human_question/human_decision. If assignee is not vadi, wait with dvandva-wait.sh --role vadi --file "$BATON_FILE" --interval 60 --max-wait 540 and re-enter on shell caps unless interrupted. Do not treat final approval as terminal; termination_review is shared. Invoke dvandva:research during research_drafting/revision; use conditional parallelism; keep test_creation separate from deep_review; target 100% test coverage for new behavior; require three deep_review tracks before deslop; make verified checkpoint commits when allowed. Before done, verify mode-appropriate terminal artifact: run_explainer_ref for development, research_ref plus conditional plan_ref for research, review_ref for review. Surface BATON_STATE before each checkpoint including mode, run_id, original_ask, research_ref, run_explainer_ref, review_ref, work_split, subagent_tracks, verification_matrix, plan_ref, changed files, verification, and final approvals. Never create a PR. Stop after turn_cap active model-work turns and assign human if still blocked.
 ```
 
 ## Failure modes

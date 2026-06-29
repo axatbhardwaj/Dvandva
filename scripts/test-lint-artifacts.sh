@@ -219,7 +219,7 @@ run_case "run explainer metadata run_id must match filename" 1 bash "$LINTER" "$
 GOOD_PR="$TMP_DIR/good-pr"
 write_pr_review "$GOOD_PR/report.html" '
   <section id="verdict"><h2>Verdict</h2></section>
-  <section id="severity"><h2>Severity</h2></section>
+  <section id="severity"><h2>Severity</h2><table><tr><th>Severity</th><th>Count</th></tr><tr><td>None</td><td>0</td></tr></table></section>
   <section id="findings"><h2>Findings</h2></section>
   <section id="ground-truth"><h2>Ground Truth</h2></section>'
 run_case "valid pr_review artifact is accepted" 0 bash "$LINTER" "$GOOD_PR"
@@ -258,13 +258,39 @@ write_pr_review "$BAD_PR_SCHEMA/report.html" '
 sed -i 's/"schema":"dvandva.artifact.pr_review.v1"/"schema":"dvandva.artifact.bogus.v1"/' "$BAD_PR_SCHEMA/report.html"
 run_case "pr_review with wrong schema is rejected" 1 bash "$LINTER" "$BAD_PR_SCHEMA"
 
+BAD_PR_TYPE="$TMP_DIR/bad-pr-type"
+write_pr_review "$BAD_PR_TYPE/report.html" '
+  <section id="verdict"><h2>Verdict</h2></section>
+  <section id="severity"><h2>Severity</h2><table><tr><td>None</td></tr></table></section>
+  <section id="findings"><h2>Findings</h2></section>
+  <section id="ground-truth"><h2>Ground Truth</h2></section>'
+sed -i 's/"artifact_type":"pr_review"/"artifact_type":"test"/' "$BAD_PR_TYPE/report.html"
+run_case "pr_review reserved schema with wrong artifact_type is rejected" 1 bash "$LINTER" "$BAD_PR_TYPE"
+
+BAD_PR_MISSING_TYPE="$TMP_DIR/bad-pr-missing-type"
+write_pr_review "$BAD_PR_MISSING_TYPE/report.html" '
+  <section id="verdict"><h2>Verdict</h2></section>
+  <section id="severity"><h2>Severity</h2><table><tr><td>None</td></tr></table></section>
+  <section id="findings"><h2>Findings</h2></section>
+  <section id="ground-truth"><h2>Ground Truth</h2></section>'
+sed -i 's/,"artifact_type":"pr_review"//' "$BAD_PR_MISSING_TYPE/report.html"
+run_case "pr_review reserved schema missing artifact_type is rejected" 1 bash "$LINTER" "$BAD_PR_MISSING_TYPE"
+
+BAD_PR_STRUCTURE="$TMP_DIR/bad-pr-structure"
+write_pr_review "$BAD_PR_STRUCTURE/report.html" '
+  <section id="verdict"><h2>Verdict</h2></section>
+  <section id="severity"><h2>Severity</h2></section>
+  <section id="findings"><h2>Findings</h2></section>
+  <section id="ground-truth"><h2>Ground Truth</h2></section>'
+run_case "pr_review missing severity table is rejected" 1 bash "$LINTER" "$BAD_PR_STRUCTURE"
+
 # --- bug_rca cases ---
 
 GOOD_RCA="$TMP_DIR/good-rca"
 write_bug_rca "$GOOD_RCA/report.html" '
   <section id="symptom"><h2>Symptom</h2></section>
   <section id="hypotheses"><h2>Hypotheses</h2></section>
-  <section id="root-cause"><h2>Root Cause</h2></section>
+  <section id="root-cause"><h2>Root Cause</h2><svg viewBox="0 0 10 10"><path d="M1 5h8"/></svg></section>
   <section id="fix-direction"><h2>Fix Direction</h2></section>'
 run_case "valid bug_rca artifact is accepted" 0 bash "$LINTER" "$GOOD_RCA"
 
@@ -274,6 +300,32 @@ write_bug_rca "$BAD_RCA_SECTION/report.html" '
   <section id="hypotheses"><h2>Hypotheses</h2></section>
   <section id="fix-direction"><h2>Fix Direction</h2></section>'
 run_case "bug_rca missing root-cause section is rejected" 1 bash "$LINTER" "$BAD_RCA_SECTION"
+
+BAD_RCA_TYPE="$TMP_DIR/bad-rca-type"
+write_bug_rca "$BAD_RCA_TYPE/report.html" '
+  <section id="symptom"><h2>Symptom</h2></section>
+  <section id="hypotheses"><h2>Hypotheses</h2></section>
+  <section id="root-cause"><h2>Root Cause</h2><svg viewBox="0 0 10 10"></svg></section>
+  <section id="fix-direction"><h2>Fix Direction</h2></section>'
+sed -i 's/"artifact_type":"bug_rca"/"artifact_type":"test"/' "$BAD_RCA_TYPE/report.html"
+run_case "bug_rca reserved schema with wrong artifact_type is rejected" 1 bash "$LINTER" "$BAD_RCA_TYPE"
+
+BAD_RCA_MISSING_TYPE="$TMP_DIR/bad-rca-missing-type"
+write_bug_rca "$BAD_RCA_MISSING_TYPE/report.html" '
+  <section id="symptom"><h2>Symptom</h2></section>
+  <section id="hypotheses"><h2>Hypotheses</h2></section>
+  <section id="root-cause"><h2>Root Cause</h2><svg viewBox="0 0 10 10"></svg></section>
+  <section id="fix-direction"><h2>Fix Direction</h2></section>'
+sed -i 's/,"artifact_type":"bug_rca"//' "$BAD_RCA_MISSING_TYPE/report.html"
+run_case "bug_rca reserved schema missing artifact_type is rejected" 1 bash "$LINTER" "$BAD_RCA_MISSING_TYPE"
+
+BAD_RCA_VISUAL="$TMP_DIR/bad-rca-visual"
+write_bug_rca "$BAD_RCA_VISUAL/report.html" '
+  <section id="symptom"><h2>Symptom</h2></section>
+  <section id="hypotheses"><h2>Hypotheses</h2></section>
+  <section id="root-cause"><h2>Root Cause</h2></section>
+  <section id="fix-direction"><h2>Fix Direction</h2></section>'
+run_case "bug_rca missing causal-chain SVG is rejected" 1 bash "$LINTER" "$BAD_RCA_VISUAL"
 
 if [[ "$failures" -gt 0 ]]; then
   exit 1
