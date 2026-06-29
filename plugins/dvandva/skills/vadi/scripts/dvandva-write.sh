@@ -469,6 +469,8 @@ if ! jq -e '(.checkpoint | type) == "number"' "$CANDIDATE_FILE" >/dev/null 2>&1;
 fi
 new_checkpoint="$(jq -r '.checkpoint' "$CANDIDATE_FILE")"
 new_phase="$(jq -r '.phase' "$CANDIDATE_FILE")"
+new_vadi_final_approval="$(jq -r '.vadi_final_approval // false' "$CANDIDATE_FILE")"
+new_prativadi_final_approval="$(jq -r '.prativadi_final_approval // false' "$CANDIDATE_FILE")"
 
 case "$schema:$new_status" in
   dvandva.baton.v1:spec_drafting|dvandva.baton.v1:spec_review|dvandva.baton.v1:spec_revision|dvandva.baton.v1:human_question|dvandva.baton.v1:implementing|dvandva.baton.v1:phase_review|dvandva.baton.v1:phase_fixing|dvandva.baton.v1:review_of_review|dvandva.baton.v1:counter_review|dvandva.baton.v1:human_decision|dvandva.baton.v1:done) ;;
@@ -742,6 +744,16 @@ else
     exit 25
   fi
 
+  approval_reason=""
+  if [[ "$schema" == "dvandva.baton.v2" && "$new_status" != "done" ]]; then
+    writer_role="${DVANDVA_ROLE:-}"
+    if [[ "$cur_vadi_final_approval" != "true" && "$new_vadi_final_approval" == "true" && "$writer_role" != "vadi" ]]; then
+      approval_reason="final approval ownership requires DVANDVA_ROLE=vadi to raise vadi_final_approval"
+    elif [[ "$cur_prativadi_final_approval" != "true" && "$new_prativadi_final_approval" == "true" && "$writer_role" != "prativadi" ]]; then
+      approval_reason="final approval ownership requires DVANDVA_ROLE=prativadi to raise prativadi_final_approval"
+    fi
+  fi
+
   # Precedence is load-bearing — do not reorder:
   #   1. stale checkpoint guard   2. checkpoint+1
   #   3. same-status team-sync gate   4. from-human_question
@@ -758,6 +770,8 @@ else
     exit 27
   elif [[ "$new_checkpoint" -ne $((cur_checkpoint + 1)) ]]; then
     reason="checkpoint must be $((cur_checkpoint + 1)), got $new_checkpoint"
+  elif [[ -n "$approval_reason" ]]; then
+    reason="$approval_reason"
   elif [[ "$new_status" == "$cur_status" ]]; then
     if [[ "$schema" == "dvandva.baton.v2" ]]; then
       case "$new_status" in

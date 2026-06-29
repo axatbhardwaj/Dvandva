@@ -28,7 +28,10 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
 - `termination_review`: v2's multipart termination state. It is team-owned
   (`assignee: "team"`, `active_roles: ["vadi", "prativadi"]`) so both roles
   keep polling and explicitly decide whether to stop. `done` is legal only from
-  `termination_review` after both final approvals are true.
+  `termination_review` after both final approvals are true. The write helper
+  enforces approval ownership when a bit is raised: `DVANDVA_ROLE=vadi` may
+  raise only `vadi_final_approval`, and `DVANDVA_ROLE=prativadi` may raise only
+  `prativadi_final_approval`.
 - `dvandva-wait.sh`: continuous polling is the hard rule. `--max-wait` is the
   heartbeat interval by default, and the helper keeps polling until role
   ownership, shared terminal `done`, `human_question`, `human_decision`, or user
@@ -220,7 +223,7 @@ Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`) m
 | `deslop` | `phase_fixing` | v2: Cleanup finds behavior, test, or review blockers |
 | `deslop` | `phase: N+1, status: parallel_implementing, disagreement_round: 0` | v2: no nits, low/minor bugs, stale wording, or unclear instructions remain except explicitly accepted `deferred` items |
 | `deslop` | `termination_review` | v2 final phase passed implementation, test_creation, deep_review, and deslop. The writer records its own final approval, keeps `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`, and keeps polling because stop is not yet shared. |
-| `termination_review` | final `done` | v2: both roles have explicitly decided to stop (`vadi_final_approval == true` and `prativadi_final_approval == true`), `run_explainer_ref` points to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`, and the final commit/push gates have run. |
+| `termination_review` | final `done` | v2: both roles have explicitly decided to stop (`vadi_final_approval == true` and `prativadi_final_approval == true`), each approval bit was raised by its owning `DVANDVA_ROLE`, `run_explainer_ref` points to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`, and the final commit/push gates have run. |
 | `termination_review` | `phase_fixing` | One role rejects final stop because behavior, tests, docs, or run artifacts still need work. |
 | `phase: N, implementing` | `human_decision` | Vadi blocked |
 | `phase_review (impl)` | `phase_fixing` | Prativadi hands back substantive findings |
@@ -278,7 +281,9 @@ writes:
 - Terminal `done` has no status owner. It is accepted as terminal for a
   coordinator assignee (`human`, `team`, `vadi`, or `prativadi`) only from
   `termination_review`, while the final gate still requires both final
-  approvals and the run explainer; wait helpers stop on `done`.
+  approvals and the run explainer; wait helpers stop on `done`. Raising
+  `vadi_final_approval` requires `DVANDVA_ROLE=vadi`; raising
+  `prativadi_final_approval` requires `DVANDVA_ROLE=prativadi`.
 
 Any other transition is illegal in v1 or v2 and must be rejected by the writing
 agent.

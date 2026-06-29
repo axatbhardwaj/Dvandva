@@ -309,6 +309,7 @@ Model classes are vendor-neutral: `opus-class|gpt-5.5` for architecture/planning
 - v2: `phase_fixing` → `test_creation` when fixes changed behavior, tests, or verification evidence
 - v2: `deslop` → `phase: N+1, parallel_implementing` or `termination_review` when no nits, low/minor bugs, stale wording, or unclear instructions remain except explicitly accepted `deferred` items; `termination_review` uses `assignee: "team"` and `active_roles: ["vadi", "prativadi"]` so both roles keep polling while deciding whether to stop
 - v2: `termination_review` → terminal `done` only after the installed current baton already has `vadi_final_approval == true` and `prativadi_final_approval == true`; terminal `done` also requires a coordinator assignee (`human`, `team`, `vadi`, or `prativadi`) and `run_explainer_ref` pointing to `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`
+- v2 final approval ownership is enforced by the write helper: raising `vadi_final_approval` requires `DVANDVA_ROLE=vadi`; raising `prativadi_final_approval` requires `DVANDVA_ROLE=prativadi`. A role cannot approve for its peer.
 - v2: `termination_review` → `phase_fixing` when either role finds behavior, test, documentation, artifact, or protocol work still owed
 - v2: `deslop` → `phase_fixing` when cleanup finds behavior, test, or review blockers
 - `phase: N, implementing` → `human_decision`
@@ -347,8 +348,10 @@ For v2 candidates, `assignee` is status-owned: vadi owns
 `cross_review`, `cross_fixing`, and `termination_review`. Terminal `done` has no
 status owner: it may use a coordinator assignee (`human`, `team`, `vadi`, or
 `prativadi`) only from `termination_review`, while the final gate still requires
-both approvals and the run explainer. Existing batons cannot change schema or
-v2 `run_id` mid-run.
+both approvals and the run explainer. Raising an approval bit is role-owned:
+`DVANDVA_ROLE=vadi` may raise only `vadi_final_approval`, and
+`DVANDVA_ROLE=prativadi` may raise only `prativadi_final_approval`. Existing
+batons cannot change schema or v2 `run_id` mid-run.
 
 Any other transition is illegal in v1 or v2. The writing agent must reject
 illegal transitions and route to `human_decision` instead.

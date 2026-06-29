@@ -1679,8 +1679,13 @@ for edge in $V2_EDGES; do
   fi
   make_baton_v2 "$BOX/baton.json" "$cur" "$(v2_status_owner "$cur")" 4 "${cur_extras[@]}"
   make_baton_v2 "$BOX/baton.next.json" "$new" "$(v2_status_owner "$new")" 5 "${extras[@]}"
-  run_case "v2 edge $edge is legal" 0 \
-    "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+  if [[ "$edge" == "deslop:termination_review" ]]; then
+    run_case "v2 edge $edge is legal" 0 \
+      env DVANDVA_ROLE=vadi "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+  else
+    run_case "v2 edge $edge is legal" 0 \
+      "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+  fi
 done
 
 BOX="$(new_box v2-schema-downgrade-research)"
@@ -1992,6 +1997,43 @@ make_baton_v2 "$BOX/baton.next.json" "done" "team" 5 \
   '.prativadi_final_approval = true'
 run_case_contains "v2 done requires approvals before terminal checkpoint" 24 "done requires current termination_review with both final approvals" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-termination-review-rejects-vadi-raising-both-approvals)"
+make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4
+make_baton_v2 "$BOX/baton.next.json" "termination_review" "team" 5 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+run_case_contains "v2 vadi cannot raise both final approvals entering termination_review" 24 "final approval ownership" \
+  env DVANDVA_ROLE=vadi "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-termination-review-rejects-vadi-raising-prativadi-approval)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = false'
+make_baton_v2 "$BOX/baton.next.json" "termination_review" "team" 5 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Vadi cannot approve for prativadi."' \
+  '.next_action = "Prativadi must make its own stop decision."' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+run_case_contains "v2 vadi cannot raise prativadi final approval" 24 "final approval ownership" \
+  env DVANDVA_ROLE=vadi "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-termination-review-allows-prativadi-raising-own-approval)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = false'
+make_baton_v2 "$BOX/baton.next.json" "termination_review" "team" 5 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Prativadi independently approves the shared stop decision."' \
+  '.next_action = "Team: final approval bits now converged; final ship may proceed."' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+run_case "v2 prativadi can raise its own final approval" 0 \
+  env DVANDVA_ROLE=prativadi "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-done-rejects-generated-assignee)"
 make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 '.active_roles = ["vadi", "prativadi"]'

@@ -397,7 +397,7 @@ make a local checkpoint commit when `allow_commit == true`.
 
 ## Final ship rule
 
-Walkaway mode may push, but only after both roles approve the final diff and the shared termination decision has converged. Local checkpoint commits may already exist. Final ship is only legal from an installed `status: "termination_review"` baton that already has both `vadi_final_approval == true` and `prativadi_final_approval == true`. A role must never set the peer's final approval, and a candidate must never both collect a missing peer approval and write `done` in the same checkpoint. Before writing terminal `status: "done"`, verify:
+Walkaway mode may push, but only after both roles approve the final diff and the shared termination decision has converged. Local checkpoint commits may already exist. Final ship is only legal from an installed `status: "termination_review"` baton that already has both `vadi_final_approval == true` and `prativadi_final_approval == true`. A role must never set the peer's final approval, and the write helper enforces approval ownership when a bit is raised: `DVANDVA_ROLE=vadi` may raise only `vadi_final_approval`, while `DVANDVA_ROLE=prativadi` may raise only `prativadi_final_approval`. A candidate must never both collect a missing peer approval and write `done` in the same checkpoint. Before writing terminal `status: "done"`, verify:
 
 - `allow_pr == false` (never create a PR).
 - `vadi_final_approval == true` and `prativadi_final_approval == true`.
