@@ -47,20 +47,21 @@ This shows a v2 run-scoped baton. Accepted public v2 modes are
 `development`, `research`, and `review`; older batons may still serialize
 `feature-pr` as a legacy alias for `development`. Legacy v1 batons use
 `schema: "dvandva.baton.v1"`, omit the v2-only fields `run_id`,
-`original_ask`, `research_ref`, `run_explainer_ref`, `active_roles`,
+`original_ask`, `research_ref`, `run_explainer_ref`, `run_explainer_reviews`, `active_roles`,
 `work_split`, `agent_instances`, `subagent_tracks`, and `verification_matrix`,
 and default `turn_cap` to 60. Nullable v2 additions for the accepted run modes
 are `research_outcome`, `review_ref`, and `review_intake`; `review_target`
 remains the existing selector field. The live v2 write-helper enforcement
 covers v2-only fields, safe `run_id` values, schema continuity for existing
 runs, v2 status-owner pairs, honest `agent_instances` and `subagent_tracks`,
-the terminal `run_explainer_ref` invariant, and v2 lifecycle transitions.
+the terminal `run_explainer_ref` and `run_explainer_reviews` invariants, and v2 lifecycle transitions.
 
 Accepted terminal artifact gates are mode-conditional: development runs require
-`run_explainer_ref`; research runs require `research_ref` and additionally
-`plan_ref` iff `research_outcome == seed_development`; review runs require
-`review_ref`. In all three v2 modes, `termination_review` plus both final
-approvals are shared and remain the only path to terminal `done`.
+`run_explainer_ref` plus completed approved `run_explainer_reviews` from both
+roles for that exact artifact; research runs require `research_ref` and
+additionally `plan_ref` iff `research_outcome == seed_development`; review runs
+require `review_ref`. In all three v2 modes, `termination_review` plus both
+final approvals are shared and remain the only path to terminal `done`.
 
 implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; the `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. `test_creation` routes to `cross_review` and records 100% test coverage evidence for new executable behavior or source-only rationale for docs/skills; `cross_review` may route to `cross_fixing`, and only completed cross-review evidence for both roles can advance to `deep_review`. Phase convention: implementation-chunk tracks use the numeric implementation phase, while cross-review and deep-review gate tracks use the status-name phase such as `phase: "cross_review"` or `phase: "deep_review"`.
 
@@ -95,6 +96,7 @@ early. Scalar-owner states still reject same-status rewrites.
   "research_ref": "./superpowers/research/2026-05-13-example-feature.html",
   "plan_ref": "./superpowers/plans/2026-05-13-example-feature.html",
   "run_explainer_ref": null,
+  "run_explainer_reviews": [],
   "research_outcome": null,
   "review_ref": null,
   "review_intake": null,
@@ -336,9 +338,10 @@ Every review-mode status uses `phase: "review"`.
 - `termination_review` plus both final approvals are shared across all v2
   modes.
 - Terminal `done` is valid only from `termination_review` and only with the
-  mode-conditional terminal artifact: `run_explainer_ref` for development,
-  `research_ref` plus `plan_ref` iff `research_outcome == seed_development` for
-  research, and `review_ref` for review.
+  mode-conditional terminal artifact: `run_explainer_ref` plus both roles'
+  completed approved `run_explainer_reviews` for that exact artifact in
+  development, `research_ref` plus `plan_ref` iff `research_outcome ==
+  seed_development` for research, and `review_ref` for review.
 - Approval ownership is role-owned: `DVANDVA_ROLE=vadi` may raise only
   `vadi_final_approval`, and `DVANDVA_ROLE=prativadi` may raise only
   `prativadi_final_approval`.
@@ -356,7 +359,7 @@ checkpoint. The live v2 write-helper enforcement covers named-run research
 transitions, v2-only fields, safe run IDs, schema continuity, status-owner
 pairs, `subagent_tracks`, the three-angle `deep_review -> deslop` gate, and the
 mode-conditional terminal artifact gates for development, research, and review
-runs.
+runs, including the two-role `run_explainer_reviews` gate for development.
 
 ## Regular checkpoint commits
 

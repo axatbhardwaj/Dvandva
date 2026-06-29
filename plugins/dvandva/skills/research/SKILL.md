@@ -136,8 +136,8 @@ The prativadi performs independent research review. Do not rely solely on the va
 6. Confirm test creation is separate from review and that new code/behavior has a 100% test coverage plan or an explicit documented reason why executable coverage is impossible.
 7. If gaps remain, write `findings` and route to `research_revision`.
 8. If research is sufficient, route according to the accepted intent:
-   - Development mode: advance to `phase: "spec", status: "spec_drafting"`, preserving `research_ref`, `run_explainer_ref`, `work_split`, `subagent_tracks`, `verification_matrix`, and `plan_ref`.
-   - Research mode + `research_outcome: "seed_development"`: advance to `phase: "spec", status: "spec_drafting"`, preserving `research_ref`, `run_explainer_ref`, `work_split`, `subagent_tracks`, `verification_matrix`, and `plan_ref`.
+   - Development mode: advance to `phase: "spec", status: "spec_drafting"`, preserving `research_ref`, `run_explainer_ref`, `run_explainer_reviews`, `work_split`, `subagent_tracks`, `verification_matrix`, and `plan_ref`.
+   - Research mode + `research_outcome: "seed_development"`: advance to `phase: "spec", status: "spec_drafting"`, preserving `research_ref`, `run_explainer_ref`, `run_explainer_reviews`, `work_split`, `subagent_tracks`, `verification_matrix`, and `plan_ref`.
    - Research mode + `research_outcome: "exploratory"`: advance to shared `termination_review` with `phase: "spec"`, `assignee: "team"`, and both active roles; do not invent another non-spec research path.
    - Review mode: advance to `phase: "review", status: "deep_review"` for the selected `review_target`. Do not produce `review_ref` yet; that deliverable belongs to `deep_review` / `deslop`.
 

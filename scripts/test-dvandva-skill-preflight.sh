@@ -81,6 +81,9 @@ for file in "$VADI" "$PRATIVADI"; do
   require_match "$file" \
     'both roles.*stop|stop.*both roles|shared termination|multipart termination' \
     "$role skill says terminal stop is a shared two-role decision"
+  require_match "$file" \
+    'run_explainer_reviews' \
+    "$role skill surfaces and gates final run explainer reviews"
 done
 
 for file in "$COMMAND_VADI" "$COMMAND_PRATIVADI"; do
@@ -94,6 +97,9 @@ for file in "$COMMAND_VADI" "$COMMAND_PRATIVADI"; do
   require_match "$file" \
     'keep polling or stop together|both roles keep polling|both approve' \
     "$command_role command says roles stop together only after shared approval"
+  require_match "$file" \
+    'run_explainer_reviews' \
+    "$command_role command requires both explainer reviews before done"
   reject_match "$file" \
     'Continue the walkaway run until the resolved Dvandva baton status is "done", "human_question", or "human_decision"' \
     "$command_role command rejects one-step terminal stop wording"
@@ -121,6 +127,9 @@ require_match "$PRATIVADI" \
 require_match "$PRATIVADI" \
   'Development runs require .*run_explainer_ref.*research runs require .*research_ref.*plan_ref.*review runs require .*review_ref' \
   "prativadi final ship rule is mode-conditional"
+require_match "$PRATIVADI" \
+  'run_explainer_reviews.*vadi.*prativadi|vadi.*prativadi.*run_explainer_reviews' \
+  "prativadi final ship rule requires both explainer reviews"
 reject_match "$PRATIVADI" \
   'A final dark self-contained run explainer exists at `\./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer\.html`' \
   "prativadi final ship rule is not development-artifact-only"
@@ -137,6 +146,9 @@ require_match "$STATE_REF" \
 require_match "$STATE_REF" \
   'deslop.*termination_review|termination_review.*done' \
   "state reference routes final done through termination_review"
+require_match "$STATE_REF" \
+  'run_explainer_reviews.*vadi.*prativadi|vadi.*prativadi.*run_explainer_reviews' \
+  "state reference requires both final explainer reviews"
 
 # Static README coverage: reject stale Run-4 guidance that predates the
 # delegating-wrapper coexistence model.
@@ -180,6 +192,9 @@ for file in "$ROOT_DIR/product.md" "$ROOT_DIR/docs/protocol/local-baton-channel.
   require_match "$file" \
     '\.dvandva/githooks' \
     "$label documents the .dvandva/githooks delegating wrapper"
+  require_match "$file" \
+    'run_explainer_reviews' \
+    "$label documents final explainer review evidence"
 done
 
 if [[ "$failures" -gt 0 ]]; then

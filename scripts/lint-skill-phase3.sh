@@ -48,6 +48,7 @@ for role in vadi prativadi; do
   require_text "$skill" "original_ask" "$role skill surfaces original ask"
   require_text "$skill" "run_id" "$role skill surfaces run id"
   require_text "$skill" "research_ref" "$role skill surfaces research ref"
+  require_text "$skill" "run_explainer_reviews" "$role skill surfaces final explainer reviews"
   require_text "$skill" "plan_ref" "$role skill surfaces plan ref"
   require_text "$skill" "turn_cap" "$role skill surfaces active turn cap"
   require_text "$skill" "BATON_STATE: { mode, phase, status, assignee:" "$role BATON_STATE remains structured with mode"
@@ -70,6 +71,7 @@ for command in "$ROOT_DIR/plugins/dvandva/commands/vadi.md" "$ROOT_DIR/plugins/d
   require_text "$command" "turn_cap" "$name goal keeps active turn cap"
   require_text "$command" "do not count shell wait heartbeats as turns" "$name goal separates waits from active turns"
   require_text "$command" "continuous polling is the hard rule" "$name goal makes continuous polling mandatory"
+  require_text "$command" "run_explainer_reviews" "$name goal requires final explainer reviews"
 done
 
 if [[ "$failures" -gt 0 ]]; then

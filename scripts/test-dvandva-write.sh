@@ -554,6 +554,31 @@ v2_test_creation_track_filter() {
 JQ
 }
 
+v2_run_explainer_reviews_filter() {
+  cat <<'JQ'
+.run_explainer_reviews = [
+  {
+    "id": "run-explainer-review-vadi",
+    "role": "vadi",
+    "artifact_ref": "./superpowers/run-reports/2026-06-28-run-a-explainer.html",
+    "status": "completed",
+    "result": "approved",
+    "summary": "Vadi reviewed the final run explainer.",
+    "evidence_refs": ["vadi:run-explainer-review"]
+  },
+  {
+    "id": "run-explainer-review-prativadi",
+    "role": "prativadi",
+    "artifact_ref": "./superpowers/run-reports/2026-06-28-run-a-explainer.html",
+    "status": "completed",
+    "result": "approved",
+    "summary": "Prativadi reviewed the final run explainer.",
+    "evidence_refs": ["prativadi:run-explainer-review"]
+  }
+]
+JQ
+}
+
 v2_cross_review_tracks_filter() {
   cat <<'JQ'
 .subagent_tracks += [
@@ -1743,6 +1768,7 @@ for edge in $V2_EDGES; do
     extras+=('.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"')
     extras+=('.vadi_final_approval = true')
     extras+=('.prativadi_final_approval = true')
+    extras+=("$(v2_run_explainer_reviews_filter)")
   fi
   make_baton_v2 "$BOX/baton.json" "$cur" "$(v2_status_owner "$cur")" 4 "${cur_extras[@]}"
   make_baton_v2 "$BOX/baton.next.json" "$new" "$(v2_status_owner "$new")" 5 "${extras[@]}"
@@ -1908,7 +1934,8 @@ make_baton_v2 "$BOX/baton.json" "phase_review" "prativadi" 4
 make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
   '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
   '.vadi_final_approval = true' \
-  '.prativadi_final_approval = true'
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)"
 run_case_contains "v2 phase_review->done rejects legacy terminal review" 24 "done requires current status termination_review" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
@@ -1917,7 +1944,8 @@ make_baton_v2 "$BOX/baton.json" "review_of_review" "vadi" 4
 make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
   '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
   '.vadi_final_approval = true' \
-  '.prativadi_final_approval = true'
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)"
 run_case_contains "v2 review_of_review->done rejects legacy terminal review" 24 "done requires current status termination_review" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
@@ -1926,7 +1954,8 @@ make_baton_v2 "$BOX/baton.json" "counter_review" "prativadi" 4
 make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
   '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
   '.vadi_final_approval = true' \
-  '.prativadi_final_approval = true'
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)"
 run_case_contains "v2 counter_review->done rejects legacy terminal review" 24 "done requires current status termination_review" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
@@ -1998,7 +2027,8 @@ make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4
 make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
   '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
   '.vadi_final_approval = true' \
-  '.prativadi_final_approval = true'
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)"
 run_case_contains "v2 deslop->done requires termination_review first" 24 "done requires current status termination_review" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
@@ -2007,7 +2037,8 @@ make_baton_v2 "$BOX/baton.json" "human_decision" "human" 4
 make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
   '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
   '.vadi_final_approval = true' \
-  '.prativadi_final_approval = true'
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)"
 run_case_contains "v2 human_decision->done still requires termination_review first" 24 "done requires current status termination_review" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
@@ -2026,7 +2057,8 @@ make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
 make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
   '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
   '.vadi_final_approval = true' \
-  '.prativadi_final_approval = true'
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)"
 run_case "v2 done accepts valid run_explainer_ref path" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
@@ -2039,17 +2071,115 @@ for done_owner in human team vadi prativadi; do
   make_baton_v2 "$BOX/baton.next.json" "done" "$done_owner" 5 \
     '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
     '.vadi_final_approval = true' \
-    '.prativadi_final_approval = true'
+    '.prativadi_final_approval = true' \
+    "$(v2_run_explainer_reviews_filter)"
   run_case "v2 done accepts coordinator assignee $done_owner" 0 \
     "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 done
+
+BOX="$(new_box v2-done-rejects-missing-run-explainer-reviews)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "team" 5 \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+run_case_contains "v2 done requires both run explainer reviews" 23 "DVANDVA_WRITE bad_run_explainer_reviews" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-done-rejects-one-run-explainer-review)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "team" 5 \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)" \
+  '.run_explainer_reviews |= map(select(.role == "vadi"))'
+run_case_contains "v2 done requires vadi and prativadi run explainer reviews" 23 "DVANDVA_WRITE bad_run_explainer_reviews" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-done-rejects-mismatched-run-explainer-review-ref)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "team" 5 \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)" \
+  '.run_explainer_reviews[1].artifact_ref = "./superpowers/run-reports/2026-06-28-other-explainer.html"'
+run_case_contains "v2 done requires run explainer reviews for exact artifact" 23 "DVANDVA_WRITE bad_run_explainer_reviews" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-done-rejects-incomplete-run-explainer-review)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "team" 5 \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)" \
+  '.run_explainer_reviews[1].status = "pending"'
+run_case_contains "v2 done requires completed run explainer reviews" 23 "DVANDVA_WRITE bad_run_explainer_reviews" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-done-rejects-unapproved-run-explainer-review)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "team" 5 \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)" \
+  '.run_explainer_reviews[1].result = "rejected"'
+run_case_contains "v2 done requires approved run explainer reviews" 23 "DVANDVA_WRITE bad_run_explainer_reviews" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-done-rejects-blank-run-explainer-review-summary)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "team" 5 \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)" \
+  '.run_explainer_reviews[1].summary = "   "'
+run_case_contains "v2 done requires nonblank run explainer review summaries" 23 "DVANDVA_WRITE bad_run_explainer_reviews" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-done-rejects-empty-run-explainer-review-evidence)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "team" 5 \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)" \
+  '.run_explainer_reviews[1].evidence_refs = []'
+run_case_contains "v2 done requires run explainer review evidence" 23 "DVANDVA_WRITE bad_run_explainer_reviews" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-done-rejects-missing-final-approval)"
 make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 '.active_roles = ["vadi", "prativadi"]'
 make_baton_v2 "$BOX/baton.next.json" "done" "team" 5 \
   '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
   '.vadi_final_approval = true' \
-  '.prativadi_final_approval = false'
+  '.prativadi_final_approval = false' \
+  "$(v2_run_explainer_reviews_filter)"
 run_case_contains "v2 done requires both final approvals" 23 "DVANDVA_WRITE bad_done_state" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
@@ -2061,7 +2191,8 @@ make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
 make_baton_v2 "$BOX/baton.next.json" "done" "team" 5 \
   '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
   '.vadi_final_approval = true' \
-  '.prativadi_final_approval = true'
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)"
 run_case_contains "v2 done requires approvals before terminal checkpoint" 24 "done requires current termination_review with both final approvals" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
@@ -2107,7 +2238,8 @@ make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 '.active_roles = [
 make_baton_v2 "$BOX/baton.next.json" "done" "r3-generated-dynamic-review" 5 \
   '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
   '.vadi_final_approval = true' \
-  '.prativadi_final_approval = true'
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)"
 run_case_contains "v2 done rejects generated assignee" 23 "DVANDVA_WRITE bad_done_state" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
@@ -2346,7 +2478,8 @@ make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
   '.resume_assignee = null' \
   '.resume_status = null' \
   '.vadi_final_approval = true' \
-  '.prativadi_final_approval = true'
+  '.prativadi_final_approval = true' \
+  "$(v2_run_explainer_reviews_filter)"
 run_case_contains "v2 human_question cannot resume directly to done" 24 "human_question cannot resume directly to done" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 

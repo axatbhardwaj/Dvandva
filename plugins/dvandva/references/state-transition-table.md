@@ -21,6 +21,7 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
   goal loops do not drift.
 - `research_ref`: path to the generated user-facing HTML research artifact.
 - `run_explainer_ref`: path to the final run explainer HTML under `./superpowers/run-reports/`, required before terminal `done`.
+- `run_explainer_reviews`: v2 array of role review records for the final run explainer. Development terminal `done` requires completed approved `vadi` and `prativadi` entries whose `artifact_ref` exactly equals `run_explainer_ref`, with non-empty `summary` and `evidence_refs`.
 - `research_outcome`: optional nullable v2 field recording the accepted
   research result, including `seed_development` when a research run also emits
   a seed plan for a future development run.
@@ -65,8 +66,10 @@ before `research_ref` exists. Existing batons cannot change schema or v2
 `run_id` mid-run. Accepted v2 docs use mode-conditional terminal artifact
 gates: development runs require `run_explainer_ref`; research runs require
 `research_ref` and additionally `plan_ref` iff `research_outcome ==
-seed_development`; review runs require `review_ref`. In all v2 modes, terminal
-`done` still requires a coordinator assignee (`human`, `team`, `vadi`, or
+seed_development`; review runs require `review_ref`. Development terminal
+`done` additionally requires completed approved `run_explainer_reviews` from
+both roles for the exact `run_explainer_ref`. In all v2 modes, terminal `done`
+still requires a coordinator assignee (`human`, `team`, `vadi`, or
 `prativadi`), both final approvals, and an installed current baton already at
 `termination_review`.
 
@@ -167,6 +170,7 @@ early. Scalar-owner states still reject same-status rewrites.
   "review_target": "research | spec | implementation | prativadi_fixups | vadi_counter | null",
   "research_ref": "v2 path to gitignored generated HTML research file under ./superpowers/research/, set during research phase",
   "run_explainer_ref": "v2 path to gitignored final run explainer HTML under ./superpowers/run-reports/, required before terminal done for development mode",
+  "run_explainer_reviews": "v2 array of role review records for the final run explainer; development done requires completed approved vadi and prativadi entries whose artifact_ref exactly equals run_explainer_ref, with non-empty summary and evidence_refs",
   "research_outcome": "nullable v2 field; accepted research result, including seed_development when a research run seeds a future development run",
   "review_ref": "nullable v2 path to gitignored generated HTML review artifact under ./superpowers/reviews/",
   "review_intake": "nullable v2 field carrying review-mode intake scope or selector",
@@ -239,7 +243,7 @@ into `termination_review` is explicit; there is no wildcard
 | `deslop` | `phase: N+1, status: "parallel_implementing"` | A non-final phase is clean and the next development phase begins. |
 | `deslop` | `termination_review` | The final development phase is clean; the run enters the shared stop-review gate. |
 | `termination_review` | `phase_fixing` | One role rejects final stop because behavior, tests, docs, or run artifacts still need work. |
-| `termination_review` | final `done` | Both roles explicitly decide to stop, both approval bits are true, and `run_explainer_ref` is set. |
+| `termination_review` | final `done` | Both roles explicitly decide to stop, both approval bits are true, `run_explainer_ref` is set, and `run_explainer_reviews` contains completed approved entries from both roles for that exact artifact. |
 
 ## Research Mode (v2, 12 edges)
 
@@ -344,9 +348,11 @@ writes:
   coordinator assignee (`human`, `team`, `vadi`, or `prativadi`) only from
   `termination_review` in any v2 mode. The final gate still requires both
   final approvals plus the mode-conditional terminal artifact:
-  `run_explainer_ref` for development, `research_ref` plus `plan_ref` iff
-  `research_outcome == seed_development` for research, and `review_ref` for
-  review. Wait helpers stop on `done`. Raising `vadi_final_approval` requires
+  `run_explainer_ref` plus both roles' completed approved
+  `run_explainer_reviews` for that exact artifact in development,
+  `research_ref` plus `plan_ref` iff `research_outcome == seed_development`
+  for research, and `review_ref` for review. Wait helpers stop on `done`.
+  Raising `vadi_final_approval` requires
   `DVANDVA_ROLE=vadi`; raising `prativadi_final_approval` requires
   `DVANDVA_ROLE=prativadi`.
 

@@ -467,6 +467,24 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
           echo "DVANDVA_WRITE bad_run_explainer_ref candidate=$CANDIDATE_FILE" >&2
           exit 23
         fi
+        if ! jq -e '
+          .run_explainer_ref as $ref |
+          def reviewed_by($role):
+            any(.run_explainer_reviews[]?;
+              .role == $role and
+              .artifact_ref == $ref and
+              .status == "completed" and
+              .result == "approved" and
+              ((.summary | type) == "string" and (.summary | test("[^[:space:]]"))) and
+              ((.evidence_refs | type) == "array" and ((.evidence_refs | length) > 0))
+            );
+          ((.run_explainer_reviews | type) == "array") and
+          reviewed_by("vadi") and
+          reviewed_by("prativadi")
+        ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+          echo "DVANDVA_WRITE bad_run_explainer_reviews candidate=$CANDIDATE_FILE" >&2
+          exit 23
+        fi
         ;;
       research)
         if ! jq -e '

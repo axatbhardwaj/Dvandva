@@ -171,10 +171,12 @@ bypass commit is still visible.
 Before post-handshake terminal `done`, a v2 run must satisfy the
 mode-conditional terminal artifact gate: development runs write
 `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html` and set
-`run_explainer_ref`; research runs require `research_ref` and additionally
-`plan_ref` iff `research_outcome == seed_development`; review runs require
-`review_ref`. In all cases, terminal `done` still routes through shared
-`termination_review` with both final approvals set.
+`run_explainer_ref`, then both roles record completed approved entries in
+`run_explainer_reviews` for that exact artifact; research runs require
+`research_ref` and additionally `plan_ref` iff `research_outcome ==
+seed_development`; review runs require `review_ref`. In all cases, terminal
+`done` still routes through shared `termination_review` with both final
+approvals set.
 
 ## History
 
