@@ -105,6 +105,44 @@ for file in "${html_files[@]}"; do
     fi
   fi
 
+  if [[ "$artifact_type" == "pr_review" ]]; then
+    if echo "$meta" | jq -e '
+      .schema == "dvandva.artifact.pr_review.v1" and
+      .artifact_type == "pr_review"
+    ' >/dev/null 2>&1; then
+      pass "$rel pr_review metadata schema and artifact_type match"
+    else
+      fail "$rel pr_review metadata schema must be dvandva.artifact.pr_review.v1 and artifact_type must be pr_review"
+    fi
+
+    for section in verdict severity findings ground-truth; do
+      if grep -Eiq "id=[\"']${section}[\"']" "$file"; then
+        pass "$rel includes #${section} section"
+      else
+        fail "$rel missing #${section} section"
+      fi
+    done
+  fi
+
+  if [[ "$artifact_type" == "bug_rca" ]]; then
+    if echo "$meta" | jq -e '
+      .schema == "dvandva.artifact.bug_rca.v1" and
+      .artifact_type == "bug_rca"
+    ' >/dev/null 2>&1; then
+      pass "$rel bug_rca metadata schema and artifact_type match"
+    else
+      fail "$rel bug_rca metadata schema must be dvandva.artifact.bug_rca.v1 and artifact_type must be bug_rca"
+    fi
+
+    for section in symptom hypotheses root-cause fix-direction; do
+      if grep -Eiq "id=[\"']${section}[\"']" "$file"; then
+        pass "$rel includes #${section} section"
+      else
+        fail "$rel missing #${section} section"
+      fi
+    done
+  fi
+
   if grep -Eiq '<script[^>]+src[[:space:]]*=[[:space:]]*["'\'']?https?://' "$file" \
     || grep -Eiq '<link[^>]+href[[:space:]]*=[[:space:]]*["'\'']?https?://' "$file" \
     || grep -Eiq '<(img|iframe|source|video|audio)[^>]+src[[:space:]]*=[[:space:]]*["'\'']?https?://' "$file" \
@@ -113,6 +151,16 @@ for file in "${html_files[@]}"; do
     fail "$rel contains external resource reference"
   else
     pass "$rel has no external resource references"
+  fi
+
+  if grep -Eiq '<script[^>]+src[[:space:]]*=[[:space:]]*["'\'']?\.\./' "$file" \
+    || grep -Eiq '<link[^>]+href[[:space:]]*=[[:space:]]*["'\'']?\.\./' "$file" \
+    || grep -Eiq '<(img|iframe|source|video|audio)[^>]+src[[:space:]]*=[[:space:]]*["'\'']?\.\./' "$file" \
+    || grep -Eiq 'url\([[:space:]]*["'\'']?\.\./' "$file" \
+    || grep -Eiq '@import[[:space:]]+(url\([[:space:]]*)?["'\'']?\.\./' "$file"; then
+    fail "$rel contains path-traversal ref (../)"
+  else
+    pass "$rel has no path-traversal refs"
   fi
 done
 
