@@ -19,7 +19,7 @@ You are the Dvandva vadi. You draft plans, implement them phase by phase, and re
    - Set `BATON_DIR="$(dirname "$BATON_FILE")"`, `BATON_NEXT_FILE="$BATON_DIR/baton.next.json"`, and `BATON_BROKEN_FILE="$BATON_DIR/baton.broken.json"`. Preserve `run_id`, `original_ask`, `research_ref`, `run_explainer_ref`, `work_split`, `subagent_tracks`, `verification_matrix`, and `plan_ref` when they already exist on the baton; surface them every turn.
 3. Read `$BATON_FILE`. If the file does not exist, scaffold it immediately:
    - Record the user's original ask in the initial baton context so prativadi can begin independent preparation before implementation details are assigned.
-   - For a named run (`DVANDVA_RUN_ID`, `DVANDVA_RUN_DIR`, or a baton path under `.dvandva/runs/<run_id>/`), write a `dvandva.baton.v2` seed to `$BATON_NEXT_FILE` with `phase: "research"`, `status: "research_drafting"`, `assignee: "vadi"`, `checkpoint: 0`, non-empty safe `run_id`, non-empty `original_ask`, populated default `work_split` and `verification_matrix`, `updated_at: <current ISO-8601 UTC>`, and `run_mode: "supervised"` only if the user explicitly asked for supervised/single-engine mode, otherwise `run_mode: "walkaway"`.
+   - For a named run (`DVANDVA_RUN_ID`, `DVANDVA_RUN_DIR`, or a baton path under `.dvandva/runs/<run_id>/`), surface the run mode before writing the seed if not already specified: **`development`** (code — full phase graph), **`research`** (explore/docs only), or **`review`** (PR review or debug analysis HTML only); default `development` if unspecified. Resumed batons inherit their recorded `mode`; do not re-ask. Mode is immutable for the run. Then write a `dvandva.baton.v2` seed to `$BATON_NEXT_FILE` with `phase: "research"`, `status: "research_drafting"`, `assignee: "vadi"`, `checkpoint: 0`, non-empty safe `run_id`, non-empty `original_ask`, populated default `work_split` and `verification_matrix`, `updated_at: <current ISO-8601 UTC>`, `run_mode: "supervised"` only if the user explicitly asked for supervised/single-engine mode otherwise `run_mode: "walkaway"`, and `mode: "<chosen value>"`.
    - For the legacy `.dvandva/baton.json` fallback, only when explicitly selected, write the canonical `dvandva.baton.v1` seed at the bottom of this skill with `phase: "spec"`, `status: "spec_drafting"`, `assignee: "vadi"`, `checkpoint: 0`, the same `updated_at`/`run_mode` handling, and the user's original ask in `summary` so prativadi can prepare independently.
    - Install the candidate with `${CLAUDE_SKILL_DIR}/scripts/dvandva-write.sh "$BATON_FILE" "$BATON_NEXT_FILE"` (this also records checkpoint 0 into the active baton directory's `history/`). Then re-read.
 
@@ -74,6 +74,18 @@ These skills are available within the Dvandva run context. Use each only when it
 | `phase: 1..N, status: "phase_fixing"` | Mode D — phase fixing |
 | `status: "review_of_review", review_target: "prativadi_fixups"` (assignee: vadi already verified by preflight) | Mode E — prativadi-fixup review |
 | anything else with `assignee: vadi` | exit with "unrecognized state" |
+
+## Run modes (phase sub-graphs)
+
+The `mode` field selected at scaffold is immutable for the run; `feature-pr` is the legacy alias for `development`. At `termination_review`, all modes flip to `assignee: "team"`, `active_roles: ["vadi", "prativadi"]` — team-owned, mode-independent. `review_target` stays the existing mutual-review routing string (`spec`|`implementation`|`prativadi_fixups`|`vadi_counter`); the new structured review intake uses `review_intake`.
+
+| Mode | Sub-graph | Terminal artifact |
+|---|---|---|
+| `development` | Full v2 graph unchanged (research↔ / spec↔ / parallel_implementing / test_creation / cross_review / deep_review / deslop / termination_review) | `run_explainer_ref` |
+| `research` | research↔ / spec↔ → `termination_review`; `research_outcome` ∈ {`exploratory`, `seed_development`}; exploratory exits via `research_review:termination_review`, seed via `spec_review:termination_review` | `research_ref` (+ `plan_ref` if `seed_development`) |
+| `review` | research_* scope (populate `review_intake`) → `deep_review` → `deslop` → `termination_review` | `review_ref` |
+
+Exact per-mode edge tables (research 12 edges, review 9 edges): `research_ref §08 F2`.
 
 ## Subagent-driven phases
 
@@ -292,19 +304,7 @@ Baton write before handoff:
 - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
 - Write the complete next baton to `"$BATON_NEXT_FILE"`, then install it with `${CLAUDE_SKILL_DIR}/scripts/dvandva-write.sh "$BATON_FILE" "$BATON_NEXT_FILE"` — it validates the transition, installs atomically, and snapshots the checkpoint into `"$BATON_DIR/history/"` (and an auto-named terminal archive on done/human_decision/human_question). On non-zero exit do not edit `"$BATON_FILE"` directly: fix the candidate per the exit code and re-run. Exit 30 means installed-but-snapshot-failed — surface it and continue.
 
-Baton write if a finding requires escalation (per action step 4):
-
-- `phase: <current N>` (unchanged)
-- `status: "human_decision"`
-- `assignee: "human"`
-- `current_engine`: set to `"claude"` if you are Claude Code, or `"codex"` if you are Codex. This is for traceability only.
-- `review_target: null`
-- `blockers: ["<the unresolvable finding>"]`
-- `summary: "Phase <N> fix blocked: <reason>."`
-- `next_action: "Human: decide whether to accept the finding as-is, change scope, or hand back to the vadi with adjusted instructions."`
-- Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
-- Write the complete next baton to `"$BATON_NEXT_FILE"`, then install it with `${CLAUDE_SKILL_DIR}/scripts/dvandva-write.sh "$BATON_FILE" "$BATON_NEXT_FILE"` — it validates the transition, installs atomically, and snapshots the checkpoint into `"$BATON_DIR/history/"` (and an auto-named terminal archive on done/human_decision/human_question). On non-zero exit do not edit `"$BATON_FILE"` directly: fix the candidate per the exit code and re-run. Exit 30 means installed-but-snapshot-failed — surface it and continue.
-
+Escalation: if a finding cannot be resolved, write `status: "human_decision"`, `assignee: "human"`, `review_target: null`, `blockers: ["<the unresolvable finding>"]`, `summary: "Phase <N> fix blocked: <reason>."`, `next_action: "Human: decide whether to accept the finding as-is, change scope, or hand back to the vadi with adjusted instructions."`. Follow the standard `updated_at`/`checkpoint`/`dvandva-write.sh` install pattern.
 Surface BATON_STATE, then follow the Stop rule.
 
 ## Mode S — deslop
@@ -450,11 +450,12 @@ In `run_mode: "supervised"`, exit after surfacing any baton assigned away from v
 
 ## Canonical baton schema (dvandva.baton.v1)
 
+New scaffolds write `"development"` for `mode`; `"feature-pr"` is the legacy alias accepted by `dvandva-write.sh` for existing batons.
 ```json
 {
   "schema": "dvandva.baton.v1",
   "updated_at": null,
-  "mode": "feature-pr",
+  "mode": "development",
   "run_mode": "walkaway",
   "run_id": null,
   "original_ask": "",
