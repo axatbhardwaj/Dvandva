@@ -30,6 +30,10 @@
 #   25 current baton exists but is unparseable (never overwritten)
 #   26 install failed (cp/mv error; baton unchanged)
 #   27 stale checkpoint (candidate is same or older than current baton)
+#   28 lock unavailable: a non-directory squats the lock path (fail-closed; the
+#      critical section never runs unlocked, so the write race cannot re-open)
+#   29 lock ownership lost: this writer's fencing token was replaced by a peer
+#      that stole the (age-timed-out) lock; install aborted, baton unchanged
 #   30 candidate installed but snapshot failed (baton IS updated)
 set -u
 
@@ -564,11 +568,36 @@ LOCK_ACQUIRED=0
 # deadlock left by a SIGKILLed writer. Override via DVANDVA_LOCK_TIMEOUT (seconds).
 LOCK_TIMEOUT="${DVANDVA_LOCK_TIMEOUT:-30}"
 
+# Fencing token: a value unique to THIS invocation, written into the lock dir at
+# acquire and re-verified immediately before the irreversible mv-install. If a
+# slow (but still LIVE) writer's lock is age-stolen by a peer, the peer rewrites
+# the token; the slow writer then detects the mismatch and aborts instead of
+# clobbering the peer's already-installed checkpoint+1 (the two-writers-both-
+# install bug). Portability: $$ differs across the two concurrent engine
+# processes (PIDs are unique among live processes), which alone distinguishes
+# racing writers. We also fold in ${BASHPID:-0} (guarded for bash 3.2 / stock
+# macOS where it may be unset under set -u), a wall-clock stamp, two $RANDOM
+# draws (a bash builtin, unlike GNU-only `date +%N`), and a /dev/urandom hexdump
+# when present -- so even PID reuse by a later invocation (after a crash) yields
+# a fresh, non-colliding token. No flock; mkdir + token files only.
+lock_nonce="$(od -An -N16 -tx1 /dev/urandom 2>/dev/null | tr -d ' \n')"
+LOCK_TOKEN="$$.${BASHPID:-0}.$(date +%s 2>/dev/null || echo 0).$RANDOM.$RANDOM.${lock_nonce:-0}"
+
 release_lock() {
   if [[ "$LOCK_ACQUIRED" -eq 1 ]]; then
     rm -rf "$LOCK_DIR" 2>/dev/null
     LOCK_ACQUIRED=0
   fi
+}
+
+# True only if we acquired the lock AND our fencing token is still installed on
+# disk. A peer that age-steals the lock renames our dir aside and writes its own
+# token, so a stolen lock makes this return non-zero (token differs or absent).
+holds_lock() {
+  [[ "$LOCK_ACQUIRED" -eq 1 ]] || return 1
+  local on_disk
+  on_disk="$(cat "$LOCK_DIR/owner" 2>/dev/null)" || return 1
+  [[ "$on_disk" == "$LOCK_TOKEN" ]]
 }
 
 cleanup_and_exit() {
@@ -590,11 +619,21 @@ acquire_lock() {
       LOCK_ACQUIRED=1
       # Record acquisition wall-clock so a later waiter can age out a crash.
       date +%s > "$LOCK_DIR/started_at" 2>/dev/null || true
+      # Stamp our fencing token so a peer that age-steals this lock provably
+      # replaces it, letting our pre-install check below detect the theft.
+      printf '%s' "$LOCK_TOKEN" > "$LOCK_DIR/owner" 2>/dev/null || true
       return 0
     fi
-    # mkdir failed. If the lock dir does not exist, the failure is environmental
-    # (e.g. a read-only baton dir), not contention -- give up on locking and let
-    # the real install fail with its own exit code rather than spin forever.
+    # mkdir failed. A NON-DIRECTORY squatting the lock path (corruption, a
+    # leftover, or an attacker planting a file) can NEVER become a held lock, so
+    # we must NOT fall through and run the critical section unlocked -- that is
+    # exactly the race window. Fail closed: signal the caller to abort (rc 2).
+    if [[ -e "$LOCK_DIR" && ! -d "$LOCK_DIR" ]]; then
+      return 2
+    fi
+    # If the lock dir does not exist at all, the failure is environmental (e.g. a
+    # read-only baton dir), not contention -- give up on locking and let the real
+    # install fail with its own exit code rather than spin forever.
     if [[ ! -d "$LOCK_DIR" ]]; then
       return 1
     fi
@@ -623,9 +662,21 @@ acquire_lock() {
   done
 }
 
-# Best-effort acquire: if locking is impossible (read-only dir) we proceed
-# unlocked so the unchanged install path reports its own failure exit code.
-acquire_lock || true
+# Lock acquisition is MANDATORY for the critical section. acquire_lock returns:
+#   0 = lock held (token stamped)
+#   1 = environmental: the lock dir could not be created and does NOT exist
+#       (e.g. a genuinely unwritable/read-only baton dir). The dir being
+#       unwritable means the real install below also cannot write, so there is
+#       no race to lose -- we proceed unlocked and let cp/mv report exit 26.
+#   2 = a non-directory squats the lock path. We can never hold a real lock, and
+#       the baton dir may still be writable, so proceeding unlocked WOULD reopen
+#       the write race. Fail closed.
+acquire_lock
+lock_rc=$?
+if [[ "$lock_rc" -eq 2 ]]; then
+  echo "DVANDVA_WRITE lock_unavailable path=$LOCK_DIR reason=non_directory_at_lock_path" >&2
+  exit 28
+fi
 
 if [[ ! -f "$BATON_FILE" ]]; then
   # Scaffold: only the vadi may create the very first baton.
@@ -884,6 +935,39 @@ fi
 if [[ "$legal" -ne 1 ]]; then
   echo "DVANDVA_WRITE illegal_transition $reason" >&2
   exit 24
+fi
+
+# Test-only deterministic interleaving seam. Unset in production (a single
+# string test, zero cost). It NEVER reads or executes input -- it only touches
+# and stats sentinel files -- so scripts/test-dvandva-write.sh can park a writer
+# here (after it has read the current checkpoint and judged the transition legal,
+# but before it installs) and deterministically let a peer steal the lock, in
+# order to prove the fencing guarantee below. The worst a stray env value can do
+# is make this one helper wait a few seconds, then continue.
+if [[ -n "${DVANDVA_WRITE_BARRIER:-}" ]]; then
+  : > "${DVANDVA_WRITE_BARRIER}.arrived" 2>/dev/null || true
+  __barrier_waited=0
+  while [[ ! -e "${DVANDVA_WRITE_BARRIER}.release" && "$__barrier_waited" -lt 200 ]]; do
+    sleep 0.05
+    __barrier_waited=$((__barrier_waited + 1))
+  done
+fi
+
+# FENCING (mandatory before the irreversible install). We have already read the
+# current checkpoint=N and judged our checkpoint=N+1 candidate legal. If, while
+# we were inside the critical section, a peer judged our lock stale and stole it
+# (age-based steal -- which fires when we are merely SLOW, not dead), the peer
+# rewrote the owner token and is itself installing N+1. Installing now would
+# clobber the peer's accepted write: two checkpoint+1 writers both "succeed". So
+# re-verify we still own the lock; if the token differs or is gone, relinquish
+# and abort fail-closed. (Skipped when LOCK_ACQUIRED=0, i.e. the rc-1 unlocked
+# path on an unwritable dir, which fails at cp/mv with exit 26 anyway.)
+if [[ "$LOCK_ACQUIRED" -eq 1 ]] && ! holds_lock; then
+  echo "DVANDVA_WRITE lock_lost fencing_token_mismatch path=$LOCK_DIR refusing_to_install=true" >&2
+  # The lock dir now belongs to the peer that stole it -- do NOT let our EXIT
+  # trap remove it. Relinquish ownership before aborting.
+  LOCK_ACQUIRED=0
+  exit 29
 fi
 
 # BATON_DIR was computed and created above when the lock was acquired.

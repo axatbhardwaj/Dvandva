@@ -1453,6 +1453,113 @@ else
   failures=$((failures + 1))
 fi
 
+# --- PFX1 lock hardening: mandatory acquisition + fencing token --------------
+# GAP 1 (fail-closed): a NON-DIRECTORY squatting the lock path
+# ($BATON_DIR/.baton.lock.d) means mkdir can never acquire the lock. The old
+# code fell through and ran the read->validate->mv critical section UNLOCKED,
+# installing rc=0 and re-opening the write race. Lock acquisition is mandatory:
+# refuse with exit 28 and leave the baton untouched.
+BOX="$(new_box v2-lock-path-non-directory)"
+RUN_DIR="$BOX/.dvandva/runs/alpha"
+mkdir -p "$RUN_DIR"
+make_baton_v2 "$RUN_DIR/baton.next.json" "research_drafting" "vadi" 0 \
+  '.run_id = "alpha" | .branch = "alpha-branch"'
+printf 'corrupt-non-directory\n' > "$RUN_DIR/.baton.lock.d"
+run_case_contains "non-directory at lock path fails closed exit 28" 28 "DVANDVA_WRITE lock_unavailable" \
+  "$SCRIPT" "$RUN_DIR/baton.json" "$RUN_DIR/baton.next.json"
+if [[ ! -f "$RUN_DIR/baton.json" && -f "$RUN_DIR/.baton.lock.d" && ! -d "$RUN_DIR/.baton.lock.d" ]]; then
+  echo "PASS: non-directory lock path installed no baton (critical section never ran unlocked)"
+else
+  echo "FAIL: non-directory lock path installed a baton unlocked or mutated the squatter"
+  failures=$((failures + 1))
+fi
+
+# GAP 2 (single writer never self-fences): a normal uncontended write still owns
+# its token at the pre-install check and must succeed rc=0.
+BOX="$(new_box v2-fencing-single-writer-no-self-fence)"
+make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 \
+  "$(v2_cross_review_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "cross_review" "team" 5 \
+  "$(v2_cross_review_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Single writer keeps its own fencing token."' \
+  '.next_action = "Team: continue; the sole holder must not self-fence."'
+run_case "single uncontended writer passes its own fencing check" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# GAP 2 (stale-lock recovery): an old started_at with a foreign token and no live
+# holder is a crashed writer's leftover. A fresh writer must steal it (replacing
+# the token) and succeed rc=0. Fencing must not break legitimate recovery.
+BOX="$(new_box v2-stale-lock-recovery)"
+make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 \
+  "$(v2_cross_review_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "cross_review" "team" 5 \
+  "$(v2_cross_review_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Stale-lock recovery: new writer steals an abandoned lock."' \
+  '.next_action = "Team: continue after recovering the abandoned lock."'
+mkdir -p "$BOX/.baton.lock.d"
+printf '%s' 0 > "$BOX/.baton.lock.d/started_at"
+printf '%s' "ghost-holder-token" > "$BOX/.baton.lock.d/owner"
+run_case "abandoned stale lock is recovered and write succeeds" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+if jq -e '.checkpoint == 5 and .status == "cross_review"' "$BOX/baton.json" >/dev/null 2>&1; then
+  echo "PASS: stale-lock recovery installed checkpoint 5"
+else
+  echo "FAIL: stale-lock recovery did not install checkpoint 5"
+  failures=$((failures + 1))
+fi
+
+# GAP 2 (fencing / live-lock): writer A acquires the lock, reads checkpoint=4,
+# judges its 5 candidate legal, then PARKS at the install barrier still holding
+# the lock and still believing checkpoint=4. Writer B (DVANDVA_LOCK_TIMEOUT=0)
+# steals A's still-LIVE lock, installs 5, and exits 0. When A is released it must
+# detect its fencing token is gone and abort fail-closed (exit 29) rather than
+# clobber B's write. Net: exactly one checkpoint+1 install survives even though a
+# live writer's lock was stolen. (DVANDVA_WRITE_BARRIER is a test-only seam that
+# only touches/stats sentinel files; it is unset in production.)
+BOX="$(new_box v2-fencing-stolen-lock)"
+make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 \
+  "$(v2_cross_review_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/cand-a.json" "cross_review" "team" 5 \
+  "$(v2_cross_review_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Fencing: slow writer A whose lock is stolen."' \
+  '.next_action = "Team: A must abort after losing the lock."'
+make_baton_v2 "$BOX/cand-b.json" "cross_review" "team" 5 \
+  "$(v2_cross_review_chunks_filter)" \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Fencing: peer writer B steals the lock and installs."' \
+  '.next_action = "Team: B wins the stolen-lock race."'
+fence_barrier="$BOX/barrierA"
+rm -f "$fence_barrier.arrived" "$fence_barrier.release"
+DVANDVA_WRITE_BARRIER="$fence_barrier" "$SCRIPT" "$BOX/baton.json" "$BOX/cand-a.json" >/dev/null 2>&1 &
+fence_pid_a=$!
+fence_waited=0
+while [[ ! -e "$fence_barrier.arrived" && "$fence_waited" -lt 200 ]]; do
+  sleep 0.05
+  fence_waited=$((fence_waited + 1))
+done
+DVANDVA_LOCK_TIMEOUT=0 "$SCRIPT" "$BOX/baton.json" "$BOX/cand-b.json" >/dev/null 2>&1
+fence_rc_b=$?
+: > "$fence_barrier.release"
+wait "$fence_pid_a"; fence_rc_a=$?
+fence_ckpt="$(jq -r '.checkpoint // "?"' "$BOX/baton.json" 2>/dev/null)"
+fence_summary="$(jq -r '.summary // "?"' "$BOX/baton.json" 2>/dev/null)"
+fence_zeros=0
+[[ "$fence_rc_a" -eq 0 ]] && fence_zeros=$((fence_zeros + 1))
+[[ "$fence_rc_b" -eq 0 ]] && fence_zeros=$((fence_zeros + 1))
+if [[ -e "$fence_barrier.arrived" && "$fence_zeros" -eq 1 && "$fence_rc_a" -eq 29 \
+  && "$fence_rc_b" -eq 0 && "$fence_ckpt" == "5" && "$fence_summary" == *"peer writer B"* ]]; then
+  echo "PASS: fenced slow writer aborts (rc_a=29), peer install survives (exactly one checkpoint 5)"
+else
+  echo "FAIL: fencing failed (arrived=$([[ -e "$fence_barrier.arrived" ]] && echo y || echo n) rc_a=$fence_rc_a rc_b=$fence_rc_b zeros=$fence_zeros ckpt=$fence_ckpt summary=$fence_summary)"
+  failures=$((failures + 1))
+fi
+
 for owner in \
   dvandva-security-auditor \
   dvandva-integration-checker \
