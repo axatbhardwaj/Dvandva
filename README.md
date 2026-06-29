@@ -126,11 +126,14 @@ For one-engine use, set `run_mode: "supervised"` in the active baton and invoke 
 Agents should make regular local checkpoint commits after a verified logical slice when `allow_commit` is true and the dirty paths match the baton's `changed_paths` union. Checkpoint commits are local only: pushing waits until both `vadi_final_approval` and `prativadi_final_approval` are true and `allow_push` is true. Dvandva must never create a PR.
 
 Run 4 role preflight enforces git work-gating automatically in each clone via
-the single turn-entry gate:
+the single turn-entry gate. The turn preflight ships per-role inside the plugin
+tree at `plugins/dvandva/skills/<role>/scripts/dvandva-preflight.sh` and is
+invoked by the role skill at turn entry (there is no repo-root
+`scripts/dvandva-preflight.sh`). Invoked directly it is:
 
 ```bash
 export DVANDVA_ROLE=vadi      # or: export DVANDVA_ROLE=prativadi
-bash scripts/dvandva-preflight.sh --role vadi
+bash plugins/dvandva/skills/vadi/scripts/dvandva-preflight.sh --role vadi
 ```
 
 The preflight asserts `DVANDVA_ROLE=<role>` then runs the hook stage. The hook

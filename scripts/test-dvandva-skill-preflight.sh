@@ -99,6 +99,24 @@ reject_match "$README" \
   'core\.hooksPath=\.githooks' \
   "README does not document core.hooksPath=.githooks as the adoption target"
 
+# README accuracy: there is NO repo-root scripts/dvandva-preflight.sh — the turn
+# preflight ships per-role inside the plugin tree
+# (plugins/dvandva/skills/<role>/scripts/dvandva-preflight.sh) and is invoked via
+# the role skill.  Reject the stale root-script invocation and require the real
+# per-role/skill-invoked path so the README cannot drift back to a path that
+# does not exist in a plugin-installed target repo.
+if [[ ! -f "$ROOT_DIR/scripts/dvandva-preflight.sh" ]]; then
+  pass "no repo-root scripts/dvandva-preflight.sh exists (preflight ships per-role)"
+else
+  fail "unexpected repo-root scripts/dvandva-preflight.sh (preflight should ship per-role only)"
+fi
+reject_match "$README" \
+  'bash[[:space:]]+scripts/dvandva-preflight\.sh' \
+  "README does not point users at a nonexistent root scripts/dvandva-preflight.sh"
+require_match "$README" \
+  'plugins/dvandva/skills/<role>/scripts/dvandva-preflight\.sh|per-role.*dvandva-preflight\.sh|dvandva-preflight\.sh.*ships per-role' \
+  "README documents the per-role/skill-invoked turn preflight path"
+
 if [[ "$failures" -gt 0 ]]; then
   exit 1
 fi

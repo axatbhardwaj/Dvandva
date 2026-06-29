@@ -158,6 +158,29 @@ out="$(DVANDVA_ROLE=vadi bash "$HELPER" --role vadi --repo "$BOX" 2>&1)"; rc=$?
 check_msg "broken chain exits 1" 1 "$rc" "$out" "result=error"
 check_msg "broken chain reports a reason" 1 "$rc" "$out" "reason="
 
+# Plugin-only target: the per-role helper ships INSIDE the plugin tree and the
+# target repo has NO committed scripts/.  The preflight must resolve the
+# installer from the plugin location (relative to its own BASH_SOURCE), not from
+# $REPO_ROOT/scripts.  This reproduces the Layer-1 "installer ships nowhere"
+# failure if installer resolution still assumes the target repo's scripts dir.
+BOX="$TMP_DIR/plugin-only"
+new_husky_repo "$BOX"
+# Intentionally do NOT stage scripts/ or plugin sources into the box: the only
+# Dvandva source available is the real in-repo plugin tree the helper lives in.
+out="$(DVANDVA_ROLE=vadi bash "$VADI_HELPER" --role vadi --repo "$BOX" 2>&1)"; rc=$?
+check_msg "plugin-only target succeeds via plugin installer" 0 "$rc" "$out" "result=ok"
+if [[ "$out" == *"missing_installer"* ]]; then
+  echo "FAIL: plugin-only target must not report missing_installer"
+  echo "  got: $out"
+  failures=$((failures + 1))
+else
+  echo "PASS: plugin-only target does not report missing_installer"
+fi
+current="$(box_cfg_get "$BOX" core.hooksPath)"
+check_value "plugin-only target adopts delegated wrapper" ".dvandva/githooks" "$current"
+prior="$(box_cfg_get "$BOX" dvandva.priorHooksPath)"
+check_value "plugin-only target records prior foreign hooksPath" ".husky/_" "$prior"
+
 echo ""
 if [[ "$failures" -eq 0 ]]; then
   echo "All tests passed."

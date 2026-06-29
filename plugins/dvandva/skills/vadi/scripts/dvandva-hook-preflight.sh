@@ -6,10 +6,35 @@
 # active pre-commit hook with DVANDVA_HOOK_SELFCHECK=1.
 set -u
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd)"
+
 ROLE=""
 REPO_ARG=""
 MODE="${DVANDVA_HOOK_PREFLIGHT:-auto}"
 SENTINEL="DVANDVA_GATE_WIRED"
+
+# Resolve the work-gate installer plugin-first.  The role hook preflight ships
+# INSIDE the plugin tree (plugins/dvandva/skills/<role>/scripts/) and so does the
+# installer (plugins/dvandva/scripts/install-dvandva-hooks.sh, three levels up).
+# A plugin-installed target repo carries NO committed Dvandva source, so anchoring
+# on $REPO_ROOT/scripts would reintroduce the Layer-1 "installer ships nowhere"
+# failure (missing_installer before any work).  We therefore prefer the installer
+# co-located with this script's own plugin hook sources, and only fall back to the
+# target repo's scripts/ for the dogfood copy (scripts/dvandva-hook-preflight.sh),
+# whose ../../../scripts resolves to an unrelated grandparent directory.
+resolve_installer() {
+  local plugin_installer="$SCRIPT_DIR/../../../scripts/install-dvandva-hooks.sh"
+  local plugin_marker="$SCRIPT_DIR/../../../hooks/pre-commit"
+  if [[ -f "$plugin_installer" && -f "$plugin_marker" ]]; then
+    printf '%s\n' "$plugin_installer"
+    return 0
+  fi
+  if [[ -f "$REPO_ROOT/scripts/install-dvandva-hooks.sh" ]]; then
+    printf '%s\n' "$REPO_ROOT/scripts/install-dvandva-hooks.sh"
+    return 0
+  fi
+  return 1
+}
 
 usage() {
   cat <<'EOF'
@@ -115,8 +140,7 @@ if [[ "$MODE" == "off" ]]; then
   exit 0
 fi
 
-INSTALLER="$REPO_ROOT/scripts/install-dvandva-hooks.sh"
-if [[ ! -f "$INSTALLER" ]]; then
+if ! INSTALLER="$(resolve_installer)"; then
   echo "DVANDVA_HOOK_PREFLIGHT role=$ROLE mode=$MODE result=error reason=missing_installer repo=$REPO_ROOT"
   exit 1
 fi

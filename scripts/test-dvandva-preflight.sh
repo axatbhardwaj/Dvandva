@@ -130,6 +130,93 @@ else
   echo "PASS: role mismatch does not run hook stage"
 fi
 
+# ---------------------------------------------------------------------------
+# Real integration (addresses cr-c2-stub-tests): exercise the REAL orchestrator
+# + REAL resolver + REAL hook stage + REAL installer against a target repo that
+# has NO committed scripts/.  Because the only Dvandva source is the in-repo
+# plugin tree the orchestrator lives in, RESOLVED must drive a plugin-installer
+# adoption (the plugin-only enforcement case), while ASK/CREATE must never run
+# the hook stage.
+# ---------------------------------------------------------------------------
+box_cfg_get() {
+  local box="$1" key="$2" v
+  if [[ "$(git -C "$box" config --bool extensions.worktreeConfig 2>/dev/null || echo false)" == "true" ]] \
+     && v="$(git -C "$box" config --worktree --get "$key" 2>/dev/null)"; then
+    printf '%s' "$v"
+    return 0
+  fi
+  git -C "$box" config --local --get "$key" 2>/dev/null || true
+}
+
+new_target_repo() {
+  local dir="$1"
+  mkdir -p "$dir"
+  git -C "$dir" init --quiet
+  git -C "$dir" config user.email "test@dvandva.test"
+  git -C "$dir" config user.name "Dvandva Test"
+  touch "$dir/.gitkeep"
+  git -C "$dir" add .gitkeep
+  git -C "$dir" commit --quiet -m "initial"
+}
+
+write_baton() {
+  local path="$1" run_id="$2" status="$3"
+  mkdir -p "$(dirname "$path")"
+  cat > "$path" <<EOF
+{"run_id":"$run_id","status":"$status","assignee":"vadi","updated_at":"2026-06-29T00:00:00Z"}
+EOF
+}
+
+# RESOLVED -> runs the hook stage and adopts via the PLUGIN installer (the target
+# repo has no scripts/).  Old installer resolution would fail with
+# missing_installer here.
+BOX="$TMP_DIR/real-resolved"
+new_target_repo "$BOX"
+write_baton "$BOX/.dvandva/runs/accuracy/baton.json" accuracy in_progress
+out="$(cd "$BOX" && DVANDVA_ROLE=vadi bash "$VADI_PREFLIGHT" --role vadi 2>&1)"; rc=$?
+check_msg "real RESOLVED exits 0" 0 "$rc" "$out" "result=resolved"
+check_msg "real RESOLVED runs hook stage to ok" 0 "$rc" "$out" "result=ok"
+if [[ "$out" == *"missing_installer"* ]]; then
+  echo "FAIL: real RESOLVED must resolve the plugin installer (got missing_installer)"
+  echo "  got: $out"
+  failures=$((failures + 1))
+else
+  echo "PASS: real RESOLVED resolves the plugin installer (no missing_installer)"
+fi
+current="$(box_cfg_get "$BOX" core.hooksPath)"
+if [[ "$current" == ".dvandva/githooks" ]]; then
+  echo "PASS: real RESOLVED adopts the delegated wrapper"
+else
+  echo "FAIL: real RESOLVED adopts the delegated wrapper — got '$current'"
+  failures=$((failures + 1))
+fi
+
+# ASK -> never runs the hook stage; no adoption side effect.
+BOX="$TMP_DIR/real-ask"
+new_target_repo "$BOX"
+write_baton "$BOX/.dvandva/runs/aa/baton.json" aa in_progress
+write_baton "$BOX/.dvandva/runs/bb/baton.json" bb in_progress
+out="$(cd "$BOX" && DVANDVA_ROLE=vadi bash "$VADI_PREFLIGHT" --role vadi 2>&1)"; rc=$?
+check_msg "real ASK exits 12" 12 "$rc" "$out" "result=ask"
+if [[ -d "$BOX/.dvandva/githooks" ]]; then
+  echo "FAIL: real ASK must not run the hook stage (found .dvandva/githooks)"
+  failures=$((failures + 1))
+else
+  echo "PASS: real ASK does not run the hook stage"
+fi
+
+# CREATE -> never runs the hook stage; no adoption side effect.
+BOX="$TMP_DIR/real-create"
+new_target_repo "$BOX"
+out="$(cd "$BOX" && DVANDVA_ROLE=vadi bash "$VADI_PREFLIGHT" --role vadi 2>&1)"; rc=$?
+check_msg "real CREATE exits 0" 0 "$rc" "$out" "result=create"
+if [[ -d "$BOX/.dvandva/githooks" ]]; then
+  echo "FAIL: real CREATE must not run the hook stage (found .dvandva/githooks)"
+  failures=$((failures + 1))
+else
+  echo "PASS: real CREATE does not run the hook stage"
+fi
+
 echo ""
 if [[ "$failures" -eq 0 ]]; then
   echo "All tests passed."
