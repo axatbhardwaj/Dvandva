@@ -214,6 +214,26 @@ write_run_explainer "$BAD_RUN_META_ID/run-reports/2026-06-28-run-a-explainer.htm
 sed -i 's/"run_id":"run-a"/"run_id":"other-run"/' "$BAD_RUN_META_ID/run-reports/2026-06-28-run-a-explainer.html"
 run_case "run explainer metadata run_id must match filename" 1 bash "$LINTER" "$BAD_RUN_META_ID"
 
+BAD_RUN_TYPE="$TMP_DIR/bad-run-type"
+write_run_explainer "$BAD_RUN_TYPE/run-reports/2026-06-28-run-a-explainer.html" '
+  <section id="decisions"></section>
+  <section id="development"></section>
+  <section id="architecture"></section>
+  <section id="verification"></section>
+  <section id="diagrams"><svg viewBox="0 0 10 10"></svg></section>'
+sed -i 's/"artifact_type":"run_explainer"/"artifact_type":"test"/' "$BAD_RUN_TYPE/run-reports/2026-06-28-run-a-explainer.html"
+run_case "run explainer reserved schema with wrong artifact_type is rejected" 1 bash "$LINTER" "$BAD_RUN_TYPE"
+
+BAD_RUN_MISSING_TYPE="$TMP_DIR/bad-run-missing-type"
+write_run_explainer "$BAD_RUN_MISSING_TYPE/run-reports/2026-06-28-run-a-explainer.html" '
+  <section id="decisions"></section>
+  <section id="development"></section>
+  <section id="architecture"></section>
+  <section id="verification"></section>
+  <section id="diagrams"><svg viewBox="0 0 10 10"></svg></section>'
+sed -i 's/,"artifact_type":"run_explainer"//' "$BAD_RUN_MISSING_TYPE/run-reports/2026-06-28-run-a-explainer.html"
+run_case "run explainer reserved schema missing artifact_type is rejected" 1 bash "$LINTER" "$BAD_RUN_MISSING_TYPE"
+
 # --- pr_review cases ---
 
 GOOD_PR="$TMP_DIR/good-pr"

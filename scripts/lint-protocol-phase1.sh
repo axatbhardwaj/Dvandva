@@ -51,6 +51,8 @@ require_rg 'generated user-facing artifacts.*HTML|HTML.*generated user-facing ar
 reject_rg 'No multi-baton-per-repo support|One active baton per worktree' product.md 'product spec no longer excludes multi-run support'
 require_rg 'Required v2 fields include.*active_roles.*agent_instances' product.md 'product v2 field list includes active_roles and agent_instances'
 reject_rg 'Vadi \(implementing phase N\+1\)' product.md 'product flow diagram avoids stale sequential v2 implementation wording'
+require_rg '\| `review_of_review \(prativadi_fixups\)` \| final `done` \| Legacy v1 final phase approved by both roles after vadi approves prativadi fixups\.' product.md 'product legacy table keeps review_of_review final done row'
+require_rg '\| `counter_review \(vadi_counter\)` \| final `done` \| Legacy v1 final phase approved by both roles after prativadi approves counter\.' product.md 'product legacy table keeps counter_review final done row'
 
 for file in docs/protocol/local-baton-channel.md plugins/dvandva/references/local-baton-channel.md; do
   require_rg 'runs/<run_id>|runs/\$|DVANDVA_RUN_ID|run_id' "$file" "$file documents run-scoped baton paths"

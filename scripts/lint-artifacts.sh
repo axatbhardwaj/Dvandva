@@ -77,6 +77,10 @@ for file in "${html_files[@]}"; do
     fail "$rel bug_rca schema requires artifact_type bug_rca"
   fi
 
+  if [[ "$artifact_schema" == "dvandva.artifact.run_explainer.v1" && "$artifact_type" != "run_explainer" ]]; then
+    fail "$rel run_explainer schema requires artifact_type run_explainer"
+  fi
+
   if [[ "$artifact_type" == "run_explainer" ]]; then
     run_explainer_file_run_id=""
     if [[ "$artifact_rel" =~ ^run-reports/[0-9]{4}-[0-9]{2}-[0-9]{2}-([A-Za-z0-9._-]+)-explainer\.html$ ]]; then

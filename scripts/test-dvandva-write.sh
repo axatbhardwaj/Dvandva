@@ -87,6 +87,57 @@ v2_status_owner() {
   esac
 }
 
+v2_mode_status_filter() {
+  local mode="$1" status="$2"
+  case "$mode:$status" in
+    research:research_drafting|research:research_review|research:research_revision)
+      printf '.mode = "research" | .phase = "research"'
+      ;;
+    research:done)
+      printf '.mode = "research" | .phase = "spec" | .vadi_final_approval = true | .prativadi_final_approval = true'
+      ;;
+    research:termination_review)
+      printf '.mode = "research" | .phase = "spec" | .active_roles = ["vadi", "prativadi"]'
+      ;;
+    research:*)
+      printf '.mode = "research" | .phase = "spec"'
+      ;;
+    review:done)
+      printf '.mode = "review" | .phase = "review" | .review_ref = "./superpowers/reviews/review-run-modes.html" | .vadi_final_approval = true | .prativadi_final_approval = true'
+      ;;
+    review:termination_review)
+      printf '.mode = "review" | .phase = "review" | .active_roles = ["vadi", "prativadi"]'
+      ;;
+    review:deslop)
+      printf '.mode = "review" | .phase = "review"'
+      ;;
+    review:*)
+      printf '.mode = "review" | .phase = "review"'
+      ;;
+  esac
+}
+
+run_mode_edge_case() {
+  local mode="$1" from_status="$2" to_status="$3"
+  local box
+  local from_filter
+  box="$(new_box "${mode}-${from_status}-${to_status}-edge")"
+  from_filter="$(v2_mode_status_filter "$mode" "$from_status")"
+  if [[ "$from_status" == "termination_review" ]]; then
+    from_filter="$from_filter | .vadi_final_approval = true | .prativadi_final_approval = true"
+  fi
+  make_baton_v2 "$box/baton.json" "$from_status" "$(v2_status_owner "$from_status")" 4 "$from_filter"
+  if [[ "$mode:$from_status:$to_status" == "review:deep_review:deslop" ]]; then
+    make_baton_v2 "$box/baton.next.json" "$to_status" "$(v2_status_owner "$to_status")" 5 \
+      "$(v2_mode_status_filter "$mode" "$to_status")" \
+      "$(v2_review_angles_filter)"
+  else
+    make_baton_v2 "$box/baton.next.json" "$to_status" "$(v2_status_owner "$to_status")" 5 "$(v2_mode_status_filter "$mode" "$to_status")"
+  fi
+  run_case "$mode mode $from_status:$to_status full edge table is legal" 0 \
+    "$SCRIPT" "$box/baton.json" "$box/baton.next.json"
+}
+
 v2_review_angles_filter() {
   cat <<'JQ'
 .subagent_tracks += [
@@ -2201,6 +2252,13 @@ make_baton "$BOX/baton.next.json" "human_question" "human" 5
 run_case "human_question entry with null fields exits 24" 24 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+BOX="$(new_box hq-entry-resume-done)"
+make_baton "$BOX/baton.json" "spec_review" "prativadi" 4
+make_baton "$BOX/baton.next.json" "human_question" "human" 5 \
+  '.question = "Stop now?"' '.resume_assignee = "human"' '.resume_status = "done"'
+run_case_contains "human_question cannot be created with resume_status done" 24 "human_question cannot resume directly to done" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
 BOX="$(new_box hq-entry-impl)"
 make_baton "$BOX/baton.json" "implementing" "vadi" 4
 make_baton "$BOX/baton.next.json" "human_question" "human" 5 \
@@ -2228,6 +2286,27 @@ make_baton "$BOX/baton.json" "human_question" "human" 4 \
 make_baton "$BOX/baton.next.json" "spec_review" "prativadi" 5 \
   '.question = "Which scope?"' '.resume_assignee = "prativadi"' '.resume_status = "spec_review"'
 run_case "human_question resume without clearing fields exits 24" 24 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-human-question-resume-done-rejected)"
+make_baton_v2 "$BOX/baton.json" "human_question" "human" 4 \
+  '.mode = "development"' \
+  '.phase = 1' \
+  '.question = "Stop now?"' \
+  '.resume_assignee = "human"' \
+  '.resume_status = "done"' \
+  '.vadi_final_approval = false' \
+  '.prativadi_final_approval = false'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
+  '.mode = "development"' \
+  '.phase = 1' \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-28-run-a-explainer.html"' \
+  '.question = null' \
+  '.resume_assignee = null' \
+  '.resume_status = null' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true'
+run_case_contains "v2 human_question cannot resume directly to done" 24 "human_question cannot resume directly to done" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 # --- broken current baton is never clobbered ---
@@ -2511,6 +2590,37 @@ make_baton_v2 "$BOX/baton.next.json" "deep_review" "prativadi" 5 \
 run_case "review mode research_review:deep_review is legal" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+# Cover every accepted research/review edge explicitly; the generic V2_EDGES loop
+# exercises the development/feature-pr graph only.
+for edge in \
+  research_drafting:research_review \
+  research_review:research_revision \
+  research_revision:research_review \
+  research_review:spec_drafting \
+  spec_drafting:spec_review \
+  spec_review:spec_revision \
+  spec_revision:spec_review \
+  research_review:termination_review \
+  spec_review:termination_review \
+  termination_review:phase_fixing \
+  phase_fixing:research_review \
+  termination_review:done; do
+  run_mode_edge_case "research" "${edge%%:*}" "${edge##*:}"
+done
+
+for edge in \
+  research_drafting:research_review \
+  research_review:research_revision \
+  research_revision:research_review \
+  research_review:deep_review \
+  deep_review:deslop \
+  deslop:termination_review \
+  termination_review:phase_fixing \
+  phase_fixing:deep_review \
+  termination_review:done; do
+  run_mode_edge_case "review" "${edge%%:*}" "${edge##*:}"
+done
+
 # research negative: spec_review→parallel_implementing is a code-phase edge absent from research table
 BOX="$(new_box research-spec-review-parallel-implementing)"
 make_baton_v2 "$BOX/baton.json" "spec_review" "prativadi" 4 '.mode = "research"'
@@ -2644,6 +2754,29 @@ make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
   '.prativadi_final_approval = true'
 run_case "review done with review_ref is legal" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+for bad_review_ref in \
+  '../escape.html' \
+  'https://example.com/review.html' \
+  './superpowers/review/review.html' \
+  './superpowers/reviews/review.md' \
+  './superpowers/reviews/../escape.html' \
+  './superpowers/reviews//review.html'; do
+  ref_json="$(jq -Rn --arg ref "$bad_review_ref" '$ref')"
+  BOX="$(new_box "review-done-bad-review-ref-${bad_review_ref//[^A-Za-z0-9]/-}")"
+  make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+    '.mode = "review"' \
+    '.phase = "review"' \
+    '.active_roles = ["vadi", "prativadi"]' \
+    '.vadi_final_approval = true' \
+    '.prativadi_final_approval = true'
+  make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
+    '.mode = "review"' \
+    '.phase = "review"' \
+    ".review_ref = $ref_json | .vadi_final_approval = true | .prativadi_final_approval = true"
+  run_case_contains "review done rejects bad review_ref $bad_review_ref" 23 "DVANDVA_WRITE bad_review_ref" \
+    "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+done
 
 # research seed_development done missing plan_ref must fail bad_research_done_ref
 BOX="$(new_box research-done-seed-development-missing-plan-ref)"

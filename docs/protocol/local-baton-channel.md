@@ -62,7 +62,7 @@ Accepted terminal artifact gates are mode-conditional: development runs require
 `review_ref`. In all three v2 modes, `termination_review` plus both final
 approvals are shared and remain the only path to terminal `done`.
 
-implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; the `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. `test_creation` routes to `cross_review`, `cross_review` may route to `cross_fixing`, and only completed cross-review evidence for both roles can advance to `deep_review`. Phase convention: implementation-chunk tracks use the numeric implementation phase, while cross-review and deep-review gate tracks use the status-name phase such as `phase: "cross_review"` or `phase: "deep_review"`.
+implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; the `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. `test_creation` routes to `cross_review` and records 100% test coverage evidence for new executable behavior or source-only rationale for docs/skills; `cross_review` may route to `cross_fixing`, and only completed cross-review evidence for both roles can advance to `deep_review`. Phase convention: implementation-chunk tracks use the numeric implementation phase, while cross-review and deep-review gate tracks use the status-name phase such as `phase: "cross_review"` or `phase: "deep_review"`.
 
 Run 4 generalizes the path gate from dynamic `agent_instances` to `work_split`.
 The write helper applies `safe_rel_path` to `work_split.paths`,
@@ -77,11 +77,13 @@ the other. Closed or terminal historical chunks do not block later sequential
 reuse because work_split has no `base_checkpoint` wave model.
 
 Run 4 also adds local git work-gating. Role preflight exports and asserts
-`DVANDVA_ROLE=<role>`, runs `scripts/install-dvandva-hooks.sh`, verifies
-repo-local `core.hooksPath=.githooks`, and records `dvandva.hooksAdoptedAt` as
-the local drift baseline. `.githooks/pre-commit` delegates to
+`DVANDVA_ROLE=<role>`, then invokes the per-role `dvandva-preflight.sh` hook
+stage. The hook stage records the prior hook path, installs a delegating wrapper
+at `.dvandva/githooks`, verifies repo-local `core.hooksPath=.dvandva/githooks`,
+and records `dvandva.hooksAdoptedAt` as the local drift baseline. The
+`.dvandva/githooks/pre-commit` wrapper delegates to the prior hook chain and
 `scripts/dvandva-commit-gate.sh`; commits during an active baton require
-`DVANDVA_ROLE` to match `assignee` or `active_roles`; `.githooks/prepare-commit-msg`
+`DVANDVA_ROLE` to match `assignee` or `active_roles`; `.dvandva/githooks/prepare-commit-msg`
 stamps `Dvandva-Checkpoint`; and `scripts/dvandva-drift-lint.sh` reports
 unstamped commits from the hook-adoption baseline floor when present, so a
 later stamped checkpoint cannot hide a `--no-verify` bypass. This is

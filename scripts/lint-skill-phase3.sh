@@ -50,7 +50,7 @@ for role in vadi prativadi; do
   require_text "$skill" "research_ref" "$role skill surfaces research ref"
   require_text "$skill" "plan_ref" "$role skill surfaces plan ref"
   require_text "$skill" "turn_cap" "$role skill surfaces active turn cap"
-  require_text "$skill" "BATON_STATE: { phase, status, assignee:" "$role BATON_STATE remains structured"
+  require_text "$skill" "BATON_STATE: { mode, phase, status, assignee:" "$role BATON_STATE remains structured with mode"
   require_text "$skill" "--persist-max <600" "$role skill documents Claude wait cap"
   require_text "$skill" 'Codex-hosted sessions may use `--persist`' "$role skill documents Codex persistent wait"
   require_text "$skill" "Exit 23" "$role skill documents persistent cap exit"

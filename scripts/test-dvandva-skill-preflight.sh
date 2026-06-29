@@ -105,6 +105,25 @@ require_match "$VADI" \
 reject_match "$VADI" \
   'only terminal `done`/`human_decision`/`human_question` archives remain, auto-create' \
   "vadi skill does not classify human_question as only a terminal archive"
+require_match "$VADI" \
+  'Research fixbacks set .*`phase: "research"`.*`status: "research_review"`.*`assignee: "prativadi"`.*`review_target: "research"`' \
+  "vadi skill emits helper-valid research phase_fixing fixbacks"
+require_match "$VADI" \
+  'Review fixbacks set .*`phase: "review"`.*`status: "deep_review"`.*`assignee: "prativadi"`.*`review_target: null`' \
+  "vadi skill emits helper-valid review phase_fixing fixbacks"
+reject_match "$VADI" \
+  'Keep the current mode phase \(`<current N>`, `"spec"`, or `"review"`\)' \
+  "vadi skill does not keep phase=spec for research_review fixbacks"
+
+require_match "$PRATIVADI" \
+  'mode-appropriate terminal artifact \(`run_explainer_ref`, `research_ref` plus conditional `plan_ref`, or `review_ref`\)' \
+  "prativadi skill termination review reads the mode-appropriate artifact"
+require_match "$PRATIVADI" \
+  'Development runs require .*run_explainer_ref.*research runs require .*research_ref.*plan_ref.*review runs require .*review_ref' \
+  "prativadi final ship rule is mode-conditional"
+reject_match "$PRATIVADI" \
+  'A final dark self-contained run explainer exists at `\./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer\.html`' \
+  "prativadi final ship rule is not development-artifact-only"
 
 reject_match "$STATE_REF" \
   'role preflight exports and asserts `DVANDVA_ROLE=<role>`,[[:space:]]*`scripts/install-dvandva-hooks\.sh` sets and verifies `core\.hooksPath=\.githooks`' \
@@ -149,6 +168,19 @@ require_match "$README" \
 require_match "$README" \
   'termination_review' \
   "README documents multipart termination review"
+
+for file in "$ROOT_DIR/product.md" "$ROOT_DIR/docs/protocol/local-baton-channel.md" "$ROOT_DIR/plugins/dvandva/references/local-baton-channel.md"; do
+  label="${file#$ROOT_DIR/}"
+  reject_match "$file" \
+    'bash[[:space:]]+scripts/install-dvandva-hooks\.sh' \
+    "$label does not document repo-root install-dvandva-hooks as the role preflight"
+  reject_match "$file" \
+    'core\.hooksPath=\.githooks' \
+    "$label does not document core.hooksPath=.githooks as the adoption target"
+  require_match "$file" \
+    '\.dvandva/githooks' \
+    "$label documents the .dvandva/githooks delegating wrapper"
+done
 
 if [[ "$failures" -gt 0 ]]; then
   exit 1

@@ -311,7 +311,7 @@ Trigger: `status: "termination_review"` with `active_roles` containing prativadi
 
 Actions:
 
-1. Re-read the final diff, verification, `run_explainer_ref`, `final_commit`, and the peer's final approval evidence.
+1. Re-read the final diff, verification, the mode-appropriate terminal artifact (`run_explainer_ref`, `research_ref` plus conditional `plan_ref`, or `review_ref`), `final_commit`, and the peer's final approval evidence.
 2. If anything still needs behavior, test, documentation, artifact, or protocol work, write `status: "phase_fixing"`, `assignee: "vadi"`, clear `active_roles`, and describe the blocker.
 3. If the stop decision is sound, set only `prativadi_final_approval: true`. A role must never set the peer's final approval. If `vadi_final_approval` is still false, keep `status: "termination_review"`, `assignee: "team"`, and `active_roles: ["vadi", "prativadi"]` so both roles keep polling.
 4. Termination is team-owned across all modes. Never stop polling from `termination_review` merely because one approval bit flipped or one engine finished its local review.
@@ -394,8 +394,10 @@ Walkaway mode may push, but only after both roles approve the final diff and the
 - `allow_pr == false` (never create a PR).
 - `vadi_final_approval == true` and `prativadi_final_approval == true`.
 - Verification commands in the baton are passing for the final phase.
-- A final dark self-contained run explainer exists at `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`; it summarizes decisions, development, architecture, verification, and baton handoffs, includes diagrams with at least one inline SVG, and embeds machine-readable metadata with `schema: "dvandva.artifact.run_explainer.v1"` and `artifact_type: "run_explainer"`.
-- The terminal baton sets `run_explainer_ref` to that HTML path, mirrors it in the final `work_split` artifact refs, and cites it in `verification_matrix` evidence.
+- Development runs require `run_explainer_ref` pointing to a final dark self-contained run explainer at `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`; it summarizes decisions, development, architecture, verification, and baton handoffs, includes diagrams with at least one inline SVG, and embeds machine-readable metadata with `schema: "dvandva.artifact.run_explainer.v1"` and `artifact_type: "run_explainer"`.
+- Research runs require `research_ref`; they also require `plan_ref` when `research_outcome == "seed_development"`.
+- Review runs require `review_ref` pointing to the final dark self-contained review artifact.
+- The terminal baton sets the mode-appropriate artifact field, mirrors it in the final `work_split` artifact refs when applicable, and cites it in `verification_matrix` evidence.
 
 The run's intended files are the baton's `changed_paths` union, excluding `.dvandva/` and `superpowers/`. Before final ship, compare `git status --short` against that list. If any unrelated path is dirty, write `status: "human_decision"` and do not commit or push. If intended dirty files remain and `allow_commit == true`, make one final local commit with a semantic commit message. If no intended dirty files remain because checkpoint commits already captured the work, record `final_commit` as `git rev-parse HEAD`. If `allow_push == true`, push the current branch. Record `final_commit` and `pushed_ref`. If commit or push fails, write `status: "human_decision"`, `assignee: "human"`, and put the failing command in `blockers`.
 

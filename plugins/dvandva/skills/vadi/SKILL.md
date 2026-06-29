@@ -124,7 +124,7 @@ Actions:
 
 1. Invoke `dvandva:research`.
 2. Preserve `original_ask`; if missing, copy the initial user request from the current prompt into the next baton summary and research artifact metadata.
-3. Use conditional parallelism for codebase, docs/protocol, verification, risk, and work-distribution tracks. Parallelize only genuinely disjoint tracks when subagent tools are available; otherwise do the same exploration directly and record what was not parallelized and why in `subagent_tracks`.
+3. Use conditional parallelism for codebase, docs/protocol, verification, risk, and work-distribution tracks; parallelize only genuinely disjoint tracks when subagent tools are available. Otherwise do the same exploration directly and record what was not parallelized and why in `subagent_tracks`.
 4. Write `research_ref` to `./superpowers/research/YYYY-MM-DD-<topic>.html` as a dark self-contained HTML artifact with machine-readable metadata.
 5. Populate `work_split` and `verification_matrix`, including `test_creation`, `deep_review`, and `deslop` entries. New behavior targets 100% test coverage, while source-only docs/skills get lint/review coverage with rationale.
 6. Hand to prativadi for independent review with the same mode-correct phase, `status: "research_review"`, `assignee: "prativadi"`, and the appropriate `review_target`.
@@ -282,11 +282,11 @@ Actions:
 
 Baton write before handoff:
 
-- Keep the current mode phase (`<current N>`, `"spec"`, or `"review"`).
-- Development v2 routes through `test_creation`; research returns to `research_review`; review returns to `deep_review`.
-- `assignee: "prativadi"`
+- Set phase/status/review fields by mode:
+  - Development fixbacks keep the numeric implementation phase, set `status: "test_creation"`, `assignee: "vadi"`, and `review_target: null`; test evidence is refreshed before cross-review.
+  - Research fixbacks set `phase: "research"`, `status: "research_review"`, `assignee: "prativadi"`, and `review_target: "research"`; do not keep `phase: "spec"` when returning to a `research_*` status.
+  - Review fixbacks set `phase: "review"`, `status: "deep_review"`, `assignee: "prativadi"`, and `review_target: null`; review-mode `deep_review` uses the review phase, not a numeric implementation phase.
 - `current_engine`: set to `"claude"` if you are Claude Code, or `"codex"` if you are Codex. This is for traceability only.
-- `review_target: "implementation"`
 - `findings: []` (clear; prativadi re-populates if issues remain)
 - `summary: "Addressed prativadi findings for phase <N>. <N> items fixed."`
 - `verification: [...]` updated with the post-fix verification commands

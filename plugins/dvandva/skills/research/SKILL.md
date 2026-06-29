@@ -126,7 +126,7 @@ The vadi runs first for any named v2 run that is still in the research statuses:
 
 ### research_review
 
-The prativadi performs independent research review. Do not rely solely on the vadi's `research_ref`.
+The prativadi performs independent research review. Do not rely solely on the vadi's research_ref.
 
 1. Re-read `original_ask`.
 2. Open `research_ref`. In review mode, also inspect `review_intake` and confirm `review_target` still names the intended later review subject.

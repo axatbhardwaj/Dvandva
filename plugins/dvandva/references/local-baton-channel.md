@@ -62,7 +62,13 @@ Accepted terminal artifact gates are mode-conditional: development runs require
 `review_ref`. In all three v2 modes, `termination_review` plus both final
 approvals are shared and remain the only path to terminal `done`.
 
-implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; the `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. `test_creation` routes to `cross_review`, `cross_review` may route to `cross_fixing`, and only completed cross-review evidence for both roles can advance to `deep_review`. Phase convention: implementation-chunk tracks use the numeric implementation phase, while cross-review and deep-review gate tracks use the status-name phase such as `phase: "cross_review"` or `phase: "deep_review"`.
+implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; the `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. `test_creation` routes to `cross_review` and records 100% test coverage evidence for new executable behavior or source-only rationale for docs/skills; `cross_review` may route to `cross_fixing`, and only completed cross-review evidence for both roles can advance to `deep_review`. Phase convention: implementation-chunk tracks use the numeric implementation phase, while cross-review and deep-review gate tracks use the status-name phase such as `phase: "cross_review"` or `phase: "deep_review"`.
+
+Role preflight exports and asserts `DVANDVA_ROLE=<role>`, then invokes the
+per-role `dvandva-preflight.sh` hook stage. The hook stage records the prior
+hook path, installs a delegating wrapper at `.dvandva/githooks`, verifies
+repo-local `core.hooksPath=.dvandva/githooks`, and restores the prior hook path
+on uninstall so Dvandva does not hijack foreign repo hook configuration.
 
 Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`,
 `termination_review`) may write same-status sync checkpoints when both roles

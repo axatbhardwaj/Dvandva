@@ -479,7 +479,11 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
         fi
         ;;
       review)
-        if ! jq -e '(.review_ref | type) == "string" and (.review_ref | length) > 0' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+        if ! jq -e '
+          (.review_ref | type) == "string" and
+          (.review_ref | test("^\\./superpowers/reviews/[A-Za-z0-9._/-]+\\.html$")) and
+          ((.review_ref | test("(^|/)\\.\\.(/|$)|//")) | not)
+        ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
           echo "DVANDVA_WRITE bad_review_ref candidate=$CANDIDATE_FILE" >&2
           exit 23
         fi
@@ -867,6 +871,8 @@ else
   elif [[ "$cur_status" == "human_question" ]]; then
     if [[ "$new_status" == "human_decision" ]]; then
       legal=1
+    elif [[ "$cur_resume_status" == "done" || "$new_status" == "done" ]]; then
+      reason="human_question cannot resume directly to done"
     elif [[ "$new_status" == "$cur_resume_status" && "$new_assignee" == "$cur_resume_assignee" && "$cand_q_null" == "true" && "$cand_ra_null" == "true" && "$cand_rs_null" == "true" ]]; then
       legal=1
     else
@@ -887,6 +893,8 @@ else
       reason="human_question only enters from spec or research states, not $cur_status"
     elif [[ "$cand_q_null" == "true" || "$cand_ra_null" == "true" || "$cand_rs_null" == "true" ]]; then
       reason="human_question requires non-null question, resume_assignee, resume_status"
+    elif jq -e '.resume_status == "done"' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+      reason="human_question cannot resume directly to done"
     else
       legal=1
     fi
