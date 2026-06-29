@@ -186,6 +186,17 @@ assert_line "DVANDVA_RUN_DIR wins -> RESOLVED dir baton" 0 "RESOLVED $RUN_DIR_PA
 assert_line "DVANDVA_RUN_DIR trailing slash normalized" 0 "RESOLVED $RUN_DIR_PATH/baton.json" \
   env DVANDVA_RUN_DIR="$RUN_DIR_PATH/" "$SCRIPT" --role vadi --cwd "$BOX_H"
 
+# (h3) competing selectors: DVANDVA_BATON_FILE beats DVANDVA_RUN_DIR beats DVANDVA_RUN_ID.
+BOX_PREC="$TMP_DIR/prec"
+PREC_FILE="$BOX_PREC/custom/win-baton.json"
+seed_baton "$PREC_FILE" "winfile" "spec_review" "vadi" "2026-06-29T10:00:00Z"
+seed_baton "$BOX_PREC/.dvandva/runs/dirrun/baton.json" "dirrun" "implementing" "vadi" "2026-06-29T10:00:00Z"
+assert_line "BATON_FILE beats RUN_DIR+RUN_ID" 0 "RESOLVED $PREC_FILE" \
+  env DVANDVA_BATON_FILE="$PREC_FILE" DVANDVA_RUN_DIR="$BOX_PREC/.dvandva/runs/dirrun" DVANDVA_RUN_ID="idrun" "$SCRIPT" --role vadi --cwd "$BOX_PREC"
+# (h4) DVANDVA_RUN_DIR beats DVANDVA_RUN_ID when BATON_FILE is absent.
+assert_line "RUN_DIR beats RUN_ID" 0 "RESOLVED $BOX_PREC/.dvandva/runs/dirrun/baton.json" \
+  env DVANDVA_RUN_DIR="$BOX_PREC/.dvandva/runs/dirrun" DVANDVA_RUN_ID="idrun" "$SCRIPT" --role vadi --cwd "$BOX_PREC"
+
 # (i) safe DVANDVA_RUN_ID=alpha -> RESOLVED .dvandva/runs/alpha/baton.json.
 BOX_I="$TMP_DIR/i-run-id"
 mkdir -p "$BOX_I"
