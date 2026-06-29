@@ -2,6 +2,7 @@
 name: dvandva-pattern-mapper
 description: Use for Dvandva research when an implementer needs to know the existing codebase analog or proven pattern before writing new code.
 model: opus
+color: green
 phase: research
 tools: Read, Glob, Grep
 ---

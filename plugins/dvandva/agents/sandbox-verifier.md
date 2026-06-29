@@ -2,6 +2,7 @@
 name: dvandva-sandbox-verifier
 description: Use for Dvandva runtime probes, command evidence, helper verification, and sandboxed checks that should not become permanent tests.
 model: opus
+color: cyan
 phase: verification
 tools: Read, Glob, Grep, Bash
 ---

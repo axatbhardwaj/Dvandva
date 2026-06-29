@@ -2,6 +2,7 @@
 name: dvandva-architect
 description: Use for Dvandva phase design, dependency ordering, work distribution, and two-team parallel implementation planning.
 model: opus
+color: green
 phase: spec_drafting
 tools: Read, Glob, Grep
 ---

@@ -2,6 +2,7 @@
 name: dvandva-doc-verifier
 description: Use for Dvandva deep_review when the run includes documentation, explainers, skill docs, READMEs, or baton summaries that must be verified against actual code and observable behavior.
 model: opus
+color: yellow
 phase: deep_review
 tools: Read, Glob, Grep, Bash
 ---

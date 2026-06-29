@@ -2,6 +2,7 @@
 name: dvandva-deep-reviewer
 description: Use for independent Dvandva deep_review after implementation, test_creation, and cross-review evidence exist.
 model: opus
+color: yellow
 phase: deep_review
 tools: Read, Glob, Grep, Bash
 ---

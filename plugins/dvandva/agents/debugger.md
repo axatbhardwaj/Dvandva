@@ -2,6 +2,7 @@
 name: dvandva-debugger
 description: Use in Dvandva phase_fixing when a review finding or test failure needs root-cause diagnosis before a fix is attempted by reproducing the failure, forming ranked hypotheses, isolating the cause, and confirming the root cause.
 model: sonnet
+color: red
 phase: phase_fixing
 tools: Read, Glob, Grep, Bash
 ---

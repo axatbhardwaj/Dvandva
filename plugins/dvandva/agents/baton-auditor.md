@@ -2,6 +2,7 @@
 name: dvandva-baton-auditor
 description: Use for Dvandva baton schema, transition, active_roles, checkpoint, and handoff integrity audits.
 model: opus
+color: green
 phase: baton_audit
 tools: Read, Glob, Grep, Bash
 ---
