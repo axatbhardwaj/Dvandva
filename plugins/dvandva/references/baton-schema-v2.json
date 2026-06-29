@@ -60,6 +60,9 @@
   "research_ref": null,
   "plan_ref": null,
   "run_explainer_ref": null,
+  "research_outcome": null,
+  "review_ref": null,
+  "review_intake": null,
   "work_split": [
     {
       "id": "research-codebase",
