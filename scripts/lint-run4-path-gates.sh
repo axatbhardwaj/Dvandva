@@ -163,8 +163,8 @@ require_match \
 
 require_slurp_match \
   scripts/install-dvandva-hooks.sh \
-  'core\.hooksPath.*\.githooks|\.githooks.*core\.hooksPath' \
-  'install-dvandva-hooks.sh must install repo-local .githooks via core.hooksPath'
+  'core\.hooksPath.*\.dvandva/githooks|\.dvandva/githooks.*core\.hooksPath' \
+  'install-dvandva-hooks.sh must set core.hooksPath to the delegating .dvandva/githooks dir'
 
 require_slurp_match \
   scripts/install-dvandva-hooks.sh \
@@ -193,8 +193,8 @@ require_slurp_match \
 
 require_slurp_match \
   plugins/dvandva/skills/vadi/SKILL.md \
-  'install-dvandva-hooks\.sh.*core\.hooksPath=.*\.githooks|core\.hooksPath=.*\.githooks.*install-dvandva-hooks\.sh' \
-  'vadi skill preflight must enforce repo-local Dvandva hooks'
+  'dvandva-preflight\.sh' \
+  'vadi skill preflight must invoke the unified dvandva-preflight.sh turn-gate'
 
 require_slurp_match \
   plugins/dvandva/skills/vadi/SKILL.md \
@@ -208,8 +208,8 @@ require_slurp_match \
 
 require_slurp_match \
   plugins/dvandva/skills/prativadi/SKILL.md \
-  'install-dvandva-hooks\.sh.*core\.hooksPath=.*\.githooks|core\.hooksPath=.*\.githooks.*install-dvandva-hooks\.sh' \
-  'prativadi skill preflight must enforce repo-local Dvandva hooks'
+  'dvandva-preflight\.sh' \
+  'prativadi skill preflight must invoke the unified dvandva-preflight.sh turn-gate'
 
 require_slurp_match \
   plugins/dvandva/skills/prativadi/SKILL.md \
