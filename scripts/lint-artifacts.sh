@@ -15,6 +15,22 @@ pass() {
   echo "PASS: $1"
 }
 
+run_explainer_stem_matches_run_id() {
+  local stem="$1"
+  local run_id="$2"
+  if [[ ! "$run_id" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ || "$run_id" == *".."* ]]; then
+    return 1
+  fi
+
+  if [[ "$run_id" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}- ]]; then
+    [[ "$stem" == "$run_id" ]]
+  elif [[ "$stem" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}-(.+)$ ]]; then
+    [[ "${BASH_REMATCH[1]}" == "$run_id" ]]
+  else
+    return 1
+  fi
+}
+
 if [[ ! -d "$ARTIFACT_DIR" ]]; then
   pass "no generated artifact directory present"
   exit 0
@@ -82,15 +98,23 @@ for file in "${html_files[@]}"; do
   fi
 
   if [[ "$artifact_type" == "run_explainer" ]]; then
-    run_explainer_file_run_id=""
-    if [[ "$artifact_rel" =~ ^run-reports/[0-9]{4}-[0-9]{2}-[0-9]{2}-([A-Za-z0-9._-]+)-explainer\.html$ ]]; then
-      run_explainer_file_run_id="${BASH_REMATCH[1]}"
+    run_explainer_file_stem=""
+    run_explainer_meta_run_id=""
+    run_explainer_candidate_stem=""
+    if [[ -n "$meta" ]]; then
+      run_explainer_meta_run_id="$(echo "$meta" | jq -r 'if (.run_id | type) == "string" then .run_id else "" end' 2>/dev/null)"
+    fi
+    if [[ "$artifact_rel" =~ ^run-reports/([A-Za-z0-9._-]+)-explainer\.html$ ]]; then
+      run_explainer_candidate_stem="${BASH_REMATCH[1]}"
+    fi
+    if [[ -n "$run_explainer_candidate_stem" ]] && run_explainer_stem_matches_run_id "$run_explainer_candidate_stem" "$run_explainer_meta_run_id"; then
+      run_explainer_file_stem="$run_explainer_candidate_stem"
       pass "$rel run explainer path is canonical"
     else
-      fail "$rel run explainer path must be run-reports/YYYY-MM-DD-<run_id>-explainer.html"
+      fail "$rel run explainer path must be run-reports/YYYY-MM-DD-<run_id>-explainer.html, or <run_id>-explainer.html when run_id is already date-prefixed"
     fi
 
-    if echo "$meta" | jq -e --arg run_id "$run_explainer_file_run_id" '
+    if [[ -n "$run_explainer_file_stem" ]] && echo "$meta" | jq -e --arg run_id "$run_explainer_meta_run_id" '
       .schema == "dvandva.artifact.run_explainer.v1" and
       .artifact_type == "run_explainer" and
       .run_id == $run_id and

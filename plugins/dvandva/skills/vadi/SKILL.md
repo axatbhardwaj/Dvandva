@@ -395,7 +395,7 @@ Walkaway mode may push, but only after both roles approve the final diff and the
 - `allow_pr == false` (never create a PR).
 - `vadi_final_approval == true` and `prativadi_final_approval == true`.
 - Verification commands in the baton are passing for the final phase.
-- Development: dark self-contained run explainer exists at `./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html`, includes diagrams/metadata, `run_explainer_ref` points to it, and `run_explainer_reviews` contains completed approved entries from both `vadi` and `prativadi` whose `artifact_ref` exactly equals `run_explainer_ref`.
+- Development: dark self-contained one-date run explainer exists under `./superpowers/run-reports/` (`YYYY-MM-DD-<run_id>-explainer.html` for date-less run IDs, or `<run_id>-explainer.html` when `run_id` already starts with `YYYY-MM-DD-`; never add a second date prefix), includes diagrams/metadata, `run_explainer_ref` points to it, and `run_explainer_reviews` contains completed approved entries from both `vadi` and `prativadi` whose `artifact_ref` exactly equals `run_explainer_ref`.
 - Research: `research_ref` exists; `plan_ref` also exists iff `research_outcome == "seed_development"`.
 - Review: `review_ref` exists.
 

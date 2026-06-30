@@ -50,6 +50,25 @@ is_safe_run_id() {
   [[ "$value" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] && [[ "$value" != *".."* ]]
 }
 
+run_explainer_ref_matches_run_id() {
+  local ref="$1"
+  local run_id="$2"
+  local stem=""
+  if [[ "$ref" =~ ^\./superpowers/run-reports/([A-Za-z0-9._-]+)-explainer\.html$ ]]; then
+    stem="${BASH_REMATCH[1]}"
+  else
+    return 1
+  fi
+
+  if [[ "$run_id" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}- ]]; then
+    [[ "$stem" == "$run_id" ]]
+  elif [[ "$stem" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}-(.+)$ ]]; then
+    [[ "${BASH_REMATCH[1]}" == "$run_id" ]]
+  else
+    return 1
+  fi
+}
+
 named_run_dir_id() {
   local path="$1"
   if [[ "$path" =~ (^|/)\.dvandva/runs/([^/]+)/baton\.json$ ]]; then
@@ -457,13 +476,8 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
   if [[ "$new_status" == "done" ]]; then
     case "$new_effective_mode" in
       development)
-        if ! jq -e '(.run_explainer_ref | type) == "string" and (.run_explainer_ref | test("^\\./superpowers/run-reports/[0-9]{4}-[0-9]{2}-[0-9]{2}-[A-Za-z0-9._-]+-explainer\\.html$"))' "$CANDIDATE_FILE" >/dev/null 2>&1; then
-          echo "DVANDVA_WRITE bad_run_explainer_ref candidate=$CANDIDATE_FILE" >&2
-          exit 23
-        fi
-        explainer_ref="$(jq -r '.run_explainer_ref' "$CANDIDATE_FILE")"
-        explainer_run_id="$(printf '%s\n' "$explainer_ref" | sed -E 's#^\./superpowers/run-reports/[0-9]{4}-[0-9]{2}-[0-9]{2}-(.*)-explainer\.html$#\1#')"
-        if [[ "$explainer_run_id" != "$new_run_id" ]]; then
+        explainer_ref="$(jq -r 'if (.run_explainer_ref | type) == "string" then .run_explainer_ref else "" end' "$CANDIDATE_FILE")"
+        if ! run_explainer_ref_matches_run_id "$explainer_ref" "$new_run_id"; then
           echo "DVANDVA_WRITE bad_run_explainer_ref candidate=$CANDIDATE_FILE" >&2
           exit 23
         fi

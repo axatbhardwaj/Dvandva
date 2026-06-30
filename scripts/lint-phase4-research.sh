@@ -385,7 +385,8 @@ for file in \
 done
 require_text "$ROOT_DIR/product.md" "adversarial-analyst.md" "product layout includes adversarial analyst agent file"
 require_text "$ROOT_DIR/product.md" "at least three angle-specific reviewers" "product requires multi-angle deep review"
-require_text "$ROOT_DIR/product.md" "./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html" "product documents final explainer path"
+require_text "$ROOT_DIR/product.md" "one-date explainer under \`./superpowers/run-reports/\`" "product documents final explainer path"
+require_text "$ROOT_DIR/product.md" "never add a second date prefix" "product documents date-prefixed run_id explainer convention"
 require_text "$ROOT_DIR/product.md" 'direct Codex plugin install, dual installer install, and `install-codex.sh` helper install' "product documents all smoke install runtime probes"
 require_text "$ROOT_DIR/product.md" 'dvandva:vadi`, `dvandva:prativadi`, `dvandva:research`, `dvandva:testing`, `dvandva:understanding`, and `dvandva:worktree-setup' "product documents all smoke-verified Dvandva skills"
 require_text "$ROOT_DIR/scripts/smoke-plugin-install.sh" "dvandva:research" "smoke script requires research skill runtime surface"

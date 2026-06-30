@@ -133,6 +133,9 @@ require_match "$PRATIVADI" \
 require_match "$PRATIVADI" \
   'run_explainer_reviews.*vadi.*prativadi|vadi.*prativadi.*run_explainer_reviews' \
   "prativadi final ship rule requires both explainer reviews"
+require_match "$PRATIVADI" \
+  'one-date run explainer.*YYYY-MM-DD-<run_id>-explainer\.html.*<run_id>-explainer\.html.*never add a second date prefix' \
+  "prativadi final ship rule documents the one-date explainer convention"
 reject_match "$PRATIVADI" \
   'A final dark self-contained run explainer exists at `\./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer\.html`' \
   "prativadi final ship rule is not development-artifact-only"

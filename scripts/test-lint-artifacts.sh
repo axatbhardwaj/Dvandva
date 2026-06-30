@@ -56,6 +56,7 @@ HTML
 write_run_explainer() {
   local file="$1"
   local body="$2"
+  local run_id="${3:-run-a}"
   mkdir -p "$(dirname "$file")"
   cat > "$file" <<HTML
 <!doctype html>
@@ -68,7 +69,7 @@ write_run_explainer() {
 <body>
 ${body}
 <script type="application/json" id="dvandva-artifact-meta">
-{"schema":"dvandva.artifact.run_explainer.v1","artifact_type":"run_explainer","run_id":"run-a","baton_ref":".dvandva/runs/run-a/baton.json","final_commit":null,"sections":["decisions","development","architecture","verification","diagrams"]}
+{"schema":"dvandva.artifact.run_explainer.v1","artifact_type":"run_explainer","run_id":"$run_id","baton_ref":".dvandva/runs/$run_id/baton.json","final_commit":null,"sections":["decisions","development","architecture","verification","diagrams"]}
 </script>
 </body>
 </html>
@@ -158,6 +159,30 @@ write_run_explainer "$GOOD_RUN/run-reports/2026-06-28-run-a-explainer.html" '
     <section id="diagrams"><h2>Diagrams</h2><svg viewBox="0 0 10 10"><path d="M1 1h8v8H1z"/></svg></section>
   </main>'
 run_case "run explainer artifact is accepted" 0 bash "$LINTER" "$GOOD_RUN"
+
+GOOD_RUN_DATE_PREFIXED="$TMP_DIR/good-run-date-prefixed"
+write_run_explainer "$GOOD_RUN_DATE_PREFIXED/run-reports/2026-06-29-baton-accuracy-hook-coexist-explainer.html" '
+  <main>
+    <section id="decisions"><h2>Decisions</h2></section>
+    <section id="development"><h2>Development</h2></section>
+    <section id="architecture"><h2>Architecture</h2></section>
+    <section id="verification"><h2>Verification</h2></section>
+    <section id="diagrams"><h2>Diagrams</h2><svg viewBox="0 0 10 10"><path d="M1 1h8v8H1z"/></svg></section>
+  </main>' \
+  "2026-06-29-baton-accuracy-hook-coexist"
+run_case "date-prefixed run explainer artifact is accepted without double date" 0 bash "$LINTER" "$GOOD_RUN_DATE_PREFIXED"
+
+BAD_RUN_DATE_DOUBLED="$TMP_DIR/bad-run-date-doubled"
+write_run_explainer "$BAD_RUN_DATE_DOUBLED/run-reports/2026-06-30-2026-06-29-baton-accuracy-hook-coexist-explainer.html" '
+  <main>
+    <section id="decisions"><h2>Decisions</h2></section>
+    <section id="development"><h2>Development</h2></section>
+    <section id="architecture"><h2>Architecture</h2></section>
+    <section id="verification"><h2>Verification</h2></section>
+    <section id="diagrams"><h2>Diagrams</h2><svg viewBox="0 0 10 10"><path d="M1 1h8v8H1z"/></svg></section>
+  </main>' \
+  "2026-06-29-baton-accuracy-hook-coexist"
+run_case "date-prefixed run explainer artifact rejects double date" 1 bash "$LINTER" "$BAD_RUN_DATE_DOUBLED"
 
 BAD_RUN_PATH="$TMP_DIR/bad-run-path"
 write_run_explainer "$BAD_RUN_PATH/report.html" '

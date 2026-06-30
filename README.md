@@ -170,11 +170,13 @@ bypass commit is still visible.
 
 Before post-handshake terminal `done`, a v2 run must satisfy the
 mode-conditional terminal artifact gate: development runs write
-`./superpowers/run-reports/YYYY-MM-DD-<run_id>-explainer.html` and set
+one-date run explainer HTML under `./superpowers/run-reports/` and set
 `run_explainer_ref`, then both roles record completed approved entries in
 `run_explainer_reviews` for that exact artifact; those entries are
 role-owned, and `DVANDVA_ROLE` must match the entry role for additions or
-changes. Research runs require
+changes. Use `YYYY-MM-DD-<run_id>-explainer.html` for date-less run IDs, or
+`<run_id>-explainer.html` when `run_id` already starts with `YYYY-MM-DD-`;
+never add a second date prefix. Research runs require
 `research_ref` and additionally `plan_ref` iff `research_outcome ==
 seed_development`; review runs require `review_ref`. In all cases, terminal
 `done` still routes through shared `termination_review` with both final

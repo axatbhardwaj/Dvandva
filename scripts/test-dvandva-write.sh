@@ -579,6 +579,56 @@ v2_run_explainer_reviews_filter() {
 JQ
 }
 
+v2_date_prefixed_run_explainer_reviews_filter() {
+  cat <<'JQ'
+.run_explainer_reviews = [
+  {
+    "id": "run-explainer-review-vadi",
+    "role": "vadi",
+    "artifact_ref": "./superpowers/run-reports/2026-06-29-baton-accuracy-hook-coexist-explainer.html",
+    "status": "completed",
+    "result": "approved",
+    "summary": "Vadi reviewed the final run explainer.",
+    "evidence_refs": ["vadi:run-explainer-review"]
+  },
+  {
+    "id": "run-explainer-review-prativadi",
+    "role": "prativadi",
+    "artifact_ref": "./superpowers/run-reports/2026-06-29-baton-accuracy-hook-coexist-explainer.html",
+    "status": "completed",
+    "result": "approved",
+    "summary": "Prativadi reviewed the final run explainer.",
+    "evidence_refs": ["prativadi:run-explainer-review"]
+  }
+]
+JQ
+}
+
+v2_double_date_run_explainer_reviews_filter() {
+  cat <<'JQ'
+.run_explainer_reviews = [
+  {
+    "id": "run-explainer-review-vadi",
+    "role": "vadi",
+    "artifact_ref": "./superpowers/run-reports/2026-06-30-2026-06-29-baton-accuracy-hook-coexist-explainer.html",
+    "status": "completed",
+    "result": "approved",
+    "summary": "Vadi reviewed the final run explainer.",
+    "evidence_refs": ["vadi:run-explainer-review"]
+  },
+  {
+    "id": "run-explainer-review-prativadi",
+    "role": "prativadi",
+    "artifact_ref": "./superpowers/run-reports/2026-06-30-2026-06-29-baton-accuracy-hook-coexist-explainer.html",
+    "status": "completed",
+    "result": "approved",
+    "summary": "Prativadi reviewed the final run explainer.",
+    "evidence_refs": ["prativadi:run-explainer-review"]
+  }
+]
+JQ
+}
+
 v2_cross_review_tracks_filter() {
   cat <<'JQ'
 .subagent_tracks += [
@@ -2064,6 +2114,40 @@ make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
   '.prativadi_final_approval = true' \
   "$(v2_run_explainer_reviews_filter)"
 run_case "v2 done accepts valid run_explainer_ref path" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-done-accepts-date-prefixed-run-id-explainer)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.run_id = "2026-06-29-baton-accuracy-hook-coexist"' \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-29-baton-accuracy-hook-coexist-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true' \
+  "$(v2_date_prefixed_run_explainer_reviews_filter)"
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
+  '.run_id = "2026-06-29-baton-accuracy-hook-coexist"' \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-29-baton-accuracy-hook-coexist-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true' \
+  "$(v2_date_prefixed_run_explainer_reviews_filter)"
+run_case "v2 done accepts date-prefixed run_id explainer without double date" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-done-rejects-double-date-run-id-explainer)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.run_id = "2026-06-29-baton-accuracy-hook-coexist"' \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-30-2026-06-29-baton-accuracy-hook-coexist-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true' \
+  "$(v2_double_date_run_explainer_reviews_filter)"
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 \
+  '.run_id = "2026-06-29-baton-accuracy-hook-coexist"' \
+  '.run_explainer_ref = "./superpowers/run-reports/2026-06-30-2026-06-29-baton-accuracy-hook-coexist-explainer.html"' \
+  '.vadi_final_approval = true' \
+  '.prativadi_final_approval = true' \
+  "$(v2_double_date_run_explainer_reviews_filter)"
+run_case_contains "v2 done rejects double-date explainer for date-prefixed run_id" 23 "bad_run_explainer_ref" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 for done_owner in human team vadi prativadi; do
