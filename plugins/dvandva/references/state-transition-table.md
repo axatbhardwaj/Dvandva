@@ -55,6 +55,12 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
   human-intervention batons are ignored so parked runs cannot hijack newer work.
   For a sibling `human_question`, output must preserve the sibling baton's
   `question`, `resume_assignee`, and `resume_status`.
+  After installing a handoff checkpoint, the writer must run the helper with
+  `--since-checkpoint <written_checkpoint>`; while the selected baton remains at
+  or below that checkpoint, the helper keeps polling even if a team-owned
+  `active_roles` field names the writer. It exits 0 with `checkpoint_advanced`
+  only after a peer write advances the baton, so the role re-reads before
+  deciding whether to work, wait again, or stop together.
   `termination_review` is not terminal; it wakes both roles.
   `--persist` is accepted for older snippets and is redundant. Optional
   `--persist-max <seconds>` is a total wall-clock cap; the wait-helper persist cap exit 23 is not a terminal baton state and must re-enter wait unless the

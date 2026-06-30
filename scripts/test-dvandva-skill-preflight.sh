@@ -96,6 +96,9 @@ for file in "$VADI" "$PRATIVADI"; do
   require_match "$file" \
     'sibling.{0,160}human_question.{0,160}question.{0,160}resume_assignee.{0,160}resume_status|human_question.{0,160}sibling.{0,160}question.{0,160}resume_assignee.{0,160}resume_status|question.{0,160}resume_assignee.{0,160}resume_status.{0,160}sibling.{0,160}human_question' \
     "$role skill preserves sibling human_question question and resume metadata"
+  require_match "$file" \
+    '--since-checkpoint' \
+    "$role skill uses checkpoint-gated wait after handoff"
 done
 
 for file in "$COMMAND_VADI" "$COMMAND_PRATIVADI"; do
@@ -121,6 +124,9 @@ for file in "$COMMAND_VADI" "$COMMAND_PRATIVADI"; do
   require_match "$file" \
     'newer sibling.*human_(decision|question)|human_(decision|question).*(newer sibling|sibling run)' \
     "$command_role command requires newer sibling human-intervention propagation"
+  require_match "$file" \
+    '--since-checkpoint' \
+    "$command_role command uses checkpoint-gated wait after handoff"
 done
 
 require_match "$VADI" \
@@ -185,6 +191,9 @@ require_match "$STATE_REF" \
 require_match "$STATE_REF" \
   'termination_review.*active|active.*termination_review' \
   "state reference preserves termination_review as active and non-terminal"
+require_match "$STATE_REF" \
+  '--since-checkpoint' \
+  "state reference documents checkpoint-gated handoff waits"
 
 # Static README coverage: reject stale Run-4 guidance that predates the
 # delegating-wrapper coexistence model.
@@ -234,6 +243,9 @@ for file in "$ROOT_DIR/product.md" "$ROOT_DIR/docs/protocol/local-baton-channel.
   require_match "$file" \
     'run_explainer_reviews' \
     "$label documents final explainer review evidence"
+  require_match "$file" \
+    '--since-checkpoint' \
+    "$label documents checkpoint-gated handoff waits"
 done
 
 if [[ "$failures" -gt 0 ]]; then

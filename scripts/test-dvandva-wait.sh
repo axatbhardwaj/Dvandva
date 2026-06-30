@@ -183,6 +183,41 @@ run_case "returns 0 for vadi active_roles concurrent baton" 0 \
 run_case "returns 0 for prativadi active_roles concurrent baton" 0 \
   "$PRATIVADI_SCRIPT" --role prativadi --file "$BATON_ACTIVE_ROLES" --interval 0 --max-wait 0
 
+BATON_HANDOFF_WAIT="$TMP_DIR/handoff-wait.json"
+write_active_roles_baton "$BATON_HANDOFF_WAIT"
+handoff_same_checkpoint_output="$(timeout 3 "$SCRIPT" --role vadi --file "$BATON_HANDOFF_WAIT" --interval 1 --max-wait 540 --since-checkpoint 9 2>&1)"
+handoff_same_checkpoint_exit=$?
+if [[ "$handoff_same_checkpoint_exit" -ne 124 ]]; then
+  echo "FAIL: --since-checkpoint should keep polling while team handoff checkpoint is unchanged, got $handoff_same_checkpoint_exit"
+  echo "$handoff_same_checkpoint_output"
+  failures=$((failures + 1))
+else
+  echo "PASS: --since-checkpoint keeps polling on unchanged active team checkpoint"
+fi
+
+BATON_HANDOFF_ADVANCE="$TMP_DIR/handoff-advance.json"
+write_active_roles_baton "$BATON_HANDOFF_ADVANCE"
+(
+  sleep 1
+  jq '.checkpoint = 10 | .updated_at = "2026-06-29T21:00:00Z"' "$BATON_HANDOFF_ADVANCE" > "$BATON_HANDOFF_ADVANCE.tmp"
+  mv "$BATON_HANDOFF_ADVANCE.tmp" "$BATON_HANDOFF_ADVANCE"
+) &
+handoff_advance_pid=$!
+handoff_advance_output="$(timeout 5 "$SCRIPT" --role vadi --file "$BATON_HANDOFF_ADVANCE" --interval 1 --max-wait 540 --since-checkpoint 9 2>&1)"
+handoff_advance_exit=$?
+wait "$handoff_advance_pid" 2>/dev/null || true
+if [[ "$handoff_advance_exit" -ne 0 ]]; then
+  echo "FAIL: --since-checkpoint should wake when baton checkpoint advances, got $handoff_advance_exit"
+  echo "$handoff_advance_output"
+  failures=$((failures + 1))
+elif [[ "$handoff_advance_output" != *"checkpoint_advanced"* || "$handoff_advance_output" != *"since_checkpoint=9"* || "$handoff_advance_output" != *"checkpoint=10"* ]]; then
+  echo "FAIL: --since-checkpoint wake output missing checkpoint advance metadata"
+  echo "$handoff_advance_output"
+  failures=$((failures + 1))
+else
+  echo "PASS: --since-checkpoint wakes when baton checkpoint advances"
+fi
+
 BATON_TERMINATION_REVIEW="$TMP_DIR/termination-review.json"
 write_termination_review_baton "$BATON_TERMINATION_REVIEW"
 run_case "returns 0 for vadi termination_review active_roles" 0 \

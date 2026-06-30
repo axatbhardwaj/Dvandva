@@ -406,8 +406,8 @@ The run's intended files are the baton's `changed_paths` union, excluding `.dvan
 In `run_mode: "walkaway"`, do not exit merely because the baton assigns work to prativadi. After writing any baton assigned away from vadi:
 
 1. Surface the new BATON_STATE line.
-2. Immediately run a foreground wait against the resolved `"$BATON_FILE"`. Continuous polling is the hard rule: `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role vadi --file "$BATON_FILE" --interval 60 --max-wait 540` keeps the shell polling across heartbeat intervals. Codex-hosted sessions may use `--persist` for older snippets, but it is redundant; add `--persist-max <600` only to fit a shell budget. Exit 20 from explicit `--finite` and Exit 23 from `--persist-max` are heartbeats/caps, not baton terminal states; immediately re-enter the wait unless the user interrupts.
-3. Continue from Preflight when the wait returns 0.
+2. Immediately run a foreground wait against the resolved `"$BATON_FILE"`. Continuous polling is the hard rule: `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role vadi --file "$BATON_FILE" --interval 60 --max-wait 540 --since-checkpoint "<checkpoint just installed>"` keeps the shell polling across heartbeat intervals until the baton changes after this handoff. Use `--since-checkpoint` after every baton write that hands work away or leaves a team-owned state active; it prevents `active_roles` from bouncing the writer immediately back to "ready" on the same checkpoint. If entering wait without a just-written checkpoint, omit `--since-checkpoint`. Codex-hosted sessions may use `--persist` for older snippets, but it is redundant; add `--persist-max <600` only to fit a shell budget. Exit 20 from explicit `--finite` and Exit 23 from `--persist-max` are heartbeats/caps, not baton terminal states; immediately re-enter the wait unless the user interrupts.
+3. Continue from Preflight when the wait returns 0 (`ready` or `checkpoint_advanced`).
 
 Do not end the turn after an assigned-away BATON_STATE line. The next action is the foreground wait helper, not a final response to the user.
 

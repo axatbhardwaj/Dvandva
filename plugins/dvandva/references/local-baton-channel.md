@@ -359,7 +359,7 @@ illegal transitions and route to `human_decision` instead.
 
 ## Handoff Rule
 
-The active agent must stop doing LLM work after writing a baton that assigns the next action to another actor. In default `run_mode: "walkaway"`, it then blocks in the foreground wait helper instead of exiting the overall run.
+The active agent must stop doing LLM work after writing a baton that assigns the next action to another actor. In default `run_mode: "walkaway"`, it then blocks in the foreground wait helper instead of exiting the overall run. After installing a handoff checkpoint, call the helper with `--since-checkpoint <written_checkpoint>` so team-owned `active_roles` states do not return the writer as ready on the same checkpoint; the helper exits 0 with `checkpoint_advanced` only after a peer write advances the baton.
 
 Every baton write goes through `${CLAUDE_SKILL_DIR}/scripts/dvandva-write.sh`,
 which validates the v1 or v2 transition, installs atomically, and snapshots the
@@ -390,13 +390,13 @@ This is the core anti-token-polling rule:
 
 - The vadi does not spend model turns asking whether the prativadi moved.
 - The prativadi does not spend model turns asking whether the vadi moved.
-- In walkaway mode, the assigned-away agent runs `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role <vadi|prativadi> --interval 60 --max-wait 540`.
+- In walkaway mode, the assigned-away agent runs `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role <vadi|prativadi> --interval 60 --max-wait 540`. After a baton write, add `--since-checkpoint <written_checkpoint>` so active team states poll until the baton advances instead of bouncing the writer back to ready immediately.
 - Continuous polling is the hard rule: `--max-wait` is a heartbeat interval, not a stop condition, and the helper keeps polling until this role owns the baton, the baton reaches post-handshake `done`, the baton enters `human_question`/`human_decision`, or the user interrupts. `termination_review` is active and wakes both roles; final approval alone is not a stop condition.
 - `--persist` is accepted for older call sites and is now redundant. `--persist-max <seconds>` is the optional total wall-clock cap; the wait-helper persist cap exit 23 means the cap was reached, not that the peer is done. Re-enter the wait unless the user interrupts. Explicit `--finite` compatibility mode is the only path to timeout exit 20 and is not valid for normal walkaway loops.
 - The write-helper validation exit 23 means a baton candidate failed schema, required-key, safe-run-id, v2 status-owner, status, or enum validation. Fix the candidate and rerun the write helper; do not edit the installed baton directly.
 - Claude Code has a Bash-tool wall-clock cap around 600 seconds, so Claude-hosted sessions must relaunch the wait if a harness cap stops the shell before a terminal baton state. Codex-hosted sessions may use unbounded default continuous polling or pass `--persist` for older snippets.
 - In supervised mode, the assigned-away agent exits and the human invokes the next role manually.
-- When the helper exits 0, the agent re-reads the baton and resumes.
+- When the helper exits 0 (`ready` or `checkpoint_advanced`), the agent re-reads the baton and resumes.
 - When the helper exits 10, the agent surfaces post-handshake `done` and stops. When it exits 11 or 12, the agent surfaces the human-intervention `human_decision` or `human_question` state and pauses for the human. For `human_question`, the helper also prints `question`, `resume_assignee`, and `resume_status`.
 
 ## Goal Conditions

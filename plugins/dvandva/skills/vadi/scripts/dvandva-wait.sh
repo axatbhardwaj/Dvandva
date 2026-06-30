@@ -56,10 +56,11 @@ MAX_WAIT=540
 ALLOW_MISSING=0
 PERSIST=1
 PERSIST_MAX=0
+SINCE_CHECKPOINT=""
 
 usage() {
   cat >&2 <<'USAGE'
-Usage: dvandva-wait.sh --role <vadi|prativadi> [--file .dvandva/baton.json] [--interval seconds] [--max-wait seconds] [--allow-missing] [--persist] [--persist-max seconds] [--finite]
+Usage: dvandva-wait.sh --role <vadi|prativadi> [--file .dvandva/baton.json] [--interval seconds] [--max-wait seconds] [--allow-missing] [--persist] [--persist-max seconds] [--since-checkpoint checkpoint] [--finite]
 
 Defaults: --interval 60 --max-wait 540
 Default file resolution: --file wins; otherwise DVANDVA_BATON_FILE,
@@ -82,6 +83,11 @@ or --finite --max-wait elapses (returns 20 on timeout).
 --persist is accepted for older call sites and is now the default behavior.
 Use --persist-max to set a total wall-clock cap for continuous waits; 0 means
 no cap. Use --finite to restore the old single-heartbeat exit-20 behavior.
+
+Use --since-checkpoint after installing a handoff checkpoint: the helper keeps
+polling while the selected baton remains at or below that checkpoint, even when
+the current team-owned state lists this role in active_roles. Terminal done,
+human_question, and human_decision still stop immediately.
 USAGE
 }
 
@@ -121,6 +127,11 @@ while [[ $# -gt 0 ]]; do
       PERSIST_MAX="$2"
       shift 2
       ;;
+    --since-checkpoint)
+      [[ $# -ge 2 ]] || { usage; exit 2; }
+      SINCE_CHECKPOINT="$2"
+      shift 2
+      ;;
     --finite)
       PERSIST=0
       shift 1
@@ -143,6 +154,11 @@ fi
 
 if ! [[ "$INTERVAL" =~ ^[0-9]+$ && "$MAX_WAIT" =~ ^[0-9]+$ && "$PERSIST_MAX" =~ ^[0-9]+$ ]]; then
   echo "ERROR: --interval, --max-wait, and --persist-max must be non-negative integers" >&2
+  exit 2
+fi
+
+if [[ -n "$SINCE_CHECKPOINT" ]] && ! [[ "$SINCE_CHECKPOINT" =~ ^[0-9]+$ ]]; then
+  echo "ERROR: --since-checkpoint must be a non-negative integer" >&2
   exit 2
 fi
 
@@ -480,14 +496,25 @@ while true; do
       ;;
   esac
 
-  if [[ "$assignee" == "$ROLE" ]]; then
-    echo "DVANDVA_WAIT ready role=$ROLE phase=$phase status=$status checkpoint=$checkpoint"
-    exit 0
-  fi
+  if [[ -n "$SINCE_CHECKPOINT" ]]; then
+    if ! [[ "$checkpoint" =~ ^[0-9]+$ ]]; then
+      echo "DVANDVA_WAIT invalid_checkpoint file=$BATON_FILE checkpoint=$checkpoint"
+      exit 22
+    fi
+    if [[ "$checkpoint" -gt "$SINCE_CHECKPOINT" ]]; then
+      echo "DVANDVA_WAIT checkpoint_advanced role=$ROLE phase=$phase status=$status checkpoint=$checkpoint since_checkpoint=$SINCE_CHECKPOINT assignee=$assignee active_roles=$active_roles"
+      exit 0
+    fi
+  else
+    if [[ "$assignee" == "$ROLE" ]]; then
+      echo "DVANDVA_WAIT ready role=$ROLE phase=$phase status=$status checkpoint=$checkpoint"
+      exit 0
+    fi
 
-  if [[ ",$active_roles," == *",$ROLE,"* ]]; then
-    echo "DVANDVA_WAIT ready role=$ROLE phase=$phase status=$status checkpoint=$checkpoint assignee=$assignee active_roles=$active_roles"
-    exit 0
+    if [[ ",$active_roles," == *",$ROLE,"* ]]; then
+      echo "DVANDVA_WAIT ready role=$ROLE phase=$phase status=$status checkpoint=$checkpoint assignee=$assignee active_roles=$active_roles"
+      exit 0
+    fi
   fi
 
   if [[ "$PERSIST" -eq 1 ]]; then
