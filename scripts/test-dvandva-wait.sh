@@ -440,6 +440,16 @@ else
   echo "PASS: DVANDVA_CONCURRENT=1 suppresses newer sibling human_decision stop"
 fi
 
+newer_question_suppressed_output="$(env DVANDVA_RUN_ID="alpha" DVANDVA_CONCURRENT=1 timeout 3 bash -c 'cd "$1" && "$2" --role prativadi --persist --interval 1 --max-wait 540' _ "$NEWER_QUESTION_BOX" "$PRATIVADI_SCRIPT" 2>&1)"
+newer_question_suppressed_exit=$?
+if [[ "$newer_question_suppressed_exit" -ne 124 ]]; then
+  echo "FAIL: DVANDVA_CONCURRENT=1 should suppress newer sibling human_question stop, got $newer_question_suppressed_exit"
+  echo "$newer_question_suppressed_output"
+  failures=$((failures + 1))
+else
+  echo "PASS: DVANDVA_CONCURRENT=1 suppresses newer sibling human_question stop"
+fi
+
 # Case 2b: a terminal sibling whose active_roles (not assignee) lists my role must
 # also be skipped -- the contains_role branch of the fire condition is gated too.
 TERMINAL_ACTIVE_ROLES_BOX="$TMP_DIR/terminal-active-roles-box"
