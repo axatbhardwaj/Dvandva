@@ -149,6 +149,43 @@ mkdir -p "$BAD_MD/plans"
 printf '# generated markdown artifact\n' > "$BAD_MD/plans/generated.md"
 run_case "generated markdown artifact is rejected" 1 bash "$LINTER" "$BAD_MD"
 
+MISSING_ARTIFACT_DIR="$TMP_DIR/missing-artifacts"
+run_case "missing artifact directory remains a no-op" 0 bash "$LINTER" "$MISSING_ARTIFACT_DIR"
+
+DIRECT_BAD_META="$TMP_DIR/direct-bad-meta.html"
+cat > "$DIRECT_BAD_META" <<'HTML'
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Direct file artifact test</title>
+  <style>:root{color-scheme: dark;--bg:#090b10}body{background:var(--bg);color:#eef3f8}</style>
+</head>
+<body>
+  <p>This direct file intentionally lacks Dvandva artifact metadata.</p>
+</body>
+</html>
+HTML
+run_case "direct HTML file target is linted" 1 bash "$LINTER" "$DIRECT_BAD_META"
+
+MULTI_GOOD="$TMP_DIR/multi-good"
+write_artifact "$MULTI_GOOD/report.html" '<p>Good first target.</p>'
+MULTI_BAD="$TMP_DIR/multi-bad.html"
+cat > "$MULTI_BAD" <<'HTML'
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Second target artifact test</title>
+  <style>:root{color-scheme: dark;--bg:#090b10}body{background:var(--bg);color:#eef3f8}</style>
+</head>
+<body>
+  <p>This second target intentionally lacks Dvandva artifact metadata.</p>
+</body>
+</html>
+HTML
+run_case "multiple artifact targets are all linted" 1 bash "$LINTER" "$MULTI_GOOD" "$MULTI_BAD"
+
 GOOD_RUN="$TMP_DIR/good-run"
 write_run_explainer "$GOOD_RUN/run-reports/2026-06-28-run-a-explainer.html" '
   <main>

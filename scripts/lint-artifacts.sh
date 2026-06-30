@@ -3,8 +3,11 @@
 set -u
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ARTIFACT_DIR="${1:-$ROOT_DIR/superpowers}"
 failures=0
+TARGETS=("$@")
+if [[ "${#TARGETS[@]}" -eq 0 ]]; then
+  TARGETS=("$ROOT_DIR/superpowers")
+fi
 
 fail() {
   echo "FAIL: $1"
@@ -31,27 +34,86 @@ run_explainer_stem_matches_run_id() {
   fi
 }
 
-if [[ ! -d "$ARTIFACT_DIR" ]]; then
-  pass "no generated artifact directory present"
+path_abs() {
+  local path="$1"
+  if [[ -d "$path" ]]; then
+    (cd "$path" && pwd -P)
+  elif [[ -e "$path" ]]; then
+    local dir base
+    dir="$(dirname "$path")"
+    base="$(basename "$path")"
+    printf '%s/%s\n' "$(cd "$dir" && pwd -P)" "$base"
+  else
+    return 1
+  fi
+}
+
+scope_label() {
+  local joined="${TARGETS[*]}"
+  printf '%s\n' "$joined"
+}
+
+artifact_rel_for_file() {
+  local file="$1"
+  local base="$2"
+  if [[ "$file" == "$ROOT_DIR/superpowers/"* ]]; then
+    printf '%s\n' "${file#$ROOT_DIR/superpowers/}"
+  elif [[ -n "$base" && "$file" == "$base/"* ]]; then
+    printf '%s\n' "${file#$base/}"
+  else
+    basename "$file"
+  fi
+}
+
+markdown_files=()
+html_files=()
+html_bases=()
+existing_targets=0
+
+for target in "${TARGETS[@]}"; do
+  if [[ ! -e "$target" ]]; then
+    pass "no generated artifact directory present"
+    continue
+  fi
+
+  existing_targets=$((existing_targets + 1))
+  target_abs="$(path_abs "$target")"
+  if [[ -d "$target_abs" ]]; then
+    while IFS= read -r file; do
+      markdown_files+=("$file")
+    done < <(find "$target_abs" -type f -name '*.md' | sort)
+    while IFS= read -r file; do
+      html_files+=("$file")
+      html_bases+=("$target_abs")
+    done < <(find "$target_abs" -type f -name '*.html' | sort)
+  elif [[ "$target_abs" == *.md ]]; then
+    markdown_files+=("$target_abs")
+  elif [[ "$target_abs" == *.html ]]; then
+    html_files+=("$target_abs")
+    html_bases+=("$(dirname "$target_abs")")
+  fi
+done
+
+if [[ "$existing_targets" -eq 0 ]]; then
   exit 0
 fi
 
-mapfile -t markdown_files < <(find "$ARTIFACT_DIR" -type f -name '*.md' | sort)
 if [[ "${#markdown_files[@]}" -gt 0 ]]; then
-  fail "generated Markdown artifacts are not allowed under $ARTIFACT_DIR"
+  fail "generated Markdown artifacts are not allowed under $(scope_label)"
   printf '  %s\n' "${markdown_files[@]#$ROOT_DIR/}"
 else
-  pass "no generated Markdown artifacts under $ARTIFACT_DIR"
+  pass "no generated Markdown artifacts under $(scope_label)"
 fi
 
-mapfile -t html_files < <(find "$ARTIFACT_DIR" -type f -name '*.html' | sort)
 if [[ "${#html_files[@]}" -eq 0 ]]; then
-  fail "no generated HTML artifacts found under $ARTIFACT_DIR"
+  fail "no generated HTML artifacts found under $(scope_label)"
 fi
 
-for file in "${html_files[@]}"; do
+for index in "${!html_files[@]}"; do
+  file="${html_files[$index]}"
+  artifact_base="${html_bases[$index]}"
   rel="${file#$ROOT_DIR/}"
-  artifact_rel="${file#$ARTIFACT_DIR/}"
+  artifact_rel="$(artifact_rel_for_file "$file" "$artifact_base")"
 
   if head -n 5 "$file" | grep -iq '<!doctype html'; then
     pass "$rel declares HTML doctype"
