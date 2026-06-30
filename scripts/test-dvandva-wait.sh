@@ -95,6 +95,29 @@ write_named_observed_baton() {
 JSON
 }
 
+write_named_question_baton() {
+  local file="$1"
+  local run_id="$2"
+  local updated_at="$3"
+  local current_engine="$4"
+  mkdir -p "$(dirname "$file")"
+  cat > "$file" <<JSON
+{
+  "schema": "dvandva.baton.v2",
+  "run_id": "$run_id",
+  "assignee": "human",
+  "status": "human_question",
+  "phase": "spec",
+  "checkpoint": 9,
+  "question": "Which scope should Dvandva choose?",
+  "resume_assignee": "prativadi",
+  "resume_status": "spec_review",
+  "updated_at": "$updated_at",
+  "current_engine": "$current_engine"
+}
+JSON
+}
+
 write_active_roles_baton() {
   local file="$1"
   mkdir -p "$(dirname "$file")"
@@ -332,10 +355,10 @@ fi
 # DISCOVERY taxonomy treating human_* as resumable is separate and unchanged). The
 # selected named run alpha waits on the peer while sibling beta is parked terminal.
 
-# Case 1: sibling in human_decision with a stale assignee=my role -> heartbeat, not 29.
+# Case 1: older sibling in human_decision with a stale assignee=my role -> heartbeat, not 29.
 TERMINAL_DECISION_BOX="$TMP_DIR/terminal-decision-box"
-write_named_observed_baton "$TERMINAL_DECISION_BOX/.dvandva/runs/alpha/baton.json" "alpha" "prativadi" "phase_review" "2026-06-29T18:00:00Z" "codex"
-write_named_observed_baton "$TERMINAL_DECISION_BOX/.dvandva/runs/beta/baton.json" "beta" "vadi" "human_decision" "2026-06-29T18:01:00Z" "claude"
+write_named_observed_baton "$TERMINAL_DECISION_BOX/.dvandva/runs/alpha/baton.json" "alpha" "prativadi" "phase_review" "2026-06-29T18:01:00Z" "codex"
+write_named_observed_baton "$TERMINAL_DECISION_BOX/.dvandva/runs/beta/baton.json" "beta" "vadi" "human_decision" "2026-06-29T18:00:00Z" "claude"
 terminal_decision_output="$(env DVANDVA_RUN_ID="alpha" timeout 3 bash -c 'cd "$1" && "$2" --role vadi --persist --interval 1 --max-wait 1' _ "$TERMINAL_DECISION_BOX" "$SCRIPT" 2>&1)"
 terminal_decision_exit=$?
 if [[ "$terminal_decision_exit" -ne 124 ]]; then
@@ -347,13 +370,13 @@ elif [[ "$terminal_decision_output" == *"split_brain"* || "$terminal_decision_ou
   echo "$terminal_decision_output"
   failures=$((failures + 1))
 else
-  echo "PASS: human_decision sibling with stale my-role assignee is terminal (no split-brain, not counted)"
+  echo "PASS: older human_decision sibling with stale my-role assignee is ignored (no split-brain, not counted)"
 fi
 
-# Case 2: sibling in human_question with a stale assignee=my role -> heartbeat, not 29.
+# Case 2: older sibling in human_question with a stale assignee=my role -> heartbeat, not 29.
 TERMINAL_QUESTION_BOX="$TMP_DIR/terminal-question-box"
-write_named_observed_baton "$TERMINAL_QUESTION_BOX/.dvandva/runs/alpha/baton.json" "alpha" "prativadi" "phase_review" "2026-06-29T18:10:00Z" "codex"
-write_named_observed_baton "$TERMINAL_QUESTION_BOX/.dvandva/runs/beta/baton.json" "beta" "vadi" "human_question" "2026-06-29T18:11:00Z" "claude"
+write_named_observed_baton "$TERMINAL_QUESTION_BOX/.dvandva/runs/alpha/baton.json" "alpha" "prativadi" "phase_review" "2026-06-29T18:11:00Z" "codex"
+write_named_observed_baton "$TERMINAL_QUESTION_BOX/.dvandva/runs/beta/baton.json" "beta" "vadi" "human_question" "2026-06-29T18:10:00Z" "claude"
 terminal_question_output="$(env DVANDVA_RUN_ID="alpha" timeout 3 bash -c 'cd "$1" && "$2" --role vadi --persist --interval 1 --max-wait 1' _ "$TERMINAL_QUESTION_BOX" "$SCRIPT" 2>&1)"
 terminal_question_exit=$?
 if [[ "$terminal_question_exit" -ne 124 ]]; then
@@ -365,7 +388,56 @@ elif [[ "$terminal_question_output" == *"split_brain"* || "$terminal_question_ou
   echo "$terminal_question_output"
   failures=$((failures + 1))
 else
-  echo "PASS: human_question sibling with stale my-role assignee is terminal (no split-brain, not counted)"
+  echo "PASS: older human_question sibling with stale my-role assignee is ignored (no split-brain, not counted)"
+fi
+
+# Stop-together resilience: a newer sibling human_decision is a paired pause for
+# a selected run waiting on the peer. This must not wait until the 540s
+# max-wait heartbeat; the timeout below catches heartbeat-only implementations.
+NEWER_DECISION_BOX="$TMP_DIR/newer-decision-box"
+write_named_observed_baton "$NEWER_DECISION_BOX/.dvandva/runs/alpha/baton.json" "alpha" "prativadi" "phase_review" "2026-06-29T20:00:00Z" "codex"
+write_named_observed_baton "$NEWER_DECISION_BOX/.dvandva/runs/beta/baton.json" "beta" "human" "human_decision" "2026-06-29T20:01:00Z" "claude"
+newer_decision_output="$(env DVANDVA_RUN_ID="alpha" timeout 5 bash -c 'cd "$1" && "$2" --role vadi --persist --interval 1 --max-wait 540' _ "$NEWER_DECISION_BOX" "$SCRIPT" 2>&1)"
+newer_decision_exit=$?
+if [[ "$newer_decision_exit" -ne 11 ]]; then
+  echo "FAIL: newer sibling human_decision should stop paired vadi wait with exit 11, got $newer_decision_exit"
+  echo "$newer_decision_output"
+  failures=$((failures + 1))
+elif [[ "$newer_decision_output" != *"sibling_run_id=beta"* || "$newer_decision_output" != *"selected_run_id=alpha"* ]]; then
+  echo "FAIL: newer sibling human_decision output missing selected/sibling metadata"
+  echo "$newer_decision_output"
+  failures=$((failures + 1))
+else
+  echo "PASS: newer sibling human_decision stops paired vadi wait"
+fi
+
+# Same paired-stop contract for the prativadi helper, including actionable
+# human_question metadata from the sibling baton.
+NEWER_QUESTION_BOX="$TMP_DIR/newer-question-box"
+write_named_observed_baton "$NEWER_QUESTION_BOX/.dvandva/runs/alpha/baton.json" "alpha" "vadi" "phase_review" "2026-06-29T20:10:00Z" "codex"
+write_named_question_baton "$NEWER_QUESTION_BOX/.dvandva/runs/beta/baton.json" "beta" "2026-06-29T20:11:00Z" "claude"
+newer_question_output="$(env DVANDVA_RUN_ID="alpha" timeout 5 bash -c 'cd "$1" && "$2" --role prativadi --persist --interval 1 --max-wait 540' _ "$NEWER_QUESTION_BOX" "$PRATIVADI_SCRIPT" 2>&1)"
+newer_question_exit=$?
+if [[ "$newer_question_exit" -ne 12 ]]; then
+  echo "FAIL: newer sibling human_question should stop paired prativadi wait with exit 12, got $newer_question_exit"
+  echo "$newer_question_output"
+  failures=$((failures + 1))
+elif [[ "$newer_question_output" != *"sibling_run_id=beta"* || "$newer_question_output" != *"resume_assignee=prativadi"* || "$newer_question_output" != *"resume_status=spec_review"* || "$newer_question_output" != *"Which scope should Dvandva choose?"* ]]; then
+  echo "FAIL: newer sibling human_question output missing sibling question/resume metadata"
+  echo "$newer_question_output"
+  failures=$((failures + 1))
+else
+  echo "PASS: newer sibling human_question stops paired prativadi wait with metadata"
+fi
+
+newer_decision_suppressed_output="$(env DVANDVA_RUN_ID="alpha" DVANDVA_CONCURRENT=1 timeout 3 bash -c 'cd "$1" && "$2" --role vadi --persist --interval 1 --max-wait 540' _ "$NEWER_DECISION_BOX" "$SCRIPT" 2>&1)"
+newer_decision_suppressed_exit=$?
+if [[ "$newer_decision_suppressed_exit" -ne 124 ]]; then
+  echo "FAIL: DVANDVA_CONCURRENT=1 should suppress newer sibling human_decision stop, got $newer_decision_suppressed_exit"
+  echo "$newer_decision_suppressed_output"
+  failures=$((failures + 1))
+else
+  echo "PASS: DVANDVA_CONCURRENT=1 suppresses newer sibling human_decision stop"
 fi
 
 # Case 2b: a terminal sibling whose active_roles (not assignee) lists my role must

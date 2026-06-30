@@ -4,3 +4,4 @@ private-artifacts/
 journal/
 *.log
 /superpowers/
+/agent-os/

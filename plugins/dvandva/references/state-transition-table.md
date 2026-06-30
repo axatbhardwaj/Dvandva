@@ -48,7 +48,14 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
 - `dvandva-wait.sh`: continuous polling is the hard rule. `--max-wait` is the
   heartbeat interval by default, and the helper keeps polling until role
   ownership, shared terminal `done`, `human_question`, `human_decision`, or user
-  interrupt. `termination_review` is not terminal; it wakes both roles.
+  interrupt. `human_question` and `human_decision` are a paired run pause that
+  stops both roles together. When the selected run is waiting on the peer, the
+  wait helper propagates a newer sibling run's `human_decision` or
+  `human_question` unless `DVANDVA_CONCURRENT=1`; older sibling
+  human-intervention batons are ignored so parked runs cannot hijack newer work.
+  For a sibling `human_question`, output must preserve the sibling baton's
+  `question`, `resume_assignee`, and `resume_status`.
+  `termination_review` is not terminal; it wakes both roles.
   `--persist` is accepted for older snippets and is redundant. Optional
   `--persist-max <seconds>` is a total wall-clock cap; the wait-helper persist cap exit 23 is not a terminal baton state and must re-enter wait unless the
   user interrupts. Explicit `--finite` compatibility mode is the only path to

@@ -87,6 +87,15 @@ for file in "$VADI" "$PRATIVADI"; do
   require_match "$file" \
     'approval and explainer-review ownership|explainer-review and approval ownership' \
     "$role skill says helper-enforced ownership covers explainer reviews"
+  require_match "$file" \
+    'human_(decision|question).*(paired run pause|stop both roles together)|stop both roles together.*human_(decision|question)|paired run pause.*human_(decision|question)' \
+    "$role skill says human_question and human_decision are paired run pauses that stop both roles together"
+  require_match "$file" \
+    'newer sibling.*human_(decision|question)|human_(decision|question).*(newer sibling|sibling run)' \
+    "$role skill requires newer sibling human-intervention propagation"
+  require_match "$file" \
+    'sibling.{0,160}human_question.{0,160}question.{0,160}resume_assignee.{0,160}resume_status|human_question.{0,160}sibling.{0,160}question.{0,160}resume_assignee.{0,160}resume_status|question.{0,160}resume_assignee.{0,160}resume_status.{0,160}sibling.{0,160}human_question' \
+    "$role skill preserves sibling human_question question and resume metadata"
 done
 
 for file in "$COMMAND_VADI" "$COMMAND_PRATIVADI"; do
@@ -106,6 +115,12 @@ for file in "$COMMAND_VADI" "$COMMAND_PRATIVADI"; do
   reject_match "$file" \
     'Continue the walkaway run until the resolved Dvandva baton status is "done", "human_question", or "human_decision"' \
     "$command_role command rejects one-step terminal stop wording"
+  require_match "$file" \
+    'human_(decision|question).*(paired run pause|stop both roles together)|stop both roles together.*human_(decision|question)|paired run pause.*human_(decision|question)' \
+    "$command_role command says human_question and human_decision are paired run pauses that stop both roles together"
+  require_match "$file" \
+    'newer sibling.*human_(decision|question)|human_(decision|question).*(newer sibling|sibling run)' \
+    "$command_role command requires newer sibling human-intervention propagation"
 done
 
 require_match "$VADI" \
@@ -158,6 +173,18 @@ require_match "$STATE_REF" \
 require_match "$STATE_REF" \
   'approval and explainer-review ownership|explainer-review ownership|run_explainer_reviews.{0,120}DVANDVA_ROLE.{0,120}ownership|DVANDVA_ROLE.{0,120}run_explainer_reviews.{0,120}ownership' \
   "state reference documents DVANDVA_ROLE ownership for explainer reviews"
+require_match "$STATE_REF" \
+  'human_(decision|question).*(paired run pause|stop both roles together)|stop both roles together.*human_(decision|question)|paired run pause.*human_(decision|question)' \
+  "state reference says human_question and human_decision are paired run pauses that stop both roles together"
+require_match "$STATE_REF" \
+  'newer sibling.*human_(decision|question)|human_(decision|question).*(newer sibling|sibling run)' \
+  "state reference requires newer sibling human-intervention propagation"
+require_match "$STATE_REF" \
+  'sibling.{0,160}human_question.{0,160}question.{0,160}resume_assignee.{0,160}resume_status|human_question.{0,160}sibling.{0,160}question.{0,160}resume_assignee.{0,160}resume_status|question.{0,160}resume_assignee.{0,160}resume_status.{0,160}sibling.{0,160}human_question' \
+  "state reference preserves sibling human_question question and resume metadata"
+require_match "$STATE_REF" \
+  'termination_review.*active|active.*termination_review' \
+  "state reference preserves termination_review as active and non-terminal"
 
 # Static README coverage: reject stale Run-4 guidance that predates the
 # delegating-wrapper coexistence model.

@@ -94,6 +94,14 @@ For git work-gating, completed `done` batons and human-intervention
 them, and drift lint only reports off-protocol commits while at least one active
 baton is present or when checkpoint history gives it a scan floor.
 
+For waiting, `human_question` and `human_decision` are a paired run pause that
+stops both roles together. If a selected run is waiting on the peer and a newer
+sibling run enters `human_decision` or `human_question`, the wait helper
+propagates that sibling human-intervention state to the selected waiter unless
+`DVANDVA_CONCURRENT=1`. Older sibling human-intervention batons remain parked
+and ignored, and a sibling `human_question` must surface `question`,
+`resume_assignee`, and `resume_status` so the human can resume the correct run.
+
 Run 4 standalone-agent retirement is intentionally Dvandva-only: it covers only
 Dvandva-covered workflows with functional parity via Runs 1-4 usage. The
 allowlist is the five Claude symlink agents `adversarial-analyst`, `architect`,

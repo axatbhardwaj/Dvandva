@@ -237,9 +237,15 @@ scan_sibling_runs() {
   # only matters when that is the peer. The selected run is identified by file
   # path (-ef self-skip below), not by run id, so no run-id argument is needed.
   local selected_assignee="$1"
-  local sibling_root sibling_file sibling_state sibling_status sibling_assignee sibling_active_roles sibling_run_id
+  local selected_updated_at="${2:-}"
+  local sibling_root sibling_file sibling_state sibling_status sibling_assignee sibling_active_roles sibling_updated_at sibling_question sibling_resume_assignee sibling_resume_status sibling_run_id
   SIBLING_ACTIVE_COUNT=0
   SPLIT_BRAIN_SIBLING_RUN_ID=""
+  SIBLING_HUMAN_STATUS=""
+  SIBLING_HUMAN_RUN_ID=""
+  SIBLING_HUMAN_QUESTION=""
+  SIBLING_HUMAN_RESUME_ASSIGNEE=""
+  SIBLING_HUMAN_RESUME_STATUS=""
   sibling_root="$(derive_dvandva_root "$BATON_FILE")"
   if [[ -z "$sibling_root" ]]; then
     return 0
@@ -262,8 +268,8 @@ scan_sibling_runs() {
       continue
     fi
     sibling_run_id="$(derive_run_id "$sibling_file")"
-    sibling_state="$(jq -r '[.status // "", .assignee // "", ((.active_roles // []) | join(","))] | join("\u001f")' "$sibling_file" 2>/dev/null)" || continue
-    IFS=$'\x1f' read -r sibling_status sibling_assignee sibling_active_roles <<< "$sibling_state"
+    sibling_state="$(jq -r '[.status // "", .assignee // "", ((.active_roles // []) | join(",")), .updated_at // "", .question // "", .resume_assignee // "", .resume_status // ""] | join("\u001f")' "$sibling_file" 2>/dev/null)" || continue
+    IFS=$'\x1f' read -r sibling_status sibling_assignee sibling_active_roles sibling_updated_at sibling_question sibling_resume_assignee sibling_resume_status <<< "$sibling_state"
     # Completed / intervention states are not active runs competing for my role.
     # For WAIT split-brain, done is completed; human_decision / human_question
     # are paused on a human. A stale assignee or active_roles still naming my
@@ -272,7 +278,19 @@ scan_sibling_runs() {
     # termination handoff, so both roles must wake instead of treating it as
     # completed.
     case "$sibling_status" in
-      done|human_decision|human_question)
+      done)
+        continue
+        ;;
+      human_decision|human_question)
+        if [[ "${DVANDVA_CONCURRENT:-0}" != "1" && "$selected_assignee" == "$(peer_role)" && -n "$selected_updated_at" && -n "$sibling_updated_at" && "$sibling_updated_at" > "$selected_updated_at" ]]; then
+          SIBLING_HUMAN_STATUS="$sibling_status"
+          SIBLING_HUMAN_RUN_ID="$sibling_run_id"
+          SIBLING_HUMAN_QUESTION="$sibling_question"
+          SIBLING_HUMAN_RESUME_ASSIGNEE="$sibling_resume_assignee"
+          SIBLING_HUMAN_RESUME_STATUS="$sibling_resume_status"
+          shopt -u nullglob
+          return 0
+        fi
         continue
         ;;
     esac
@@ -290,6 +308,35 @@ heartbeat_selector_meta() {
   local run_id="$1"
   printf 'run_id=%s file=%s selected_by=%s sibling_active_runs=%s' \
     "$run_id" "$BATON_FILE" "$SELECTED_BY" "$SIBLING_ACTIVE_COUNT"
+}
+
+handle_sibling_interrupts() {
+  local selected_run_id="$1"
+  local assignee="$2"
+  local phase="$3"
+  local status="$4"
+  local checkpoint="$5"
+  local active_roles="$6"
+  local updated_at="$7"
+  local current_engine="$8"
+  local run_id_note="$9"
+
+  scan_sibling_runs "$assignee" "$updated_at"
+  case "$SIBLING_HUMAN_STATUS" in
+    human_decision)
+      echo "DVANDVA_WAIT human_decision role=$ROLE selected_run_id=$selected_run_id sibling_run_id=$SIBLING_HUMAN_RUN_ID waiting_on=$assignee phase=$phase status=$status checkpoint=$checkpoint $(heartbeat_selector_meta "$selected_run_id")$run_id_note"
+      exit 11
+      ;;
+    human_question)
+      echo "DVANDVA_WAIT human_question role=$ROLE selected_run_id=$selected_run_id sibling_run_id=$SIBLING_HUMAN_RUN_ID waiting_on=$assignee phase=$phase status=$status checkpoint=$checkpoint resume_assignee=$SIBLING_HUMAN_RESUME_ASSIGNEE resume_status=$SIBLING_HUMAN_RESUME_STATUS question=$SIBLING_HUMAN_QUESTION $(heartbeat_selector_meta "$selected_run_id")$run_id_note"
+      exit 12
+      ;;
+  esac
+
+  if [[ -n "$SPLIT_BRAIN_SIBLING_RUN_ID" ]]; then
+    echo "DVANDVA_WAIT split_brain role=$ROLE selected_run_id=$selected_run_id sibling_run_id=$SPLIT_BRAIN_SIBLING_RUN_ID waiting_on=$assignee phase=$phase status=$status checkpoint=$checkpoint active_roles=$active_roles $(heartbeat_selector_meta "$selected_run_id") elapsed=${elapsed}s last_seen_engine=$current_engine updated_at=$updated_at$run_id_note"
+    exit 29
+  fi
 }
 
 resolve_default_baton() {
@@ -327,17 +374,39 @@ resolve_default_baton() {
 
 wait_one_interval() {
   # Interruptible sleep: wake early on baton-directory events when
-  # inotifywait exists. Watch the directory, not the file — an atomic
-  # tmp+mv replace changes the inode and would orphan a file watch.
-  # Spurious events are harmless; the loop re-checks state every wake.
-  local dir
+  # inotifywait exists. Watch directories, not files — an atomic
+  # tmp+mv replace changes the inode and would orphan a file watch. The selected
+  # run dir catches normal baton handoff; sibling dirs/root catch paired human
+  # intervention in another active run. Spurious events are harmless; the loop
+  # re-checks state every wake.
+  local dir sibling_root run_dir existing
+  local -a watch_dirs=()
+  add_watch_dir() {
+    local candidate="$1"
+    [[ -d "$candidate" ]] || return 0
+    for existing in "${watch_dirs[@]}"; do
+      [[ "$existing" == "$candidate" ]] && return 0
+    done
+    watch_dirs+=("$candidate")
+  }
+
   dir="$(dirname "$BATON_FILE")"
-  if command -v inotifywait >/dev/null 2>&1 && [[ -d "$dir" ]]; then
+  add_watch_dir "$dir"
+  sibling_root="$(derive_dvandva_root "$BATON_FILE")"
+  if [[ -n "$sibling_root" ]]; then
+    add_watch_dir "$sibling_root"
+    add_watch_dir "$sibling_root/runs"
+    for run_dir in "$sibling_root"/runs/*; do
+      add_watch_dir "$run_dir"
+    done
+  fi
+
+  if command -v inotifywait >/dev/null 2>&1 && [[ "${#watch_dirs[@]}" -gt 0 ]]; then
     # Exit 0 = event, 2 = timeout (both fine). Anything else (e.g. watch
     # limit exhausted) must fall back to sleep, or the loop would burn
     # elapsed time without any wall-clock wait and hit max-wait early.
     local rc=0
-    inotifywait -qq -t "$INTERVAL" -e create,moved_to,close_write "$dir" 2>/dev/null || rc=$?
+    inotifywait -qq -t "$INTERVAL" -e create,moved_to,close_write "${watch_dirs[@]}" 2>/dev/null || rc=$?
     if [[ "$rc" -ne 0 && "$rc" -ne 2 ]]; then
       sleep "$INTERVAL"
     fi
@@ -351,7 +420,7 @@ resolve_default_baton
 while true; do
   if [[ ! -f "$BATON_FILE" ]]; then
     selected_run_id="$(derive_run_id "$BATON_FILE")"
-    scan_sibling_runs ""
+    scan_sibling_runs "" ""
     if [[ "$ALLOW_MISSING" -eq 1 ]]; then
       if [[ "$elapsed" -ge "$MAX_WAIT" ]]; then
         if [[ "$PERSIST" -eq 1 ]]; then
@@ -421,16 +490,15 @@ while true; do
     exit 0
   fi
 
+  if [[ "$PERSIST" -eq 1 ]]; then
+    handle_sibling_interrupts "$selected_run_id" "$assignee" "$phase" "$status" "$checkpoint" "$active_roles" "$updated_at" "$current_engine" "$run_id_note"
+  fi
+
   if [[ "$elapsed" -ge "$MAX_WAIT" ]]; then
     if [[ "$PERSIST" -eq 1 ]]; then
       if [[ "$INTERVAL" -eq 0 ]]; then
         echo "ERROR: continuous wait mode requires --interval > 0 when the baton is not ready; use --finite for an immediate heartbeat" >&2
         exit 2
-      fi
-      scan_sibling_runs "$assignee"
-      if [[ -n "$SPLIT_BRAIN_SIBLING_RUN_ID" ]]; then
-        echo "DVANDVA_WAIT split_brain role=$ROLE selected_run_id=$selected_run_id sibling_run_id=$SPLIT_BRAIN_SIBLING_RUN_ID waiting_on=$assignee $(heartbeat_selector_meta "$selected_run_id")$run_id_note"
-        exit 29
       fi
       echo "DVANDVA_WAIT heartbeat role=$ROLE waiting_on=$assignee phase=$phase status=$status checkpoint=$checkpoint active_roles=$active_roles $(heartbeat_selector_meta "$selected_run_id") elapsed=${elapsed}s last_seen_engine=$current_engine updated_at=$updated_at$run_id_note"
       elapsed=0

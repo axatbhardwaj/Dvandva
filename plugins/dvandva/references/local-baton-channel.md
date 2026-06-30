@@ -71,6 +71,14 @@ hook path, installs a delegating wrapper at `.dvandva/githooks`, verifies
 repo-local `core.hooksPath=.dvandva/githooks`, and restores the prior hook path
 on uninstall so Dvandva does not hijack foreign repo hook configuration.
 
+For waiting, `human_question` and `human_decision` are a paired run pause that
+stops both roles together. If a selected run is waiting on the peer and a newer
+sibling run enters `human_question` or `human_decision`, the wait helper
+propagates that sibling human-intervention state to the selected waiter unless
+`DVANDVA_CONCURRENT=1`. Older sibling human-intervention batons remain parked
+and ignored, and a sibling `human_question` must surface `question`,
+`resume_assignee`, and `resume_status` so the human can resume the correct run.
+
 Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`,
 `termination_review`) may write same-status sync checkpoints when both roles
 remain active. Use them to record partial completion, task distribution, peer
