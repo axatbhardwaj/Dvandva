@@ -18,7 +18,7 @@ Prefer concise, source-backed docs over speculative architecture. If a workflow 
 
 ## Preferred Workflow Model
 
-Either engine can host either role. The preferred dogfood setup is Claude Code as vadi and Codex as prativadi, but Codex-as-vadi, Claude-as-prativadi, and single-engine supervised runs are valid.
+Either engine can host either role. The preferred dogfood setup is Claude Code as vadi and Codex as prativadi; Codex-as-vadi and Claude-as-prativadi are equally valid. **Dvandva never runs solo** — every run has two decorrelated roles, and the reviewer is never the engine that did the work. `supervised` runs are valid but are not solo: they are human-gated handoffs between the same two roles, differing from `walkaway` only in that the human invokes each role instead of the sessions polling autonomously. (The termination gate enforces this — `done` requires both roles' independent, `DVANDVA_ROLE`-bound approvals.)
 
 Use PR comments for human-facing milestone summaries only. Use local baton files for agent-to-agent handoff.
 

@@ -67,7 +67,7 @@ Target shape:
 - Two persistent agent sessions.
 - Master plan first, with voluntary human Q&A until plan lock.
 - Phase implementation/review loops until post-handshake `done` or `human_decision`.
-- `run_mode: "walkaway"` for two sessions; `run_mode: "supervised"` for single-engine serial fallback.
+- `run_mode: "walkaway"` for two autonomous sessions; `run_mode: "supervised"` for human-gated handoffs (the human invokes each of the two roles in turn). Both are paired — Dvandva never runs solo (one engine reviewing its own work).
 - PR comments only for human-facing summaries if a human chooses to write them.
 
 Protocol:
