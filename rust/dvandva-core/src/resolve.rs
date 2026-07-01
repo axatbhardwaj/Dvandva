@@ -273,7 +273,7 @@ impl RunCandidate {
 // coalescing null/false to None exactly like jq `.x // ""` treats them as absent.
 //
 // SYNTHETIC RESIDUAL (numeric fields): the shell resolver does NOT apply
-// `tostring` to these fields, so a NUMERIC `run_id`/`status`/`updated_at`
+// `tostring` to these fields, so a NUMERIC `run_id`/`status`/`assignee`/`updated_at`
 // (e.g. `run_id: 1.5`) surfaces in the jq ASK array as a JSON NUMBER, whereas
 // this helper stringifies it (`"1.5"`). Real Dvandva batons always carry these
 // as strings, so the divergence is unreachable in practice; preserving the JSON
