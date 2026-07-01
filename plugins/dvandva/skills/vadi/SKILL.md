@@ -94,6 +94,7 @@ For full-profile v2 phase work, implementation-phase parallelism is mandatory. A
 Phase convention: implementation-chunk `subagent_tracks` use the numeric implementation phase; cross-review and deep-review gate tracks use the status-name phase such as `phase: "cross_review"` or `phase: "deep_review"`.
 
 Team-owned v2 states may write same-status sync checkpoints while both roles remain active. Use them for partial completion and task distribution; do not use them to fake phase advancement.
+On any repeated review/fix loop edge (`deep_review->phase_fixing`, `cross_review->cross_fixing`, `termination_review->phase_fixing`, `phase_review->phase_fixing`, `review_of_review<->counter_review`), set `loop_counts["<from>:<to>"]` to its prior value + 1; the write helper mandates this increment and routes a counter that reaches `disagreement_cap` to `human_decision`.
 
 | Phase | Default subagents |
 |---|---|

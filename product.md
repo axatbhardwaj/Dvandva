@@ -581,7 +581,7 @@ This appendix is the spec-level authoritative reference for the schema (includin
   "resume_status": "spec_drafting | spec_review | spec_revision | null; status to restore after a human_question answer",
   "disagreement_round": "integer, set to 0 by the agent that writes the first baton of each new phase; incremented by the agent that disagrees during mutual review",
   "disagreement_cap": "integer, default 3, optionally set during spec phase",
-  "loop_counts": "v2 additive map keyed \"<kind>:<phase>\" to a per-cycle counter for repeated review/fix loops; the write helper enforces increment-by-one and routes a counter that reaches disagreement_cap to human_decision. Missing on older batons seeds empty.",
+  "loop_counts": "v2 additive map keyed \"<kind>:<phase>\" to a per-cycle counter for repeated review/fix loops; the write helper mandates increment-by-one on every loop-edge write (an absent counter reads as 0 but the candidate must still write the increment, so the cap cannot be bypassed by omission) and routes a counter that reaches disagreement_cap to human_decision. The counter resets on phase advance.",
   "turn_cap": "integer, default 60; passive shell wait heartbeats do not count",
   "branch": "git branch name",
   "checkpoint": "integer, bumped by the writer",

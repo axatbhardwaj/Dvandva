@@ -216,7 +216,7 @@ early. Scalar-owner states still reject same-status rewrites.
   "resume_status": "spec_drafting | spec_review | spec_revision | null; status to restore after a human_question answer",
   "disagreement_round": "integer, reset to 0 by the agent that writes the first baton of each new phase",
   "disagreement_cap": "integer, default 3, optionally set during spec phase",
-  "loop_counts": "v2 additive map keyed \"<kind>:<phase>\" to an integer per-cycle counter for repeated review/fix loops; the write helper enforces increment-by-one and, at disagreement_cap, allows only a human_decision target. Missing on older batons is treated as empty and seeded empty, never rejected.",
+  "loop_counts": "v2 additive map keyed \"<kind>:<phase>\" to an integer per-cycle counter for repeated review/fix loops; the write helper mandates increment-by-one on every loop-edge write (grandfathering only the read of an absent counter to 0, so the cap cannot be bypassed by omitting loop_counts) and, at disagreement_cap, allows only a human_decision target. Absent counters read as 0; the counter resets on phase advance.",
   "turn_cap": "integer, default 60; passive shell wait heartbeats do not count",
   "branch": "git branch name",
   "checkpoint": "integer, bumped by the writer",
@@ -414,10 +414,12 @@ These gates keep the walkaway loop live and bound its cycles.
 - **Loop caps.** `loop_counts["<kind>:<phase>"]` counts repeated review/fix
   cycles (`deep_review->phase_fixing`, `cross_review->cross_fixing`,
   `termination_review->phase_fixing`, `phase_review->phase_fixing`,
-  `review_of_review<->counter_review`). The write helper enforces
-  increment-by-one (`bad_loop_counts` otherwise) and, once a counter reaches
-  `disagreement_cap`, allows only a `human_decision` target (`loop_cap`
-  otherwise). Batons without `loop_counts` seed empty.
+  `review_of_review<->counter_review`). The write helper mandates
+  increment-by-one on every loop-edge write, even when `loop_counts` is absent
+  for that edge (`bad_loop_counts` otherwise), so the cap cannot be bypassed by
+  omitting the counter; once a counter reaches `disagreement_cap`, only a
+  `human_decision` target is allowed (`loop_cap` otherwise). Absent counters
+  read as 0 and reset on phase advance.
 - **depends_on validation.** `work_split[].depends_on` ids must resolve to a
   chunk id or the fixed anchor set, and the chunk-id dependency graph must be
   acyclic (`bad_depends_on` otherwise).
