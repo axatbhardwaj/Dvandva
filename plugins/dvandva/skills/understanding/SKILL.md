@@ -96,7 +96,7 @@ At the **start**, build a dark self-contained HTML checklist at `./superpowers/u
 
 ## Baton Integration
 
-Surface `BATON_STATE` at the start of the teaching session. Read `research_ref` and `plan_ref` before building the checklist — they contain the decisions worth teaching.
+Surface `BATON_STATE_COMPACT` at the start of the teaching session. Read `research_ref` and `plan_ref` before building the checklist — they contain the decisions worth teaching.
 
 **Do not mutate the baton** during an understanding session. If the user asks for a reference to the understanding artifact to carry forward, add it to `deferred` or `summary` only if they explicitly request it.
 

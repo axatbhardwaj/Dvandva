@@ -13,7 +13,7 @@ Invoke `superpowers:using-git-worktrees` first. If the current harness cannot lo
 
 ## Contract
 
-- Surface `BATON_STATE` if a baton already exists.
+- Surface `BATON_STATE_COMPACT` if a baton already exists.
 - Create or select a worktree before starting a risky multi-phase run.
 - Copy local env files only when the repo convention allows it.
 - Confirm `.gitignore` covers `.dvandva/`, `/superpowers/`, and `agent-os/`.

@@ -74,7 +74,16 @@ if ! jq -e . "$BATON_FILE" >/dev/null 2>&1; then
   exit 22
 fi
 
+if ! jq -e 'type == "object"' "$BATON_FILE" >/dev/null 2>&1; then
+  echo "ERROR: baton JSON root must be object: $BATON_FILE" >&2
+  exit 22
+fi
+
 jq --arg baton_file "$BATON_FILE" --arg role "$ROLE" '
+  def string_limit: 240;
+  def action_limit: 500;
+  def item_limit: 10;
+
   def as_array:
     if type == "array" then .
     elif type == "object" then [to_entries[] | .value]
@@ -88,14 +97,49 @@ jq --arg baton_file "$BATON_FILE" --arg role "$ROLE" '
       0
     end;
 
+  def bounded_scalar($max):
+    if . == null then
+      null
+    elif type == "string" then
+      if length > $max then .[0:$max] + "...[truncated]" else . end
+    else
+      (tostring | if length > $max then .[0:$max] + "...[truncated]" else . end)
+    end;
+
+  def pick_bounded($keys; $max):
+    with_entries(
+      select(.key as $key | ($keys | index($key)) != null)
+      | .value |= bounded_scalar($max)
+    );
+
+  def compact_verification($item):
+    $item
+    | {
+        command: (.command | bounded_scalar(string_limit)),
+        result: (.result | bounded_scalar(80)),
+        notes: (.notes | bounded_scalar(string_limit))
+      }
+    | with_entries(select(.value != null and .value != ""));
+
+  def cap_items($max):
+    if length > $max then
+      .[0:$max] + [{more_count: (length - $max)}]
+    else
+      .
+    end;
+
   def clean_refs:
     (
-      if (.refs | type) == "object" then .refs else {} end
+      if (.refs | type) == "object" then
+        (.refs | pick_bounded(["branch", "base", "plan", "plan_ref", "research_ref", "run_explainer_ref", "review_ref"]; string_limit))
+      else
+        {}
+      end
     ) + {
-      research_ref: (.research_ref // null),
-      plan_ref: (.plan_ref // null),
-      run_explainer_ref: (.run_explainer_ref // null),
-      review_ref: (.review_ref // null)
+      research_ref: (.research_ref | bounded_scalar(string_limit)),
+      plan_ref: (.plan_ref | bounded_scalar(string_limit)),
+      run_explainer_ref: (.run_explainer_ref | bounded_scalar(string_limit)),
+      review_ref: (.review_ref | bounded_scalar(string_limit))
     }
     | with_entries(
         select(
@@ -112,7 +156,7 @@ jq --arg baton_file "$BATON_FILE" --arg role "$ROLE" '
 
   def compact_work($root; $role):
     ($root.work_split // [] | as_array) as $items |
-    ($root.phase | tostring) as $current_phase |
+    ($root.phase // "" | tostring) as $current_phase |
     ($root.status // "" | tostring) as $current_status |
     [
       $items[] |
@@ -135,7 +179,7 @@ jq --arg baton_file "$BATON_FILE" --arg role "$ROLE" '
         write_paths_count: count_value(.write_paths // []),
         depends_on_count: count_value(.depends_on // [])
       }
-    ];
+    ] | cap_items(item_limit);
 
   def compact_findings:
     [
@@ -147,19 +191,24 @@ jq --arg baton_file "$BATON_FILE" --arg role "$ROLE" '
         area: (.area // null),
         status: (.status // "open")
       }
-    ];
+    ] | cap_items(item_limit);
 
   def latest_verification:
     if (.verification_latest | type) == "object" then
-      .verification_latest
+      compact_verification(.verification_latest)
     elif (.verification | type) == "array" and (.verification | length) > 0 then
-      (.verification[-1] | {
-        command: (.command // null),
-        result: (.result // null),
-        notes: (.notes // null)
-      })
+      compact_verification(.verification[-1])
     else
       {}
+    end;
+
+  def compact_next_action:
+    if (.next_action | type) == "object" then
+      (.next_action | pick_bounded(["owner_role", "role", "assignee", "status", "prompt", "summary", "action", "command"]; action_limit))
+    elif .next_action == null then
+      {}
+    else
+      (.next_action | bounded_scalar(action_limit))
     end;
 
   {
@@ -187,6 +236,6 @@ jq --arg baton_file "$BATON_FILE" --arg role "$ROLE" '
     current_role_work: compact_work(.; $role),
     open_findings: compact_findings,
     verification_latest: latest_verification,
-    next_action: (.next_action // {})
+    next_action: compact_next_action
   }
 ' "$BATON_FILE"

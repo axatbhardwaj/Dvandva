@@ -405,7 +405,7 @@ Use `/goal` around the baton state instead of around a timer.
 
 Do not paste goal text from this reference. Use the role skill bodies or engine command files as the canonical source, because they include current Existing baton discovery, conditional parallelism, `subagent_tracks`, `run_explainer_ref`, and terminal explainer gates. This reference intentionally avoids duplicating those long strings so it cannot drift into a stale legacy fallback.
 
-Both goals require the agent to surface a structured `BATON_STATE: { ... }` line at every checkpoint. The `/goal` evaluator detects exit conditions by reading that line in the transcript.
+Both goals require the agent to surface a bounded `BATON_STATE_COMPACT` line at every checkpoint — produced by `dvandva-state.sh --compact` (refs, counts, current-role work, open findings, latest verification, and `next_action`) rather than pasting the full `work_split`/`subagent_tracks`/`verification_matrix` arrays or the full baton — and to read the authoritative full `baton.json` before any state-changing decision (baton write, approval, human handoff, or validator-failure diagnosis). The `/goal` evaluator detects exit conditions by reading that line in the transcript.
 
 ## Why Not LLM Polling
 

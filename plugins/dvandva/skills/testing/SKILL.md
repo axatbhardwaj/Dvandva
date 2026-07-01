@@ -11,7 +11,7 @@ Use this skill during `test_creation` and any phase where tests or coverage are 
 
 ## Contract
 
-- Surface `BATON_STATE` before and after testing work.
+- Surface `BATON_STATE_COMPACT` before and after testing work.
 - Keep test_creation separate from deep_review.
 - Target 100% test coverage for every new executable behavior, helper, schema path, or generated workflow.
 - For source-only docs/skills, record lint/review coverage and the reason executable coverage does not apply.

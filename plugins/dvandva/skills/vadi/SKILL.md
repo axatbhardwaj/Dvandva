@@ -30,7 +30,7 @@ You are the Dvandva vadi. You draft plans, implement them phase by phase, and re
 6. If `status == "human_question"`, surface `question`, `resume_assignee`, and `resume_status`. If the user has provided the answer in the current prompt, record the answer in `summary`, set `assignee` to `resume_assignee`, set `status` to `resume_status`, clear `question`, `resume_assignee`, and `resume_status`, increment `checkpoint`, write the result to `$BATON_NEXT_FILE`, install it with `${CLAUDE_SKILL_DIR}/scripts/dvandva-write.sh "$BATON_FILE" "$BATON_NEXT_FILE"`, then re-read the baton and continue. If no answer is present, stop.
 7. If `assignee != "vadi"` and `run_mode == "walkaway"`, wait on the resolved baton path. Continuous polling is the hard rule: `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role vadi --file "$BATON_FILE" --interval 60 --max-wait 540 --until-actionable` keeps polling across heartbeat intervals until the baton assigns vadi, reaches post-handshake `done`, enters `human_decision`/`human_question`, or the user interrupts. `--until-actionable` prevents team-owned `active_roles` from waking vadi until vadi has actionable work, while still waking shared states such as `termination_review`. `human_decision` and `human_question` are paired run pauses that stop both roles together, not one-role stop points. A newer sibling run's `human_decision` or `human_question` is propagated as a paired pause for a selected non-terminal wait unless `DVANDVA_CONCURRENT=1`; a sibling `human_question` must surface that sibling baton's `question`, `resume_assignee`, and `resume_status`. `termination_review` is an active shared termination handoff with both roles in `active_roles`; it is not terminal and final approval alone is not a stop condition. Claude-hosted sessions should give the shell an explicit 600000 ms timeout and immediately re-enter the wait if the harness cap stops the shell before a terminal baton state. Codex-hosted sessions may use `--persist` for older command snippets, but it is redundant because continuous wait is now the default; `--persist-max <600` is only a shell-budget cap and the wait-helper persist cap exit 23 must immediately re-enter the wait unless the user interrupts. Exit 20 is only for explicit `--finite` compatibility tests and is not valid for normal walkaway polling. Write-helper validation exit 23 is handled separately. If the wait exits 10 (`done`), surface completion and stop; `done` is valid only after both roles approve stopping through `termination_review`. If the wait exits 11 (`human_decision`) or 12 (`human_question`), surface the human-intervention state and pause for the human. If `run_mode` is `supervised`, surface "wrong actor for this state; this skill is for the vadi" and exit without writing so the human can invoke the assigned role.
 8. Determine mode from `mode` + `phase` + `status` + `review_target`; treat `feature-pr` as legacy `development`.
-9. Surface: `BATON_STATE: { mode, phase, status, assignee: vadi, run_mode, run_id, original_ask, research_ref, run_explainer_ref, run_explainer_reviews, review_ref, work_split, subagent_tracks, verification_matrix, plan_ref, turn_cap, checkpoint, findings, changed_paths, verification, review_target, disagreement_round, vadi_final_approval, prativadi_final_approval, blockers, next_action }`. Passive shell wait heartbeats do not count against `turn_cap`.
+9. Surface `BATON_STATE_COMPACT` — run `${CLAUDE_SKILL_DIR}/scripts/dvandva-state.sh --compact --file "$BATON_FILE" --role vadi`, which emits a bounded JSON summary (`kind`, `schema`, `run_id`, `mode`, `run_mode`, `phase`, `status`, `assignee`, `active_roles`, `checkpoint`, `refs`, `counts`, `current_role_work`, `open_findings`, `verification_latest`, `next_action`) instead of pasting full `work_split`/`subagent_tracks`/`verification_matrix` arrays or the full baton contents. Read the authoritative full `baton.json` (and the refs/artifacts it names) before any state-changing decision — baton write, final approval, cross-review or deep-review approval, human handoff, or validator-failure diagnosis; compact surfacing is for narration only. Passive shell wait heartbeats do not count against `turn_cap`.
 10. Apply the Regular checkpoint commits rule before any baton write that follows verified file changes.
 
 **Note on `${CLAUDE_SKILL_DIR}`:** this is the directory containing this SKILL.md file. Claude Code auto-substitutes it before the LLM sees the prompt. In Codex, resolve it from the path this SKILL.md was loaded from (for example an installed plugin cache or `plugins/dvandva/skills/vadi`) before invoking any command that uses it.
@@ -148,7 +148,7 @@ Trigger: `phase: "spec", status: "spec_drafting"`.
 Actions:
 
 1. Read `research_ref`, `work_split`, and `verification_matrix` first. If this is a named v2 run and research is missing, route back to `research_drafting`; for legacy v1-compatible runs, require the missing research gap to be documented in `deferred`.
-2. Invoke `superpowers:brainstorming` to clarify scope with the user. During master planning, questions to the user are allowed and expected when the goal is under-specified, risky, or has multiple valid product directions. If a user answer is required before a useful plan can be written, set `status: "human_question"`, `assignee: "human"`, `question: "<one concrete question>"`, `resume_assignee: "vadi"`, `resume_status: "spec_drafting"`, `next_action: "Human: answer question, then invoke the vadi skill; it will resume spec_drafting."`, surface BATON_STATE, and stop.
+2. Invoke `superpowers:brainstorming` to clarify scope with the user. During master planning, questions to the user are allowed and expected when the goal is under-specified, risky, or has multiple valid product directions. If a user answer is required before a useful plan can be written, set `status: "human_question"`, `assignee: "human"`, `question: "<one concrete question>"`, `resume_assignee: "vadi"`, `resume_status: "spec_drafting"`, `next_action: "Human: answer question, then invoke the vadi skill; it will resume spec_drafting."`, surface BATON_STATE_COMPACT, and stop.
 3. Invoke `superpowers:writing-plans` to convert the design into a phase-by-phase implementation plan.
 4. The generated user-facing plan goes to `./superpowers/plans/YYYY-MM-DD-<topic>.html` (gitignored), as a dark self-contained HTML artifact with machine-readable phase metadata. Record the absolute path.
 5. Read the plan's declared phase count. Set `total_phases` on the baton to that integer.
@@ -168,7 +168,7 @@ Baton write before handoff:
 - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
 - Write the complete next baton to `"$BATON_NEXT_FILE"`, then install it with `${CLAUDE_SKILL_DIR}/scripts/dvandva-write.sh "$BATON_FILE" "$BATON_NEXT_FILE"` — it validates the transition, installs atomically, and snapshots the checkpoint into `"$BATON_DIR/history/"` (and an auto-named terminal archive on done/human_decision/human_question). On non-zero exit do not edit `"$BATON_FILE"` directly: fix the candidate per the exit code and re-run. Exit 30 means installed-but-snapshot-failed — surface it and continue.
 
-Surface the new BATON_STATE line, then follow the Stop rule.
+Surface the new BATON_STATE_COMPACT line, then follow the Stop rule.
 
 ## Mode B — spec revision
 
@@ -178,7 +178,7 @@ Actions:
 
 1. Read the baton's `findings` array. Each finding is a Q&A item or change request from the prativadi.
 2. Verify `plan_ref` is set, exists, and points to a `.html` plan artifact. If `plan_ref` is null, missing, or still a generated markdown plan, surface "plan_ref unset or not HTML; spec phase cannot proceed" and write the baton with `status: "human_decision"`, `assignee: "human"`, `blockers: ["plan_ref unset or not HTML during spec_revision"]`, `next_action: "Human: investigate why plan_ref was never set during Mode A. Restart spec phase if needed."`. Exit.
-3. Open the plan file at `plan_ref`. Address each finding by editing the plan. If the findings reveal a product choice only the user can make, set `status: "human_question"`, `assignee: "human"`, `question: "<one concrete question>"`, `resume_assignee: "vadi"`, `resume_status: "spec_revision"`, keep `master_plan_locked: false`, `next_action: "Human: answer question, then invoke the vadi skill; it will resume spec_revision."`, surface BATON_STATE, and stop.
+3. Open the plan file at `plan_ref`. Address each finding by editing the plan. If the findings reveal a product choice only the user can make, set `status: "human_question"`, `assignee: "human"`, `question: "<one concrete question>"`, `resume_assignee: "vadi"`, `resume_status: "spec_revision"`, keep `master_plan_locked: false`, `next_action: "Human: answer question, then invoke the vadi skill; it will resume spec_revision."`, surface BATON_STATE_COMPACT, and stop.
 4. If your edits changed the declared phase count in the plan, also update `total_phases` on the baton.
 
 Baton write before handoff:
@@ -198,7 +198,7 @@ Baton write before handoff:
 - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
 - Write the complete next baton to `"$BATON_NEXT_FILE"`, then install it with `${CLAUDE_SKILL_DIR}/scripts/dvandva-write.sh "$BATON_FILE" "$BATON_NEXT_FILE"` — it validates the transition, installs atomically, and snapshots the checkpoint into `"$BATON_DIR/history/"` (and an auto-named terminal archive on done/human_decision/human_question). On non-zero exit do not edit `"$BATON_FILE"` directly: fix the candidate per the exit code and re-run. Exit 30 means installed-but-snapshot-failed — surface it and continue.
 
-Surface BATON_STATE, then follow the Stop rule.
+Surface BATON_STATE_COMPACT, then follow the Stop rule.
 
 ## Mode C — phase implementation
 
@@ -244,7 +244,7 @@ Baton write if you hit a handback condition (architecture, schema migration, sha
 - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
 - Write the complete next baton to `"$BATON_NEXT_FILE"`, then install it with `${CLAUDE_SKILL_DIR}/scripts/dvandva-write.sh "$BATON_FILE" "$BATON_NEXT_FILE"` — it validates the transition, installs atomically, and snapshots the checkpoint into `"$BATON_DIR/history/"` (and an auto-named terminal archive on done/human_decision/human_question). On non-zero exit do not edit `"$BATON_FILE"` directly: fix the candidate per the exit code and re-run. Exit 30 means installed-but-snapshot-failed — surface it and continue.
 
-Surface BATON_STATE, then follow the Stop rule.
+Surface BATON_STATE_COMPACT, then follow the Stop rule.
 
 ## Mode T — test creation
 
@@ -297,7 +297,7 @@ Baton write before handoff:
 - Write the complete next baton to `"$BATON_NEXT_FILE"`, then install it with `${CLAUDE_SKILL_DIR}/scripts/dvandva-write.sh "$BATON_FILE" "$BATON_NEXT_FILE"` — it validates the transition, installs atomically, and snapshots the checkpoint into `"$BATON_DIR/history/"` (and an auto-named terminal archive on done/human_decision/human_question). On non-zero exit do not edit `"$BATON_FILE"` directly: fix the candidate per the exit code and re-run. Exit 30 means installed-but-snapshot-failed — surface it and continue.
 
 Escalation: if a finding cannot be resolved, write `status: "human_decision"`, `assignee: "human"`, `review_target: null`, `blockers: ["<the unresolvable finding>"]`, `summary: "Phase <N> fix blocked: <reason>."`, `next_action: "Human: decide whether to accept the finding as-is, change scope, or hand back to the vadi with adjusted instructions."`. Follow the standard `updated_at`/`checkpoint`/`dvandva-write.sh` install pattern.
-Surface BATON_STATE, then follow the Stop rule.
+Surface BATON_STATE_COMPACT, then follow the Stop rule.
 
 ## Mode S — deslop
 
@@ -354,7 +354,7 @@ If you approve, baton write:
 If you disapprove:
 
 1. Increment `disagreement_round` by 1.
-2. If `disagreement_round >= disagreement_cap` (default 3), set `status: "human_decision", assignee: "human"`, populate `blockers` with "mutual review reached cap without agreement; needs human call". Update `next_action: "Human: decide whether to accept the prativadi's fixup, the vadi's counter, or a third path. Edit baton.assignee to resume."`. Set `current_engine` as above. Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Write the complete next baton to `"$BATON_NEXT_FILE"`, then install it with `${CLAUDE_SKILL_DIR}/scripts/dvandva-write.sh "$BATON_FILE" "$BATON_NEXT_FILE"` — it validates the transition, installs atomically, and snapshots the checkpoint into `"$BATON_DIR/history/"` (and an auto-named terminal archive on human_decision). On non-zero exit do not edit `"$BATON_FILE"` directly: fix the candidate per the exit code and re-run. Exit 30 means installed-but-snapshot-failed — surface it and continue. Surface BATON_STATE, then follow the Stop rule.
+2. If `disagreement_round >= disagreement_cap` (default 3), set `status: "human_decision", assignee: "human"`, populate `blockers` with "mutual review reached cap without agreement; needs human call". Update `next_action: "Human: decide whether to accept the prativadi's fixup, the vadi's counter, or a third path. Edit baton.assignee to resume."`. Set `current_engine` as above. Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Write the complete next baton to `"$BATON_NEXT_FILE"`, then install it with `${CLAUDE_SKILL_DIR}/scripts/dvandva-write.sh "$BATON_FILE" "$BATON_NEXT_FILE"` — it validates the transition, installs atomically, and snapshots the checkpoint into `"$BATON_DIR/history/"` (and an auto-named terminal archive on human_decision). On non-zero exit do not edit `"$BATON_FILE"` directly: fix the candidate per the exit code and re-run. Exit 30 means installed-but-snapshot-failed — surface it and continue. Surface BATON_STATE_COMPACT, then follow the Stop rule.
 3. Otherwise, write your counter-changes inline (edit the files the prativadi's fixup touched). Baton write:
    - `phase: <current N>` (unchanged)
    - `status: "counter_review"`
@@ -368,7 +368,7 @@ If you disapprove:
    - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
    - Write the complete next baton to `"$BATON_NEXT_FILE"`, then install it with `${CLAUDE_SKILL_DIR}/scripts/dvandva-write.sh "$BATON_FILE" "$BATON_NEXT_FILE"` — it validates the transition, installs atomically, and snapshots the checkpoint into `"$BATON_DIR/history/"` (and an auto-named terminal archive on done/human_decision/human_question). On non-zero exit do not edit `"$BATON_FILE"` directly: fix the candidate per the exit code and re-run. Exit 30 means installed-but-snapshot-failed — surface it and continue.
 
-Surface BATON_STATE, then follow the Stop rule.
+Surface BATON_STATE_COMPACT, then follow the Stop rule.
 
 ## Regular checkpoint commits
 
@@ -405,11 +405,11 @@ The run's intended files are the baton's `changed_paths` union, excluding `.dvan
 
 In `run_mode: "walkaway"`, do not exit merely because the baton assigns work to prativadi. After writing any baton assigned away from vadi:
 
-1. Surface the new BATON_STATE line.
+1. Surface the new BATON_STATE_COMPACT line.
 2. Immediately run a foreground wait against the resolved `"$BATON_FILE"`. Continuous polling is the hard rule: `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role vadi --file "$BATON_FILE" --interval 60 --max-wait 540 --since-checkpoint "<checkpoint just installed>" --until-actionable` keeps the shell polling across heartbeat intervals until the baton changes after this handoff and vadi has actionable work. Use `--since-checkpoint` after every baton write that hands work away or leaves a team-owned state active; it prevents `active_roles` from bouncing the writer immediately back to "ready" on the same checkpoint. Use `--until-actionable` so team-owned states do not wake a role whose chunks are still blocked or peer-owned. If entering wait without a just-written checkpoint, omit `--since-checkpoint` but keep `--until-actionable`. Codex-hosted sessions may use `--persist` for older snippets, but it is redundant; add `--persist-max <600` only to fit a shell budget. Exit 20 from explicit `--finite` and Exit 23 from `--persist-max` are heartbeats/caps, not baton terminal states; immediately re-enter the wait unless the user interrupts.
 3. Continue from Preflight when the wait returns 0 (`ready` or `checkpoint_advanced`).
 
-Do not end the turn after an assigned-away BATON_STATE line. The next action is the foreground wait helper, not a final response to the user.
+Do not end the turn after an assigned-away BATON_STATE_COMPACT line. The next action is the foreground wait helper, not a final response to the user.
 
 Stop only when the wait reports post-handshake `done`, `human_question`, or `human_decision`, or when the user interrupts. `termination_review` is not terminal; it is a shared active handoff where both roles either keep polling or stop together after both approve. This is shell polling, not LLM polling: do not spend model turns checking whether prativadi has moved, and do not stop merely because the peer is slow.
 
@@ -418,7 +418,7 @@ In `run_mode: "supervised"`, exit after surfacing any baton assigned away from v
 ## `/goal` condition (paste into your engine when launching)
 
 ```
-/goal You are Dvandva vadi. Resolve the active baton before every read from explicit env vars, safe DVANDVA_RUN_ID, or Existing baton discovery; ask before choosing among active runs, and auto-create a named run only when no resumable baton exists. Continue walkaway until post-handshake done or human_question/human_decision. If assignee is not vadi, wait with dvandva-wait.sh --role vadi --file "$BATON_FILE" --interval 60 --max-wait 540 --until-actionable and re-enter on shell caps unless interrupted. Do not treat final approval as terminal; termination_review is shared. Invoke dvandva:research during research_drafting/revision; use conditional parallelism; keep test_creation separate from deep_review; target 100% test coverage for new behavior; require three deep_review tracks before deslop; make verified checkpoint commits when allowed. Before done, verify mode-appropriate terminal artifact: run_explainer_ref plus both roles' run_explainer_reviews for development, research_ref plus conditional plan_ref for research, review_ref for review. Surface BATON_STATE before each checkpoint including mode, run_id, original_ask, research_ref, run_explainer_ref, run_explainer_reviews, review_ref, work_split, subagent_tracks, verification_matrix, plan_ref, changed files, verification, and final approvals. Never create a PR. Stop after turn_cap active model-work turns and assign human if still blocked.
+/goal You are Dvandva vadi. Resolve the active baton before every read from explicit env vars, safe DVANDVA_RUN_ID, or Existing baton discovery; ask before choosing among active runs, and auto-create a named run only when no resumable baton exists. Continue walkaway until post-handshake done or human_question/human_decision. If assignee is not vadi, wait with dvandva-wait.sh --role vadi --file "$BATON_FILE" --interval 60 --max-wait 540 --until-actionable and re-enter on shell caps unless interrupted. Do not treat final approval as terminal; termination_review is shared. Invoke dvandva:research during research_drafting/revision; use conditional parallelism; keep test_creation separate from deep_review; target 100% test coverage for new behavior; require three deep_review tracks before deslop; make verified checkpoint commits when allowed. Before done, verify mode-appropriate terminal artifact: run_explainer_ref plus both roles' run_explainer_reviews for development, research_ref plus conditional plan_ref for research, review_ref for review. Surface BATON_STATE_COMPACT before each checkpoint via dvandva-state.sh --compact (a bounded summary: kind, schema, run_id, mode, run_mode, phase, status, assignee, active_roles, checkpoint, refs, counts, current_role_work, open_findings, verification_latest, next_action) instead of full work_split/subagent_tracks/verification_matrix arrays or the full baton, and read the authoritative full baton.json before any state-changing decision. Never create a PR. Stop after turn_cap active model-work turns and assign human if still blocked.
 ```
 
 ## Failure modes

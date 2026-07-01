@@ -98,8 +98,9 @@ write_full_baton() {
   ],
   "verification_latest": {
     "command": "scripts/test-dvandva-state.sh",
-    "status": "red",
-    "updated_at": "2026-07-01T00:00:00Z"
+    "result": "red",
+    "notes": "short note",
+    "extra": "object-form extra detail must not be surfaced"
   },
   "next_action": {
     "owner_role": "vadi",
@@ -137,6 +138,103 @@ write_malformed_baton() {
   local file="$1"
   mkdir -p "$(dirname "$file")"
   printf '{"schema":"dvandva.baton.v2","run_id":"broken",\n' > "$file"
+}
+
+write_non_object_json() {
+  local file="$1"
+  mkdir -p "$(dirname "$file")"
+  printf '[]\n' > "$file"
+}
+
+write_phase_less_baton() {
+  local file="$1"
+  mkdir -p "$(dirname "$file")"
+  cat > "$file" <<'JSON'
+{
+  "schema": "dvandva.baton.v2",
+  "run_id": "phase-less-run",
+  "mode": "development",
+  "run_mode": "walkaway",
+  "status": "implementing",
+  "assignee": "vadi",
+  "active_roles": [],
+  "checkpoint": 7,
+  "work_split": [
+    {
+      "id": "phase-less-work",
+      "chunk_type": "implementation",
+      "owner_role": "vadi",
+      "status": "ready",
+      "paths": ["plugins/dvandva/skills/vadi/scripts/dvandva-state.sh"]
+    }
+  ],
+  "subagent_tracks": [],
+  "verification_matrix": [],
+  "findings": [],
+  "blockers": [],
+  "changed_paths": []
+}
+JSON
+}
+
+write_large_baton() {
+  local file="$1"
+  local long
+  long="$(printf 'x%.0s' $(seq 1 1500))"
+  mkdir -p "$(dirname "$file")"
+  jq -n --arg long "$long" '
+    {
+      schema: "dvandva.baton.v2",
+      run_id: "large-run",
+      mode: "development",
+      run_mode: "walkaway",
+      phase: 1,
+      status: "implementing",
+      assignee: "vadi",
+      active_roles: [],
+      checkpoint: 9,
+      refs: {
+        huge: $long,
+        branch: ("branch-" + $long),
+        plan: "superpowers/plans/large-run.html"
+      },
+      research_ref: ("./superpowers/research/" + $long + ".html"),
+      plan_ref: "./superpowers/plans/large-run.html",
+      work_split: [
+        range(0; 15) as $i |
+        {
+          id: ("work-" + ($i | tostring)),
+          phase: 1,
+          chunk_type: "implementation",
+          owner_role: "vadi",
+          status: "ready",
+          paths: ["a", "b"],
+          write_paths: ["a"],
+          depends_on: ["root"]
+        }
+      ],
+      subagent_tracks: [],
+      verification_matrix: [],
+      findings: [
+        range(0; 15) as $i |
+        {
+          id: ("F-" + ($i | tostring)),
+          severity: "low",
+          status: "open",
+          summary: $long
+        }
+      ],
+      blockers: [],
+      changed_paths: [],
+      verification_latest: {
+        command: $long,
+        result: "passed",
+        notes: $long,
+        extra: $long
+      },
+      next_action: $long
+    }
+  ' > "$file"
 }
 
 run_compact() {
@@ -195,6 +293,9 @@ assert_compact_state() {
     and (.open_findings | length) == 1
     and .open_findings[0].id == "F-1"
     and .verification_latest.command == "scripts/test-dvandva-state.sh"
+    and .verification_latest.result == "red"
+    and .verification_latest.notes == "short note"
+    and (.verification_latest | has("extra") | not)
     and .next_action.owner_role == "vadi"
     and (has("work_split") | not)
     and (has("subagent_tracks") | not)
@@ -265,12 +366,109 @@ assert_malformed_fails() {
   echo "PASS: $name"
 }
 
+assert_non_object_fails_cleanly() {
+  local name="$1"
+  local script="$2"
+  local baton="$3"
+
+  local output actual_exit
+  output="$(run_compact "$script" "$baton" 2>&1)"
+  actual_exit=$?
+  if [[ "$actual_exit" -ne 22 ]]; then
+    echo "FAIL: $name expected exit 22 for valid non-object JSON, got $actual_exit"
+    echo "$output"
+    failures=$((failures + 1))
+    return
+  fi
+  if ! printf '%s' "$output" | grep -Fq "baton JSON root must be object"; then
+    echo "FAIL: $name expected clean non-object error"
+    echo "$output"
+    failures=$((failures + 1))
+    return
+  fi
+  echo "PASS: $name"
+}
+
+assert_phase_less_work_is_not_dropped() {
+  local name="$1"
+  local script="$2"
+  local baton="$3"
+
+  local output actual_exit
+  output="$(run_compact "$script" "$baton" 2>&1)"
+  actual_exit=$?
+  if [[ "$actual_exit" -ne 0 ]]; then
+    echo "FAIL: $name expected exit 0, got $actual_exit"
+    echo "$output"
+    failures=$((failures + 1))
+    return
+  fi
+  if ! printf '%s' "$output" | jq -e '
+    .run_id == "phase-less-run"
+    and (.phase == null)
+    and (.current_role_work | length) == 1
+    and .current_role_work[0].id == "phase-less-work"
+  ' >/dev/null 2>&1; then
+    echo "FAIL: $name dropped phase-less role work"
+    printf '%s\n' "$output" | jq . 2>/dev/null || echo "$output"
+    failures=$((failures + 1))
+    return
+  fi
+  echo "PASS: $name"
+}
+
+assert_large_state_is_bounded() {
+  local name="$1"
+  local script="$2"
+  local baton="$3"
+
+  local output actual_exit bytes
+  output="$(run_compact "$script" "$baton" 2>&1)"
+  actual_exit=$?
+  if [[ "$actual_exit" -ne 0 ]]; then
+    echo "FAIL: $name expected exit 0, got $actual_exit"
+    echo "$output"
+    failures=$((failures + 1))
+    return
+  fi
+  bytes="$(printf '%s' "$output" | wc -c)"
+  if [[ "$bytes" -gt 12000 ]]; then
+    echo "FAIL: $name expected compact output <= 12000 bytes, got $bytes"
+    failures=$((failures + 1))
+    return
+  fi
+  if ! printf '%s' "$output" | jq -e '
+    (.refs | has("huge") | not)
+    and ((.refs.research_ref // "" | length) <= 260)
+    and ((.verification_latest.command // "" | length) <= 260)
+    and ((.verification_latest.notes // "" | length) <= 260)
+    and (.verification_latest | has("extra") | not)
+    and ((.next_action // "" | length) <= 520)
+    and (.current_role_work | length) == 11
+    and .current_role_work[10].more_count == 5
+    and (.open_findings | length) == 11
+    and .open_findings[10].more_count == 5
+  ' >/dev/null 2>&1; then
+    echo "FAIL: $name compact JSON was not bounded as expected"
+    printf '%s\n' "$output" | jq . 2>/dev/null || echo "$output"
+    failures=$((failures + 1))
+    return
+  fi
+  echo "PASS: $name"
+}
+
 FULL_BATON="$TMP_DIR/full-baton.json"
 MISSING_REFS_BATON="$TMP_DIR/missing-refs-baton.json"
 MALFORMED_BATON="$TMP_DIR/malformed-baton.json"
+NON_OBJECT_BATON="$TMP_DIR/non-object-baton.json"
+PHASE_LESS_BATON="$TMP_DIR/phase-less-baton.json"
+LARGE_BATON="$TMP_DIR/large-baton.json"
 write_full_baton "$FULL_BATON"
 write_missing_refs_baton "$MISSING_REFS_BATON"
 write_malformed_baton "$MALFORMED_BATON"
+write_non_object_json "$NON_OBJECT_BATON"
+write_phase_less_baton "$PHASE_LESS_BATON"
+write_large_baton "$LARGE_BATON"
 
 assert_compact_state "vadi --compact emits bounded compact baton state JSON" "$SCRIPT" "$FULL_BATON" "vadi" 2
 assert_compact_state "prativadi --compact emits bounded compact baton state JSON" "$PRATIVADI_SCRIPT" "$FULL_BATON" "prativadi" 1
@@ -278,6 +476,9 @@ assert_compact_state "prativadi --compact emits bounded compact baton state JSON
 assert_missing_optional_refs "missing optional refs serialize as null/empty" "$SCRIPT" "$MISSING_REFS_BATON"
 
 assert_malformed_fails "malformed JSON fails nonzero" "$SCRIPT" "$MALFORMED_BATON"
+assert_non_object_fails_cleanly "valid non-object JSON fails cleanly" "$SCRIPT" "$NON_OBJECT_BATON"
+assert_phase_less_work_is_not_dropped "phase-less baton keeps phase-less role work" "$SCRIPT" "$PHASE_LESS_BATON"
+assert_large_state_is_bounded "large compact state stays bounded" "$SCRIPT" "$LARGE_BATON"
 
 if cmp -s "$SCRIPT" "$PRATIVADI_SCRIPT"; then
   echo "PASS: plugin state helpers are byte-identical"

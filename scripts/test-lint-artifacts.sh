@@ -149,6 +149,21 @@ mkdir -p "$BAD_MD/plans"
 printf '# generated markdown artifact\n' > "$BAD_MD/plans/generated.md"
 run_case "generated markdown artifact is rejected" 1 bash "$LINTER" "$BAD_MD"
 
+BAD_FULL_BATON_STATE="$TMP_DIR/bad-full-baton-state"
+write_artifact "$BAD_FULL_BATON_STATE/report.html" '
+  <pre>BATON_STATE: {"work_split":[{"id":"too-much"}],"subagent_tracks":[],"verification_matrix":[]}</pre>'
+run_case "routine full BATON_STATE dynamic arrays are rejected" 1 bash "$LINTER" "$BAD_FULL_BATON_STATE"
+
+BAD_PARTIAL_FULL_BATON_STATE="$TMP_DIR/bad-partial-full-baton-state"
+write_artifact "$BAD_PARTIAL_FULL_BATON_STATE/report.html" '
+  <pre>BATON_STATE: {"work_split":[{"id":"too-much"}],"subagent_tracks":[]}</pre>'
+run_case "routine full BATON_STATE with any dynamic array is rejected" 1 bash "$LINTER" "$BAD_PARTIAL_FULL_BATON_STATE"
+
+GOOD_COMPACT_BATON_STATE="$TMP_DIR/good-compact-baton-state"
+write_artifact "$GOOD_COMPACT_BATON_STATE/report.html" '
+  <pre>BATON_STATE_COMPACT: {"counts":{"work_split":12,"subagent_tracks":8,"verification_matrix":5},"refs":{"plan_ref":"./superpowers/plans/x.html"}}</pre>'
+run_case "compact BATON_STATE counts and refs are accepted" 0 bash "$LINTER" "$GOOD_COMPACT_BATON_STATE"
+
 MISSING_ARTIFACT_DIR="$TMP_DIR/missing-artifacts"
 run_case "missing artifact directory remains a no-op" 0 bash "$LINTER" "$MISSING_ARTIFACT_DIR"
 

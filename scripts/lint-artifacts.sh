@@ -159,6 +159,13 @@ for index in "${!html_files[@]}"; do
     fail "$rel run_explainer schema requires artifact_type run_explainer"
   fi
 
+  if grep -Eiq 'BATON_STATE([^_A-Z0-9]|$)' "$file" \
+    && grep -Eiq '"(work_split|subagent_tracks|verification_matrix)"[[:space:]]*:' "$file"; then
+    fail "$rel contains routine full BATON_STATE dynamic-array dump"
+  else
+    pass "$rel avoids routine full BATON_STATE dynamic-array dumps"
+  fi
+
   if [[ "$artifact_type" == "run_explainer" ]]; then
     run_explainer_file_stem=""
     run_explainer_meta_run_id=""

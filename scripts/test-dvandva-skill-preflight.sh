@@ -9,6 +9,7 @@ PRATIVADI="$ROOT_DIR/plugins/dvandva/skills/prativadi/SKILL.md"
 COMMAND_VADI="$ROOT_DIR/plugins/dvandva/commands/vadi.md"
 COMMAND_PRATIVADI="$ROOT_DIR/plugins/dvandva/commands/prativadi.md"
 STATE_REF="$ROOT_DIR/plugins/dvandva/references/state-transition-table.md"
+RESEARCH="$ROOT_DIR/plugins/dvandva/skills/research/SKILL.md"
 
 failures=0
 
@@ -102,6 +103,21 @@ for file in "$VADI" "$PRATIVADI"; do
   require_match "$file" \
     '--until-actionable' \
     "$role skill uses action-aware waiting for team-owned states"
+  require_match "$file" \
+    'BATON_STATE_COMPACT' \
+    "$role skill requires compact baton-state surfacing"
+  require_match "$file" \
+    'dvandva-state\.sh[[:space:]]+--compact' \
+    "$role skill names the compact state helper"
+  require_match "$file" \
+    'BATON_STATE_COMPACT.{0,240}schema.{0,240}active_roles|BATON_STATE_COMPACT.{0,240}active_roles.{0,240}schema' \
+    "$role skill compact field list includes schema and active_roles"
+  require_match "$file" \
+    'read .*authoritative full .*baton\.json.*state-changing|state-changing.*read .*authoritative full .*baton\.json' \
+    "$role skill requires full baton reads before state-changing decisions"
+  reject_match "$file" \
+    'Surface( the new)?[[:space:]]+`?BATON_STATE([^_A-Z0-9]|$)' \
+    "$role skill has no stale BATON_STATE surfacing wording"
 done
 
 for file in "$COMMAND_VADI" "$COMMAND_PRATIVADI"; do
@@ -133,6 +149,56 @@ for file in "$COMMAND_VADI" "$COMMAND_PRATIVADI"; do
   require_match "$file" \
     '--until-actionable' \
     "$command_role command uses action-aware waiting for team-owned states"
+  require_match "$file" \
+    'BATON_STATE_COMPACT' \
+    "$command_role command requires compact baton-state surfacing"
+  require_match "$file" \
+    'dvandva-state\.sh[[:space:]]+--compact' \
+    "$command_role command names the compact state helper"
+  require_match "$file" \
+    'BATON_STATE_COMPACT.{0,240}schema.{0,240}active_roles|BATON_STATE_COMPACT.{0,240}active_roles.{0,240}schema' \
+    "$command_role command compact field list includes schema and active_roles"
+  require_match "$file" \
+    'full .*baton\.json.*state-changing decision|state-changing decision.*full .*baton\.json' \
+    "$command_role command requires full baton reads before state-changing decisions"
+done
+
+for file in "$ROOT_DIR/docs/protocol/local-baton-channel.md" "$ROOT_DIR/plugins/dvandva/references/local-baton-channel.md"; do
+  label="${file#$ROOT_DIR/}"
+  require_match "$file" \
+    'BATON_STATE_COMPACT' \
+    "$label requires compact baton-state surfacing"
+  require_match "$file" \
+    'dvandva-state\.sh[[:space:]]+--compact' \
+    "$label names the compact state helper"
+done
+
+require_match "$RESEARCH" \
+  'BATON_STATE_COMPACT' \
+  "research skill requires compact baton-state surfacing"
+require_match "$RESEARCH" \
+  'dvandva-state\.sh[[:space:]]+--compact' \
+  "research skill names the compact state helper"
+require_match "$RESEARCH" \
+  'read .*authoritative full .*baton\.json.*state-changing|state-changing.*read .*authoritative full .*baton\.json' \
+  "research skill requires full baton reads before state-changing writes"
+
+PRODUCT="$ROOT_DIR/product.md"
+require_match "$PRODUCT" \
+  'BATON_STATE_COMPACT' \
+  "product.md documents compact baton-state surfacing"
+reject_match "$PRODUCT" \
+  'BATON_STATE:[[:space:]]*\{' \
+  "product.md does not document stale BATON_STATE regex surface"
+
+for file in "$ROOT_DIR/docs/research/codex-goal-notes.md" "$ROOT_DIR/docs/research/claude-code-goal.md"; do
+  label="${file#$ROOT_DIR/}"
+  require_match "$file" \
+    'BATON_STATE_COMPACT' \
+    "$label documents compact baton-state surfacing"
+  reject_match "$file" \
+    'surface[[:space:]]+BATON_STATE([^_A-Z0-9]|$)' \
+    "$label has no stale surface BATON_STATE wording"
 done
 
 require_match "$VADI" \
