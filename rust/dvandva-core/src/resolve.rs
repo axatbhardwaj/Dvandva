@@ -183,7 +183,7 @@ fn discover_runs(root: &Path) -> Result<ResolveOutcome, ResolveError> {
     files.sort_by(|a, b| a.relative.cmp(&b.relative));
 
     let legacy = root.join(".dvandva/baton.json");
-    if legacy.is_file() {
+    if legacy.symlink_metadata().is_ok() {
         files.push(CandidateFile {
             absolute: legacy,
             relative: ".dvandva/baton.json".to_string(),
@@ -242,7 +242,7 @@ fn candidate_files(root: &Path) -> Vec<CandidateFile> {
     for entry in entries.flatten() {
         let run_dir = entry.path();
         let baton = run_dir.join("baton.json");
-        if !baton.is_file() {
+        if baton.symlink_metadata().is_err() {
             continue;
         }
         let fallback_run_id = entry.file_name().to_string_lossy().into_owned();
@@ -272,7 +272,7 @@ impl RunCandidate {
 fn object_field(value: &Value, key: &str) -> Option<String> {
     let field = value.as_object()?.get(key)?;
     match field {
-        Value::Null => None,
+        Value::Null | Value::Bool(false) => None,
         Value::String(s) => Some(s.clone()),
         other => Some(other.to_string()),
     }

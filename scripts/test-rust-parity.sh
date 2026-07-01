@@ -422,6 +422,50 @@ parity_resolve "R23a missing --role -> exit 2" 2 "" \
 parity_resolve "R23b unknown role -> exit 2" 2 "" \
   -- "$RESOLVE_VADI" --role bystander --cwd "$BOX"
 
+# ---------------------------------------------------------------------------
+# REGRESSION cases from cross-review (resolve). The original 55 cases missed
+# these. F2b/F3 are EXPECTED TO FAIL until prativadi's resolve.rs/state.rs fixes
+# land; the assertions below are the CORRECT shell==rust parity bar (do NOT
+# weaken them to make rust pass — they turn green when the bug is fixed).
+# ---------------------------------------------------------------------------
+
+# F2b REGRESSION (expect FAIL): a sibling baton with `run_id:false` and
+# `status:false`. The shell coalesces `false` via `.x // ""` to the empty string
+# (false is falsy for jq `//`), so run_id falls back to the DIRECTORY NAME ("aa")
+# and status becomes "" (non-"done" -> resumable). With a second normal run this
+# is two resumable runs -> ASK(12), ordered updated_at desc (bb 06-29 before
+# aa 01-01). Rust currently LEAKS the literal string "false" for run_id/status,
+# so the ASK array is not value-equal. Assert exit + leading token + ASK jq -S
+# value-equal against the shell oracle.
+BOX="$TMP_DIR/box-f2b-false-scalars"
+mkdir -p "$BOX/.dvandva/runs/aa"
+cat >"$BOX/.dvandva/runs/aa/baton.json" <<'JSON'
+{"schema":"dvandva.baton.v2","run_id":false,"status":false,"updated_at":"2026-01-01T00:00:00Z","checkpoint":1}
+JSON
+seed_baton "$BOX/.dvandva/runs/bb/baton.json" bb-run implementing vadi "2026-06-29T10:00:00Z"
+parity_resolve "F2b REGRESSION false run_id/status coalesce -> dir-name fallback + empty status in ASK(12)" 12 "" \
+  -- "$RESOLVE_VADI" --role vadi --cwd "$BOX"
+
+# F3a REGRESSION (expect FAIL): a run dir whose `baton.json` is itself a
+# DIRECTORY. It still matches the discovery glob, but jq cannot read it, so the
+# shell FAILS CLOSED -> `ASK []` exit 12 (never a wrong CREATE/RESOLVED). Rust
+# currently ignores the unreadable entry and emits CREATE exit 0. Assert parity
+# to the fail-closed shell oracle.
+BOX="$TMP_DIR/box-f3a-dir-baton"
+mkdir -p "$BOX/.dvandva/runs/foo/baton.json"
+parity_resolve "F3a REGRESSION baton.json is a DIRECTORY -> fail-closed ASK(12)" 12 "ASK []" \
+  -- "$RESOLVE_VADI" --role vadi --cwd "$BOX"
+
+# F3b REGRESSION (expect FAIL): a run dir whose `baton.json` is a BROKEN SYMLINK
+# (target does not exist). The glob matches the dangling entry, jq cannot open
+# the target, so the shell FAILS CLOSED -> `ASK []` exit 12. Rust currently
+# treats it as absent and emits CREATE exit 0. Assert parity to the shell oracle.
+BOX="$TMP_DIR/box-f3b-broken-symlink"
+mkdir -p "$BOX/.dvandva/runs/bar"
+ln -s /nonexistent-dvandva-target "$BOX/.dvandva/runs/bar/baton.json"
+parity_resolve "F3b REGRESSION baton.json is a BROKEN SYMLINK -> fail-closed ASK(12)" 12 "ASK []" \
+  -- "$RESOLVE_VADI" --role vadi --cwd "$BOX"
+
 echo
 echo "=== STATE parity ==="
 
@@ -629,6 +673,50 @@ fi
 # S17: role=team / role=human accepted (state allows all four roles).
 parity_state "S17 role=team accepted" 0 "$STATE_VADI" --compact --file "$FULL" --role team
 
+# ---------------------------------------------------------------------------
+# REGRESSION cases from cross-review (state). The original 55 cases missed these.
+# F1/F2a are EXPECTED TO FAIL until prativadi's state.rs fix lands; the assertions
+# are the CORRECT shell==rust parity bar (do NOT weaken them to make rust pass).
+# ---------------------------------------------------------------------------
+
+# F1 REGRESSION (expect FAIL): a work_split item whose PRIMARY alias keys are
+# present-but-NULL (owner_role:null, chunk_type:null) with a non-null secondary
+# alias (owner:"vadi", type:"implementation"). The shell uses jq `//`, which
+# treats null as absent and FALLS THROUGH to the secondary alias — so the item
+# is selected (owner "vadi" matches role, type is "implementation" under the
+# parallel_implementing status filter) and surfaced in current_role_work with
+# owner_role:"vadi" / chunk_type:"implementation". Rust currently keys on
+# alias-PRESENCE (not null), so it drops the item -> current_role_work [].
+# Assert rust state value-equal to the shell oracle.
+F1_NULLALIAS="$TMP_DIR/f1-null-primary-alias.json"
+cat >"$F1_NULLALIAS" <<'JSON'
+{
+  "schema": "dvandva.baton.v2", "run_id": "f1-null-alias", "mode": "development",
+  "run_mode": "walkaway", "status": "parallel_implementing", "assignee": "team",
+  "phase": 1, "checkpoint": 1, "active_roles": ["vadi", "prativadi"],
+  "work_split": [{"id": "x", "owner_role": null, "owner": "vadi", "chunk_type": null, "type": "implementation", "phase": 1, "status": "planned"}],
+  "subagent_tracks": [], "verification_matrix": [], "findings": [], "blockers": [], "changed_paths": []
+}
+JSON
+parity_state "F1 REGRESSION work_split null primary alias -> // falls through (owner_role vadi / chunk_type implementation)" 0 "$STATE_VADI" --compact --file "$F1_NULLALIAS" --role vadi
+
+# F2a REGRESSION (expect FAIL): top-level scalars set to boolean `false`
+# (schema:false, profile:false, phase:false). The shell coalesces via `//`,
+# which treats `false` as absent: schema -> null (`.schema // null`), profile ->
+# "full" (`.profile // "full"` under development_mode), profile_floor -> "full",
+# phase -> null (`.phase // null`). Rust currently LEAKS the literal `false`.
+# Assert rust state value-equal to the shell oracle.
+F2A_FALSE="$TMP_DIR/f2a-false-scalars.json"
+cat >"$F2A_FALSE" <<'JSON'
+{
+  "schema": false, "run_id": "f2a-false-scalars", "mode": "development",
+  "profile": false, "phase": false,
+  "status": "implementing", "assignee": "vadi", "checkpoint": 1,
+  "work_split": [], "subagent_tracks": [], "verification_matrix": [], "findings": [], "blockers": [], "changed_paths": []
+}
+JSON
+parity_state "F2a REGRESSION false top-level scalars coalesce (schema null / profile full / phase null)" 0 "$STATE_VADI" --compact --file "$F2A_FALSE" --role vadi
+
 echo
 echo "=== SHIM-PATH parity (vm-shim-binary-path / vm-fallback) ==="
 
@@ -702,6 +790,48 @@ for role in vadi prativadi; do
     pass "V4 role derivation preserved (co-located binary, $role, no --role)"
   else
     fail "V4 role derivation diverged ($role): co-located role=[$co_role] shell role=[$sh_role]"
+  fi
+done
+
+# CR-1 REGRESSION (should PASS — already fixed): `state` via the shim WITH
+# DVANDVA_BIN set but NO --role and NO DVANDVA_ROLE. The shim must derive the
+# role from its own parent-of-parent dir (skills/<role>/scripts) and EXPORT it
+# before exec'ing the binary, so the delegated run emits the correct role —
+# matching the shell fallback, which derives role from the same script dir.
+# V4 covers the CO-LOCATED-binary path; the original 55 cases never exercised
+# this DVANDVA_BIN path with a missing --role. Assert exit 0 + the LITERAL role
+# value (not just shell==rust equality, which a mutual role=null bug would pass)
+# + shell==rust value-equal, for both role dirs.
+CR1_BATON="$TMP_DIR/cr1-role-derivation.json"
+cat >"$CR1_BATON" <<'JSON'
+{
+  "schema": "dvandva.baton.v2", "run_id": "cr1-role", "mode": "development",
+  "run_mode": "walkaway", "status": "implementing", "assignee": "vadi",
+  "phase": 1, "checkpoint": 1, "active_roles": ["vadi"],
+  "work_split": [], "subagent_tracks": [], "verification_matrix": [], "findings": [], "blockers": [], "changed_paths": []
+}
+JSON
+for role in vadi prativadi; do
+  cases=$((cases + 1))
+  cr_script="$ROOT_DIR/plugins/dvandva/skills/$role/scripts/dvandva-state.sh"
+  cr_d="$TMP_DIR/cr1-$role"
+  mkdir -p "$cr_d"
+  # Rust: DVANDVA_BIN set, no --role, no DVANDVA_ROLE -> shim derives+exports role.
+  env -u DVANDVA_ROLE -u DVANDVA_BATON_FILE -u DVANDVA_RUN_DIR -u DVANDVA_RUN_ID \
+    DVANDVA_BIN="$BIN" "$cr_script" --compact --file "$CR1_BATON" >"$cr_d/rs.out" 2>"$cr_d/rs.err"
+  cr_rs_exit=$?
+  # Shell fallback: no DVANDVA_BIN, no --role, no DVANDVA_ROLE -> derives role from dir.
+  env -u DVANDVA_BIN -u DVANDVA_ROLE -u DVANDVA_BATON_FILE -u DVANDVA_RUN_DIR -u DVANDVA_RUN_ID \
+    "$cr_script" --compact --file "$CR1_BATON" >"$cr_d/sh.out" 2>"$cr_d/sh.err"
+  cr_sh_exit=$?
+  cr_rs_role="$(jq -r '.role' "$cr_d/rs.out" 2>/dev/null)"
+  cr_sh_role="$(jq -r '.role' "$cr_d/sh.out" 2>/dev/null)"
+  if [[ "$cr_rs_exit" -eq 0 && "$cr_sh_exit" -eq 0 &&
+    "$cr_rs_role" == "$role" && "$cr_sh_role" == "$role" ]] &&
+    diff <(jq -S . "$cr_d/sh.out" 2>/dev/null) <(jq -S . "$cr_d/rs.out" 2>/dev/null) >/dev/null 2>&1; then
+    pass "CR-1 state shim no --role derives+exports role=$role (DVANDVA_BIN path) — exit0 + role literal + value-equal"
+  else
+    fail "CR-1 state shim no --role ($role): rust-exit=$cr_rs_exit rust-role=[$cr_rs_role] shell-exit=$cr_sh_exit shell-role=[$cr_sh_role]"
   fi
 done
 

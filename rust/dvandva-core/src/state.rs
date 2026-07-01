@@ -116,8 +116,15 @@ fn get<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
     value.as_object()?.get(key)
 }
 
+fn jq_coalesce(value: Option<&Value>) -> Option<&Value> {
+    match value {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => None,
+        Some(value) => Some(value),
+    }
+}
+
 fn clone_or_null(value: Option<&Value>) -> Value {
-    value.cloned().unwrap_or(Value::Null)
+    jq_coalesce(value).cloned().unwrap_or(Value::Null)
 }
 
 fn num(value: usize) -> Value {
@@ -141,8 +148,8 @@ fn effective_profile(root: &Value) -> Value {
 
 fn effective_profile_floor(root: &Value) -> Value {
     if development_mode(root) {
-        match get(root, "profile_floor") {
-            Some(value) if !value.is_null() => value.clone(),
+        match jq_coalesce(get(root, "profile_floor")) {
+            Some(value) => value.clone(),
             _ => effective_profile(root),
         }
     } else {
@@ -156,7 +163,7 @@ trait NullDefault {
 
 impl NullDefault for Value {
     fn or_string_default(self, default: &str) -> Value {
-        if self.is_null() {
+        if matches!(self, Value::Null | Value::Bool(false)) {
             Value::String(default.to_string())
         } else {
             self
@@ -227,8 +234,8 @@ fn bound_string(value: &str, max: usize) -> String {
 }
 
 fn coalesce_tostring(value: Option<&Value>) -> String {
-    match value {
-        None | Some(Value::Null) => String::new(),
+    match jq_coalesce(value) {
+        None => String::new(),
         Some(Value::String(s)) => s.clone(),
         Some(other) => other.to_string(),
     }
@@ -329,7 +336,7 @@ fn compact_work(root: &Value, role: Role) -> Vec<Value> {
 }
 
 fn first_present<'a>(value: &'a Value, keys: &[&str]) -> Option<&'a Value> {
-    keys.iter().find_map(|key| get(value, key))
+    keys.iter().find_map(|key| jq_coalesce(get(value, key)))
 }
 
 fn compact_findings(root: &Value) -> Vec<Value> {
@@ -348,8 +355,8 @@ fn compact_findings(root: &Value) -> Vec<Value> {
             out.insert("area".to_string(), clone_or_null(get(&item, "area")));
             out.insert(
                 "status".to_string(),
-                match get(&item, "status") {
-                    Some(value) if !value.is_null() => value.clone(),
+                match jq_coalesce(get(&item, "status")) {
+                    Some(value) => value.clone(),
                     _ => Value::String("open".to_string()),
                 },
             );
@@ -377,8 +384,8 @@ fn compact_findings(root: &Value) -> Vec<Value> {
 
 fn is_open_finding(value: &Value) -> bool {
     if value.is_object() {
-        let status = match get(value, "status") {
-            Some(raw) if !raw.is_null() => coalesce_tostring(Some(raw)).to_ascii_lowercase(),
+        let status = match jq_coalesce(get(value, "status")) {
+            Some(raw) => coalesce_tostring(Some(raw)).to_ascii_lowercase(),
             _ => "open".to_string(),
         };
         !matches!(
