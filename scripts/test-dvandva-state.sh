@@ -22,6 +22,21 @@ write_full_baton() {
   "schema": "dvandva.baton.v2",
   "run_id": "token-efficient-runs",
   "mode": "development",
+  "profile": "standard",
+  "profile_floor": "standard",
+  "profile_decision": {
+    "selected_profile": "standard",
+    "floor": "standard",
+    "reason": "state helper profile surfacing test",
+    "decided_by": "test-suite",
+    "decided_at": "2026-07-01T00:00:00Z",
+    "risk_inputs": [],
+    "hard_triggers": [],
+    "allowlist_match": false,
+    "allowlist_refs": [],
+    "evidence_refs": ["test:state-profile"]
+  },
+  "profile_history": [],
   "run_mode": "walkaway",
   "phase": 1,
   "status": "parallel_implementing",
@@ -177,6 +192,60 @@ write_phase_less_baton() {
 JSON
 }
 
+write_legacy_string_verification_baton() {
+  local file="$1"
+  mkdir -p "$(dirname "$file")"
+  cat > "$file" <<'JSON'
+{
+  "schema": "dvandva.baton.v2",
+  "run_id": "legacy-string-verification",
+  "mode": "development",
+  "profile": "fast",
+  "profile_floor": "fast",
+  "run_mode": "walkaway",
+  "phase": 1,
+  "status": "implementing",
+  "assignee": "vadi",
+  "active_roles": [],
+  "checkpoint": 11,
+  "work_split": [],
+  "subagent_tracks": [],
+  "verification_matrix": [],
+  "verification": ["legacy verification string"],
+  "findings": [],
+  "blockers": [],
+  "changed_paths": []
+}
+JSON
+}
+
+write_legacy_string_findings_baton() {
+  local file="$1"
+  mkdir -p "$(dirname "$file")"
+  cat > "$file" <<'JSON'
+{
+  "schema": "dvandva.baton.v2",
+  "run_id": "legacy-string-findings",
+  "mode": "development",
+  "profile": "standard",
+  "profile_floor": "standard",
+  "run_mode": "walkaway",
+  "phase": 1,
+  "status": "cross_fixing",
+  "assignee": "team",
+  "active_roles": ["vadi", "prativadi"],
+  "checkpoint": 12,
+  "work_split": [],
+  "subagent_tracks": [],
+  "verification_matrix": [],
+  "verification": [],
+  "findings": ["legacy finding string"],
+  "blockers": [],
+  "changed_paths": []
+}
+JSON
+}
+
 write_large_baton() {
   local file="$1"
   local long
@@ -272,6 +341,8 @@ assert_compact_state() {
     and .run_id == "token-efficient-runs"
     and .mode == "development"
     and .run_mode == "walkaway"
+    and .profile == "standard"
+    and .profile_floor == "standard"
     and .phase == 1
     and .status == "parallel_implementing"
     and .assignee == "team"
@@ -326,10 +397,12 @@ assert_missing_optional_refs() {
   fi
 
   if ! printf '%s' "$output" | jq -e '
-    (.kind // .label) == "BATON_STATE_COMPACT"
-    and .run_id == "minimal-run"
-    and (.refs == null or .refs == {})
-    and .counts.work_split == 0
+	    (.kind // .label) == "BATON_STATE_COMPACT"
+	    and .run_id == "minimal-run"
+	    and .profile == "full"
+	    and .profile_floor == "full"
+	    and (.refs == null or .refs == {})
+	    and .counts.work_split == 0
     and .counts.subagent_tracks == 0
     and .counts.verification_matrix == 0
     and .counts.findings == 0
@@ -417,6 +490,65 @@ assert_phase_less_work_is_not_dropped() {
   echo "PASS: $name"
 }
 
+assert_legacy_string_verification_is_bounded() {
+  local name="$1"
+  local script="$2"
+  local baton="$3"
+
+  local output actual_exit
+  output="$(run_compact "$script" "$baton" 2>&1)"
+  actual_exit=$?
+  if [[ "$actual_exit" -ne 0 ]]; then
+    echo "FAIL: $name expected exit 0, got $actual_exit"
+    echo "$output"
+    failures=$((failures + 1))
+    return
+  fi
+  if ! printf '%s' "$output" | jq -e '
+    .run_id == "legacy-string-verification"
+    and .profile == "fast"
+    and .profile_floor == "fast"
+    and .verification_latest.command == "legacy verification string"
+    and .verification_latest.result == "legacy"
+  ' >/dev/null 2>&1; then
+    echo "FAIL: $name did not compact a legacy string verification entry"
+    printf '%s\n' "$output" | jq . 2>/dev/null || echo "$output"
+    failures=$((failures + 1))
+    return
+  fi
+  echo "PASS: $name"
+}
+
+assert_legacy_string_findings_do_not_crash() {
+  local name="$1"
+  local script="$2"
+  local baton="$3"
+
+  local output actual_exit
+  output="$(run_compact "$script" "$baton" 2>&1)"
+  actual_exit=$?
+  if [[ "$actual_exit" -ne 0 ]]; then
+    echo "FAIL: $name expected exit 0, got $actual_exit"
+    echo "$output"
+    failures=$((failures + 1))
+    return
+  fi
+  if ! printf '%s' "$output" | jq -e '
+    .run_id == "legacy-string-findings"
+    and .profile == "standard"
+    and .profile_floor == "standard"
+    and (.open_findings | length) == 1
+    and .open_findings[0].status == "open"
+    and .open_findings[0].summary == "legacy finding string"
+  ' >/dev/null 2>&1; then
+    echo "FAIL: $name did not compact a legacy string finding entry"
+    printf '%s\n' "$output" | jq . 2>/dev/null || echo "$output"
+    failures=$((failures + 1))
+    return
+  fi
+  echo "PASS: $name"
+}
+
 assert_large_state_is_bounded() {
   local name="$1"
   local script="$2"
@@ -462,12 +594,16 @@ MISSING_REFS_BATON="$TMP_DIR/missing-refs-baton.json"
 MALFORMED_BATON="$TMP_DIR/malformed-baton.json"
 NON_OBJECT_BATON="$TMP_DIR/non-object-baton.json"
 PHASE_LESS_BATON="$TMP_DIR/phase-less-baton.json"
+LEGACY_STRING_VERIFICATION_BATON="$TMP_DIR/legacy-string-verification-baton.json"
+LEGACY_STRING_FINDINGS_BATON="$TMP_DIR/legacy-string-findings-baton.json"
 LARGE_BATON="$TMP_DIR/large-baton.json"
 write_full_baton "$FULL_BATON"
 write_missing_refs_baton "$MISSING_REFS_BATON"
 write_malformed_baton "$MALFORMED_BATON"
 write_non_object_json "$NON_OBJECT_BATON"
 write_phase_less_baton "$PHASE_LESS_BATON"
+write_legacy_string_verification_baton "$LEGACY_STRING_VERIFICATION_BATON"
+write_legacy_string_findings_baton "$LEGACY_STRING_FINDINGS_BATON"
 write_large_baton "$LARGE_BATON"
 
 assert_compact_state "vadi --compact emits bounded compact baton state JSON" "$SCRIPT" "$FULL_BATON" "vadi" 2
@@ -478,6 +614,8 @@ assert_missing_optional_refs "missing optional refs serialize as null/empty" "$S
 assert_malformed_fails "malformed JSON fails nonzero" "$SCRIPT" "$MALFORMED_BATON"
 assert_non_object_fails_cleanly "valid non-object JSON fails cleanly" "$SCRIPT" "$NON_OBJECT_BATON"
 assert_phase_less_work_is_not_dropped "phase-less baton keeps phase-less role work" "$SCRIPT" "$PHASE_LESS_BATON"
+assert_legacy_string_verification_is_bounded "legacy string verification stays bounded" "$SCRIPT" "$LEGACY_STRING_VERIFICATION_BATON"
+assert_legacy_string_findings_do_not_crash "legacy string findings stay bounded" "$SCRIPT" "$LEGACY_STRING_FINDINGS_BATON"
 assert_large_state_is_bounded "large compact state stays bounded" "$SCRIPT" "$LARGE_BATON"
 
 if cmp -s "$SCRIPT" "$PRATIVADI_SCRIPT"; then

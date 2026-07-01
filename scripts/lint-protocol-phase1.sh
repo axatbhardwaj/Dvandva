@@ -51,7 +51,20 @@ require_rg 'Continuous polling is the hard rule' product.md 'product spec makes 
 require_rg 'generated user-facing artifacts.*HTML|HTML.*generated user-facing artifacts' product.md 'product spec scopes HTML migration to generated user-facing artifacts'
 reject_rg 'No multi-baton-per-repo support|One active baton per worktree' product.md 'product spec no longer excludes multi-run support'
 require_rg 'Required v2 fields include.*active_roles.*agent_instances' product.md 'product v2 field list includes active_roles and agent_instances'
+require_rg 'The full-profile v2 flow has eight segments' product.md 'product flow overview is scoped to full profile'
+reject_rg 'The v2 flow has eight segments' product.md 'product flow overview no longer treats full profile as all v2'
+require_rg 'Every completed full-profile v2 development run must produce a one-date explainer' product.md 'product artifact policy scopes run explainer to full profile'
+reject_rg 'Every completed v2 development run must produce a one-date explainer' product.md 'product artifact policy no longer requires explainers for compact profiles'
+require_rg '`development` is the delivery run; its separate `profile` field selects' product.md 'product mode summary separates delivery mode from lifecycle profile'
+reject_rg '`development` is the full research -> planning -> implementation -> review run\.' product.md 'product mode summary does not collapse development into full profile'
+require_rg 'For v2 full-profile phase work, approve by writing `phase: 1, status: parallel_implementing' product.md 'product prativadi spec approval branches for full profile'
+require_rg 'For v2 fast/standard-profile phase work, approve by writing `phase: 1, status: implementing' product.md 'product prativadi spec approval branches for compact profiles'
+require_rg 'status: "parallel_implementing"` for full-profile v2, or `"implementing"` for fast/standard-profile v2' product.md 'product vadi Mode C recognizes compact v2 implementing'
+reject_rg 'status: "parallel_implementing"` for v2, or `"implementing"` only for an explicitly selected legacy v1 run' product.md 'product vadi Mode C no longer treats implementing as legacy-only'
+reject_rg 'return through `test_creation` rather than directly to review' product.md 'product phase fixing instructions are profile-aware'
 reject_rg 'Vadi \(implementing phase N\+1\)' product.md 'product flow diagram avoids stale sequential v2 implementation wording'
+reject_rg 'clean ──▶ phase N\+1' product.md 'product overview deslop clean arrow avoids direct done/phase advance ambiguity'
+reject_rg 'approve ──▶ phase N\+1' product.md 'product overview mutual-review approval arrows route through deslop'
 require_rg '\| `review_of_review \(prativadi_fixups\)` \| final `done` \| Legacy v1 final phase approved by both roles after vadi approves prativadi fixups\.' product.md 'product legacy table keeps review_of_review final done row'
 require_rg '\| `counter_review \(vadi_counter\)` \| final `done` \| Legacy v1 final phase approved by both roles after prativadi approves counter\.' product.md 'product legacy table keeps counter_review final done row'
 
@@ -78,6 +91,11 @@ reject_rg 'extended v1 seed|legacy v1 default 20|Legacy v1 defaults to 20' produ
 require_rg 'dvandva\.baton\.v2' plugins/dvandva/references/state-transition-table.md 'transition table documents baton v2'
 require_rg 'research_drafting|research_review|research_revision' plugins/dvandva/references/state-transition-table.md 'transition table documents research states'
 require_rg 'run_explainer_reviews' plugins/dvandva/references/state-transition-table.md 'transition table documents final explainer review gate'
+require_rg '\| `research_review` \| `implementing` \| Prativadi accepts the allowlisted fast research/evidence package; fast skips spec planning and enters compact implementation\.' product.md 'product fast profile documents research_review->implementing edge'
+require_rg '\| `research_review` \| `implementing` \| Prativadi accepts the allowlisted fast research/evidence package; fast skips spec planning and enters compact implementation\.' plugins/dvandva/references/state-transition-table.md 'transition table fast profile documents research_review->implementing edge'
+for file in docs/protocol/local-baton-channel.md plugins/dvandva/references/local-baton-channel.md; do
+  require_rg '`research_review` -> `implementing`' "$file" "$file fast profile documents research_review->implementing edge"
+done
 require_rg '\| `phase_review \(impl\)` \| `phase: N\+1, status: implementing, disagreement_round: 0` \| Legacy v1:' plugins/dvandva/references/state-transition-table.md 'transition table scopes phase_review advancement as legacy v1'
 require_rg '\| `review_of_review \(prativadi_fixups\)` \| `phase: N\+1, status: implementing, disagreement_round: 0` \| Legacy v1:' plugins/dvandva/references/state-transition-table.md 'transition table scopes review_of_review advancement as legacy v1'
 require_rg '\| `counter_review \(vadi_counter\)` \| `phase: N\+1, status: implementing, disagreement_round: 0` \| Legacy v1:' plugins/dvandva/references/state-transition-table.md 'transition table scopes counter_review advancement as legacy v1'

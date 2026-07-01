@@ -16,12 +16,19 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
 - accepted run modes: `development`, `research`, and `review`. Older batons
   may still serialize `feature-pr`; treat it as a legacy alias for
   `development`. `campaign` is legacy wording and not the current public enum.
+- development flow profiles: `fast`, `standard`, and `full`. `profile` is
+  orthogonal to `mode`; new development scaffolds default to `standard`, while
+  existing development/legacy `feature-pr` batons that lack `profile` are
+  effective `full` for compatibility. `profile_floor` records the minimum
+  allowed profile after risk analysis. `profile_decision` records selected
+  profile, floor, reason, risk inputs, hard triggers, allowlist evidence, and
+  evidence refs. `profile_history` records profile/floor changes.
 - `run_id`: stable non-empty safe identifier shared by both role sessions.
 - `original_ask`: the user's original request, surfaced in preflight so long
   goal loops do not drift.
 - `research_ref`: path to the generated user-facing HTML research artifact.
-- `run_explainer_ref`: path to the final run explainer HTML under `./superpowers/run-reports/`, required before terminal `done`.
-- `run_explainer_reviews`: v2 array of role review records for the final run explainer. Development terminal `done` requires completed approved `vadi` and `prativadi` entries whose `artifact_ref` exactly equals `run_explainer_ref`, with non-empty `summary` and `evidence_refs`.
+- `run_explainer_ref`: path to the final run explainer HTML under `./superpowers/run-reports/`, required before terminal `done` for full-profile development runs.
+- `run_explainer_reviews`: v2 array of role review records for the final run explainer. Full-profile development terminal `done` requires completed approved `vadi` and `prativadi` entries whose `artifact_ref` exactly equals `run_explainer_ref`, with non-empty `summary` and `evidence_refs`.
 - `research_outcome`: optional nullable v2 field recording the accepted
   research result, including `seed_development` when a research run also emits
   a seed plan for a future development run.
@@ -81,17 +88,19 @@ v2 write-helper enforcement requires safe `run_id`, `original_ask`,
 `research_ref` before advancing beyond the initial research draft, except that
 `human_question` and `human_decision` remain legal early-escalation targets
 before `research_ref` exists. Existing batons cannot change schema or v2
-`run_id` mid-run. Accepted v2 docs use mode-conditional terminal artifact
-gates: development runs require `run_explainer_ref`; research runs require
+`run_id` mid-run. Accepted v2 docs use mode/profile-conditional terminal
+artifact gates: full-profile development runs require `run_explainer_ref` plus
+completed approved `run_explainer_reviews` from both roles for the exact
+artifact; fast and standard development runs require `profile_decision`, passing
+final verification, completed `verification_matrix` evidence, and completed
+approved prativadi `phase-review` evidence but no run explainer; research runs require
 `research_ref` and additionally `plan_ref` iff `research_outcome ==
-seed_development`; review runs require `review_ref`. Development terminal
-`done` additionally requires completed approved `run_explainer_reviews` from
-both roles for the exact `run_explainer_ref`. In all v2 modes, terminal `done`
-still requires a coordinator assignee (`human`, `team`, `vadi`, or
+seed_development`; review runs require `review_ref`. In all v2 modes, terminal
+`done` still requires a coordinator assignee (`human`, `team`, `vadi`, or
 `prativadi`), both final approvals, and an installed current baton already at
 `termination_review`.
 
-implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. After `test_creation`, the baton enters `cross_review`; `cross_review` may route to `cross_fixing`, and only completed cross-review evidence for both roles can advance to `deep_review`. Phase convention: implementation-chunk tracks use the numeric implementation phase, while cross-review and deep-review gate tracks use the status-name phase such as `phase: "cross_review"` or `phase: "deep_review"`.
+Full-profile implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. After `test_creation`, the baton enters `cross_review`; `cross_review` may route to `cross_fixing`, and only completed cross-review evidence for both roles can advance to `deep_review`. Fast and standard development profiles use the compact `implementing -> phase_review -> termination_review -> done` path, still with `profile_decision`, passing final verification, completed `verification_matrix` evidence, a completed approved prativadi `phase-review` subagent track, shared termination, and role-owned final approvals. Phase convention: implementation-chunk tracks use the numeric implementation phase, while cross-review, phase-review, and deep-review gate tracks use the status-name phase such as `phase: "cross_review"`, `phase: "phase_review"`, or `phase: "deep_review"`.
 
 Run 4 generalizes write gating from Run 3 generated instances to `work_split`.
 The helper validates `work_split.paths`, `work_split.read_paths`, and
@@ -178,6 +187,10 @@ early. Scalar-owner states still reject same-status rewrites.
   "schema": "dvandva.baton.v1",
   "updated_at": "ISO-8601 UTC timestamp, set by the agent that last wrote the baton",
   "mode": "development | research | review | feature-pr (legacy alias for development)",
+  "profile": "development-only lifecycle depth: fast | standard | full; missing existing development profiles are effective full",
+  "profile_floor": "minimum allowed profile computed from risk inputs; downgrades below this require human_decision",
+  "profile_decision": "object recording selected_profile, floor, reason, decided_by, decided_at, risk_inputs, hard_triggers, allowlist_match, allowlist_refs, and evidence_refs",
+  "profile_history": "append-only array of profile change records: from, to, floor, checkpoint, actor_role, reason, evidence_refs",
   "run_mode": "walkaway | supervised",
   "phase": "research | spec | review | 1 | 2 | ... | done",
   "total_phases": "integer, set during spec phase, immutable thereafter unless human edits",
@@ -187,8 +200,8 @@ early. Scalar-owner states still reject same-status rewrites.
   "current_engine": "optional; claude | codex | null. Records which CLI wrote the most recent baton; traceability only.",
   "review_target": "research | spec | implementation | prativadi_fixups | vadi_counter | null",
   "research_ref": "v2 path to gitignored generated HTML research file under ./superpowers/research/, set during research phase",
-  "run_explainer_ref": "v2 path to gitignored final run explainer HTML under ./superpowers/run-reports/, required before terminal done for development mode",
-  "run_explainer_reviews": "v2 array of role review records for the final run explainer; development done requires completed approved vadi and prativadi entries whose artifact_ref exactly equals run_explainer_ref, with non-empty summary and evidence_refs",
+  "run_explainer_ref": "v2 path to gitignored final run explainer HTML under ./superpowers/run-reports/, required before terminal done for full-profile development mode",
+  "run_explainer_reviews": "v2 array of role review records for the final run explainer; full-profile development done requires completed approved vadi and prativadi entries whose artifact_ref exactly equals run_explainer_ref, with non-empty summary and evidence_refs",
   "research_outcome": "nullable v2 field; accepted research result, including seed_development when a research run seeds a future development run",
   "review_ref": "nullable v2 path to gitignored generated HTML review artifact under ./superpowers/reviews/",
   "review_intake": "nullable v2 field carrying review-mode intake scope or selector",
@@ -227,12 +240,15 @@ early. Scalar-owner states still reject same-status rewrites.
 }
 ```
 
-## Development Mode (v2, 26 edges)
+## Development Profiles
 
-This is the currently enforced v2 development table from
-`scripts/test-dvandva-write.sh` (`V2_EDGES`). It remains unchanged. Every route
-into `termination_review` is explicit; there is no wildcard
-`* -> termination_review`.
+Development mode chooses one of three lifecycle profiles through `profile`.
+This selector is independent from `mode`.
+
+### Development Full Profile (v2, 26 edges)
+
+This is the exhaustive v2 development table. Every route into
+`termination_review` is explicit; there is no wildcard `* -> termination_review`.
 
 | From | To | Trigger |
 |---|---|---|
@@ -262,6 +278,48 @@ into `termination_review` is explicit; there is no wildcard
 | `deslop` | `termination_review` | The final development phase is clean; the run enters the shared stop-review gate. |
 | `termination_review` | `phase_fixing` | One role rejects final stop because behavior, tests, docs, or run artifacts still need work. |
 | `termination_review` | final `done` | Both roles explicitly decide to stop, both approval bits are true, `run_explainer_ref` is set, and `run_explainer_reviews` contains completed approved entries from both roles for that exact artifact. |
+
+### Development Standard Profile (v2 compact edges)
+
+Standard is the default for new development scaffolds that do not touch hard-risk
+coordination surfaces. It keeps research/spec planning, then uses a compact
+implementation and review path.
+
+| From | To | Trigger |
+|---|---|---|
+| `research_drafting` | `research_review` | Vadi writes `research_ref`, `profile_decision`, work split, and verification matrix. |
+| `research_review` | `research_revision` | Prativadi finds research/profile gaps. |
+| `research_revision` | `research_review` | Vadi addresses research/profile gaps. |
+| `research_review` | `phase: "spec", status: "spec_drafting"` | Research is accepted and the compact development plan can be drafted. |
+| `spec_drafting` | `spec_review` | Vadi hands the plan to prativadi for Q&A. |
+| `spec_review` | `spec_revision` | Prativadi surfaces planning Q&A. |
+| `spec_revision` | `spec_review` | Vadi answers Q&A and re-hands the plan. |
+| `spec_review` | `phase: 1, status: "implementing"` | Prativadi accepts the plan and starts compact implementation. |
+| `implementing` | `phase_review` | Vadi records implementation and verification evidence, including a profile-floor recheck. |
+| `phase_review` | `phase_fixing` | Prativadi finds substantive issues. |
+| `phase_review` | `implementing` | Prativadi requests additional implementation or verification without leaving compact profile. |
+| `phase_fixing` | `phase_review` | Vadi fixes and refreshes evidence. |
+| `phase_review` | `termination_review` | Prativadi approves compact implementation/review evidence. |
+| `termination_review` | `phase_fixing` | Either role rejects final stop. |
+| `termination_review` | final `done` | Both approvals are true, `profile_decision` is valid, final verification is passing, `verification_matrix` evidence is complete, and a completed approved prativadi `phase-review` subagent track exists. No run explainer is required for standard. |
+
+### Development Fast Profile (v2 allowlist edges)
+
+Fast is valid only for allowlisted prose-only changes with positive allowlist
+evidence, `profile_floor: "fast"`, and no hard-risk paths.
+
+| From | To | Trigger |
+|---|---|---|
+| `research_drafting` | `research_review` | Optional fast research prelude records `research_ref`, `profile_decision`, allowlist evidence, work split, and verification matrix before compact implementation. |
+| `research_review` | `research_revision` | Prativadi requests a research/evidence correction before fast implementation. |
+| `research_revision` | `research_review` | Vadi refreshes the fast research package and returns to prativadi. |
+| `research_review` | `implementing` | Prativadi accepts the allowlisted fast research/evidence package; fast skips spec planning and enters compact implementation. |
+| `implementing` | `phase_review` | Vadi records verification evidence and profile recheck for allowlisted paths. |
+| `phase_review` | `phase_fixing` | Prativadi finds issues. |
+| `phase_fixing` | `phase_review` | Vadi fixes and refreshes evidence. |
+| `phase_review` | `termination_review` | Prativadi approves the compact review and the profile still satisfies the floor. |
+| `termination_review` | `phase_fixing` | Either role rejects final stop. |
+| `termination_review` | final `done` | Both approvals are true, `profile_decision` is valid, final verification is passing, `verification_matrix` evidence is complete, and a completed approved prativadi `phase-review` subagent track exists. No run explainer is required for fast. |
 
 ## Research Mode (v2, 12 edges)
 
@@ -365,11 +423,15 @@ writes:
 - Terminal `done` has no status owner. It is accepted as terminal for a
   coordinator assignee (`human`, `team`, `vadi`, or `prativadi`) only from
   `termination_review` in any v2 mode. The final gate still requires both
-  final approvals plus the mode-conditional terminal artifact:
-  `run_explainer_ref` plus both roles' completed approved
-  `run_explainer_reviews` for that exact artifact in development,
-  `research_ref` plus `plan_ref` iff `research_outcome == seed_development`
-  for research, and `review_ref` for review. Wait helpers stop on `done`.
+  final approvals plus the mode/profile-conditional terminal artifact or
+  evidence: `run_explainer_ref` plus both roles' completed approved
+  `run_explainer_reviews` for that exact artifact in development/full,
+  `profile_decision`, passing final verification, completed
+  `verification_matrix` evidence, and a completed approved prativadi
+  `phase-review` subagent track in development/fast and development/standard,
+  `research_ref` plus `plan_ref` iff
+  `research_outcome == seed_development` for research, and `review_ref` for
+  review. Wait helpers stop on `done`.
   Raising `vadi_final_approval` requires
   `DVANDVA_ROLE=vadi`; raising `prativadi_final_approval` requires
   `DVANDVA_ROLE=prativadi`.

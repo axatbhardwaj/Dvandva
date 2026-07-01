@@ -7,6 +7,7 @@ SCRIPT="$ROOT_DIR/plugins/dvandva/skills/vadi/scripts/dvandva-write.sh"
 PRATIVADI_SCRIPT="$ROOT_DIR/plugins/dvandva/skills/prativadi/scripts/dvandva-write.sh"
 SCHEMA_SEED="$ROOT_DIR/plugins/dvandva/references/baton-schema.json"
 V2_SCHEMA_SEED="$ROOT_DIR/plugins/dvandva/references/baton-schema-v2.json"
+CHANNEL_TEMPLATE="$ROOT_DIR/templates/channel/baton.json"
 TMP_DIR="$(mktemp -d)"
 
 cleanup() {
@@ -50,6 +51,21 @@ make_baton_v2() {
     | .run_id = "run-a"
     | .original_ask = "Original user ask for v2 enforcement"
     | .research_ref = "./superpowers/research/run-a.html"
+    | .profile = "full"
+    | .profile_floor = "full"
+    | .profile_decision = {
+        selected_profile: "full",
+        floor: "full",
+        reason: "test helper default preserves the existing full v2 development graph unless a case overrides it",
+        decided_by: "test-suite",
+        decided_at: "2026-07-01T00:00:00Z",
+        risk_inputs: [],
+        hard_triggers: [],
+        allowlist_match: false,
+        allowlist_refs: [],
+        evidence_refs: ["test-helper"]
+      }
+    | .profile_history = []
     | .current_engine = "codex"
     | .branch = "test-branch"
     | .master_plan_locked = false
@@ -123,7 +139,7 @@ run_mode_edge_case() {
   local from_filter
   box="$(new_box "${mode}-${from_status}-${to_status}-edge")"
   from_filter="$(v2_mode_status_filter "$mode" "$from_status")"
-  if [[ "$from_status" == "termination_review" ]]; then
+  if [[ "$from_status" == "termination_review" && "$to_status" == "done" ]]; then
     from_filter="$from_filter | .vadi_final_approval = true | .prativadi_final_approval = true"
   fi
   make_baton_v2 "$box/baton.json" "$from_status" "$(v2_status_owner "$from_status")" 4 "$from_filter"
@@ -143,10 +159,11 @@ v2_review_angles_filter() {
 .subagent_tracks += [
   {
     "id": "review-correctness",
-    "phase": "deep_review",
-    "status": "completed",
-    "track": "correctness-regression",
-    "owner": "dvandva-deep-reviewer",
+	    "phase": "deep_review",
+	    "status": "completed",
+	    "track": "correctness-regression",
+	    "review_checkpoint": 4,
+	    "owner": "dvandva-deep-reviewer",
     "parallelized": true,
     "rationale": "Independent correctness and regression review can run without editing shared files.",
     "inputs": ["candidate diff"],
@@ -156,10 +173,11 @@ v2_review_angles_filter() {
   },
   {
     "id": "review-tests",
-    "phase": "deep_review",
-    "status": "completed",
-    "track": "test-evidence",
-    "owner": "dvandva-deep-reviewer",
+	    "phase": "deep_review",
+	    "status": "completed",
+	    "track": "test-evidence",
+	    "review_checkpoint": 4,
+	    "owner": "dvandva-deep-reviewer",
     "parallelized": true,
     "rationale": "Independent test evidence review can run beside correctness and protocol review.",
     "inputs": ["verification output"],
@@ -169,10 +187,11 @@ v2_review_angles_filter() {
   },
   {
     "id": "review-protocol",
-    "phase": "deep_review",
-    "status": "completed",
-    "track": "protocol-handoff",
-    "owner": "dvandva-baton-auditor",
+	    "phase": "deep_review",
+	    "status": "completed",
+	    "track": "protocol-handoff",
+	    "review_checkpoint": 4,
+	    "owner": "dvandva-baton-auditor",
     "parallelized": true,
     "rationale": "Independent protocol handoff review checks baton and docs without editing code.",
     "inputs": ["baton candidate"],
@@ -644,6 +663,7 @@ v2_cross_review_tracks_filter() {
     "inputs": ["implementation-chunk-c", "implementation-chunk-d"],
     "outputs": ["Peer chunks accepted."],
     "evidence_refs": ["subagent:cross-vadi"],
+    "review_checkpoint": 4,
     "result": "approved"
   },
   {
@@ -658,6 +678,7 @@ v2_cross_review_tracks_filter() {
     "inputs": ["implementation-chunk-a", "implementation-chunk-b", "implementation-chunk-e"],
     "outputs": ["Peer chunks accepted."],
     "evidence_refs": ["subagent:cross-prativadi"],
+    "review_checkpoint": 4,
     "result": "approved"
   }
 ]
@@ -679,6 +700,7 @@ v2_cross_review_finding_filter() {
     "inputs": ["implementation-chunk-a"],
     "outputs": ["changes-requested: vadi-owned chunk needs a fix."],
     "evidence_refs": ["subagent:cross-prativadi-finding"],
+    "review_checkpoint": 4,
     "result": "changes-requested"
   }
 ]
@@ -997,6 +1019,11 @@ run_case_contains "v2 missing run_explainer_ref exits 23" 23 "DVANDVA_WRITE miss
 BOX="$(new_box v2-missing-active-roles)"
 make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 'del(.active_roles)'
 run_case_contains "v2 missing active_roles exits 23" 23 "DVANDVA_WRITE missing_key key=active_roles" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-bad-review-target-selector)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 '.review_target = "DR6-DR7-profile-matrix-fixups"'
+run_case_contains "v2 arbitrary review_target exits 23" 23 "DVANDVA_WRITE bad_review_target" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-missing-agent-instances)"
@@ -1973,6 +2000,52 @@ make_baton_v2 "$BOX/baton.next.json" "deep_review" "prativadi" 5 \
 run_case_contains "v2 cross_review->deep_review requires both cross-review roles" 24 "completed cross-review subagent_tracks for both roles" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+BOX="$(new_box v2-cross-review-deep-review-missing-review-checkpoint)"
+make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "deep_review" "prativadi" 5 \
+  "$(v2_cross_review_tracks_filter)" \
+  '.subagent_tracks |= map(if .track == "cross-review" then del(.review_checkpoint) else . end)'
+run_case_contains "v2 cross_review->deep_review requires current review checkpoint evidence" 24 "current-cycle completed cross-review subagent_tracks" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-cross-review-deep-review-stale-review-checkpoint)"
+make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "deep_review" "prativadi" 5 \
+  "$(v2_cross_review_tracks_filter)" \
+  '.subagent_tracks |= map(if .track == "cross-review" then .review_checkpoint = 3 else . end)'
+run_case_contains "v2 cross_review->deep_review rejects stale cross-review approvals" 24 "current-cycle completed cross-review subagent_tracks" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-cross-review-deep-review-after-team-sync)"
+make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 '.active_roles = ["vadi", "prativadi"]'
+mkdir -p "$BOX/history"
+cp "$BOX/baton.json" "$BOX/history/4-cross_review-team.json"
+make_baton_v2 "$BOX/baton.next.json" "cross_review" "team" 5 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  "$(v2_cross_review_tracks_filter)" \
+  '.subagent_tracks |= map(select(.owner_role == "prativadi"))'
+run_case "v2 cross_review same-status sync can record first review role" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+make_baton_v2 "$BOX/baton.next.json" "deep_review" "prativadi" 6 \
+  "$(v2_cross_review_tracks_filter)"
+run_case "v2 cross_review->deep_review accepts review-cycle checkpoint after team sync" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-cross-review-cross-fixing-after-team-sync)"
+make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 '.active_roles = ["vadi", "prativadi"]'
+mkdir -p "$BOX/history"
+cp "$BOX/baton.json" "$BOX/history/4-cross_review-team.json"
+make_baton_v2 "$BOX/baton.next.json" "cross_review" "team" 5 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  "$(v2_cross_review_finding_filter)"
+run_case "v2 cross_review same-status sync can record finding role" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+make_baton_v2 "$BOX/baton.next.json" "cross_fixing" "team" 6 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  "$(v2_cross_review_finding_filter)"
+run_case "v2 cross_review->cross_fixing accepts review-cycle checkpoint after team sync" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
 BOX="$(new_box v2-cross-review-deep-review-numeric-phase-evidence)"
 make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 '.active_roles = ["vadi", "prativadi"]'
 make_baton_v2 "$BOX/baton.next.json" "deep_review" "prativadi" 5 \
@@ -2461,6 +2534,14 @@ make_baton_v2 "$BOX/baton.next.json" "deslop" "vadi" 5 \
   "$(v2_review_angles_filter)" \
   '.subagent_tracks |= map(if (.track == "correctness-regression" or .track == "test-evidence" or .track == "protocol-handoff") then .phase = "research" else . end)'
 run_case_contains "v2 deep_review->deslop rejects stale review angles from another phase" 24 "three completed review-angle subagent_tracks" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-deep-review-stale-same-phase-angles)"
+make_baton_v2 "$BOX/baton.json" "deep_review" "prativadi" 8
+make_baton_v2 "$BOX/baton.next.json" "deslop" "vadi" 9 \
+  "$(v2_review_angles_filter)" \
+  '.subagent_tracks |= map(if (.track == "correctness-regression" or .track == "test-evidence" or .track == "protocol-handoff") then .review_checkpoint = 4 else . end)'
+run_case_contains "v2 deep_review->deslop rejects stale same-phase review angles" 24 "current-cycle three completed review-angle subagent_tracks" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-deep-review-empty-evidence)"
@@ -3246,6 +3327,34 @@ make_baton_v2 "$BOX/baton.next.json" "termination_review" "team" 5 \
 run_case_contains "review mode vadi cannot raise prativadi approval exits 24" 24 "final approval ownership" \
   env DVANDVA_ROLE=vadi "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+BOX="$(new_box v2-vadi-clears-prativadi-approval)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.mode = "development"' '.phase = 1' \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.vadi_final_approval = true' '.prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "termination_review" "team" 5 \
+  '.mode = "development"' '.phase = 1' \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Vadi cannot clear prativadi final approval."' \
+  '.next_action = "Prativadi approval state must remain role-owned."' \
+  '.vadi_final_approval = true' '.prativadi_final_approval = false'
+run_case_contains "v2 vadi cannot clear prativadi approval exits 24" 24 "final approval ownership" \
+  env DVANDVA_ROLE=vadi "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-prativadi-clears-vadi-approval)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.mode = "development"' '.phase = 1' \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.vadi_final_approval = true' '.prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "termination_review" "team" 5 \
+  '.mode = "development"' '.phase = 1' \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.summary = "Prativadi cannot clear vadi final approval."' \
+  '.next_action = "Vadi approval state must remain role-owned."' \
+  '.vadi_final_approval = false' '.prativadi_final_approval = true'
+run_case_contains "v2 prativadi cannot clear vadi approval exits 24" 24 "final approval ownership" \
+  env DVANDVA_ROLE=prativadi "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
 # ---- F3.7  schema backcompat: optional fields absent must not block transitions ----
 
 # v2 scaffold with research_outcome / review_ref / review_intake deleted must succeed
@@ -3263,6 +3372,745 @@ make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 \
 make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 \
   'del(.research_outcome) | del(.review_ref) | del(.review_intake)'
 run_case "v2 transition missing research_outcome/review_ref/review_intake is legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+# --- development profile matrix (fast / standard / full) ---
+
+BOX="$(new_box profile-new-development-default-standard)"
+jq '.updated_at = "2026-07-01T00:00:00Z"
+  | .mode = "development"
+  | .run_id = "run-a"
+  | .original_ask = "Profile default test"
+  | .research_ref = "./superpowers/research/run-a.html"
+  | .current_engine = "codex"
+  | .branch = "test-branch"
+  | .status = "research_drafting"
+  | .assignee = "vadi"
+  | .checkpoint = 0' "$V2_SCHEMA_SEED" > "$BOX/baton.next.json"
+run_case "profile new development scaffold defaults standard" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+if jq -e '.profile == "standard" and .profile_floor == "standard" and (.profile_decision | type) == "object" and (.profile_history | type) == "array"' "$BOX/baton.json" >/dev/null 2>&1; then
+  echo "PASS: profile default fields installed from v2 schema seed"
+else
+  echo "FAIL: profile default fields missing from v2 schema seed"
+  jq '{profile, profile_floor, profile_decision, profile_history}' "$BOX/baton.json" 2>/dev/null || true
+  failures=$((failures + 1))
+fi
+if jq -e '(.status_catalog | index("implementing") != null) and (.status_catalog | index("phase_review") != null) and (.status_catalog | index("phase_fixing") != null)' "$V2_SCHEMA_SEED" >/dev/null 2>&1; then
+  echo "PASS: v2 schema status_catalog includes compact profile statuses"
+else
+  echo "FAIL: v2 schema status_catalog missing compact profile statuses"
+  jq '.status_catalog' "$V2_SCHEMA_SEED" 2>/dev/null || true
+  failures=$((failures + 1))
+fi
+if jq -e '(.status_catalog | index("review_of_review") != null) and (.status_catalog | index("counter_review") != null)' "$V2_SCHEMA_SEED" >/dev/null 2>&1; then
+  echo "PASS: v2 schema status_catalog includes full-profile mutual-review statuses"
+else
+  echo "FAIL: v2 schema status_catalog missing full-profile mutual-review statuses"
+  jq '.status_catalog' "$V2_SCHEMA_SEED" 2>/dev/null || true
+  failures=$((failures + 1))
+fi
+if jq -e '.mode == "development"' "$V2_SCHEMA_SEED" >/dev/null 2>&1; then
+  echo "PASS: v2 schema seed defaults to public development mode"
+else
+  echo "FAIL: v2 schema seed should default to development, not legacy feature-pr"
+  jq '{schema, mode}' "$V2_SCHEMA_SEED" 2>/dev/null || true
+  failures=$((failures + 1))
+fi
+if jq -e '(.summary | type) == "string" and (.summary | contains("standard-profile compact lifecycle")) and (.summary | contains("full-profile gates"))' "$V2_SCHEMA_SEED" >/dev/null 2>&1; then
+  echo "PASS: v2 schema seed summary describes profile-selected lifecycle"
+else
+  echo "FAIL: v2 schema seed summary should describe standard compact defaults and full-profile gates"
+  jq '{summary}' "$V2_SCHEMA_SEED" 2>/dev/null || true
+  failures=$((failures + 1))
+fi
+if jq -e '((has("profile") | not) and (has("profile_floor") | not) and (has("profile_decision") | not) and (has("profile_history") | not))' "$CHANNEL_TEMPLATE" >/dev/null 2>&1; then
+  echo "PASS: legacy channel template omits v2 profile fields"
+else
+  echo "FAIL: legacy channel template should not carry v2 profile defaults"
+  jq '{schema, profile, profile_floor, profile_decision, profile_history}' "$CHANNEL_TEMPLATE" 2>/dev/null || true
+  failures=$((failures + 1))
+fi
+
+BOX="$(new_box profile-new-development-requires-metadata)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 \
+  'del(.profile) | del(.profile_floor) | del(.profile_decision) | del(.profile_history)'
+run_case_contains "new development scaffold missing profile metadata exits 23" 23 "DVANDVA_WRITE bad_profile" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-bad-enum)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 '.profile = "turbo"'
+run_case_contains "profile bad enum exits 23" 23 "DVANDVA_WRITE bad_profile" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-decision-decided-by-blank)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 \
+  '.profile_decision.decided_by = "   "'
+run_case_contains "profile_decision decided_by blank exits 23" 23 "DVANDVA_WRITE bad_profile" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-floor-bad-enum)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 '.profile_floor = "turbo"'
+run_case_contains "profile_floor bad enum exits 23" 23 "DVANDVA_WRITE bad_profile" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-decision-missing-key)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 'del(.profile_decision.evidence_refs)'
+run_case_contains "profile_decision missing required key exits 23" 23 "DVANDVA_WRITE bad_profile" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-decision-selected-profile-mismatch)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 \
+  '.profile_decision.selected_profile = "standard"'
+run_case_contains "profile_decision selected_profile mismatch exits 23" 23 "DVANDVA_WRITE bad_profile" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-decision-floor-mismatch)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 \
+  '.profile_decision.floor = "standard"'
+run_case_contains "profile_decision floor mismatch exits 23" 23 "DVANDVA_WRITE bad_profile" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-history-bad-entry)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 \
+  '.profile_history = [{from: "fast", to: "standard", floor: "standard", checkpoint: 5, actor_role: "bot", reason: "invalid actor", evidence_refs: []}]'
+run_case_contains "profile_history malformed entry exits 23" 23 "DVANDVA_WRITE bad_profile" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-mode-fast-still-invalid)"
+make_baton_v2 "$BOX/baton.next.json" "research_drafting" "vadi" 0 '.mode = "fast"'
+run_case_contains "mode fast remains invalid bad_mode" 23 "DVANDVA_WRITE bad_mode" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-missing-existing-dev-effective-full)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 'del(.profile) | del(.profile_floor) | del(.profile_decision) | del(.profile_history)'
+make_baton_v2 "$BOX/baton.next.json" "spec_drafting" "vadi" 5 'del(.profile) | del(.profile_floor) | del(.profile_decision) | del(.profile_history)'
+run_case "missing profile on existing development baton keeps full-compatible edge legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-feature-pr-missing-effective-full)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 '.mode = "feature-pr" | del(.profile) | del(.profile_floor) | del(.profile_decision) | del(.profile_history)'
+make_baton_v2 "$BOX/baton.next.json" "spec_drafting" "vadi" 5 '.mode = "feature-pr" | del(.profile) | del(.profile_floor) | del(.profile_decision) | del(.profile_history)'
+run_case "missing profile on existing feature-pr baton keeps full-compatible edge legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-missing-existing-dev-full-only-edge)"
+make_baton_v2 "$BOX/baton.json" "spec_review" "prativadi" 4 'del(.profile) | del(.profile_floor) | del(.profile_decision) | del(.profile_history)'
+make_baton_v2 "$BOX/baton.next.json" "parallel_implementing" "team" 5 \
+  'del(.profile) | del(.profile_floor) | del(.profile_decision) | del(.profile_history)' \
+  "$(v2_parallel_chunks_filter)"
+run_case "missing profile on existing development baton permits full-only edge" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-missing-existing-dev-standard-edge-rejected)"
+make_baton_v2 "$BOX/baton.json" "spec_review" "prativadi" 4 'del(.profile) | del(.profile_floor) | del(.profile_decision) | del(.profile_history)'
+make_baton_v2 "$BOX/baton.next.json" "implementing" "vadi" 5 \
+  'del(.profile) | del(.profile_floor) | del(.profile_decision) | del(.profile_history) | .phase = 1 | .master_plan_locked = true'
+run_case_contains "missing profile on existing development baton rejects standard-only edge" 24 "no legal edge spec_review->implementing" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+fast_profile_filter='.profile = "fast"
+  | .profile_floor = "fast"
+  | .profile_decision = {
+      selected_profile: "fast",
+      floor: "fast",
+      reason: "test fast allowlist",
+      decided_by: "test-suite",
+      decided_at: "2026-07-01T00:00:00Z",
+      risk_inputs: ["changed_paths"],
+      hard_triggers: [],
+      allowlist_match: true,
+      allowlist_refs: ["README.md"],
+      evidence_refs: ["test:fast-allowlist"]
+    }
+  | .profile_history = []'
+
+standard_profile_filter='.profile = "standard"
+  | .profile_floor = "standard"
+  | .profile_decision = {
+      selected_profile: "standard",
+      floor: "standard",
+      reason: "test standard profile",
+      decided_by: "test-suite",
+      decided_at: "2026-07-01T00:00:00Z",
+      risk_inputs: [],
+      hard_triggers: [],
+      allowlist_match: false,
+      allowlist_refs: [],
+      evidence_refs: ["test:standard"]
+    }
+  | .profile_history = []'
+
+full_low_floor_profile_filter='.profile = "full"
+  | .profile_floor = "fast"
+  | .profile_decision = {
+      selected_profile: "full",
+      floor: "fast",
+      reason: "test hard-risk path with incorrectly low floor",
+      decided_by: "test-suite",
+      decided_at: "2026-07-01T00:00:00Z",
+      risk_inputs: ["changed_paths"],
+      hard_triggers: ["plugins/dvandva/skills/vadi/SKILL.md"],
+      allowlist_match: false,
+      allowlist_refs: [],
+      evidence_refs: ["test:hard-risk-low-floor"]
+    }
+  | .profile_history = [{from: "fast", to: "full", floor: "fast", checkpoint: 5, actor_role: "vadi", reason: "hard-risk path detected but floor left too low", evidence_refs: ["test:hard-risk-low-floor"]}]'
+
+fast_allowlist_work_split='.work_split = [
+    {
+      "id": "fast-readme-doc",
+      "phase": "1",
+      "chunk_type": "implementation",
+      "owner": "vadi",
+      "owner_role": "vadi",
+      "scope": "README-only fast allowlist fixture.",
+      "paths": ["README.md"],
+      "write_paths": ["README.md"],
+      "cross_review_by": "prativadi",
+      "can_parallelize": false,
+      "parallel_rationale": "Single allowlisted prose file.",
+      "depends_on": [],
+      "status": "planned",
+      "artifact_refs": []
+    }
+  ]'
+
+compact_terminal_evidence_filter='.verification = [
+    {"command": "bash scripts/test-dvandva-write.sh", "result": "passed", "notes": "compact terminal verification"}
+  ]
+  | .verification_matrix |= map(.current = "passed" | .evidence_refs = ["command:bash scripts/test-dvandva-write.sh"])
+  | .subagent_tracks += [
+    {
+      "id": "compact-phase-review",
+      "phase": "phase_review",
+      "track": "phase-review",
+      "owner": "prativadi",
+	      "owner_role": "prativadi",
+	      "status": "completed",
+	      "result": "approved",
+	      "parallelized": false,
+	      "rationale": "Compact profile independent prativadi review evidence.",
+	      "review_checkpoint": 4,
+	      "inputs": ["profile compact implementation"],
+	      "outputs": ["Prativadi approved compact profile implementation and verification evidence."],
+	      "evidence_refs": ["test:compact-phase-review"]
+	    }
+  ]'
+
+BOX="$(new_box profile-fast-allowlist-edge)"
+make_baton_v2 "$BOX/baton.json" "implementing" "vadi" 4 "$fast_profile_filter" "$fast_allowlist_work_split" '.changed_paths = ["README.md"]'
+make_baton_v2 "$BOX/baton.next.json" "phase_review" "prativadi" 5 "$fast_profile_filter" "$fast_allowlist_work_split" '.changed_paths = ["README.md"]' \
+  '.verification += [{"command":"bash scripts/test-dvandva-write.sh","result":"passed","notes":"fast verification evidence"}]'
+run_case "profile fast allowlist implementing:phase_review is legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-fast-research-drafting-review-edge)"
+make_baton_v2 "$BOX/baton.json" "research_drafting" "vadi" 4 "$fast_profile_filter" "$fast_allowlist_work_split" '.changed_paths = ["README.md"]'
+make_baton_v2 "$BOX/baton.next.json" "research_review" "prativadi" 5 "$fast_profile_filter" "$fast_allowlist_work_split" '.changed_paths = ["README.md"]'
+run_case "profile fast research_drafting:research_review is legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-fast-research-review-implementing-edge)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 "$fast_profile_filter" "$fast_allowlist_work_split" '.changed_paths = ["README.md"]'
+make_baton_v2 "$BOX/baton.next.json" "implementing" "vadi" 5 "$fast_profile_filter" "$fast_allowlist_work_split" \
+  '.changed_paths = ["README.md"] | .phase = 1 | .master_plan_locked = true'
+run_case "profile fast research_review:implementing is legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-fast-phase-review-fixing-edge)"
+make_baton_v2 "$BOX/baton.json" "phase_review" "prativadi" 4 "$fast_profile_filter" "$fast_allowlist_work_split" '.changed_paths = ["README.md"]'
+make_baton_v2 "$BOX/baton.next.json" "phase_fixing" "vadi" 5 "$fast_profile_filter" "$fast_allowlist_work_split" '.changed_paths = ["README.md"]'
+run_case "profile fast phase_review:phase_fixing is legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-fast-phase-fixing-review-edge)"
+make_baton_v2 "$BOX/baton.json" "phase_fixing" "vadi" 4 "$fast_profile_filter" "$fast_allowlist_work_split" '.changed_paths = ["README.md"]'
+make_baton_v2 "$BOX/baton.next.json" "phase_review" "prativadi" 5 "$fast_profile_filter" "$fast_allowlist_work_split" '.changed_paths = ["README.md"]'
+run_case "profile fast phase_fixing:phase_review is legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-fast-phase-review-termination-edge)"
+make_baton_v2 "$BOX/baton.json" "phase_review" "prativadi" 4 "$fast_profile_filter" "$fast_allowlist_work_split" '.changed_paths = ["README.md"]'
+make_baton_v2 "$BOX/baton.next.json" "termination_review" "team" 5 "$fast_profile_filter" "$fast_allowlist_work_split" \
+  '.changed_paths = ["README.md"] | .active_roles = ["vadi", "prativadi"] | .vadi_final_approval = true'
+run_case "profile fast phase_review:termination_review is legal" 0 \
+  env DVANDVA_ROLE=vadi "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-fast-termination-fixing-edge)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 "$fast_profile_filter" "$fast_allowlist_work_split" \
+  '.changed_paths = ["README.md"] | .active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.next.json" "phase_fixing" "vadi" 5 "$fast_profile_filter" "$fast_allowlist_work_split" '.changed_paths = ["README.md"]'
+run_case "profile fast termination_review:phase_fixing is legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-fast-done-without-explainer)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 "$fast_profile_filter" "$fast_allowlist_work_split" \
+  "$compact_terminal_evidence_filter" \
+  '.changed_paths = ["README.md"] | .active_roles = ["vadi", "prativadi"] | .vadi_final_approval = true | .prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 "$fast_profile_filter" "$fast_allowlist_work_split" \
+  "$compact_terminal_evidence_filter" \
+  '.changed_paths = ["README.md"] | .vadi_final_approval = true | .prativadi_final_approval = true'
+run_case "profile fast termination_review:done does not require run_explainer_ref" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-fast-done-requires-verification)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 "$fast_profile_filter" "$fast_allowlist_work_split" \
+  "$compact_terminal_evidence_filter" \
+  '.changed_paths = ["README.md"] | .active_roles = ["vadi", "prativadi"] | .vadi_final_approval = true | .prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 "$fast_profile_filter" "$fast_allowlist_work_split" \
+  "$compact_terminal_evidence_filter" \
+  '.verification = [] | .changed_paths = ["README.md"] | .vadi_final_approval = true | .prativadi_final_approval = true'
+run_case_contains "profile fast done requires final verification evidence" 23 "DVANDVA_WRITE bad_compact_terminal_evidence" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-fast-done-requires-review)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 "$fast_profile_filter" "$fast_allowlist_work_split" \
+  "$compact_terminal_evidence_filter" \
+  '.changed_paths = ["README.md"] | .active_roles = ["vadi", "prativadi"] | .vadi_final_approval = true | .prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 "$fast_profile_filter" "$fast_allowlist_work_split" \
+  "$compact_terminal_evidence_filter" \
+  '.subagent_tracks |= map(select(.id != "compact-phase-review")) | .changed_paths = ["README.md"] | .vadi_final_approval = true | .prativadi_final_approval = true'
+run_case_contains "profile fast done requires independent review evidence" 23 "DVANDVA_WRITE bad_compact_terminal_evidence" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-fast-done-rejects-missing-phase-review-checkpoint)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 "$fast_profile_filter" "$fast_allowlist_work_split" \
+  "$compact_terminal_evidence_filter" \
+  '.changed_paths = ["README.md"] | .active_roles = ["vadi", "prativadi"] | .vadi_final_approval = true | .prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 "$fast_profile_filter" "$fast_allowlist_work_split" \
+  "$compact_terminal_evidence_filter" \
+  '.subagent_tracks |= map(if .track == "phase-review" then del(.review_checkpoint) else . end)
+    | .changed_paths = ["README.md"] | .vadi_final_approval = true | .prativadi_final_approval = true'
+run_case_contains "profile fast done requires current phase-review checkpoint evidence" 23 "DVANDVA_WRITE bad_compact_terminal_evidence" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-fast-done-rejects-stale-phase-review-checkpoint)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 "$fast_profile_filter" "$fast_allowlist_work_split" \
+  "$compact_terminal_evidence_filter" \
+  '.changed_paths = ["README.md"] | .active_roles = ["vadi", "prativadi"] | .vadi_final_approval = true | .prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 "$fast_profile_filter" "$fast_allowlist_work_split" \
+  "$compact_terminal_evidence_filter" \
+  '.subagent_tracks |= map(if .track == "phase-review" then .review_checkpoint = 3 else . end)
+    | .changed_paths = ["README.md"] | .vadi_final_approval = true | .prativadi_final_approval = true'
+run_case_contains "profile fast done rejects stale phase-review checkpoint evidence" 23 "DVANDVA_WRITE bad_compact_terminal_evidence" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-fast-without-allowlist-rejected)"
+make_baton_v2 "$BOX/baton.json" "implementing" "vadi" 4 "$fast_profile_filter" "$fast_allowlist_work_split" '.changed_paths = ["README.md"]'
+make_baton_v2 "$BOX/baton.next.json" "phase_review" "prativadi" 5 "$fast_profile_filter" "$fast_allowlist_work_split" '.changed_paths = ["README.md"]' \
+  '.profile_decision.allowlist_match = false'
+run_case_contains "profile fast without allowlist match exits 23" 23 "DVANDVA_WRITE bad_profile_floor" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-fast-hard-risk-rejected)"
+make_baton_v2 "$BOX/baton.json" "implementing" "vadi" 4 "$fast_profile_filter" '.changed_paths = ["README.md"]'
+make_baton_v2 "$BOX/baton.next.json" "phase_review" "prativadi" 5 "$fast_profile_filter" \
+  '.changed_paths = ["plugins/dvandva/skills/vadi/scripts/dvandva-write.sh"]'
+run_case_contains "profile fast hard-risk path exits 23" 23 "DVANDVA_WRITE bad_profile_floor" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-fast-protocol-doc-rejected)"
+make_baton_v2 "$BOX/baton.json" "implementing" "vadi" 4 "$fast_profile_filter" "$fast_allowlist_work_split" '.changed_paths = ["README.md"]'
+make_baton_v2 "$BOX/baton.next.json" "phase_review" "prativadi" 5 "$fast_profile_filter" "$fast_allowlist_work_split" \
+  '.changed_paths = ["docs/protocol/local-baton-channel.md"]'
+run_case_contains "profile fast protocol doc hard-risk path exits 23" 23 "DVANDVA_WRITE bad_profile_floor" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-fast-agent-write-not-allowlisted-rejected)"
+make_baton_v2 "$BOX/baton.json" "implementing" "vadi" 4 "$fast_profile_filter" "$fast_allowlist_work_split" '.changed_paths = ["README.md"]'
+make_baton_v2 "$BOX/baton.next.json" "phase_review" "prativadi" 5 "$fast_profile_filter" "$fast_allowlist_work_split" \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.changed_paths = ["README.md"] | .agent_instances[0].read_paths = ["README.md"] | .agent_instances[0].write_paths = ["docs/workflows/probe.md"]'
+run_case_contains "profile fast agent write path outside allowlist exits 23" 23 "DVANDVA_WRITE bad_profile_floor" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-fast-work-split-read-not-allowlisted-rejected)"
+make_baton_v2 "$BOX/baton.json" "implementing" "vadi" 4 "$fast_profile_filter" "$fast_allowlist_work_split" '.changed_paths = ["README.md"]'
+make_baton_v2 "$BOX/baton.next.json" "phase_review" "prativadi" 5 "$fast_profile_filter" "$fast_allowlist_work_split" \
+  '.changed_paths = ["README.md"] | .work_split[0].read_paths = ["docs/workflows/probe.md"]'
+run_case_contains "profile fast work_split read path outside allowlist exits 23" 23 "DVANDVA_WRITE bad_profile_floor" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-fast-agent-read-not-allowlisted-rejected)"
+make_baton_v2 "$BOX/baton.json" "implementing" "vadi" 4 "$fast_profile_filter" "$fast_allowlist_work_split" '.changed_paths = ["README.md"]'
+make_baton_v2 "$BOX/baton.next.json" "phase_review" "prativadi" 5 "$fast_profile_filter" "$fast_allowlist_work_split" \
+  "$(v2_dynamic_agent_instances_filter)" \
+  '.changed_paths = ["README.md"] | .agent_instances[0].read_paths = ["docs/workflows/probe.md"] | .agent_instances[0].write_paths = ["README.md"]'
+run_case_contains "profile fast agent read path outside allowlist exits 23" 23 "DVANDVA_WRITE bad_profile_floor" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-standard-role-skill-hard-risk)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 "$standard_profile_filter"
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 "$standard_profile_filter" \
+  '.changed_paths = ["plugins/dvandva/skills/vadi/SKILL.md"]'
+run_case_contains "profile standard role skill hard-risk exits 23" 23 "DVANDVA_WRITE bad_profile_floor" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-standard-product-spec-hard-risk)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 "$standard_profile_filter"
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 "$standard_profile_filter" \
+  '.changed_paths = ["product.md"]'
+run_case_contains "profile standard product spec hard-risk exits 23" 23 "DVANDVA_WRITE bad_profile_floor" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-full-hard-risk-low-floor-rejected)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 "$fast_profile_filter"
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 "$full_low_floor_profile_filter" \
+  '.changed_paths = ["plugins/dvandva/skills/vadi/SKILL.md"]'
+run_case_contains "profile full hard-risk path still requires full floor" 23 "DVANDVA_WRITE bad_profile_floor" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-full-hard-risk-decision-low-floor-rejected)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 "$standard_profile_filter"
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 \
+  '.profile = "full"
+    | .profile_floor = "full"
+    | .profile_decision = {
+        selected_profile: "full",
+        floor: "standard",
+        reason: "test hard-risk path with decision floor left too low",
+        decided_by: "test-suite",
+        decided_at: "2026-07-01T00:00:00Z",
+        risk_inputs: ["changed_paths"],
+        hard_triggers: ["plugins/dvandva/skills/vadi/SKILL.md"],
+        allowlist_match: false,
+        allowlist_refs: [],
+        evidence_refs: ["test:hard-risk-decision-low-floor"]
+      }
+    | .profile_history = [{from: "standard", to: "full", floor: "full", checkpoint: 5, actor_role: "vadi", reason: "hard-risk path detected", evidence_refs: ["test:hard-risk-decision-low-floor"]}]
+    | .changed_paths = ["plugins/dvandva/skills/vadi/SKILL.md"]'
+run_case_contains "profile full hard-risk path requires profile_decision floor consistency" 23 "DVANDVA_WRITE bad_profile" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-standard-env-hard-risk)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 "$standard_profile_filter"
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 "$standard_profile_filter" \
+  '.changed_paths = [".env"]'
+run_case_contains "profile standard env hard-risk exits 23" 23 "DVANDVA_WRITE bad_profile_floor" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-standard-hard-risk-work-split-path)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 "$standard_profile_filter"
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 "$standard_profile_filter" \
+  '.work_split[0].paths = ["plugins/dvandva/references/baton-schema-v2.json"]'
+run_case_contains "profile standard work_split paths hard-risk exits 23" 23 "DVANDVA_WRITE bad_profile_floor" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-standard-hard-risk-work-split-read-path)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 "$standard_profile_filter"
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 "$standard_profile_filter" \
+  '.work_split[0].read_paths = ["plugins/dvandva/references/state-transition-table.md"]'
+run_case_contains "profile standard work_split read_paths hard-risk exits 23" 23 "DVANDVA_WRITE bad_profile_floor" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-standard-hard-risk-work-split-write-path)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 "$standard_profile_filter"
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 "$standard_profile_filter" \
+  '.work_split[0].write_paths = ["templates/channel/baton.json"]'
+run_case_contains "profile standard work_split write_paths hard-risk exits 23" 23 "DVANDVA_WRITE bad_profile_floor" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-standard-hard-risk-agent-read-path)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 "$standard_profile_filter"
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 "$standard_profile_filter" \
+  '.agent_instances = [{id: "profile-risk-probe", read_paths: ["scripts/test-dvandva-write.sh"], write_paths: []}]'
+run_case_contains "profile standard agent read_paths hard-risk exits 23" 23 "DVANDVA_WRITE bad_profile_floor" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-standard-hard-risk-agent-write-path)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 "$standard_profile_filter"
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 "$standard_profile_filter" \
+  '.agent_instances = [{id: "profile-risk-probe", read_paths: [], write_paths: ["plugins/dvandva/skills/vadi/scripts/dvandva-state.sh"]}]'
+run_case_contains "profile standard agent write_paths hard-risk exits 23" 23 "DVANDVA_WRITE bad_profile_floor" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+role_helper_hard_risk_cases=()
+while IFS= read -r helper_path; do
+  helper_name="$(basename "$helper_path")"
+  helper_name="${helper_name#dvandva-}"
+  helper_name="${helper_name%.sh}"
+  role_helper_hard_risk_cases+=("$helper_name")
+done < <(find "$ROOT_DIR/plugins/dvandva/skills/vadi/scripts" -maxdepth 1 -type f -name 'dvandva-*.sh' -printf '%p\n' | sort)
+
+missing_helper_cases=()
+while IFS= read -r helper_path; do
+  required_helper="$(basename "$helper_path")"
+  required_helper="${required_helper#dvandva-}"
+  required_helper="${required_helper%.sh}"
+  found_helper=0
+  for tested_helper in "${role_helper_hard_risk_cases[@]}"; do
+    if [[ "$required_helper" == "$tested_helper" ]]; then
+      found_helper=1
+      break
+    fi
+  done
+  if [[ "$found_helper" -eq 0 ]]; then
+    missing_helper_cases+=("$required_helper")
+  fi
+done < <(find "$ROOT_DIR/plugins/dvandva/skills/vadi/scripts" -maxdepth 1 -type f -name 'dvandva-*.sh' -printf '%p\n' | sort)
+if [[ "${#missing_helper_cases[@]}" -eq 0 ]]; then
+  echo "PASS: profile helper hard-risk cases cover every bundled role helper"
+else
+  echo "FAIL: profile helper hard-risk cases missing: ${missing_helper_cases[*]}"
+  failures=$((failures + 1))
+fi
+
+for role in vadi prativadi; do
+  for helper in "${role_helper_hard_risk_cases[@]}"; do
+    BOX="$(new_box "profile-standard-${role}-${helper}-helper-hard-risk")"
+    make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 "$standard_profile_filter"
+    make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 "$standard_profile_filter" \
+      ".changed_paths = [\"plugins/dvandva/skills/$role/scripts/dvandva-$helper.sh\"]"
+    run_case_contains "profile standard $role dvandva-$helper helper hard-risk exits 23" 23 "DVANDVA_WRITE bad_profile_floor" \
+      "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+  done
+done
+
+for hard_script in \
+  test-install.sh \
+  test-lint-skills.sh \
+  smoke-plugin-install.sh \
+  dvandva-drift-lint.sh \
+  dvandva-commit-gate.sh \
+  retire-standalone-agents.sh
+do
+  BOX="$(new_box "profile-standard-top-script-hard-risk-${hard_script%.sh}")"
+  make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 "$standard_profile_filter"
+  make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 "$standard_profile_filter" \
+    ".changed_paths = [\"scripts/$hard_script\"]"
+  run_case_contains "profile standard top-level script $hard_script hard-risk exits 23" 23 "DVANDVA_WRITE bad_profile_floor" \
+    "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+done
+
+BOX="$(new_box profile-standard-compact-edge)"
+make_baton_v2 "$BOX/baton.json" "spec_review" "prativadi" 4 "$standard_profile_filter"
+make_baton_v2 "$BOX/baton.next.json" "implementing" "vadi" 5 "$standard_profile_filter" '.phase = 1 | .master_plan_locked = true'
+run_case "profile standard spec_review:implementing is legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-standard-research-spec-edge)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 "$standard_profile_filter"
+make_baton_v2 "$BOX/baton.next.json" "spec_drafting" "vadi" 5 "$standard_profile_filter"
+run_case "profile standard research_review:spec_drafting is legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-standard-spec-revision-edge)"
+make_baton_v2 "$BOX/baton.json" "spec_review" "prativadi" 4 "$standard_profile_filter"
+make_baton_v2 "$BOX/baton.next.json" "spec_revision" "vadi" 5 "$standard_profile_filter"
+run_case "profile standard spec_review:spec_revision is legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-standard-implementing-review-edge)"
+make_baton_v2 "$BOX/baton.json" "implementing" "vadi" 4 "$standard_profile_filter" '.phase = 1'
+make_baton_v2 "$BOX/baton.next.json" "phase_review" "prativadi" 5 "$standard_profile_filter" '.phase = 1'
+run_case "profile standard implementing:phase_review is legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-standard-review-fixing-edge)"
+make_baton_v2 "$BOX/baton.json" "phase_review" "prativadi" 4 "$standard_profile_filter" '.phase = 1'
+make_baton_v2 "$BOX/baton.next.json" "phase_fixing" "vadi" 5 "$standard_profile_filter" '.phase = 1'
+run_case "profile standard phase_review:phase_fixing is legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-standard-review-termination-edge)"
+make_baton_v2 "$BOX/baton.json" "phase_review" "prativadi" 4 "$standard_profile_filter" '.phase = 1'
+make_baton_v2 "$BOX/baton.next.json" "termination_review" "team" 5 "$standard_profile_filter" \
+  '.phase = 1 | .active_roles = ["vadi", "prativadi"] | .vadi_final_approval = true'
+run_case "profile standard phase_review:termination_review is legal" 0 \
+  env DVANDVA_ROLE=vadi "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-standard-done-without-explainer)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 "$standard_profile_filter" \
+  "$compact_terminal_evidence_filter" \
+  '.active_roles = ["vadi", "prativadi"] | .vadi_final_approval = true | .prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 "$standard_profile_filter" \
+  "$compact_terminal_evidence_filter" \
+  '.vadi_final_approval = true | .prativadi_final_approval = true'
+run_case "profile standard done does not require run_explainer_ref" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-standard-done-requires-verification)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 "$standard_profile_filter" \
+  "$compact_terminal_evidence_filter" \
+  '.active_roles = ["vadi", "prativadi"] | .vadi_final_approval = true | .prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 "$standard_profile_filter" \
+  "$compact_terminal_evidence_filter" \
+  '.verification_matrix |= map(.current = "pending" | .evidence_refs = []) | .vadi_final_approval = true | .prativadi_final_approval = true'
+run_case_contains "profile standard done requires completed verification matrix" 23 "DVANDVA_WRITE bad_compact_terminal_evidence" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-standard-done-requires-review)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 "$standard_profile_filter" \
+  "$compact_terminal_evidence_filter" \
+  '.active_roles = ["vadi", "prativadi"] | .vadi_final_approval = true | .prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 "$standard_profile_filter" \
+  "$compact_terminal_evidence_filter" \
+  '.subagent_tracks |= map(select(.track != "phase-review")) | .vadi_final_approval = true | .prativadi_final_approval = true'
+run_case_contains "profile standard done requires independent review evidence" 23 "DVANDVA_WRITE bad_compact_terminal_evidence" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-standard-done-rejects-missing-phase-review-checkpoint)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 "$standard_profile_filter" \
+  "$compact_terminal_evidence_filter" \
+  '.active_roles = ["vadi", "prativadi"] | .vadi_final_approval = true | .prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 "$standard_profile_filter" \
+  "$compact_terminal_evidence_filter" \
+  '.subagent_tracks |= map(if .track == "phase-review" then del(.review_checkpoint) else . end)
+    | .vadi_final_approval = true | .prativadi_final_approval = true'
+run_case_contains "profile standard done requires current phase-review checkpoint evidence" 23 "DVANDVA_WRITE bad_compact_terminal_evidence" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-standard-done-rejects-stale-phase-review-checkpoint)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 "$standard_profile_filter" \
+  "$compact_terminal_evidence_filter" \
+  '.active_roles = ["vadi", "prativadi"] | .vadi_final_approval = true | .prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 "$standard_profile_filter" \
+  "$compact_terminal_evidence_filter" \
+  '.subagent_tracks |= map(if .track == "phase-review" then .review_checkpoint = 3 else . end)
+    | .vadi_final_approval = true | .prativadi_final_approval = true'
+run_case_contains "profile standard done rejects stale phase-review checkpoint evidence" 23 "DVANDVA_WRITE bad_compact_terminal_evidence" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-standard-done-rejects-generic-cross-review)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 "$standard_profile_filter" \
+  "$compact_terminal_evidence_filter" \
+  '.active_roles = ["vadi", "prativadi"] | .vadi_final_approval = true | .prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "done" "human" 5 "$standard_profile_filter" \
+  '.verification = [{"command": "bash scripts/test-dvandva-write.sh", "result": "passed", "notes": "compact terminal verification"}]
+    | .verification_matrix |= map(.current = "passed" | .evidence_refs = ["command:bash scripts/test-dvandva-write.sh"])
+    | .subagent_tracks += [{
+        id: "generic-cross-review-not-compact-phase-review",
+        phase: "phase_review",
+        track: "cross-review",
+        owner: "dvandva-cross-reviewer",
+        status: "completed",
+        result: "approved",
+        parallelized: false,
+        rationale: "Generic cross-review evidence must not satisfy compact terminal phase-review gate.",
+        inputs: ["profile compact implementation"],
+        outputs: ["Generic cross-review approved something."],
+        evidence_refs: ["test:generic-cross-review"]
+      }]
+    | .vadi_final_approval = true | .prativadi_final_approval = true'
+run_case_contains "profile standard done requires prativadi phase-review evidence, not generic cross-review" 23 "DVANDVA_WRITE bad_compact_terminal_evidence" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-escalation-history-required)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 "$fast_profile_filter"
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 "$standard_profile_filter" '.profile_history = []'
+run_case_contains "profile escalation requires profile_history entry" 23 "DVANDVA_WRITE bad_profile_history" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-history-append-only)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 "$fast_profile_filter" \
+  '.profile_history = [{from: null, to: "fast", floor: "fast", checkpoint: 2, actor_role: "vadi", reason: "initial fast selection", evidence_refs: ["test:initial-fast"]}]'
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 "$standard_profile_filter" \
+  '.profile_history = [{from: "fast", to: "standard", floor: "standard", checkpoint: 5, actor_role: "vadi", reason: "risk increased after review", evidence_refs: ["test:profile-escalation"]}]'
+run_case_contains "profile_history preserves prior entries during escalation" 23 "DVANDVA_WRITE bad_profile_history" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-escalation-history-accepted)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 "$fast_profile_filter"
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 "$standard_profile_filter" \
+  '.profile_history = [{from: "fast", to: "standard", floor: "standard", checkpoint: 5, actor_role: "vadi", reason: "risk increased after review", evidence_refs: ["test:profile-escalation"]}]'
+run_case "profile escalation with profile_history entry is legal" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-downgrade-below-floor-rejected)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 \
+  '.profile = "full" | .profile_floor = "full"'
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 \
+  "$standard_profile_filter" '.profile_floor = "full" | .profile_decision.floor = "full"'
+run_case_contains "profile downgrade below floor exits 23" 23 "DVANDVA_WRITE bad_profile_downgrade" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-floor-lowering-rejected)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 \
+  '.profile = "full" | .profile_floor = "full"'
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 \
+  '.profile = "full"
+    | .profile_floor = "standard"
+    | .profile_decision = {
+        selected_profile: "full",
+        floor: "standard",
+        reason: "test illegal floor lowering",
+        decided_by: "test-suite",
+        decided_at: "2026-07-01T00:00:00Z",
+        risk_inputs: [],
+        hard_triggers: [],
+        allowlist_match: false,
+        allowlist_refs: [],
+        evidence_refs: ["test:floor-lowering"]
+      }
+    | .profile_history = [{from: "full", to: "full", floor: "standard", checkpoint: 5, actor_role: "vadi", reason: "attempted floor lowering", evidence_refs: ["test:floor-lowering"]}]'
+run_case_contains "profile_floor lowering below current floor exits 23" 23 "DVANDVA_WRITE bad_profile_downgrade" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-history-only-floor-lowering-rejected)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 \
+  '.profile = "full" | .profile_floor = "full"'
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 \
+  '.profile = "full"
+    | .profile_floor = "full"
+    | .profile_decision = {
+        selected_profile: "full",
+        floor: "full",
+        reason: "test history-only floor lowering",
+        decided_by: "test-suite",
+        decided_at: "2026-07-01T00:00:00Z",
+        risk_inputs: [],
+        hard_triggers: [],
+        allowlist_match: false,
+        allowlist_refs: [],
+        evidence_refs: ["test:history-only-floor-lowering"]
+      }
+    | .profile_history = [{from: "full", to: "full", floor: "standard", checkpoint: 5, actor_role: "vadi", reason: "attempted hidden floor lowering", evidence_refs: ["test:history-only-floor-lowering"]}]'
+run_case_contains "profile_history cannot append floor below current floor" 23 "DVANDVA_WRITE bad_profile_downgrade" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+old_low_floor_history='.profile = "full"
+  | .profile_floor = "full"
+  | .profile_decision = {
+      selected_profile: "full",
+      floor: "full",
+      reason: "test old low-floor history compatibility",
+      decided_by: "test-suite",
+      decided_at: "2026-07-01T00:00:00Z",
+      risk_inputs: [],
+      hard_triggers: [],
+      allowlist_match: false,
+      allowlist_refs: [],
+      evidence_refs: ["test:old-low-floor-history"]
+    }
+  | .profile_history = [{from: "fast", to: "standard", floor: "standard", checkpoint: 3, actor_role: "vadi", reason: "historical lower floor before later escalation", evidence_refs: ["test:old-low-floor-history"]}]'
+
+BOX="$(new_box profile-history-old-lower-floor-compatible)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 "$old_low_floor_history"
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 "$old_low_floor_history"
+run_case "existing profile_history entry below current floor remains compatible" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-history-duplicate-old-lower-floor-rejected)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 "$old_low_floor_history"
+make_baton_v2 "$BOX/baton.next.json" "research_revision" "vadi" 5 "$old_low_floor_history" \
+  '.profile_history += [.profile_history[0]]'
+run_case_contains "profile_history cannot append duplicate old lower-floor entry" 23 "DVANDVA_WRITE bad_profile_downgrade" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box profile-downgrade-human-decision)"
+make_baton_v2 "$BOX/baton.json" "research_review" "prativadi" 4 \
+  '.profile = "full" | .profile_floor = "full"'
+make_baton_v2 "$BOX/baton.next.json" "human_decision" "human" 5 \
+  "$standard_profile_filter" '.profile_floor = "full" | .profile_decision.floor = "full"'
+run_case "profile downgrade below floor may route to human_decision" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 # --- usage and hygiene ---

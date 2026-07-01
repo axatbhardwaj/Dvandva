@@ -110,6 +110,188 @@ canonical_mode() {
   esac
 }
 
+profile_rank() {
+  case "$1" in
+    fast) echo 1 ;;
+    standard) echo 2 ;;
+    full) echo 3 ;;
+    *) return 1 ;;
+  esac
+}
+
+cross_review_cycle_checkpoint() {
+  local current_file="$1"
+  local current_checkpoint="$2"
+  local history_dir
+  local file
+  local row
+  local rows=""
+
+  history_dir="$(dirname "$current_file")/history"
+
+  if [[ -d "$history_dir" ]]; then
+    while IFS= read -r -d '' file; do
+      row="$(jq -r --argjson cur "$current_checkpoint" '
+        select((.checkpoint | type) == "number" and .checkpoint <= $cur and (.status | type) == "string")
+        | [.checkpoint, .status]
+        | @tsv
+      ' "$file" 2>/dev/null || true)"
+      if [[ -n "$row" ]]; then
+        rows+="$row"$'\n'
+      fi
+    done < <(find "$history_dir" -maxdepth 1 -type f -name '*.json' -print0 2>/dev/null)
+  fi
+
+  row="$(jq -r '
+    select((.checkpoint | type) == "number" and (.status | type) == "string")
+    | [.checkpoint, .status]
+    | @tsv
+  ' "$current_file" 2>/dev/null || true)"
+  if [[ -n "$row" ]]; then
+    rows+="$row"$'\n'
+  fi
+
+  if [[ -z "$rows" ]]; then
+    printf '%s\n' "$current_checkpoint"
+    return 0
+  fi
+
+  printf '%s' "$rows" | sort -n -k1,1 | awk -v cur="$current_checkpoint" '
+    $1 <= cur {
+      checkpoints[++n] = $1
+      statuses[n] = $2
+    }
+    END {
+      cycle = cur
+      found = 0
+      for (i = n; i >= 1; i--) {
+        if (statuses[i] == "cross_review") {
+          cycle = checkpoints[i]
+          found = 1
+        } else if (found) {
+          break
+        }
+      }
+      print cycle
+    }
+  '
+}
+
+deep_review_cycle_checkpoint() {
+  local current_file="$1"
+  local current_checkpoint="$2"
+  local history_dir
+  local file
+  local row
+  local rows=""
+
+  history_dir="$(dirname "$current_file")/history"
+
+  if [[ -d "$history_dir" ]]; then
+    while IFS= read -r -d '' file; do
+      row="$(jq -r --argjson cur "$current_checkpoint" '
+        select((.checkpoint | type) == "number" and .checkpoint <= $cur and (.status | type) == "string")
+        | [.checkpoint, .status]
+        | @tsv
+      ' "$file" 2>/dev/null || true)"
+      if [[ -n "$row" ]]; then
+        rows+="$row"$'\n'
+      fi
+    done < <(find "$history_dir" -maxdepth 1 -type f -name '*.json' -print0 2>/dev/null)
+  fi
+
+  row="$(jq -r '
+    select((.checkpoint | type) == "number" and (.status | type) == "string")
+    | [.checkpoint, .status]
+    | @tsv
+  ' "$current_file" 2>/dev/null || true)"
+  if [[ -n "$row" ]]; then
+    rows+="$row"$'\n'
+  fi
+
+  if [[ -z "$rows" ]]; then
+    printf '%s\n' "$current_checkpoint"
+    return 0
+  fi
+
+  printf '%s' "$rows" | sort -n -k1,1 | awk -v cur="$current_checkpoint" '
+    $1 <= cur {
+      checkpoints[++n] = $1
+      statuses[n] = $2
+    }
+    END {
+      cycle = cur
+      found = 0
+      for (i = n; i >= 1; i--) {
+        if (statuses[i] == "deep_review") {
+          cycle = checkpoints[i]
+          found = 1
+        } else if (found) {
+          break
+        }
+      }
+      print cycle
+    }
+  '
+}
+
+phase_review_cycle_checkpoint() {
+  local current_file="$1"
+  local current_checkpoint="$2"
+  local current_phase="$3"
+  local history_dir
+  local file
+  local row
+  local rows=""
+
+  history_dir="$(dirname "$current_file")/history"
+
+  if [[ -d "$history_dir" ]]; then
+    while IFS= read -r -d '' file; do
+      row="$(jq -r --argjson cur "$current_checkpoint" '
+        select((.checkpoint | type) == "number" and .checkpoint <= $cur and (.status | type) == "string")
+        | [.checkpoint, .status, (.phase | tostring)]
+        | @tsv
+      ' "$file" 2>/dev/null || true)"
+      if [[ -n "$row" ]]; then
+        rows+="$row"$'\n'
+      fi
+    done < <(find "$history_dir" -maxdepth 1 -type f -name '*.json' -print0 2>/dev/null)
+  fi
+
+  row="$(jq -r '
+    select((.checkpoint | type) == "number" and (.status | type) == "string")
+    | [.checkpoint, .status, (.phase | tostring)]
+    | @tsv
+  ' "$current_file" 2>/dev/null || true)"
+  if [[ -n "$row" ]]; then
+    rows+="$row"$'\n'
+  fi
+
+  if [[ -z "$rows" ]]; then
+    printf '%s\n' "$current_checkpoint"
+    return 0
+  fi
+
+  printf '%s' "$rows" | sort -n -k1,1 | awk -v cur="$current_checkpoint" -v phase="$current_phase" '
+    $1 <= cur {
+      checkpoints[++n] = $1
+      statuses[n] = $2
+      phases[n] = $3
+    }
+    END {
+      cycle = cur
+      for (i = n; i >= 1; i--) {
+        if (statuses[i] == "phase_review" && phases[i] == phase) {
+          cycle = checkpoints[i]
+          break
+        }
+      }
+      print cycle
+    }
+  '
+}
+
 if [[ ! -f "$CANDIDATE_FILE" ]]; then
   echo "DVANDVA_WRITE missing candidate=$CANDIDATE_FILE" >&2
   exit 21
@@ -150,10 +332,24 @@ for key in "${REQUIRED_KEYS[@]}"; do
   fi
 done
 
+if ! jq -e '
+  .review_target == null or
+  .review_target == "research" or
+  .review_target == "spec" or
+  .review_target == "implementation" or
+  .review_target == "prativadi_fixups" or
+  .review_target == "vadi_counter"
+' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+  echo "DVANDVA_WRITE bad_review_target candidate=$CANDIDATE_FILE" >&2
+  exit 23
+fi
+
 new_status="$(jq -r '.status // ""' "$CANDIDATE_FILE")"
 new_assignee="$(jq -r '.assignee // ""' "$CANDIDATE_FILE")"
 new_mode="$(jq -r '.mode // ""' "$CANDIDATE_FILE")"
 new_effective_mode=""
+new_effective_profile=""
+new_profile_floor=""
 
 if [[ "$schema" == "dvandva.baton.v2" ]]; then
   if ! new_effective_mode="$(canonical_mode "$new_mode")"; then
@@ -168,6 +364,136 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
   if ! jq -e '(.original_ask | type) == "string" and (.original_ask | length) > 0' "$CANDIDATE_FILE" >/dev/null 2>&1; then
     echo "DVANDVA_WRITE bad_original_ask candidate=$CANDIDATE_FILE" >&2
     exit 23
+  fi
+  if [[ "$new_effective_mode" == "development" ]]; then
+    if ! jq -e '
+      def profile_value: . == "fast" or . == "standard" or . == "full";
+      def nonblank: (type == "string") and test("[^[:space:]]");
+      (
+        ((has("profile") | not) or .profile == null or (.profile | profile_value)) and
+        ((has("profile_floor") | not) or .profile_floor == null or (.profile_floor | profile_value)) and
+        ((has("profile_history") | not) or (.profile_history | type) == "array") and
+        all((.profile_history // [])[]?;
+          ((.from == null) or (.from | profile_value)) and
+          (.to | profile_value) and
+          (.floor | profile_value) and
+          ((.checkpoint | type) == "number") and
+          ((.actor_role == "vadi") or (.actor_role == "prativadi") or (.actor_role == "human") or (.actor_role == "team")) and
+          (.reason | nonblank) and
+          ((.evidence_refs | type) == "array")
+        ) and
+        (
+          if has("profile_decision") and .profile_decision != null then
+            (.profile_decision | type) == "object" and
+            (.profile_decision.selected_profile | profile_value) and
+            (.profile_decision.floor | profile_value) and
+            (.profile_decision.reason | nonblank) and
+            (.profile_decision.decided_by | nonblank) and
+            ((.profile_decision.decided_at == null) or (.profile_decision.decided_at | type) == "string") and
+            ((.profile_decision.risk_inputs | type) == "array") and
+            ((.profile_decision.hard_triggers | type) == "array") and
+            ((.profile_decision.allowlist_match | type) == "boolean") and
+            ((.profile_decision.allowlist_refs | type) == "array") and
+            ((.profile_decision.evidence_refs | type) == "array")
+          else
+            true
+          end
+        )
+      )
+    ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+      echo "DVANDVA_WRITE bad_profile candidate=$CANDIDATE_FILE" >&2
+      exit 23
+    fi
+    if [[ ! -f "$BATON_FILE" && "$new_status" != "human_decision" ]] && ! jq -e '
+      (has("profile") and .profile != null) and
+      (has("profile_floor") and .profile_floor != null) and
+      (has("profile_decision") and (.profile_decision | type) == "object") and
+      (has("profile_history") and (.profile_history | type) == "array")
+    ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+      echo "DVANDVA_WRITE bad_profile candidate=$CANDIDATE_FILE" >&2
+      exit 23
+    fi
+    if jq -e 'has("profile") and .profile != null' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+      new_effective_profile="$(jq -r '.profile' "$CANDIDATE_FILE")"
+    elif [[ ! -f "$BATON_FILE" ]]; then
+      new_effective_profile="standard"
+    else
+      new_effective_profile="full"
+    fi
+    if jq -e 'has("profile_floor") and .profile_floor != null' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+      new_profile_floor="$(jq -r '.profile_floor' "$CANDIDATE_FILE")"
+    else
+      new_profile_floor="$new_effective_profile"
+    fi
+    if jq -e 'has("profile_decision") and .profile_decision != null' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+      if ! jq -e --arg profile "$new_effective_profile" --arg floor "$new_profile_floor" '
+        .profile_decision.selected_profile == $profile and
+        .profile_decision.floor == $floor
+      ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+        echo "DVANDVA_WRITE bad_profile candidate=$CANDIDATE_FILE" >&2
+        exit 23
+      fi
+    fi
+    if [[ "$(profile_rank "$new_effective_profile")" -lt "$(profile_rank "$new_profile_floor")" && "$new_status" != "human_decision" ]]; then
+      echo "DVANDVA_WRITE bad_profile_downgrade candidate=$CANDIDATE_FILE" >&2
+      exit 23
+    fi
+    if jq -e '
+      def hard_path:
+        . == ".dvandva" or
+        startswith(".dvandva/") or
+        startswith(".githooks/") or
+        startswith(".dvandva/githooks/") or
+        . == "product.md" or
+        . == "plugins/dvandva/references/baton-schema-v2.json" or
+        . == "plugins/dvandva/references/state-transition-table.md" or
+        . == "plugins/dvandva/references/local-baton-channel.md" or
+        . == "docs/protocol/local-baton-channel.md" or
+        . == "templates/channel/baton.json" or
+        test("^plugins/dvandva/skills/[^/]+/SKILL\\.md$") or
+        test("^plugins/dvandva/commands/[^/]+\\.md$") or
+        test("^plugins/dvandva/skills/[^/]+/scripts/dvandva-[^/]+\\.sh$") or
+        test("^scripts/[^/]+\\.sh$") or
+        test("^plugins/dvandva/scripts/.*\\.sh$") or
+        test("(^|/)\\.env(\\..*)?$") or
+        test("(^|/)(secret|secrets|credential|credentials)(/|$)") or
+        test("(^|/)(api|apis|client|clients)(/|$)") or
+        test("(^|/)(package-lock\\.json|package\\.json|pnpm-lock\\.yaml|yarn\\.lock|requirements\\.txt|pyproject\\.toml|Cargo\\.toml|Cargo\\.lock)$");
+      [
+        (.changed_paths // [])[]?,
+        (.work_split // [] | if type == "array" then .[]? else .[]? end | (.paths // [])[]?),
+        (.work_split // [] | if type == "array" then .[]? else .[]? end | (.read_paths // [])[]?),
+        (.work_split // [] | if type == "array" then .[]? else .[]? end | (.write_paths // [])[]?),
+        ((.agent_instances // [])[]? | (.read_paths // [])[]?),
+        ((.agent_instances // [])[]? | (.write_paths // [])[]?)
+      ] | any(type == "string" and hard_path)
+    ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+      if [[ "$new_effective_profile" != "full" || "$new_profile_floor" != "full" ]] || ! jq -e '
+        ((has("profile_decision") | not) or .profile_decision == null or .profile_decision.floor == "full")
+      ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+        echo "DVANDVA_WRITE bad_profile_floor candidate=$CANDIDATE_FILE" >&2
+        exit 23
+      fi
+    fi
+    if [[ "$new_effective_profile" == "fast" ]] && ! jq -e '
+      def allow_path:
+        . == "README.md" or
+        startswith("docs/research/") or
+        startswith("docs/case-studies/");
+      (.profile_decision.allowlist_match == true) and
+      ((.profile_decision.evidence_refs | type) == "array" and (.profile_decision.evidence_refs | length) > 0) and
+      ([
+        (.changed_paths // [])[]?,
+        (.work_split // [] | if type == "array" then .[]? else .[]? end | (.paths // [])[]?),
+        (.work_split // [] | if type == "array" then .[]? else .[]? end | (.read_paths // [])[]?),
+        (.work_split // [] | if type == "array" then .[]? else .[]? end | (.write_paths // [])[]?),
+        ((.agent_instances // [])[]? | (.read_paths // [])[]?),
+        ((.agent_instances // [])[]? | (.write_paths // [])[]?)
+      ] | all(type == "string" and allow_path))
+    ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+      echo "DVANDVA_WRITE bad_profile_floor candidate=$CANDIDATE_FILE" >&2
+      exit 23
+    fi
   fi
   if ! jq -e '
     (.active_roles | type) == "array" and
@@ -476,28 +802,72 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
   if [[ "$new_status" == "done" ]]; then
     case "$new_effective_mode" in
       development)
-        explainer_ref="$(jq -r 'if (.run_explainer_ref | type) == "string" then .run_explainer_ref else "" end' "$CANDIDATE_FILE")"
-        if ! run_explainer_ref_matches_run_id "$explainer_ref" "$new_run_id"; then
-          echo "DVANDVA_WRITE bad_run_explainer_ref candidate=$CANDIDATE_FILE" >&2
-          exit 23
-        fi
-        if ! jq -e '
-          .run_explainer_ref as $ref |
-          def reviewed_by($role):
-            any(.run_explainer_reviews[]?;
-              .role == $role and
-              .artifact_ref == $ref and
-              .status == "completed" and
-              .result == "approved" and
-              ((.summary | type) == "string" and (.summary | test("[^[:space:]]"))) and
-              ((.evidence_refs | type) == "array" and ((.evidence_refs | length) > 0))
-            );
-          ((.run_explainer_reviews | type) == "array") and
-          reviewed_by("vadi") and
-          reviewed_by("prativadi")
-        ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
-          echo "DVANDVA_WRITE bad_run_explainer_reviews candidate=$CANDIDATE_FILE" >&2
-          exit 23
+        if [[ "$new_effective_profile" == "full" ]]; then
+          explainer_ref="$(jq -r 'if (.run_explainer_ref | type) == "string" then .run_explainer_ref else "" end' "$CANDIDATE_FILE")"
+          if ! run_explainer_ref_matches_run_id "$explainer_ref" "$new_run_id"; then
+            echo "DVANDVA_WRITE bad_run_explainer_ref candidate=$CANDIDATE_FILE" >&2
+            exit 23
+          fi
+          if ! jq -e '
+            .run_explainer_ref as $ref |
+            def reviewed_by($role):
+              any(.run_explainer_reviews[]?;
+                .role == $role and
+                .artifact_ref == $ref and
+                .status == "completed" and
+                .result == "approved" and
+                ((.summary | type) == "string" and (.summary | test("[^[:space:]]"))) and
+                ((.evidence_refs | type) == "array" and ((.evidence_refs | length) > 0))
+              );
+            ((.run_explainer_reviews | type) == "array") and
+            reviewed_by("vadi") and
+            reviewed_by("prativadi")
+          ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+            echo "DVANDVA_WRITE bad_run_explainer_reviews candidate=$CANDIDATE_FILE" >&2
+            exit 23
+          fi
+        else
+          if ! jq -e '
+            def good_result:
+              . == "passed" or . == "approved";
+            def matrix_items:
+              if (.verification_matrix | type) == "array" then
+                .verification_matrix[]?
+              elif (.verification_matrix | type) == "object" then
+                .verification_matrix[]?
+              else
+                empty
+              end;
+            def good_matrix:
+              [matrix_items] as $items |
+              ($items | length) > 0 and
+              all($items[];
+                (((.current // .result // "") | good_result)) and
+                ((.evidence_refs | type) == "array" and (.evidence_refs | length) > 0)
+              );
+            def good_verification:
+              any(.verification[]?;
+                (((.result // "") | good_result)) and
+                ((.command | type) == "string" and (.command | test("[^[:space:]]")))
+              );
+            def good_phase_review:
+              any(.subagent_tracks[]?;
+                (.phase | tostring) == "phase_review" and
+                .track == "phase-review" and
+                .status == "completed" and
+                (((.result // "") | good_result)) and
+                ((.owner_role // .role // .owner // "") == "prativadi") and
+                ((.outputs | type) == "array" and (.outputs | length) > 0) and
+                ((.evidence_refs | type) == "array" and (.evidence_refs | length) > 0)
+              );
+            (.profile_decision | type) == "object" and
+            good_verification and
+            good_matrix and
+            good_phase_review
+          ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+            echo "DVANDVA_WRITE bad_compact_terminal_evidence candidate=$CANDIDATE_FILE" >&2
+            exit 23
+          fi
         fi
         ;;
       research)
@@ -839,20 +1209,34 @@ else
     exit 25
   fi
   cur_effective_mode=""
+  cur_effective_profile=""
+  cur_profile_floor=""
   if [[ "$cur_schema" == "dvandva.baton.v2" ]]; then
     if ! cur_effective_mode="$(canonical_mode "$cur_mode")"; then
       echo "DVANDVA_WRITE current_baton_unparseable file=$BATON_FILE bad_mode=$cur_mode" >&2
       exit 25
+    fi
+    if [[ "$cur_effective_mode" == "development" ]]; then
+      if jq -e 'has("profile") and .profile != null' "$BATON_FILE" >/dev/null 2>&1; then
+        cur_effective_profile="$(jq -r '.profile' "$BATON_FILE")"
+      else
+        cur_effective_profile="full"
+      fi
+      if jq -e 'has("profile_floor") and .profile_floor != null' "$BATON_FILE" >/dev/null 2>&1; then
+        cur_profile_floor="$(jq -r '.profile_floor' "$BATON_FILE")"
+      else
+        cur_profile_floor="$cur_effective_profile"
+      fi
     fi
   fi
 
   approval_reason=""
   if [[ "$schema" == "dvandva.baton.v2" && "$new_status" != "done" ]]; then
     writer_role="${DVANDVA_ROLE:-}"
-    if [[ "$cur_vadi_final_approval" != "true" && "$new_vadi_final_approval" == "true" && "$writer_role" != "vadi" ]]; then
-      approval_reason="final approval ownership requires DVANDVA_ROLE=vadi to raise vadi_final_approval"
-    elif [[ "$cur_prativadi_final_approval" != "true" && "$new_prativadi_final_approval" == "true" && "$writer_role" != "prativadi" ]]; then
-      approval_reason="final approval ownership requires DVANDVA_ROLE=prativadi to raise prativadi_final_approval"
+    if [[ "$new_vadi_final_approval" != "$cur_vadi_final_approval" && "$writer_role" != "vadi" ]]; then
+      approval_reason="final approval ownership requires DVANDVA_ROLE=vadi to change vadi_final_approval"
+    elif [[ "$new_prativadi_final_approval" != "$cur_prativadi_final_approval" && "$writer_role" != "prativadi" ]]; then
+      approval_reason="final approval ownership requires DVANDVA_ROLE=prativadi to change prativadi_final_approval"
     fi
   fi
 
@@ -874,6 +1258,80 @@ else
     fi
   fi
 
+  if [[ "$schema" == "dvandva.baton.v2" && "$new_effective_mode" == "development" && "$new_status" == "done" && "$new_effective_profile" != "full" ]]; then
+    phase_review_required_checkpoint="$(phase_review_cycle_checkpoint "$BATON_FILE" "$cur_checkpoint" "$cur_phase")"
+    if ! jq -e --argjson review_checkpoint "$phase_review_required_checkpoint" '
+      def good_result:
+        . == "passed" or . == "approved";
+      any(.subagent_tracks[]?;
+        (.phase | tostring) == "phase_review" and
+        .track == "phase-review" and
+        .review_checkpoint == $review_checkpoint and
+        .status == "completed" and
+        (((.result // "") | good_result)) and
+        ((.owner_role // .role // .owner // "") == "prativadi") and
+        ((.outputs | type) == "array" and (.outputs | length) > 0) and
+        ((.evidence_refs | type) == "array" and (.evidence_refs | length) > 0)
+      )
+    ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+      echo "DVANDVA_WRITE bad_compact_terminal_evidence candidate=$CANDIDATE_FILE" >&2
+      exit 23
+    fi
+  fi
+
+  if [[ "$schema" == "dvandva.baton.v2" && "$cur_effective_mode" == "development" && "$new_effective_mode" == "development" ]]; then
+    if ! jq -e --slurpfile current "$BATON_FILE" '
+      ($current[0].profile_history // []) as $old |
+      (.profile_history // []) as $new |
+      all($old[]?; . as $entry | any($new[]?; . == $entry))
+    ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+      echo "DVANDVA_WRITE bad_profile_history candidate=$CANDIDATE_FILE" >&2
+      exit 23
+    fi
+  fi
+
+  if [[ "$schema" == "dvandva.baton.v2" && "$cur_effective_mode" == "development" && "$new_effective_mode" == "development" && "$new_status" != "human_decision" ]]; then
+    if ! jq -e --arg floor "$cur_profile_floor" --slurpfile current "$BATON_FILE" '
+      def rank:
+        if . == "fast" then 1
+        elif . == "standard" then 2
+        elif . == "full" then 3
+        else 0
+        end;
+      def low_keys($items):
+        [$items[]? | select((.floor | rank) < ($floor | rank)) | tojson] | unique;
+      def low_count($items; $key):
+        [$items[]? | select((.floor | rank) < ($floor | rank) and (tojson == $key))] | length;
+      ($current[0].profile_history // []) as $old |
+      (.profile_history // []) as $new |
+      ((low_keys($old) + low_keys($new)) | unique) as $keys |
+      all($keys[]?;
+        . as $key |
+        low_count($new; $key) == low_count($old; $key)
+      )
+    ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+      echo "DVANDVA_WRITE bad_profile_downgrade candidate=$CANDIDATE_FILE" >&2
+      exit 23
+    fi
+  fi
+
+  if [[ "$schema" == "dvandva.baton.v2" && "$cur_effective_mode" == "development" && "$new_effective_mode" == "development" && "$new_status" != "human_decision" && ( "$new_effective_profile" != "$cur_effective_profile" || "$new_profile_floor" != "$cur_profile_floor" ) ]]; then
+    if ! jq -e --arg from "$cur_effective_profile" --arg to "$new_effective_profile" --arg floor "$new_profile_floor" --argjson checkpoint "$new_checkpoint" '
+      any(.profile_history[]?;
+        .from == $from and
+        .to == $to and
+        .floor == $floor and
+        .checkpoint == $checkpoint and
+        ((.actor_role == "vadi") or (.actor_role == "prativadi") or (.actor_role == "human") or (.actor_role == "team")) and
+        ((.reason | type) == "string" and (.reason | test("[^[:space:]]"))) and
+        ((.evidence_refs | type) == "array" and (.evidence_refs | length) > 0)
+      )
+    ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+      echo "DVANDVA_WRITE bad_profile_history candidate=$CANDIDATE_FILE" >&2
+      exit 23
+    fi
+  fi
+
   # Precedence is load-bearing — do not reorder:
   #   1. stale checkpoint guard   2. checkpoint+1
   #   3. ownership gates   4. same-status team-sync gate
@@ -888,6 +1346,12 @@ else
     reason="run_id_change current=$cur_run_id candidate=$new_run_id"
   elif [[ "$schema" == "dvandva.baton.v2" && "$cur_effective_mode" != "$new_effective_mode" ]]; then
     reason="mode_change current=$cur_mode candidate=$new_mode"
+  elif [[ "$schema" == "dvandva.baton.v2" && "$cur_effective_mode" == "development" && "$new_effective_mode" == "development" && "$new_status" != "human_decision" && "$(profile_rank "$new_effective_profile")" -lt "$(profile_rank "$cur_profile_floor")" ]]; then
+    echo "DVANDVA_WRITE bad_profile_downgrade candidate=$CANDIDATE_FILE" >&2
+    exit 23
+  elif [[ "$schema" == "dvandva.baton.v2" && "$cur_effective_mode" == "development" && "$new_effective_mode" == "development" && "$new_status" != "human_decision" && "$(profile_rank "$new_profile_floor")" -lt "$(profile_rank "$cur_profile_floor")" ]]; then
+    echo "DVANDVA_WRITE bad_profile_downgrade candidate=$CANDIDATE_FILE" >&2
+    exit 23
   elif [[ "$new_checkpoint" -le "$cur_checkpoint" ]]; then
     echo "DVANDVA_WRITE stale_checkpoint current=$cur_checkpoint candidate=$new_checkpoint" >&2
     exit 27
@@ -964,12 +1428,31 @@ else
       dvandva.baton.v2)
         case "$cur_effective_mode" in
           development)
-            case "${cur_status}:${new_status}" in
-              research_drafting:research_review|research_review:research_revision|research_revision:research_review|research_review:spec_drafting) legal=1 ;;
-              spec_drafting:spec_review|spec_review:spec_revision|spec_review:parallel_implementing|spec_revision:spec_review) legal=1 ;;
-              parallel_implementing:test_creation|test_creation:cross_review|cross_review:cross_fixing|cross_fixing:test_creation|cross_review:deep_review) legal=1 ;;
-              deep_review:phase_fixing|deep_review:review_of_review|deep_review:deslop|review_of_review:counter_review|review_of_review:deslop|counter_review:review_of_review|counter_review:deslop|phase_fixing:test_creation|deslop:phase_fixing|deslop:parallel_implementing|deslop:termination_review|termination_review:phase_fixing|termination_review:done) legal=1 ;;
-              *) reason="no legal edge ${cur_status}->${new_status}" ;;
+            case "$new_effective_profile" in
+              fast)
+                case "${cur_status}:${new_status}" in
+                  research_drafting:research_review|research_review:research_revision|research_revision:research_review|research_review:implementing) legal=1 ;;
+                  implementing:phase_review|phase_review:phase_fixing|phase_fixing:phase_review|phase_review:termination_review|termination_review:phase_fixing|termination_review:done) legal=1 ;;
+                  *) reason="no legal edge ${cur_status}->${new_status}" ;;
+                esac
+                ;;
+              standard)
+                case "${cur_status}:${new_status}" in
+                  research_drafting:research_review|research_review:research_revision|research_revision:research_review|research_review:spec_drafting) legal=1 ;;
+                  spec_drafting:spec_review|spec_review:spec_revision|spec_revision:spec_review|spec_review:implementing) legal=1 ;;
+                  implementing:phase_review|phase_review:phase_fixing|phase_review:implementing|phase_fixing:phase_review|phase_review:termination_review|termination_review:phase_fixing|termination_review:done) legal=1 ;;
+                  *) reason="no legal edge ${cur_status}->${new_status}" ;;
+                esac
+                ;;
+              full)
+                case "${cur_status}:${new_status}" in
+                  research_drafting:research_review|research_review:research_revision|research_revision:research_review|research_review:spec_drafting) legal=1 ;;
+                  spec_drafting:spec_review|spec_review:spec_revision|spec_review:parallel_implementing|spec_revision:spec_review) legal=1 ;;
+                  parallel_implementing:test_creation|test_creation:cross_review|cross_review:cross_fixing|cross_fixing:test_creation|cross_review:deep_review) legal=1 ;;
+                  deep_review:phase_fixing|deep_review:review_of_review|deep_review:deslop|review_of_review:counter_review|review_of_review:deslop|counter_review:review_of_review|counter_review:deslop|phase_fixing:test_creation|deslop:phase_fixing|deslop:parallel_implementing|deslop:termination_review|termination_review:phase_fixing|termination_review:done) legal=1 ;;
+                  *) reason="no legal edge ${cur_status}->${new_status}" ;;
+                esac
+                ;;
             esac
             ;;
           research)
@@ -1056,11 +1539,13 @@ else
   fi
 
   if [[ "$legal" -eq 1 && "$schema" == "dvandva.baton.v2" && "$cur_status" == "cross_review" && "$new_status" == "cross_fixing" ]]; then
-    if ! jq -e '
+    cross_review_required_checkpoint="$(cross_review_cycle_checkpoint "$BATON_FILE" "$cur_checkpoint")"
+    if ! jq -e --argjson review_checkpoint "$cross_review_required_checkpoint" '
       any(.subagent_tracks[];
         (
           .phase == "cross_review" and
           .track == "cross-review" and
+          .review_checkpoint == $review_checkpoint and
           (((.owner_role // .role // "") == "vadi") or ((.owner_role // .role // "") == "prativadi")) and
           .status == "completed" and
           (.result != "passed" and .result != "approved") and
@@ -1070,17 +1555,19 @@ else
       )
     ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
       legal=0
-      reason="cross_review->cross_fixing requires completed cross-review subagent_tracks with non-approval evidence"
+      reason="cross_review->cross_fixing requires current-cycle completed cross-review subagent_tracks with non-approval evidence"
     fi
   fi
 
   if [[ "$legal" -eq 1 && "$schema" == "dvandva.baton.v2" && "$cur_status" == "cross_review" && "$new_status" == "deep_review" ]]; then
-    if ! jq -e '
+    cross_review_required_checkpoint="$(cross_review_cycle_checkpoint "$BATON_FILE" "$cur_checkpoint")"
+    if ! jq -e --argjson review_checkpoint "$cross_review_required_checkpoint" '
       def done_cross($role):
         any(.subagent_tracks[];
           (
             .phase == "cross_review" and
             .track == "cross-review" and
+            .review_checkpoint == $review_checkpoint and
             (.owner_role // .role // "") == $role and
             .status == "completed" and
             (.result == "passed" or .result == "approved") and
@@ -1091,7 +1578,7 @@ else
       done_cross("vadi") and done_cross("prativadi")
     ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
       legal=0
-      reason="cross_review->deep_review requires completed cross-review subagent_tracks for both roles with phase=\"cross_review\""
+      reason="cross_review->deep_review requires current-cycle completed cross-review subagent_tracks for both roles with phase=\"cross_review\""
     fi
   fi
 
@@ -1107,12 +1594,14 @@ else
   fi
 
   if [[ "$legal" -eq 1 && "$schema" == "dvandva.baton.v2" && "$cur_status" == "deep_review" && ( "$new_status" == "deslop" || "$new_status" == "review_of_review" ) ]]; then
-    if ! jq -e '
+    deep_review_required_checkpoint="$(deep_review_cycle_checkpoint "$BATON_FILE" "$cur_checkpoint")"
+    if ! jq -e --argjson review_checkpoint "$deep_review_required_checkpoint" '
       def done_angle($name):
         any(.subagent_tracks[];
           (
             .phase == "deep_review" and
             .track == $name and
+            .review_checkpoint == $review_checkpoint and
             .status == "completed" and
             (.result == "passed" or .result == "approved") and
             ((.outputs | length) > 0) and
@@ -1124,7 +1613,7 @@ else
       done_angle("protocol-handoff")
     ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
       legal=0
-      reason="deep_review->deslop requires three completed review-angle subagent_tracks"
+      reason="deep_review->deslop requires current-cycle three completed review-angle subagent_tracks"
     fi
   fi
 fi

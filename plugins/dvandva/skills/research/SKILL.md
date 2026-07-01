@@ -15,13 +15,15 @@ Use this skill to turn the user's `original_ask` into source-backed preparation 
 
 The output is always a generated user-facing HTML artifact at `research_ref`, plus baton fields that let both agents work without rediscovering the same context.
 
+For development runs, research must also classify the flow `profile` separately from run `mode`. Keep `mode` as `development | research | review` and use `profile: "fast" | "standard" | "full"` only for development lifecycle depth.
+
 ## Research Artifact
 
 Write research output as a generated user-facing HTML artifact:
 
 - Path: `./superpowers/research/YYYY-MM-DD-<topic>.html`
 - Format: dark self-contained HTML that renders offline and includes machine-readable metadata.
-- Metadata: include `schema`, `run_id`, `original_ask`, `research_ref`, `work_split`, `verification_matrix`, source inventory, generated timestamp, and open questions.
+- Metadata: include `schema`, `run_id`, `original_ask`, `research_ref`, `profile`, `profile_floor`, `profile_decision`, `work_split`, `verification_matrix`, source inventory, generated timestamp, and open questions.
 - Source/platform Markdown files such as `SKILL.md`, command files, README/source docs, and protocol references remain Markdown; generated research reports do not.
 
 In review mode, `research_ref` is the scope and intake analysis artifact. It is not the final review deliverable.
@@ -50,6 +52,10 @@ Carry these fields forward on every baton:
 | `review_ref` | Path to the final review deliverable HTML. Do not write this during the initial research pass; it is produced later by `deep_review` / `deslop`. |
 | `work_split` | Planned responsibilities for vadi, prativadi, human, or subagents; include owner, scope, paths, status, and artifact refs. |
 | `verification_matrix` | Planned evidence for claims and risks; include owner, phase, command or inspection, expected result, current result, evidence refs, and the 100% test coverage target for newly created behavior. |
+| `profile` | Development-only flow profile: `fast`, `standard`, or `full`. Missing profiles on existing development batons are effective `full`; new development scaffolds default to `standard` unless hard-risk triggers require `full`. |
+| `profile_floor` | Minimum allowed profile computed from risk inputs. Downgrades below this floor route to `human_decision`; agents do not silently lower it. |
+| `profile_decision` | Structured decision record with selected profile, floor, reason, actor, timestamp or null, risk inputs, hard triggers, allowlist decision, allowlist refs, and evidence refs. |
+| `profile_history` | Append-only profile-change records containing previous profile, next profile, floor, checkpoint, actor role, reason, and evidence refs. |
 
 `verification` remains the command log. `verification_matrix` is the coverage plan and evidence map. Test creation is separate from review: the doer creates or updates tests, then the reviewer independently evaluates sufficiency.
 
@@ -61,6 +67,7 @@ Use parallel subagents aggressively when tools are available. Default tracks:
 - Protocol/docs map: relevant product, protocol, README, skill, and command constraints.
 - Verification map: tests/lints/manual checks needed to prove the work.
 - Risk map: edge cases, conflicting requirements, stale references, and likely review failures.
+- Profile map: compute `profile_floor` from actual or expected `changed_paths`, `work_split[*].paths/read_paths/write_paths`, and generated-agent read/write paths. Fast is allowlisted prose only; full is required for baton schema/templates, role skills, helper scripts, transition tables, protocol docs, hooks, lint/test/install scripts, dependency manifests, secrets/env surfaces, external API clients, artifact/history formats, or ambiguous behavior.
 - Work distribution: proposed owner and scope for each track or phase.
 - Test creation: every new behavior, helper, schema path, or generated workflow needs an explicit test or lint entry. Source-only documentation gets a lint/review entry rather than executable coverage.
 - Deep review: plan a `deep_review` pass after implementation, test_creation, and cross_review to hunt correctness bugs, stale wording, missed invariants, and low/minor issues.
@@ -118,7 +125,7 @@ The vadi runs first for any named v2 run that is still in the research statuses:
 1. Re-read `original_ask` and repo instructions, then identify whether the run is in `development`, `research`, or `review` mode. Development-mode research is mandatory and is not replaced by the lightweight research/review run modes.
 2. Dispatch parallel subagents or perform the same tracks directly.
 3. Create or update `research_ref` as the HTML artifact.
-4. In development mode, reconcile independent research inputs and populate implementation-ready `work_split`, `subagent_tracks`, and `verification_matrix` before handing to review.
+4. In development mode, reconcile independent research inputs and populate implementation-ready `work_split`, `subagent_tracks`, `verification_matrix`, `profile`, `profile_floor`, `profile_decision`, and `profile_history` before handing to review. If hard-risk triggers are present, choose `full`; if fast is requested, require allowlist evidence and no hard-risk paths.
 5. In research mode, set `research_outcome` to `exploratory` or `seed_development`. If the run is `seed_development`, plan the downstream path to `plan_ref`.
 6. In review mode, populate structured `review_intake`, keep `review_target` as the existing string selector, and do not write `review_ref`.
 7. Populate `work_split` and `verification_matrix`, including `test_creation`, `deep_review`, and `deslop` entries when those later existing statuses are expected.
@@ -161,6 +168,8 @@ The vadi addresses prativadi research findings:
 | Claiming unavailable subagents were used | Record the direct fallback in `work_split`. |
 | Writing generated research as Markdown | Generated human-facing research is HTML; source/platform docs remain Markdown. |
 | Starting implementation from research | Research must feed spec drafting and verification planning before implementation. |
+| Treating `fast`, `standard`, or `full` as `mode` values | Keep `mode` as the run contract and store lifecycle depth in development-only `profile`. |
+| Letting a lower profile survive hard-risk paths | Recompute `profile_floor` from paths and route to `full` or `human_decision`; never downgrade below the floor automatically. |
 | Using `review_target` as a structured intake blob | Keep `review_target` as the existing string selector and store structured intake in `review_intake`. |
 | Writing `review_ref` during intake research | Initial research writes `research_ref`; the later review lifecycle writes `review_ref`. |
 | Reaching `done` from `seed_development` without a plan | `research_outcome: "seed_development"` requires `plan_ref` before terminal completion. |

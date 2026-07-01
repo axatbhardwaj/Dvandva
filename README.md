@@ -10,6 +10,17 @@ Accepted v2 baton modes are `development`, `research`, and `review`.
 `feature-pr` remains a legacy alias for `development` on older batons. Public
 docs no longer treat `campaign` as the current mode enum.
 
+Development runs also carry an orthogonal flow `profile`: `fast`, `standard`,
+or `full`. `mode` answers what kind of run this is; `profile` answers how much
+development lifecycle is required. New development scaffolds default to
+`standard`, existing development batons with no profile are treated as effective
+`full`, and hard-risk paths such as product specs, baton schemas, role skills,
+helper scripts, protocol docs, hooks, top-level scripts, dependency
+manifests, secret/env surfaces, external API clients, or artifact/history formats force
+`profile_floor: "full"`. `fast` is only for
+allowlisted prose-only changes with positive allowlist evidence. Profile
+downgrades below `profile_floor` route to `human_decision`.
+
 Dvandva model classes are vendor-neutral. Agent frontmatter uses `model: opus` and `model: sonnet` as class labels, not Anthropic-only product IDs. Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models. Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`. Do not use `haiku` for Dvandva subagents.
 
 Dvandva ships as an installable plugin for both engines. The repo lives at https://github.com/axatbhardwaj/Dvandva.
@@ -169,18 +180,20 @@ reports unstamped commits when no earlier checkpoint baseline exists, so a first
 bypass commit is still visible.
 
 Before post-handshake terminal `done`, a v2 run must satisfy the
-mode-conditional terminal artifact gate: development runs write
-one-date run explainer HTML under `./superpowers/run-reports/` and set
-`run_explainer_ref`, then both roles record completed approved entries in
-`run_explainer_reviews` for that exact artifact; those entries are
+mode/profile-conditional terminal artifact gate. Full-profile development runs
+write one-date run explainer HTML under `./superpowers/run-reports/`, set
+`run_explainer_ref`, and require both roles to record completed approved
+entries in `run_explainer_reviews` for that exact artifact; those entries are
 role-owned, and `DVANDVA_ROLE` must match the entry role for additions or
 changes. Use `YYYY-MM-DD-<run_id>-explainer.html` for date-less run IDs, or
 `<run_id>-explainer.html` when `run_id` already starts with `YYYY-MM-DD-`;
-never add a second date prefix. Research runs require
-`research_ref` and additionally `plan_ref` iff `research_outcome ==
-seed_development`; review runs require `review_ref`. In all cases, terminal
-`done` still routes through shared `termination_review` with both final
-approvals set.
+never add a second date prefix. Fast and standard development runs skip the
+run-explainer gate but still require `profile_decision`, passing final
+verification, completed `verification_matrix` evidence, completed approved
+prativadi `phase-review` evidence with current-cycle `review_checkpoint`,
+shared `termination_review`, and both role-owned final approvals. Research runs
+require `research_ref` and additionally `plan_ref` iff `research_outcome ==
+seed_development`; review runs require `review_ref`.
 
 ## History
 

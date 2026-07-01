@@ -113,13 +113,22 @@ jq --arg baton_file "$BATON_FILE" --arg role "$ROLE" '
     );
 
   def compact_verification($item):
-    $item
-    | {
-        command: (.command | bounded_scalar(string_limit)),
-        result: (.result | bounded_scalar(80)),
-        notes: (.notes | bounded_scalar(string_limit))
+    if ($item | type) == "object" then
+      $item
+      | {
+          command: (.command | bounded_scalar(string_limit)),
+          result: (.result | bounded_scalar(80)),
+          notes: (.notes | bounded_scalar(string_limit))
+        }
+      | with_entries(select(.value != null and .value != ""))
+    elif $item == null then
+      {}
+    else
+      {
+        command: ($item | bounded_scalar(string_limit)),
+        result: "legacy"
       }
-    | with_entries(select(.value != null and .value != ""));
+    end;
 
   def cap_items($max):
     if length > $max then
@@ -151,8 +160,12 @@ jq --arg baton_file "$BATON_FILE" --arg role "$ROLE" '
       );
 
   def is_open_finding:
-    ((.status // "open") | tostring | ascii_downcase) as $status |
-    ($status != "closed" and $status != "resolved" and $status != "completed" and $status != "approved");
+    if type == "object" then
+      ((.status // "open") | tostring | ascii_downcase) as $status |
+      ($status != "closed" and $status != "resolved" and $status != "completed" and $status != "approved")
+    else
+      true
+    end;
 
   def compact_work($root; $role):
     ($root.work_split // [] | as_array) as $items |
@@ -185,12 +198,24 @@ jq --arg baton_file "$BATON_FILE" --arg role "$ROLE" '
     [
       (.findings // [] | as_array)[] |
       select(is_open_finding) |
-      {
-        id: (.id // null),
-        severity: (.severity // null),
-        area: (.area // null),
-        status: (.status // "open")
-      }
+      if type == "object" then
+        {
+          id: (.id // null),
+          severity: (.severity // null),
+          area: (.area // null),
+          status: (.status // "open"),
+          summary: (.summary | bounded_scalar(string_limit))
+        }
+        | with_entries(select(.value != null and .value != ""))
+      else
+        {
+          id: null,
+          severity: null,
+          area: null,
+          status: "open",
+          summary: (. | bounded_scalar(string_limit))
+        }
+      end
     ] | cap_items(item_limit);
 
   def latest_verification:
@@ -210,6 +235,12 @@ jq --arg baton_file "$BATON_FILE" --arg role "$ROLE" '
     else
       (.next_action | bounded_scalar(action_limit))
     end;
+  def development_mode:
+    ((.mode // "") == "development" or (.mode // "") == "feature-pr");
+  def effective_profile:
+    if development_mode then (.profile // "full") else (.profile // null) end;
+  def effective_profile_floor:
+    if development_mode then (.profile_floor // effective_profile) else (.profile_floor // null) end;
 
   {
     kind: "BATON_STATE_COMPACT",
@@ -218,6 +249,8 @@ jq --arg baton_file "$BATON_FILE" --arg role "$ROLE" '
     schema: (.schema // null),
     run_id: (.run_id // null),
     mode: (.mode // null),
+    profile: effective_profile,
+    profile_floor: effective_profile_floor,
     run_mode: (.run_mode // null),
     phase: (.phase // null),
     status: (.status // null),
