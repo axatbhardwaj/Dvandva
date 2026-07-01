@@ -447,8 +447,8 @@ The 15-agent roster is the **seed roster**. Run 3 enables run-scoped dynamic age
 
 | Class label | Use | Claude Code | Codex |
 |---|---|---|---|
-| `opus-class\|gpt-5.5` | Architecture, planning, review | Opus-class | gpt-5.5 |
-| `sonnet-class\|gpt-5.4` | Implementation, documentation | Sonnet-class | gpt-5.4 |
+| `opus-class\|gpt-5.5` | Architecture, planning, deep/hard-risk review | Opus-class | gpt-5.5 (xhigh) |
+| `sonnet-class\|gpt-5.4` | Implementation, docs, research, verification, routine cross-review | Sonnet-class | gpt-5.4 (xhigh) |
 
 Do not use `haiku` for Dvandva dynamic agents.
 

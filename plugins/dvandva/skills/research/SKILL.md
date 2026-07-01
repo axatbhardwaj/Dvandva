@@ -81,7 +81,7 @@ Subagents are read-only during research by default. The main agent synthesizes t
 
 Use the canonical Dvandva subagent roster under `plugins/dvandva/agents/` when the harness supports named subagents. These local roles are the source of truth for Dvandva; retired personal agent definitions from external skill repos should not be required.
 
-Dvandva model classes are vendor-neutral. Agent frontmatter uses `model: opus` and `model: sonnet` as class labels, not Anthropic-only product IDs. Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models. Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`. Do not use `haiku` for Dvandva subagents.
+Dvandva model classes are vendor-neutral. Agent frontmatter uses `model: opus` and `model: sonnet` as class labels, not Anthropic-only product IDs. Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models. Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`, and runs both classes at `xhigh` reasoning effort. Do not use `haiku` for Dvandva subagents.
 
 | Phase | Agent |
 |---|---|
@@ -106,7 +106,7 @@ Mandatory invariants:
 - Coordination invariant: no daemon, no hidden orchestrator — the baton is the only coordinator.
 - Single-writer: generated agents never own `assignee`, `active_roles`, phase transitions, or final approval.
 - Path invariant: dynamic write-path disjointness — generated instances with non-empty `write_paths` sharing the same `base_checkpoint`, or any two live (`planned`/`running`) instances regardless of base_checkpoint, must be pairwise disjoint unless explicitly serialized through `depends_on` within a shared `conflict_group`; closed instances from an earlier base_checkpoint do not block later sequential reuse.
-- Model-class mapping: use `opus-class|gpt-5.5` for review, planning, and architecture seeds; use `sonnet-class|gpt-5.4` for implementation and documentation seeds. Never use `haiku`.
+- Model-class mapping: use `opus-class|gpt-5.5` for planning, architecture, and deep/hard-risk review seeds; use `sonnet-class|gpt-5.4` for implementation, documentation, research, verification, and routine cross-review seeds. Codex runs both classes at `xhigh`. Never use `haiku`.
 
 ## Absorbed Dvandva skills
 

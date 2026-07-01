@@ -312,11 +312,11 @@ for agent in security-auditor integration-checker debugger doc-verifier pattern-
   require_output_contract_text "$file" "result: approved|findings|blocked" "new agent $agent outputs schema-valid result"
 done
 
-for agent in adversarial-analyst architect baton-auditor cross-reviewer deep-reviewer doc-verifier integration-checker pattern-mapper researcher sandbox-verifier security-auditor; do
+for agent in adversarial-analyst architect baton-auditor deep-reviewer doc-verifier integration-checker security-auditor; do
   require_agent_model "$agent_dir/$agent.md" "opus" "agent $agent uses opus-class model for planning/reviewing/architecture"
 done
 
-for agent in debugger deslopper implementer test-creator; do
+for agent in cross-reviewer debugger deslopper implementer pattern-mapper researcher sandbox-verifier test-creator; do
   require_agent_model "$agent_dir/$agent.md" "sonnet" "agent $agent uses sonnet-class model for development/implementation/documentation"
 done
 
@@ -381,8 +381,28 @@ for file in \
   require_text "$file" "Dvandva model classes are vendor-neutral" "$name documents vendor-neutral model classes"
   require_text "$file" "Claude Code maps \`opus\` to Opus-class and \`sonnet\` to Sonnet-class models" "$name documents Claude model-class mapping"
   require_text "$file" "Codex maps \`opus\` to \`gpt-5.5\` and \`sonnet\` to \`gpt-5.4\`" "$name documents Codex model-class mapping"
+  require_text "$file" "\`xhigh\` reasoning effort" "$name documents Codex xhigh reasoning effort"
   require_text "$file" "Do not use \`haiku\` for Dvandva subagents" "$name forbids haiku-class Dvandva subagents"
 done
+for file in \
+  "$ROOT_DIR/plugins/dvandva/commands/vadi.md" \
+  "$ROOT_DIR/plugins/dvandva/commands/prativadi.md"; do
+  name="${file#$ROOT_DIR/}"
+  require_text "$file" "Claude Code maps \`opus\` to Opus-class and \`sonnet\` to Sonnet-class models" "$name documents Claude model-class mapping"
+  require_text "$file" "Codex maps \`opus\` to \`gpt-5.5\` and \`sonnet\` to \`gpt-5.4\`" "$name documents Codex model-class mapping"
+  require_text "$file" "\`xhigh\` reasoning effort" "$name documents Codex xhigh reasoning effort"
+  require_text "$file" "never use \`haiku\`" "$name forbids haiku-class Dvandva subagents"
+done
+for file in \
+  "$ROOT_DIR/plugins/dvandva/references/local-baton-channel.md" \
+  "$ROOT_DIR/docs/protocol/local-baton-channel.md"; do
+  name="${file#$ROOT_DIR/}"
+  require_text "$file" "Codex runs both classes at \`xhigh\` reasoning effort" "$name documents Codex xhigh reasoning effort"
+  require_text "$file" "routine cross-review" "$name documents routine cross-review as sonnet-class work"
+done
+require_text "$ROOT_DIR/plugins/dvandva/references/state-transition-table.md" "gpt-5.5 (xhigh)" "state-transition table documents opus-class xhigh"
+require_text "$ROOT_DIR/plugins/dvandva/references/state-transition-table.md" "gpt-5.4 (xhigh)" "state-transition table documents sonnet-class xhigh"
+require_text "$ROOT_DIR/plugins/dvandva/references/state-transition-table.md" "routine cross-review" "state-transition table documents routine cross-review as sonnet-class work"
 require_text "$ROOT_DIR/product.md" "adversarial-analyst.md" "product layout includes adversarial analyst agent file"
 require_text "$ROOT_DIR/product.md" "at least three angle-specific reviewers" "product requires multi-angle deep review"
 require_text "$ROOT_DIR/product.md" "one-date explainer under \`./superpowers/run-reports/\`" "product documents final explainer path"
