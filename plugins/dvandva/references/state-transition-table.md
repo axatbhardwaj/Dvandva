@@ -216,6 +216,7 @@ early. Scalar-owner states still reject same-status rewrites.
   "resume_status": "spec_drafting | spec_review | spec_revision | null; status to restore after a human_question answer",
   "disagreement_round": "integer, reset to 0 by the agent that writes the first baton of each new phase",
   "disagreement_cap": "integer, default 3, optionally set during spec phase",
+  "loop_counts": "v2 additive map keyed \"<kind>:<phase>\" to an integer per-cycle counter for repeated review/fix loops; the write helper enforces increment-by-one and, at disagreement_cap, allows only a human_decision target. Missing on older batons is treated as empty and seeded empty, never rejected.",
   "turn_cap": "integer, default 60; passive shell wait heartbeats do not count",
   "branch": "git branch name",
   "checkpoint": "integer, bumped by the writer",
@@ -395,6 +396,40 @@ termination. Every review-mode status uses `phase: "review"`.
 | `human_question` | `resume_status` with `assignee: resume_assignee` | Human answers and the receiving skill clears question fields. |
 | any state | `human_decision` | Escalation, cap hit, blocker, malformed input, or unsafe dirty tree. |
 | `human_decision` | any mode-owned state chosen by the human | Human edits baton or prompts an agent with a decision. |
+
+## Liveness and loop gates (Slice 1)
+
+These gates keep the walkaway loop live and bound its cycles.
+
+- **Advance-owner wake.** In `parallel_implementing` and `cross_fixing`, once no
+  implementation chunk is unblocked and non-terminal for either role (all
+  terminal or blocked), `dvandva-wait.sh --until-actionable` wakes the state's
+  advance-owner (`vadi`) so the outbound transition is written instead of both
+  roles sleeping forever. Implementation chunks are identified by the same
+  definition as the `>=5` parallel-implementing gate (implementation
+  `chunk_type`, reciprocal `cross_review_by`, non-empty `paths`); lifecycle gate
+  chunks (`test_creation`, `deep_review`, `deslop`) are excluded. A `depends_on`
+  id naming a work_split chunk must be terminal to unblock; any other id is an
+  anchor (e.g. `spec-approved`), satisfied unless it equals the current status.
+- **Loop caps.** `loop_counts["<kind>:<phase>"]` counts repeated review/fix
+  cycles (`deep_review->phase_fixing`, `cross_review->cross_fixing`,
+  `termination_review->phase_fixing`, `phase_review->phase_fixing`,
+  `review_of_review<->counter_review`). The write helper enforces
+  increment-by-one (`bad_loop_counts` otherwise) and, once a counter reaches
+  `disagreement_cap`, allows only a `human_decision` target (`loop_cap`
+  otherwise). Batons without `loop_counts` seed empty.
+- **depends_on validation.** `work_split[].depends_on` ids must resolve to a
+  chunk id or the fixed anchor set, and the chunk-id dependency graph must be
+  acyclic (`bad_depends_on` otherwise).
+- **Approval hygiene.** A `*_final_approval` may be raised only when the
+  candidate status is `termination_review` (`approval_out_of_band` otherwise),
+  and both approvals reset to false on `termination_review->phase_fixing`
+  (`stale_approval` otherwise), so a stale pre-fix approval cannot satisfy the
+  done gate.
+- **Dead-peer watchdog.** `dvandva-wait.sh --stall-max <seconds>` exits 24
+  (`stalled`) when the baton does not advance within the bound; the role then
+  writes `human_decision`. Wait exit 24 is distinct from `dvandva-write.sh`
+  exit 24 (illegal transition).
 
 ## Regular checkpoint commits
 
