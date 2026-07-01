@@ -36,7 +36,7 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # HOME is already in the environment; CODEX_HOME defaults to $HOME/.codex
 CODEX_HOME="${CODEX_HOME:-$HOME/.codex}"
-DVANDVA_EXPECTED_VERSION="${DVANDVA_EXPECTED_VERSION:-1.0.0}"
+DVANDVA_EXPECTED_VERSION="${DVANDVA_EXPECTED_VERSION:-1.1.0}"
 
 CLAUDE_AGENTS_DIR="$HOME/.claude/agents"
 DVANDVA_CACHE_BASE="$HOME/.claude/plugins/cache/dvandva/dvandva"
@@ -98,14 +98,14 @@ Modes:
 Safety:
   • Only the 5 allowlisted symlinks are ever moved.
   • --apply refuses unless the dvandva cache at DVANDVA_EXPECTED_VERSION
-    (default: 1.0.0) contains all 15 required dvandva-* agent files.
+    (default: 1.1.0) contains all 15 required dvandva-* agent files.
   • Haoshoku source targets are never touched; only the symlink pointers move.
   • Skills, non-allowlisted agents, and Codex dirs are never modified.
 
 Environment:
   HOME                       Overridable home dir (used in tests).
   CODEX_HOME                 Codex home dir (default: \$HOME/.codex).
-  DVANDVA_EXPECTED_VERSION   Required dvandva cache version (default: 1.0.0).
+  DVANDVA_EXPECTED_VERSION   Required dvandva cache version (default: 1.1.0).
 EOF
 }
 

@@ -96,7 +96,7 @@ $prativadi
 
 ## Current State
 
-v1.0.0 ships as one `dvandva` plugin with:
+v1.1.0 ships as one `dvandva` plugin with:
 
 - `plugins/dvandva/skills/vadi/SKILL.md`
 - `plugins/dvandva/skills/prativadi/SKILL.md`
@@ -108,7 +108,7 @@ v1.0.0 ships as one `dvandva` plugin with:
 - Run 4 generalized path gates: `work_split` items now expose `write_paths` for write intent; bare `paths` remain backward-compatible write intent only for implementation and cross-fixing chunks. For write-capable chunks, `write_paths` supplements rather than narrows `paths`; the collision check uses their union so `write_paths: []` cannot mask a declared write surface. `cross_review` chunks are read-only unless they declare explicit `write_paths`. Live overlaps are rejected unless the chunks share a `conflict_group` and an explicit `depends_on` edge serializes the work. Terminal work_split chunks are historical and do not block later path reuse because work_split does not carry the generated-agent `base_checkpoint` wave model.
 - Run 4 git work-gating: role preflight exports and asserts `DVANDVA_ROLE=<role>`, then runs the hook stage via `dvandva-preflight.sh --role <role>`; the hook stage records the prior `core.hooksPath` as `dvandva.priorHooksPath`, sets `core.hooksPath` to `.dvandva/githooks` (a delegating wrapper that execs the prior hook chain), and records `dvandva.hooksAdoptedAt` as the local drift-lint baseline; on uninstall the prior `core.hooksPath` is restored from `dvandva.priorHooksPath`. The pre-commit hook delegates to `scripts/dvandva-commit-gate.sh`, which requires `DVANDVA_ROLE` to match baton ownership or `active_roles`; the prepare hook stamps `Dvandva-Checkpoint`; and `scripts/dvandva-drift-lint.sh` checks for off-protocol commits from the hook-adoption baseline floor, so a later stamped checkpoint cannot hide an unstamped bypass. This is local shell/git-hook enforcement, not a daemon or hidden central process.
   Terminal `done`, `human_question`, and `human_decision` batons are inactive for this git gate: commits are not blocked by terminal batons, and drift lint only reports off-protocol commits while a non-terminal baton is active or checkpoint history gives it a scan floor.
-- Run 4 Dvandva-only retirement: `scripts/retire-standalone-agents.sh` can retire only the five Claude Code symlink agents whose Dvandva-covered workflows are replaced by the seed roster: `adversarial-analyst`, `architect`, `developer`, `quality-reviewer`, and `sandbox-executor`. Functional parity is based on equivalent-or-better empirical usage across Runs 1-4, plus 1.0.0 cache/roster parity and reversibility. Codex agent-axis retirement is a no-op; skills are out of scope and no skill files are touched. The helper is dry-run first, writes a backup manifest, and supports restore.
+- Run 4 Dvandva-only retirement: `scripts/retire-standalone-agents.sh` can retire only the five Claude Code symlink agents whose Dvandva-covered workflows are replaced by the seed roster: `adversarial-analyst`, `architect`, `developer`, `quality-reviewer`, and `sandbox-executor`. Functional parity is based on equivalent-or-better empirical usage across Runs 1-4, plus 1.1.0 cache/roster parity and reversibility. Codex agent-axis retirement is a no-op; skills are out of scope and no skill files are touched. The helper is dry-run first, writes a backup manifest, and supports restore.
 - bundled `dvandva-wait.sh` helpers in both skill directories
 - plugin-local protocol references in `plugins/dvandva/references/`
 - Codex marketplace metadata in `.agents/plugins/marketplace.json`
@@ -271,7 +271,7 @@ The smoke script builds a temp marketplace, validates the Claude plugin path,
 adds and installs the marketplace in Codex with `codex plugin add` under an
 isolated `CODEX_HOME`, runs the dual Claude/Codex installer and Codex-only
 helper under isolated homes, checks that Codex renders all six Dvandva skills,
-runs both bundled wait helpers, checks the 1.0.0 installed cache version, and
+runs both bundled wait helpers, checks the 1.1.0 installed cache version, and
 checks exact 15-agent roster parity in the installed development copies.
 
 ## Release Checklist
@@ -280,7 +280,7 @@ checks exact 15-agent roster parity in the installed development copies.
 2. Run the validation commands above.
 3. Run `bash scripts/install.sh <repo-or-path>` from isolated `HOME` and `CODEX_HOME`, then verify `/skills` exposes `dvandva:vadi`, `dvandva:prativadi`, `dvandva:research`, `dvandva:testing`, `dvandva:understanding`, and `dvandva:worktree-setup` in the installed engines.
 4. If testing engine-specific fallback paths, run `bash scripts/install-codex.sh <repo-or-path>` from an isolated `CODEX_HOME` and `HOME`.
-5. Tag the release, for example `v1.0.0`.
+5. Tag the release, for example `v1.1.0`.
 6. Push the branch and tag only after both Dvandva roles approve the final diff.
 
 ## Reading Order
