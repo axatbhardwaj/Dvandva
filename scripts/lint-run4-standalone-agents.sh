@@ -6,7 +6,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 TARGET_ROOT="${1:-$ROOT_DIR}"
 FAILURES=0
 
-EXPECTED_VERSION="0.4.0"
+EXPECTED_VERSION="1.0.0"
 EXPECTED_AGENTS=(
   adversarial-analyst.md
   architect.md

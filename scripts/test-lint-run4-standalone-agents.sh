@@ -45,15 +45,15 @@ write_manifest_files() {
   cat > "$root/.claude-plugin/marketplace.json" <<'EOF'
 {
   "plugins": [
-    { "name": "dvandva", "source": "./plugins/dvandva", "version": "0.4.0" }
+    { "name": "dvandva", "source": "./plugins/dvandva", "version": "1.0.0" }
   ]
 }
 EOF
   cat > "$root/plugins/dvandva/.claude-plugin/plugin.json" <<'EOF'
-{ "name": "dvandva", "version": "0.4.0" }
+{ "name": "dvandva", "version": "1.0.0" }
 EOF
   cat > "$root/plugins/dvandva/.codex-plugin/plugin.json" <<'EOF'
-{ "name": "dvandva", "version": "0.4.0" }
+{ "name": "dvandva", "version": "1.0.0" }
 EOF
 }
 
@@ -81,7 +81,7 @@ write_retirement_fixture() {
   write_agent_files "$root"
 
   cat > "$root/README.md" <<'EOF'
-Dvandva 0.4.0 ships the canonical Dvandva roster. Run 4 makes Dvandva-only
+Dvandva 1.0.0 ships the canonical Dvandva roster. Run 4 makes Dvandva-only
 retirement available only for Dvandva-covered workflows. The retired Claude
 symlink allowlist is adversarial-analyst, architect, developer, quality-reviewer,
 and sandbox-executor. Functional parity is proven by Runs 1-4 usage, not only by
@@ -91,7 +91,7 @@ restore.
 EOF
 
   cat > "$root/product.md" <<'EOF'
-Run 4 retires only Dvandva-covered standalone agents after version 0.4.0 cache
+Run 4 retires only Dvandva-covered standalone agents after version 1.0.0 cache
 parity and functional parity via Runs 1-4 usage. The Claude allowlist is
 adversarial-analyst, architect, developer, quality-reviewer, and
 sandbox-executor. Codex agent-axis cleanup is explicitly no-op. Skills are out
@@ -105,7 +105,7 @@ through a backup manifest restore path.
 EOF
 
   cat > "$root/plugins/dvandva/references/state-transition-table.md" <<'EOF'
-Run 4 records the 0.4.0 Dvandva roster parity, Dvandva-only retirement, Codex
+Run 4 records the 1.0.0 Dvandva roster parity, Dvandva-only retirement, Codex
 agent-axis no-op, and functional parity via Runs 1-4 usage.
 EOF
 
@@ -119,7 +119,7 @@ EOF
 #!/usr/bin/env bash
 echo "Dvandva-only Dvandva-covered workflows functional parity via Runs 1-4 usage"
 echo "adversarial-analyst architect developer quality-reviewer sandbox-executor"
-echo "Codex agent-axis no-op skills out of scope no skill touches backup manifest restore 0.4.0"
+echo "Codex agent-axis no-op skills out of scope no skill touches backup manifest restore 1.0.0"
 EOF
 
   cat > "$root/scripts/test-retire-standalone-agents.sh" <<'EOF'
@@ -129,17 +129,17 @@ EOF
 
   cat > "$root/scripts/smoke-plugin-install.sh" <<'EOF'
 #!/usr/bin/env bash
-echo "0.4.0 dvandva-adversarial-analyst dvandva-test-creator"
+echo "1.0.0 dvandva-adversarial-analyst dvandva-test-creator"
 EOF
 
   cat > "$root/scripts/test-install.sh" <<'EOF'
 #!/usr/bin/env bash
-echo "0.4.0 canonical 15-agent roster"
+echo "1.0.0 canonical 15-agent roster"
 EOF
 
   cat > "$root/scripts/test-install-codex.sh" <<'EOF'
 #!/usr/bin/env bash
-echo "0.4.0 canonical 15-agent roster"
+echo "1.0.0 canonical 15-agent roster"
 EOF
 }
 
@@ -236,7 +236,7 @@ jq '.version = "0.3.0"' "$CASE/plugins/dvandva/.codex-plugin/plugin.json" > "$CA
 expect_fail \
   "standalone lint rejects manifest version mismatch" \
   "$CASE" \
-  "Dvandva manifest versions must all equal 0.4.0"
+  "Dvandva manifest versions must all equal 1.0.0"
 
 CASE="$TMP_DIR/missing-agent"
 write_retirement_fixture "$CASE"

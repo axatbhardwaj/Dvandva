@@ -48,7 +48,7 @@ TMP_PARENT="${TMPDIR:-/tmp}"
 TMP_PARENT="${TMP_PARENT%/}"
 TMP_DIR="$(mktemp -d "$TMP_PARENT/dvandva-test-retire.XXXXXX")"
 
-EXPECTED_VER="0.4.0"
+EXPECTED_VER="1.0.0"
 
 STANDALONE_AGENTS=(
   adversarial-analyst.md
@@ -88,7 +88,7 @@ unset _a
 # ---------------------------------------------------------------------------
 # Helper: build a fake HOME
 #   $1 = subdirectory name under TMP_DIR
-#   $2 = 1 (default) to include a valid dvandva 0.4.0 cache; 0 to omit
+#   $2 = 1 (default) to include a valid dvandva 1.0.0 cache; 0 to omit
 #   $3 = "full" (default) or "partial" to drop 2 agents from the cache
 # ---------------------------------------------------------------------------
 build_fake_home() {
@@ -621,7 +621,7 @@ test_restore_rejects_non_allowlisted_manifest() {
     --arg symlink_target "$FAKE_HAOSHOKU_DIR/decoy.md" \
     '{
       retired_at: "test",
-      dvandva_version: "0.4.0",
+      dvandva_version: "1.0.0",
       backup_dir: $backup_dir,
       entries: [
         {
@@ -676,7 +676,7 @@ test_restore_rejects_non_allowlisted_manifest() {
     --arg invalid_target "$FAKE_HAOSHOKU_DIR/decoy.md" \
     '{
       retired_at: "test",
-      dvandva_version: "0.4.0",
+      dvandva_version: "1.0.0",
       backup_dir: $backup_dir,
       entries: [
         {
