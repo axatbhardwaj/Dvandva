@@ -550,7 +550,7 @@ mod tests {
                     {"id": "F-2", "status": "resolved", "severity": "low", "summary": "closed finding"}
                 ],
                 "blockers": [{"id": "B-1"}],
-                "changed_paths": ["rust/dvandva-core/src/state.rs"],
+                "changed_paths": ["rust/dvandva/src/state.rs"],
                 "verification_latest": {"command": "cargo test", "result": "passed", "notes": "ok", "extra": "drop"},
                 "next_action": {"owner_role": "vadi", "prompt": "Continue.", "private": "drop"}
             }),

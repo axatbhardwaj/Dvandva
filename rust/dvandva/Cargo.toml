@@ -6,10 +6,17 @@ description = "Dvandva: a two-role (vadi/prativadi) multi-agent coordination eng
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/axatbhardwaj/Dvandva"
 readme = "README.md"
+keywords = ["cli", "multi-agent", "coordination", "baton"]
+categories = ["command-line-utilities"]
+
+[lib]
+name = "dvandva"
+path = "src/lib.rs"
 
 [[bin]]
 name = "dvandva"
 path = "src/main.rs"
 
 [dependencies]
-dvandva-core = { path = "../dvandva-core", version = "2.0.0-alpha.1" }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = { version = "1.0.150", features = ["preserve_order", "arbitrary_precision"] }

@@ -1,4 +1,4 @@
-//! `dvandva-core` — the library crate behind the `dvandva` multicall binary.
+//! `dvandva` — the library API behind the `dvandva` multicall binary.
 //!
 //! This crate hosts the read-path building blocks shared by the binary and the
 //! differential-parity harness:

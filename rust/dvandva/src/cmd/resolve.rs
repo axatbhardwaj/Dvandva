@@ -1,11 +1,11 @@
 //! `resolve` subcommand wrapper. Filled by ws-3 (prativadi): maps
-//! `dvandva_core::resolve` outcomes to stdout token lines and exit codes.
+//! `dvandva::resolve` outcomes to stdout token lines and exit codes.
 
 use std::path::PathBuf;
 
-use dvandva_core::emit;
-use dvandva_core::resolve::{resolve_active_run, ResolveEnv, ResolveError, ResolveOutcome};
-use dvandva_core::Role;
+use dvandva::emit;
+use dvandva::resolve::{resolve_active_run, ResolveEnv, ResolveError, ResolveOutcome};
+use dvandva::Role;
 
 const USAGE: &str = "\
 Usage: dvandva resolve --role <vadi|prativadi> [--cwd <dir>]
@@ -137,7 +137,7 @@ fn emit_outcome(role: Role, outcome: &ResolveOutcome) -> i32 {
 mod tests {
     use std::path::PathBuf;
 
-    use dvandva_core::Role;
+    use dvandva::Role;
 
     use super::{parse_args, ResolveArgs};
 

@@ -3,9 +3,9 @@
 
 use std::path::PathBuf;
 
-use dvandva_core::emit;
-use dvandva_core::state::compact_state_from_file;
-use dvandva_core::Role;
+use dvandva::emit;
+use dvandva::state::compact_state_from_file;
+use dvandva::Role;
 
 const USAGE: &str = "\
 Usage: dvandva state --compact --file <baton.json> [--role vadi|prativadi|team|human]
@@ -108,7 +108,7 @@ fn resolve_role(role_flag: Option<&str>, env_role: Option<&str>, argv0: &str) ->
 mod tests {
     use std::path::PathBuf;
 
-    use dvandva_core::Role;
+    use dvandva::Role;
 
     use super::{parse_args, resolve_role, StateArgs};
 
