@@ -219,6 +219,33 @@ write_named_parallel_work_baton() {
 JSON
 }
 
+write_custom_parallel_baton() {
+  # $1 file, $2 run_id, $3 checkpoint, $4 updated_at, $5 work_split JSON array
+  local file="$1"
+  local run_id="$2"
+  local checkpoint="$3"
+  local updated_at="$4"
+  local work_split="$5"
+  mkdir -p "$(dirname "$file")"
+  cat > "$file" <<JSON
+{
+  "schema": "dvandva.baton.v2",
+  "run_id": "$run_id",
+  "assignee": "team",
+  "active_roles": ["vadi", "prativadi"],
+  "status": "parallel_implementing",
+  "phase": 1,
+  "checkpoint": $checkpoint,
+  "question": null,
+  "resume_assignee": null,
+  "resume_status": null,
+  "updated_at": "$updated_at",
+  "current_engine": "codex",
+  "work_split": $work_split
+}
+JSON
+}
+
 run_case() {
   local name="$1"
   local expected_exit="$2"
@@ -319,6 +346,89 @@ elif [[ "$action_human_output" != *"sibling_run_id=beta"* || "$action_human_outp
   failures=$((failures + 1))
 else
   echo "PASS: newer sibling human_decision stops action-aware team-state waiter"
+fi
+
+# ─────────────────────────────────────────────────────────────────────
+# S1-T1: advance-owner wake, anchor resolution, lifecycle-gate exclusion
+# ─────────────────────────────────────────────────────────────────────
+# (a) When every implementation chunk is terminal, the state's advance-owner
+# (vadi for parallel_implementing) wakes to write the ->test_creation transition;
+# the non-advance role keeps waiting. Regression for the both-roles-asleep deadlock.
+S1T1_ALLDONE_BOX="$TMP_DIR/s1t1-alldone-box"
+write_named_parallel_work_baton "$S1T1_ALLDONE_BOX/.dvandva/runs/alpha/baton.json" "alpha" 80 "2026-07-01T10:00:00Z" "none"
+run_case "S1-T1 all-chunks-terminal wakes advance-owner vadi" 0 \
+  env DVANDVA_RUN_ID="alpha" bash -c 'cd "$1" && "$2" --role vadi --until-actionable --interval 0 --max-wait 0' _ "$S1T1_ALLDONE_BOX" "$SCRIPT"
+
+s1t1_nonowner_output="$(env DVANDVA_RUN_ID="alpha" timeout 3 bash -c 'cd "$1" && "$2" --role prativadi --until-actionable --interval 1 --max-wait 1' _ "$S1T1_ALLDONE_BOX" "$PRATIVADI_SCRIPT" 2>&1)"
+s1t1_nonowner_exit=$?
+if [[ "$s1t1_nonowner_exit" -ne 124 ]]; then
+  echo "FAIL: S1-T1 all-terminal must keep non-advance-owner prativadi waiting, got $s1t1_nonowner_exit"
+  echo "$s1t1_nonowner_output"; failures=$((failures + 1))
+else
+  echo "PASS: S1-T1 all-terminal keeps non-advance-owner prativadi waiting"
+fi
+
+# (b) A chunk whose depends_on names a non-chunk anchor (spec-approved) is
+# unblocked (anchor satisfied-by-phase), so its owner is actionable.
+S1T1_ANCHOR_BOX="$TMP_DIR/s1t1-anchor-box"
+write_custom_parallel_baton "$S1T1_ANCHOR_BOX/.dvandva/runs/alpha/baton.json" "alpha" 80 "2026-07-01T10:05:00Z" '[
+  {"id":"v1","phase":"1","chunk_type":"implementation","owner_role":"vadi","status":"ready","depends_on":["spec-approved"],"paths":["src/v.rs"],"cross_review_by":"prativadi"},
+  {"id":"p1","phase":"1","chunk_type":"implementation","owner_role":"prativadi","status":"completed","depends_on":["spec-approved"],"paths":["src/p.rs"],"cross_review_by":"vadi"}
+]'
+run_case "S1-T1 spec-approved anchor makes owner actionable" 0 \
+  env DVANDVA_RUN_ID="alpha" bash -c 'cd "$1" && "$2" --role vadi --until-actionable --interval 0 --max-wait 0' _ "$S1T1_ANCHOR_BOX" "$SCRIPT"
+
+# (c) A chunk depending on a non-terminal chunk id is blocked; owner keeps waiting.
+S1T1_DEPGATE_BOX="$TMP_DIR/s1t1-depgate-box"
+write_custom_parallel_baton "$S1T1_DEPGATE_BOX/.dvandva/runs/alpha/baton.json" "alpha" 80 "2026-07-01T10:06:00Z" '[
+  {"id":"v1","phase":"1","chunk_type":"implementation","owner_role":"vadi","status":"ready","depends_on":["p1"],"paths":["src/v.rs"],"cross_review_by":"prativadi"},
+  {"id":"p1","phase":"1","chunk_type":"implementation","owner_role":"prativadi","status":"ready","depends_on":[],"paths":["src/p.rs"],"cross_review_by":"vadi"}
+]'
+s1t1_depgate_output="$(env DVANDVA_RUN_ID="alpha" timeout 3 bash -c 'cd "$1" && "$2" --role vadi --until-actionable --interval 1 --max-wait 1' _ "$S1T1_DEPGATE_BOX" "$SCRIPT" 2>&1)"
+s1t1_depgate_exit=$?
+if [[ "$s1t1_depgate_exit" -ne 124 ]]; then
+  echo "FAIL: S1-T1 chunk-id dep to non-terminal chunk must keep owner waiting, got $s1t1_depgate_exit"
+  echo "$s1t1_depgate_output"; failures=$((failures + 1))
+else
+  echo "PASS: S1-T1 chunk-id dependency still gates actionability"
+fi
+
+# (d) A test_creation gate chunk (phase 1, no cross_review_by, depends_on
+# parallel_implementing) must NOT count as implementation work. With vadi impl
+# done and prativadi impl still ready, vadi waits (gate excluded), prativadi ready.
+S1T1_GATE_BOX="$TMP_DIR/s1t1-gate-box"
+write_custom_parallel_baton "$S1T1_GATE_BOX/.dvandva/runs/alpha/baton.json" "alpha" 80 "2026-07-01T10:07:00Z" '[
+  {"id":"v1","phase":"1","chunk_type":"implementation","owner_role":"vadi","status":"completed","depends_on":["spec-approved"],"paths":["src/v.rs"],"cross_review_by":"prativadi"},
+  {"id":"p1","phase":"1","chunk_type":"implementation","owner_role":"prativadi","status":"ready","depends_on":["spec-approved"],"paths":["src/p.rs"],"cross_review_by":"vadi"},
+  {"id":"test_creation","phase":"1","chunk_type":"test","owner_role":"vadi","status":"planned","depends_on":["parallel_implementing"],"paths":["tests/t.sh"]}
+]'
+s1t1_gate_vadi_output="$(env DVANDVA_RUN_ID="alpha" timeout 3 bash -c 'cd "$1" && "$2" --role vadi --until-actionable --interval 1 --max-wait 1' _ "$S1T1_GATE_BOX" "$SCRIPT" 2>&1)"
+s1t1_gate_vadi_exit=$?
+if [[ "$s1t1_gate_vadi_exit" -ne 124 ]]; then
+  echo "FAIL: S1-T1 lifecycle gate must not wake vadi while prativadi impl work remains, got $s1t1_gate_vadi_exit"
+  echo "$s1t1_gate_vadi_output"; failures=$((failures + 1))
+else
+  echo "PASS: S1-T1 lifecycle-gate chunk excluded from vadi actionability"
+fi
+run_case "S1-T1 prativadi ready impl chunk actionable despite gate chunk" 0 \
+  env DVANDVA_RUN_ID="alpha" bash -c 'cd "$1" && "$2" --role prativadi --until-actionable --interval 0 --max-wait 0' _ "$S1T1_GATE_BOX" "$PRATIVADI_SCRIPT"
+
+# ─────────────────────────────────────────────────────────────────────
+# S1-T5: --stall-max dead-peer watchdog exits 24 (stalled), distinct from
+# dvandva-write.sh exit 24 (illegal transition).
+# ─────────────────────────────────────────────────────────────────────
+S1T5_STALL_BOX="$TMP_DIR/s1t5-stall-box"
+write_named_parallel_work_baton "$S1T5_STALL_BOX/.dvandva/runs/alpha/baton.json" "alpha" 80 "2026-07-01T10:08:00Z" "vadi"
+stall_output="$(env DVANDVA_RUN_ID="alpha" timeout 8 bash -c 'cd "$1" && "$2" --role prativadi --until-actionable --interval 1 --max-wait 540 --stall-max 1' _ "$S1T5_STALL_BOX" "$PRATIVADI_SCRIPT" 2>&1)"
+stall_exit=$?
+if [[ "$stall_exit" -ne 24 ]]; then
+  echo "FAIL: S1-T5 --stall-max must exit 24 when the baton does not advance, got $stall_exit"
+  echo "$stall_output"; failures=$((failures + 1))
+elif [[ "$stall_output" != *"stalled"* || "$stall_output" != *"stall_max=1s"* ]]; then
+  echo "FAIL: S1-T5 stalled output missing metadata"
+  echo "$stall_output"; failures=$((failures + 1))
+else
+  echo "PASS: S1-T5 --stall-max exits 24 stalled on a non-advancing baton"
 fi
 
 BATON_TERMINATION_REVIEW="$TMP_DIR/termination-review.json"

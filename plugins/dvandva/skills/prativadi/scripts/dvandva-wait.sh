@@ -56,12 +56,13 @@ MAX_WAIT=540
 ALLOW_MISSING=0
 PERSIST=1
 PERSIST_MAX=0
+STALL_MAX=0
 SINCE_CHECKPOINT=""
 UNTIL_ACTIONABLE=0
 
 usage() {
   cat >&2 <<'USAGE'
-Usage: dvandva-wait.sh --role <vadi|prativadi> [--file .dvandva/baton.json] [--interval seconds] [--max-wait seconds] [--allow-missing] [--persist] [--persist-max seconds] [--since-checkpoint checkpoint] [--until-actionable] [--finite]
+Usage: dvandva-wait.sh --role <vadi|prativadi> [--file .dvandva/baton.json] [--interval seconds] [--max-wait seconds] [--allow-missing] [--persist] [--persist-max seconds] [--stall-max seconds] [--since-checkpoint checkpoint] [--until-actionable] [--finite]
 
 Defaults: --interval 60 --max-wait 540
 Default file resolution: --file wins; otherwise DVANDVA_BATON_FILE,
@@ -132,6 +133,11 @@ while [[ $# -gt 0 ]]; do
       PERSIST_MAX="$2"
       shift 2
       ;;
+    --stall-max)
+      [[ $# -ge 2 ]] || { usage; exit 2; }
+      STALL_MAX="$2"
+      shift 2
+      ;;
     --since-checkpoint)
       [[ $# -ge 2 ]] || { usage; exit 2; }
       SINCE_CHECKPOINT="$2"
@@ -188,6 +194,13 @@ fi
 
 elapsed=0
 persist_started_at="$(date +%s)"
+# Dead-peer stall watchdog: wall-clock since the baton last advanced. Reset to
+# now whenever the observed checkpoint changes (see the main loop). --stall-max 0
+# (default) disables it, so existing call sites are unaffected. Exit 24 (stalled)
+# is distinct from dvandva-write.sh exit 24 (illegal transition) — different
+# helpers, same numeric-collision pattern as the lock_lost/split_brain 29 pair.
+stall_started_at="$(date +%s)"
+stall_last_checkpoint=""
 
 enforce_persist_max() {
   [[ "$PERSIST" -eq 1 && "$PERSIST_MAX" -gt 0 ]] || return 0
@@ -201,9 +214,22 @@ enforce_persist_max() {
   fi
 }
 
+enforce_stall_max() {
+  [[ "$STALL_MAX" -gt 0 ]] || return 0
+
+  local now total_stall
+  now="$(date +%s)"
+  total_stall=$((now - stall_started_at))
+  if [[ "$total_stall" -ge "$STALL_MAX" ]]; then
+    echo "DVANDVA_WAIT stalled role=$ROLE file=$BATON_FILE stall_elapsed=${total_stall}s stall_max=${STALL_MAX}s"
+    exit 24
+  fi
+}
+
 record_wait_elapsed() {
   elapsed=$((elapsed + INTERVAL))
   enforce_persist_max
+  enforce_stall_max
 }
 
 contains_role() {
@@ -370,7 +396,7 @@ role_has_actionable_work() {
 
   case "$status" in
     parallel_implementing|cross_fixing)
-      jq -e --arg role "$ROLE" --arg phase "$phase" '
+      jq -e --arg role "$ROLE" --arg phase "$phase" --arg status "$status" '
         def terminal_status:
           . == "completed" or
           . == "approved" or
@@ -381,22 +407,55 @@ role_has_actionable_work() {
           . == "collapsed" or
           . == "skipped" or
           . == "cancelled";
-        def work_items:
-          if (.work_split | type) == "array" then
-            .work_split[]?
+        (.work_split // []) as $ws |
+        ([ $ws[]? | .id ]) as $ids |
+        # A depends_on entry is a chunk-id ref (must be terminal) if it names a
+        # work_split chunk; otherwise it is an anchor (spec-approved, a status
+        # name, ...) gated by the phase transition, so satisfied UNLESS it equals
+        # the current status (you are still inside that stage).
+        def dep_satisfied($dep):
+          if ($ids | index($dep)) != null then
+            any($ws[]?; (.id == $dep) and ((.status // "") | terminal_status))
           else
-            .work_split[]?
+            ($dep != $status)
           end;
-        [ work_items | {id: (.id // ""), status: (.status // "")} ] as $all |
-        any(work_items;
+        # Implementation-family chunk set, matching the dvandva-write.sh >=5 gate:
+        # explicit implementation chunk_type + phase match + role owner +
+        # reciprocal cross_review_by + non-empty paths (cross_fixing uses the
+        # cross_fixing/fix chunk_type). Lifecycle gate chunks (test/review/deslop/
+        # cross_review) lack cross_review_by and are excluded.
+        def is_impl_chunk:
           (((.phase // "") | tostring) == $phase) and
-          (((.chunk_type // .type // "implementation") == "implementation") or ((.chunk_type // .type // "") == "cross_fixing") or ((.chunk_type // .type // "") == "fix")) and
+          (((.owner_role // .owner // "") == "vadi") or ((.owner_role // .owner // "") == "prativadi")) and
+          (
+            if $status == "parallel_implementing" then
+              ((.chunk_type // .type // "") == "implementation") and
+              (((.cross_review_by // "") == "vadi") or ((.cross_review_by // "") == "prativadi")) and
+              ((.cross_review_by // "") != (.owner_role // .owner // "")) and
+              ((.paths | type) == "array" and (.paths | length) > 0)
+            else
+              (((.chunk_type // .type // "") == "cross_fixing") or ((.chunk_type // .type // "") == "fix"))
+            end
+          );
+        def unblocked:
+          all((.depends_on // [])[]; dep_satisfied(.));
+        # Per-role: this role owns an unblocked, non-terminal implementation chunk.
+        (any($ws[]?;
+          is_impl_chunk and
           ((.owner_role // .owner // "") == $role) and
           (((.status // "") | terminal_status) | not) and
-          all((.depends_on // [])[]; . as $dep |
-            any($all[]; (.id == $dep) and ((.status // "") | terminal_status))
-          )
-        )
+          unblocked))
+        or
+        # Advance-owner wake: when no implementation chunk is unblocked and
+        # non-terminal for EITHER role (all terminal or blocked), the state
+        # advance-owner (vadi for parallel_implementing and cross_fixing) becomes
+        # actionable so it can write the outbound transition. Without this, both
+        # roles sleep forever once the last chunk finishes.
+        (($role == "vadi") and
+          ((any($ws[]?;
+            is_impl_chunk and
+            (((.status // "") | terminal_status) | not) and
+            unblocked)) | not))
       ' "$BATON_FILE" >/dev/null 2>&1
       ;;
     *)
@@ -527,6 +586,12 @@ while true; do
   fi
 
   IFS=$'\x1f' read -r baton_run_id assignee status phase checkpoint question resume_assignee resume_status active_roles updated_at current_engine <<< "$state"
+  # Reset the stall watchdog whenever the baton advances: a changed checkpoint is
+  # progress, so the peer is not stalled. First read (empty baseline) also resets.
+  if [[ "$checkpoint" != "$stall_last_checkpoint" ]]; then
+    stall_last_checkpoint="$checkpoint"
+    stall_started_at="$(date +%s)"
+  fi
   selected_run_id="$(derive_run_id "$BATON_FILE" "$baton_run_id")"
   # A baton whose .run_id field disagrees with its directory is itself suspect.
   # Path is authoritative (selected_run_id is path-derived above), so fail loud
