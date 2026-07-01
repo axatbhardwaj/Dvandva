@@ -29,7 +29,7 @@ Prerelease (`2.0.0-alpha.1`) covering the read path only. Licensed under
   affects only synthetic batons — no real Dvandva baton carries an exponential
   number in any surfaced field. The exact jq exponential formatter is not
   reproduced.
-- **Numeric `run_id`/`status`/`updated_at` in `resolve`.** The shell resolver
+- **Numeric `run_id`/`status`/`assignee`/`updated_at` in `resolve`.** The shell resolver
   passes these discovery fields through without `tostring`, so a *numeric*
   value would surface in the `ASK` array as a JSON number; the Rust resolver
   stringifies it. Real batons always carry these fields as strings, so this is
