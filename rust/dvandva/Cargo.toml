@@ -1,0 +1,15 @@
+[package]
+name = "dvandva"
+version = "2.0.0-alpha.1"
+edition = "2021"
+description = "Dvandva: a two-role (vadi/prativadi) multi-agent coordination engine. Multicall binary implementing the read path (state + resolve) over a JSON baton."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/axatbhardwaj/Dvandva"
+readme = "README.md"
+
+[[bin]]
+name = "dvandva"
+path = "src/main.rs"
+
+[dependencies]
+dvandva-core = { path = "../dvandva-core", version = "2.0.0-alpha.1" }

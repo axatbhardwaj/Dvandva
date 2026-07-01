@@ -5,3 +5,11 @@ journal/
 *.log
 /superpowers/
 /agent-os/
+
+# Secrets — crates.io publish token etc. Never commit.
+.env
+.env.*
+!.env.example
+
+# Rust build output
+/rust/target/
