@@ -75,6 +75,18 @@ elif command -v dvandva >/dev/null 2>&1; then
   __dvandva_shim_bin="$(command -v dvandva)"
 fi
 if [[ -n "$__dvandva_shim_bin" ]]; then
+  # CR-1: for `state`, preserve the shim-derived role (parent-of-parent dir)
+  # so a delegated invocation without an explicit --role still resolves the
+  # correct role. An explicit --role in "$@" still wins in the binary, and a
+  # caller-provided DVANDVA_ROLE is left untouched. Not applied to `resolve`,
+  # which always receives an explicit --role.
+  if [[ "$__dvandva_shim_subcmd" == "state" && -z "${DVANDVA_ROLE:-}" ]]; then
+    __dvandva_shim_role="$(basename "$(dirname "$__dvandva_shim_dir")")"
+    if [[ "$__dvandva_shim_role" == "vadi" || "$__dvandva_shim_role" == "prativadi" ]]; then
+      export DVANDVA_ROLE="$__dvandva_shim_role"
+    fi
+    unset __dvandva_shim_role
+  fi
   exec "$__dvandva_shim_bin" "$__dvandva_shim_subcmd" "$@"
 fi
 unset __dvandva_shim_dir __dvandva_shim_name __dvandva_shim_subcmd __dvandva_shim_bin
