@@ -135,20 +135,29 @@ v2_mode_status_filter() {
 
 run_mode_edge_case() {
   local mode="$1" from_status="$2" to_status="$3"
+  local edge="$from_status:$to_status"
   local box
   local from_filter
+  local to_filter
   box="$(new_box "${mode}-${from_status}-${to_status}-edge")"
   from_filter="$(v2_mode_status_filter "$mode" "$from_status")"
+  to_filter="$(v2_mode_status_filter "$mode" "$to_status")"
   if [[ "$from_status" == "termination_review" && "$to_status" == "done" ]]; then
     from_filter="$from_filter | .vadi_final_approval = true | .prativadi_final_approval = true"
   fi
+  case "$edge" in
+    deep_review:phase_fixing|cross_review:cross_fixing|termination_review:phase_fixing|phase_review:phase_fixing|review_of_review:counter_review|counter_review:review_of_review)
+      from_filter="$from_filter | .loop_counts = {\"$edge\": 0}"
+      to_filter="$to_filter | .loop_counts = {\"$edge\": 1}"
+      ;;
+  esac
   make_baton_v2 "$box/baton.json" "$from_status" "$(v2_status_owner "$from_status")" 4 "$from_filter"
   if [[ "$mode:$from_status:$to_status" == "review:deep_review:deslop" ]]; then
     make_baton_v2 "$box/baton.next.json" "$to_status" "$(v2_status_owner "$to_status")" 5 \
-      "$(v2_mode_status_filter "$mode" "$to_status")" \
+      "$to_filter" \
       "$(v2_review_angles_filter)"
   else
-    make_baton_v2 "$box/baton.next.json" "$to_status" "$(v2_status_owner "$to_status")" 5 "$(v2_mode_status_filter "$mode" "$to_status")"
+    make_baton_v2 "$box/baton.next.json" "$to_status" "$(v2_status_owner "$to_status")" 5 "$to_filter"
   fi
   run_case "$mode mode $from_status:$to_status full edge table is legal" 0 \
     "$SCRIPT" "$box/baton.json" "$box/baton.next.json"
@@ -1830,6 +1839,12 @@ for edge in $V2_EDGES; do
   if [[ "$edge" == "cross_review:cross_fixing" ]]; then
     extras+=("$(v2_cross_review_finding_filter)")
   fi
+  case "$edge" in
+    deep_review:phase_fixing|cross_review:cross_fixing|termination_review:phase_fixing|review_of_review:counter_review|counter_review:review_of_review)
+      cur_extras+=(".loop_counts = {\"$edge\": 0}")
+      extras+=(".loop_counts = {\"$edge\": 1}")
+      ;;
+  esac
   if [[ "$edge" == "parallel_implementing:test_creation" ]]; then
     extras+=("$(v2_parallel_chunks_filter)")
     extras+=('.active_roles = []')
@@ -1987,8 +2002,12 @@ run_case_contains "v2 cross_review->deep_review rejects missing cross-review evi
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box v2-cross-review-cross-fixing-missing-evidence)"
-make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 '.active_roles = ["vadi", "prativadi"]'
-make_baton_v2 "$BOX/baton.next.json" "cross_fixing" "team" 5 '.active_roles = ["vadi", "prativadi"]'
+make_baton_v2 "$BOX/baton.json" "cross_review" "team" 4 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.loop_counts = {"cross_review:cross_fixing": 0}'
+make_baton_v2 "$BOX/baton.next.json" "cross_fixing" "team" 5 \
+  '.active_roles = ["vadi", "prativadi"]' \
+  '.loop_counts = {"cross_review:cross_fixing": 1}'
 run_case_contains "v2 cross_review->cross_fixing rejects missing cross-review evidence" 24 "completed cross-review subagent_tracks" \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
@@ -2042,6 +2061,7 @@ run_case "v2 cross_review same-status sync can record finding role" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 make_baton_v2 "$BOX/baton.next.json" "cross_fixing" "team" 6 \
   '.active_roles = ["vadi", "prativadi"]' \
+  '.loop_counts = {"cross_review:cross_fixing": 1}' \
   "$(v2_cross_review_finding_filter)"
 run_case "v2 cross_review->cross_fixing accepts review-cycle checkpoint after team sync" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
@@ -3626,8 +3646,12 @@ run_case "profile fast research_review:implementing is legal" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box profile-fast-phase-review-fixing-edge)"
-make_baton_v2 "$BOX/baton.json" "phase_review" "prativadi" 4 "$fast_profile_filter" "$fast_allowlist_work_split" '.changed_paths = ["README.md"]'
-make_baton_v2 "$BOX/baton.next.json" "phase_fixing" "vadi" 5 "$fast_profile_filter" "$fast_allowlist_work_split" '.changed_paths = ["README.md"]'
+make_baton_v2 "$BOX/baton.json" "phase_review" "prativadi" 4 "$fast_profile_filter" "$fast_allowlist_work_split" \
+  '.changed_paths = ["README.md"]' \
+  '.loop_counts = {"phase_review:phase_fixing": 0}'
+make_baton_v2 "$BOX/baton.next.json" "phase_fixing" "vadi" 5 "$fast_profile_filter" "$fast_allowlist_work_split" \
+  '.changed_paths = ["README.md"]' \
+  '.loop_counts = {"phase_review:phase_fixing": 1}'
 run_case "profile fast phase_review:phase_fixing is legal" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
@@ -3646,8 +3670,11 @@ run_case "profile fast phase_review:termination_review is legal" 0 \
 
 BOX="$(new_box profile-fast-termination-fixing-edge)"
 make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 "$fast_profile_filter" "$fast_allowlist_work_split" \
-  '.changed_paths = ["README.md"] | .active_roles = ["vadi", "prativadi"]'
-make_baton_v2 "$BOX/baton.next.json" "phase_fixing" "vadi" 5 "$fast_profile_filter" "$fast_allowlist_work_split" '.changed_paths = ["README.md"]'
+  '.changed_paths = ["README.md"] | .active_roles = ["vadi", "prativadi"]' \
+  '.loop_counts = {"termination_review:phase_fixing": 0}'
+make_baton_v2 "$BOX/baton.next.json" "phase_fixing" "vadi" 5 "$fast_profile_filter" "$fast_allowlist_work_split" \
+  '.changed_paths = ["README.md"]' \
+  '.loop_counts = {"termination_review:phase_fixing": 1}'
 run_case "profile fast termination_review:phase_fixing is legal" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
@@ -3915,8 +3942,12 @@ run_case "profile standard implementing:phase_review is legal" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 BOX="$(new_box profile-standard-review-fixing-edge)"
-make_baton_v2 "$BOX/baton.json" "phase_review" "prativadi" 4 "$standard_profile_filter" '.phase = 1'
-make_baton_v2 "$BOX/baton.next.json" "phase_fixing" "vadi" 5 "$standard_profile_filter" '.phase = 1'
+make_baton_v2 "$BOX/baton.json" "phase_review" "prativadi" 4 "$standard_profile_filter" \
+  '.phase = 1' \
+  '.loop_counts = {"phase_review:phase_fixing": 0}'
+make_baton_v2 "$BOX/baton.next.json" "phase_fixing" "vadi" 5 "$standard_profile_filter" \
+  '.phase = 1' \
+  '.loop_counts = {"phase_review:phase_fixing": 1}'
 run_case "profile standard phase_review:phase_fixing is legal" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
@@ -4174,6 +4205,22 @@ make_baton_v2 "$BOX/baton.json" "deep_review" "prativadi" 4 \
 make_baton_v2 "$BOX/baton.next.json" "phase_fixing" "vadi" 5 \
   '.disagreement_cap = 3 | .loop_counts = {"deep_review:phase_fixing": 1}'
 run_case_contains "v2 loop count must increment by one" 23 "bad_loop_counts" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-loop-count-first-increment-required)"
+make_baton_v2 "$BOX/baton.json" "deep_review" "prativadi" 4 \
+  '.disagreement_cap = 3 | .loop_counts = {}'
+make_baton_v2 "$BOX/baton.next.json" "phase_fixing" "vadi" 5 \
+  '.disagreement_cap = 3 | .loop_counts = {}'
+run_case_contains "v2 loop count first increment is required" 23 "bad_loop_counts" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-loop-count-first-increment-accepted)"
+make_baton_v2 "$BOX/baton.json" "deep_review" "prativadi" 4 \
+  '.disagreement_cap = 3 | .loop_counts = {}'
+make_baton_v2 "$BOX/baton.next.json" "phase_fixing" "vadi" 5 \
+  '.disagreement_cap = 3 | .loop_counts = {"deep_review:phase_fixing": 1}'
+run_case "v2 loop count first increment is accepted" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
 for edge in \

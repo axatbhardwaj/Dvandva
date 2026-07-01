@@ -1320,11 +1320,8 @@ else
         loop_reason="bad_loop_counts edge=$loop_edge count=$new_loop_count"
       elif [[ "$cur_loop_count" -ge "$loop_cap" ]]; then
         loop_reason="loop_cap edge=$loop_edge count=$cur_loop_count cap=$loop_cap"
-      elif jq -e --arg edge "$loop_edge" 'has("loop_counts") and ((.loop_counts // {}) | has($edge))' "$BATON_FILE" >/dev/null 2>&1 \
-        || jq -e --arg edge "$loop_edge" 'has("loop_counts") and ((.loop_counts // {}) | has($edge))' "$CANDIDATE_FILE" >/dev/null 2>&1; then
-        if [[ "$new_loop_count" -ne $((cur_loop_count + 1)) ]]; then
-          loop_reason="bad_loop_counts edge=$loop_edge expected=$((cur_loop_count + 1)) got=$new_loop_count"
-        fi
+      elif [[ "$new_loop_count" -ne $((cur_loop_count + 1)) ]]; then
+        loop_reason="bad_loop_counts edge=$loop_edge expected=$((cur_loop_count + 1)) got=$new_loop_count"
       fi
     fi
   fi
