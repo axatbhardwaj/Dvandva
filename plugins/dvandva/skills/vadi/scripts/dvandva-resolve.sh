@@ -55,6 +55,31 @@
 #   2   usage error (bad/unsafe selector or arguments)
 set -u
 
+# --- Delegating shim -------------------------------------------------------
+# Prefer a compiled dvandva binary (DVANDVA_BIN > co-located binary > PATH).
+# When found, exec it with the subcommand derived from this shim's own
+# basename, forwarding all args unchanged (DVANDVA_ROLE / DVANDVA_* selectors
+# pass through the environment automatically; the binary derives role from
+# --role > DVANDVA_ROLE > argv0). When no binary is found, fall through to
+# the preserved shell implementation below (unchanged behavior).
+__dvandva_shim_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+__dvandva_shim_name="$(basename "${BASH_SOURCE[0]}")"
+__dvandva_shim_subcmd="${__dvandva_shim_name#dvandva-}"
+__dvandva_shim_subcmd="${__dvandva_shim_subcmd%.sh}"
+__dvandva_shim_bin=""
+if [[ -n "${DVANDVA_BIN:-}" && -x "${DVANDVA_BIN:-}" ]]; then
+  __dvandva_shim_bin="$DVANDVA_BIN"
+elif [[ -x "$__dvandva_shim_dir/dvandva" ]]; then
+  __dvandva_shim_bin="$__dvandva_shim_dir/dvandva"
+elif command -v dvandva >/dev/null 2>&1; then
+  __dvandva_shim_bin="$(command -v dvandva)"
+fi
+if [[ -n "$__dvandva_shim_bin" ]]; then
+  exec "$__dvandva_shim_bin" "$__dvandva_shim_subcmd" "$@"
+fi
+unset __dvandva_shim_dir __dvandva_shim_name __dvandva_shim_subcmd __dvandva_shim_bin
+# --- End delegating shim; preserved shell fallback continues below --------
+
 ROLE=""
 CWD=""
 
