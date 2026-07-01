@@ -216,6 +216,20 @@ fn counts(root: &Value) -> Value {
     Value::Object(out)
 }
 
+// Mirror of jq's `bounded_scalar`: strings are bounded to `max` codepoints; any
+// other scalar (number/bool) is stringified via `to_string()` then bounded,
+// exactly as jq applies `tostring`. With serde_json's `arbitrary_precision`
+// feature the numeric literal is preserved verbatim, so integers and decimals
+// stringify identically to jq (`1.50` -> "1.50", `42` -> "42").
+//
+// KNOWN RESIDUAL (exponential): jq's `tostring` normalizes exponential literals
+// to uppercase-E form (`1e10` -> "1E+10") while serde emits lowercase-e
+// (`1e10` -> "1e+10"). This narrow E-case divergence affects ONLY synthetic
+// batons — no real Dvandva baton carries an exponential number in a
+// string-context field. See rust/dvandva/README.md "Known limitations". Do not
+// emit numbers as JSON numbers here: jq stringifies them in this path, so
+// preserving the number type would DIVERGE from the shell (see F4 in the
+// differential parity harness).
 fn bounded_scalar(value: Option<&Value>, max: usize) -> Value {
     match value {
         None | Some(Value::Null) => Value::Null,

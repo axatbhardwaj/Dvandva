@@ -717,6 +717,48 @@ cat >"$F2A_FALSE" <<'JSON'
 JSON
 parity_state "F2a REGRESSION false top-level scalars coalesce (schema null / profile full / phase null)" 0 "$STATE_VADI" --compact --file "$F2A_FALSE" --role vadi
 
+# F4 REGRESSION (deep_review numeric parity): JSON numbers must render identically
+# to jq. Two shapes are exercised:
+#   * PASSTHROUGH numbers (phase, checkpoint, findings[].id) stay NUMBERS on both
+#     sides — jq preserves the literal (`1.50` not `1.5`), and Rust must too.
+#   * STRING-CONTEXT numbers (next_action scalar, findings[].summary, a numeric
+#     refs value) are stringified via jq `tostring` on BOTH sides; the STRING must
+#     match (`"1.50"` not `"1.5"`, `"3.140"` not `"3.14"`).
+# Before the arbitrary_precision fix Rust dropped trailing zeros (serde f64:
+# `1.50`->`1.5`, `3.140`->`3.14`) so these were NOT value-equal; now they are.
+# NOTE: exponential literals (e.g. `1e10`) are intentionally NOT asserted here —
+# jq normalizes them to `1E+10` while serde emits `1e+10` (E-case only). That
+# narrow, synthetic residual is documented in rust/dvandva/README.md and the
+# bounded_scalar render site; do not add an exponential case (it would fail).
+F4_NUM="$TMP_DIR/f4-numeric-parity.json"
+cat >"$F4_NUM" <<'JSON'
+{
+  "schema": "dvandva.baton.v2", "run_id": "f4-numeric", "mode": "development",
+  "run_mode": "walkaway", "status": "implementing", "assignee": "vadi",
+  "phase": 1.50, "checkpoint": 42,
+  "refs": {"branch": 2.00, "plan": "superpowers/plans/f4.html"},
+  "work_split": [], "subagent_tracks": [], "verification_matrix": [],
+  "findings": [{"id": 7, "status": "open", "severity": "low", "summary": 3.140}],
+  "blockers": [], "changed_paths": [],
+  "next_action": 1.50
+}
+JSON
+parity_state "F4 REGRESSION numeric parity (passthrough phase 1.50/id 7 + string-context next_action/summary/ref)" 0 "$STATE_VADI" --compact --file "$F4_NUM" --role vadi
+
+# F4b: minimal before/after case pinning the canonical decimal — next_action:1.50
+# stringifies to "1.50" (trailing zero preserved), plus a plain integer checkpoint.
+F4B_DEC="$TMP_DIR/f4b-decimal-next-action.json"
+cat >"$F4B_DEC" <<'JSON'
+{
+  "schema": "dvandva.baton.v2", "run_id": "f4b-decimal", "mode": "development",
+  "status": "implementing", "assignee": "vadi", "phase": 1, "checkpoint": 100,
+  "work_split": [], "subagent_tracks": [], "verification_matrix": [],
+  "findings": [], "blockers": [], "changed_paths": [],
+  "next_action": 1.50
+}
+JSON
+parity_state "F4b REGRESSION decimal next_action 1.50 -> \"1.50\" + integer checkpoint 100" 0 "$STATE_VADI" --compact --file "$F4B_DEC" --role vadi
+
 echo
 echo "=== SHIM-PATH parity (vm-shim-binary-path / vm-fallback) ==="
 

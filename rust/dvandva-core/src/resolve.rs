@@ -269,6 +269,22 @@ impl RunCandidate {
     }
 }
 
+// Extract a discovery field (run_id/status/assignee/updated_at) as a string,
+// coalescing null/false to None exactly like jq `.x // ""` treats them as absent.
+//
+// SYNTHETIC RESIDUAL (numeric fields): the shell resolver does NOT apply
+// `tostring` to these fields, so a NUMERIC `run_id`/`status`/`updated_at`
+// (e.g. `run_id: 1.5`) surfaces in the jq ASK array as a JSON NUMBER, whereas
+// this helper stringifies it (`"1.5"`). Real Dvandva batons always carry these
+// as strings, so the divergence is unreachable in practice; preserving the JSON
+// number type here would require RunCandidate to hold `Value` and would ripple
+// into the updated_at/run_id sort ordering (which must stay byte-identical to
+// the shell), so it is intentionally left as a documented synthetic residual
+// rather than fixed. See rust/dvandva/README.md "Known limitations".
+//
+// KNOWN RESIDUAL (exponential): as in state's bounded_scalar, a numeric literal
+// in exponential form stringifies with a lowercase `e` here vs jq's uppercase
+// `E` (`1e10` -> "1e+10" vs "1E+10"); also synthetic.
 fn object_field(value: &Value, key: &str) -> Option<String> {
     let field = value.as_object()?.get(key)?;
     match field {

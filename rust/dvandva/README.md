@@ -16,3 +16,22 @@ When invoked through the delegating shims `dvandva-state.sh` /
 
 Prerelease (`2.0.0-alpha.1`) covering the read path only. Licensed under
 `MIT OR Apache-2.0`.
+
+## Known limitations
+
+- **Exponential number literals.** The read path is byte-for-value equal to the
+  jq shell fallback for integer and decimal numbers, including trailing-zero
+  preservation (`1.50` stays `1.50`, not `1.5`) via serde_json's
+  `arbitrary_precision` feature. The one exception is numbers written in
+  **exponential form**: jq normalizes them to an uppercase-`E` mantissa
+  (`1e10` -> `1E+10`), while serde_json emits a lowercase `e` (`1e10` ->
+  `1e+10`). This is a narrow formatting difference (the `E`/`e` case) that
+  affects only synthetic batons — no real Dvandva baton carries an exponential
+  number in any surfaced field. The exact jq exponential formatter is not
+  reproduced.
+- **Numeric `run_id`/`status`/`updated_at` in `resolve`.** The shell resolver
+  passes these discovery fields through without `tostring`, so a *numeric*
+  value would surface in the `ASK` array as a JSON number; the Rust resolver
+  stringifies it. Real batons always carry these fields as strings, so this is
+  an unreachable, synthetic residual (preserving the number type would change
+  the `ASK` sort ordering, which must stay identical to the shell).
