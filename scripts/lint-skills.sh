@@ -14,6 +14,8 @@ if [[ $# -ne 1 ]]; then
 fi
 
 FILE="$1"
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+V1_SCHEMA="$ROOT_DIR/plugins/dvandva/references/baton-schema.json"
 
 if [[ ! -f "$FILE" ]]; then
   echo "FAIL: file not found: $FILE" >&2
@@ -66,6 +68,15 @@ if [[ "$NAME" != "vadi" && "$NAME" != "prativadi" ]]; then
   exit 0
 fi
 
+STALE_APPROVAL_LINES=$(grep -nE '_final_approval: true' "$FILE" | grep -v 'termination_review' || true)
+if [[ -n "$STALE_APPROVAL_LINES" ]]; then
+  while IFS= read -r line; do
+    [[ -z "$line" ]] && continue
+    echo "FAIL: out-of-band final approval instruction in $FILE: $line" >&2
+  done <<< "$STALE_APPROVAL_LINES"
+  exit 1
+fi
+
 # Inlined schema check: find a fenced JSON block whose first key is "schema"
 # Only scan body lines (after the second '---') to ignore any ```json in frontmatter.
 # The awk terminates at the closing fence so no truncation limit is needed.
@@ -81,13 +92,29 @@ if ! echo "$JSON_BLOCK" | jq -e '.schema == "dvandva.baton.v1"' >/dev/null 2>&1;
   exit 1
 fi
 
-REQUIRED_KEYS=(schema updated_at mode run_mode phase total_phases status assignee current_engine review_target plan_ref master_plan_locked question resume_assignee resume_status disagreement_round disagreement_cap turn_cap branch checkpoint allow_commit allow_push allow_pr vadi_final_approval prativadi_final_approval final_commit pushed_ref summary changed_paths verification findings narrow_fixups vadi_counter deferred blockers next_action)
+if [[ ! -f "$V1_SCHEMA" ]]; then
+  echo "FAIL: v1 baton schema reference not found: $V1_SCHEMA" >&2
+  exit 1
+fi
+
+mapfile -t REQUIRED_KEYS < <(jq -r 'keys[]' "$V1_SCHEMA")
 for key in "${REQUIRED_KEYS[@]}"; do
   if ! echo "$JSON_BLOCK" | jq -e "has(\"$key\")" >/dev/null 2>&1; then
     echo "FAIL: inlined JSON block missing required key '$key' in $FILE" >&2
     exit 1
   fi
 done
+
+UNEXPECTED_KEYS=$(echo "$JSON_BLOCK" | jq -r --slurpfile schema "$V1_SCHEMA" '
+  (keys - ($schema[0] | keys))[]
+' 2>/dev/null || true)
+if [[ -n "$UNEXPECTED_KEYS" ]]; then
+  while IFS= read -r key; do
+    [[ -z "$key" ]] && continue
+    echo "FAIL: inlined JSON block has unexpected key '$key' in $FILE" >&2
+  done <<< "$UNEXPECTED_KEYS"
+  exit 1
+fi
 
 echo "OK: $FILE"
 exit 0

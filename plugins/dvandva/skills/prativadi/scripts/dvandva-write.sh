@@ -635,6 +635,57 @@ if [[ "$schema" == "dvandva.baton.v2" ]]; then
   fi
   if ! jq -e '
     . as $root |
+    def allowed_anchor:
+      . == "spec-approved" or
+      . == "parallel_implementing" or
+      . == "implementing" or
+      . == "test_creation" or
+      . == "cross_review" or
+      . == "deep_review" or
+      . == "phase_review" or
+      . == "deslop";
+    def work_items:
+      if ($root.work_split | type) == "array" then
+        $root.work_split[]? | select(type == "object")
+      else
+        $root.work_split | to_entries[]? | select(.value | type == "object") | (.value + {id: (.value.id // .key)})
+      end;
+    [work_items] as $items |
+    ([$items[] | .id? | select(type == "string" and length > 0)] | unique) as $ids |
+    all($items[];
+      ((.depends_on // []) | type) == "array" and
+      all((.depends_on // [])[];
+        . as $dep |
+        (type == "string") and ((($ids | index($dep)) != null) or ($dep | allowed_anchor))
+      )
+    ) and
+    (
+      [
+        $items[] |
+        {id: (.id // ""), deps: [(.depends_on // [])[] as $dep | select(($ids | index($dep)) != null) | $dep]} |
+        select(.id | length > 0)
+      ] as $nodes |
+      def strip_ready:
+        . as $nodes |
+        [$nodes[] | select((.deps | length) == 0) | .id] as $ready |
+        if ($ready | length) == 0 then
+          $nodes
+        else
+          [
+            $nodes[] |
+            . as $node |
+            select(($ready | index($node.id)) == null) |
+            .deps = [.deps[] as $dep | select(($ready | index($dep)) == null) | $dep]
+          ]
+        end;
+      ($nodes | until((strip_ready == .); strip_ready) | length) == 0
+    )
+  ' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+    echo "DVANDVA_WRITE bad_depends_on candidate=$CANDIDATE_FILE" >&2
+    exit 23
+  fi
+  if ! jq -e '
+    . as $root |
     def work_items:
       if ($root.work_split | type) == "array" then
         $root.work_split[]?
@@ -1233,10 +1284,48 @@ else
   approval_reason=""
   if [[ "$schema" == "dvandva.baton.v2" && "$new_status" != "done" ]]; then
     writer_role="${DVANDVA_ROLE:-}"
-    if [[ "$new_vadi_final_approval" != "$cur_vadi_final_approval" && "$writer_role" != "vadi" ]]; then
+    approval_reset_transition=0
+    if [[ "$cur_status" == "termination_review" && "$new_status" == "phase_fixing" ]]; then
+      approval_reset_transition=1
+    fi
+    if [[ "$approval_reset_transition" -eq 1 && ( "$new_vadi_final_approval" == "true" || "$new_prativadi_final_approval" == "true" ) ]]; then
+      approval_reason="stale_approval: termination_review->phase_fixing must reset both final approvals"
+    elif [[ "$new_status" != "termination_review" && "$new_vadi_final_approval" == "true" && "$cur_vadi_final_approval" != "true" ]]; then
+      approval_reason="approval_out_of_band: vadi_final_approval can only be raised while entering termination_review"
+    elif [[ "$new_status" != "termination_review" && "$new_prativadi_final_approval" == "true" && "$cur_prativadi_final_approval" != "true" ]]; then
+      approval_reason="approval_out_of_band: prativadi_final_approval can only be raised while entering termination_review"
+    elif [[ "$approval_reset_transition" -eq 0 && "$new_vadi_final_approval" != "$cur_vadi_final_approval" && "$writer_role" != "vadi" ]]; then
       approval_reason="final approval ownership requires DVANDVA_ROLE=vadi to change vadi_final_approval"
-    elif [[ "$new_prativadi_final_approval" != "$cur_prativadi_final_approval" && "$writer_role" != "prativadi" ]]; then
+    elif [[ "$approval_reset_transition" -eq 0 && "$new_prativadi_final_approval" != "$cur_prativadi_final_approval" && "$writer_role" != "prativadi" ]]; then
       approval_reason="final approval ownership requires DVANDVA_ROLE=prativadi to change prativadi_final_approval"
+    fi
+  fi
+
+  loop_reason=""
+  if [[ "$schema" == "dvandva.baton.v2" && "$new_status" != "human_decision" ]]; then
+    loop_edge=""
+    case "${cur_status}:${new_status}" in
+      deep_review:phase_fixing|cross_review:cross_fixing|termination_review:phase_fixing|phase_review:phase_fixing|review_of_review:counter_review|counter_review:review_of_review)
+        loop_edge="${cur_status}:${new_status}"
+        ;;
+    esac
+    if [[ "$new_phase" != "$cur_phase" ]] \
+      && jq -e '((.loop_counts // {}) | type) == "object" and ((.loop_counts // {}) | length) > 0' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+      loop_reason="bad_loop_counts phase_advanced current=$cur_phase candidate=$new_phase must_reset=true"
+    elif [[ -n "$loop_edge" ]]; then
+      cur_loop_count="$(jq -r --arg edge "$loop_edge" '(.loop_counts // {})[$edge] // 0' "$BATON_FILE" 2>/dev/null || printf 'invalid')"
+      new_loop_count="$(jq -r --arg edge "$loop_edge" '(.loop_counts // {})[$edge] // 0' "$CANDIDATE_FILE" 2>/dev/null || printf 'invalid')"
+      loop_cap="$(jq -r '.disagreement_cap // 0' "$CANDIDATE_FILE" 2>/dev/null || printf 'invalid')"
+      if [[ ! "$cur_loop_count" =~ ^[0-9]+$ || ! "$new_loop_count" =~ ^[0-9]+$ || ! "$loop_cap" =~ ^[0-9]+$ || "$loop_cap" -eq 0 ]]; then
+        loop_reason="bad_loop_counts edge=$loop_edge count=$new_loop_count"
+      elif [[ "$cur_loop_count" -ge "$loop_cap" ]]; then
+        loop_reason="loop_cap edge=$loop_edge count=$cur_loop_count cap=$loop_cap"
+      elif jq -e --arg edge "$loop_edge" 'has("loop_counts") and ((.loop_counts // {}) | has($edge))' "$BATON_FILE" >/dev/null 2>&1 \
+        || jq -e --arg edge "$loop_edge" 'has("loop_counts") and ((.loop_counts // {}) | has($edge))' "$CANDIDATE_FILE" >/dev/null 2>&1; then
+        if [[ "$new_loop_count" -ne $((cur_loop_count + 1)) ]]; then
+          loop_reason="bad_loop_counts edge=$loop_edge expected=$((cur_loop_count + 1)) got=$new_loop_count"
+        fi
+      fi
     fi
   fi
 
@@ -1357,8 +1446,14 @@ else
     exit 27
   elif [[ "$new_checkpoint" -ne $((cur_checkpoint + 1)) ]]; then
     reason="checkpoint must be $((cur_checkpoint + 1)), got $new_checkpoint"
+  elif [[ "$approval_reason" == approval_out_of_band* || "$approval_reason" == stale_approval* ]]; then
+    echo "DVANDVA_WRITE $approval_reason" >&2
+    exit 23
   elif [[ -n "$approval_reason" ]]; then
     reason="$approval_reason"
+  elif [[ -n "$loop_reason" ]]; then
+    echo "DVANDVA_WRITE $loop_reason" >&2
+    exit 23
   elif [[ -n "$review_ownership_reason" && ( "$new_status" != "done" || ( "$cur_status" == "termination_review" && "$cur_vadi_final_approval" == "true" && "$cur_prativadi_final_approval" == "true" ) ) ]]; then
     reason="$review_ownership_reason"
   elif [[ "$new_status" == "$cur_status" ]]; then

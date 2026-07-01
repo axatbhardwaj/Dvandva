@@ -4113,6 +4113,139 @@ make_baton_v2 "$BOX/baton.next.json" "human_decision" "human" 5 \
 run_case "profile downgrade below floor may route to human_decision" 0 \
   "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
 
+# --- liveness floor: depends_on DAG, loop caps, approval hygiene ---
+
+BOX="$(new_box v2-work-split-dangling-depends-on)"
+make_baton_v2 "$BOX/baton.json" "spec_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "parallel_implementing" "team" 5 \
+  "$(v2_parallel_chunks_filter)" \
+  '.work_split |= map(if .id == "implementation-chunk-a" then .depends_on = ["missing-anchor"] else . end)'
+run_case_contains "v2 work_split dangling depends_on exits 23" 23 "bad_depends_on" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-work-split-depends-on-cycle)"
+make_baton_v2 "$BOX/baton.json" "spec_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "parallel_implementing" "team" 5 \
+  "$(v2_parallel_chunks_filter)" \
+  '.work_split |= map(
+    if .id == "implementation-chunk-a" then .depends_on = ["implementation-chunk-b"]
+    elif .id == "implementation-chunk-b" then .depends_on = ["implementation-chunk-a"]
+    else .
+    end
+  )'
+run_case_contains "v2 work_split depends_on cycle exits 23" 23 "bad_depends_on" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-work-split-anchor-depends-on-accepted)"
+make_baton_v2 "$BOX/baton.json" "spec_review" "prativadi" 4
+make_baton_v2 "$BOX/baton.next.json" "parallel_implementing" "team" 5 \
+  "$(v2_parallel_chunks_filter)" \
+  '.work_split |= map(if (.chunk_type // "") == "implementation" then .depends_on = ["spec-approved"] else . end)' \
+  '.work_split += [{
+    "id": "test_creation",
+    "phase": "1",
+    "chunk_type": "test",
+    "owner": "vadi",
+    "owner_role": "vadi",
+    "suggested_agent": "dvandva-test-creator",
+    "scope": "Test gate follows parallel implementation.",
+    "paths": ["scripts/test-dvandva-write.sh"],
+    "write_paths": ["scripts/test-dvandva-write.sh"],
+    "can_parallelize": false,
+    "parallel_rationale": "Gate runs after implementation.",
+    "depends_on": ["parallel_implementing"],
+    "status": "planned",
+    "artifact_refs": []
+  }]'
+run_case "v2 work_split accepts fixed anchor depends_on refs" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-loop-cap-rejects-fourth-cycle)"
+make_baton_v2 "$BOX/baton.json" "deep_review" "prativadi" 4 \
+  '.disagreement_cap = 3 | .loop_counts = {"deep_review:phase_fixing": 3}'
+make_baton_v2 "$BOX/baton.next.json" "phase_fixing" "vadi" 5 \
+  '.disagreement_cap = 3 | .loop_counts = {"deep_review:phase_fixing": 4}'
+run_case_contains "v2 loop cap rejects fourth review/fix cycle" 23 "loop_cap" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-loop-count-requires-increment)"
+make_baton_v2 "$BOX/baton.json" "deep_review" "prativadi" 4 \
+  '.disagreement_cap = 3 | .loop_counts = {"deep_review:phase_fixing": 1}'
+make_baton_v2 "$BOX/baton.next.json" "phase_fixing" "vadi" 5 \
+  '.disagreement_cap = 3 | .loop_counts = {"deep_review:phase_fixing": 1}'
+run_case_contains "v2 loop count must increment by one" 23 "bad_loop_counts" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+for edge in \
+  "cross_review:cross_fixing:team:team" \
+  "termination_review:phase_fixing:team:vadi" \
+  "phase_review:phase_fixing:prativadi:vadi" \
+  "review_of_review:counter_review:vadi:prativadi" \
+  "counter_review:review_of_review:prativadi:vadi"; do
+  IFS=: read -r from_status to_status from_owner to_owner <<< "$edge"
+  BOX="$(new_box "v2-loop-cap-${from_status}-${to_status}")"
+  make_baton_v2 "$BOX/baton.json" "$from_status" "$from_owner" 4 \
+    '.active_roles = (if .assignee == "team" then ["vadi", "prativadi"] else [] end)' \
+    '.disagreement_cap = 3' \
+    ".loop_counts = {\"$from_status:$to_status\": 3}"
+  make_baton_v2 "$BOX/baton.next.json" "$to_status" "$to_owner" 5 \
+    '.active_roles = (if .assignee == "team" then ["vadi", "prativadi"] else [] end)' \
+    '.disagreement_cap = 3' \
+    ".loop_counts = {\"$from_status:$to_status\": 4}"
+  run_case_contains "v2 loop cap rejects $from_status->$to_status" 23 "loop_cap" \
+    "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+done
+
+BOX="$(new_box v2-loop-counts-reset-on-next-phase)"
+make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4 \
+  '.phase = 1 | .loop_counts = {"deep_review:phase_fixing": 2}'
+make_baton_v2 "$BOX/baton.next.json" "parallel_implementing" "team" 5 \
+  "$(v2_parallel_chunks_filter)" \
+  '.phase = 2 | .active_roles = ["vadi", "prativadi"] | .work_split |= map(if (.chunk_type // "") == "implementation" then .phase = "2" else . end)' \
+  '.loop_counts = {"deep_review:phase_fixing": 2}'
+run_case_contains "v2 loop counts reset on next phase" 23 "bad_loop_counts" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-loop-counts-empty-on-next-phase)"
+make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4 \
+  '.phase = 1 | .loop_counts = {"deep_review:phase_fixing": 2}'
+make_baton_v2 "$BOX/baton.next.json" "parallel_implementing" "team" 5 \
+  "$(v2_parallel_chunks_filter)" \
+  '.phase = 2 | .active_roles = ["vadi", "prativadi"] | .work_split |= map(if (.chunk_type // "") == "implementation" then .phase = "2" else . end)' \
+  '.loop_counts = {}'
+run_case "v2 empty loop counts accepted on next phase" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-loop-cap-may-escalate-human-decision)"
+make_baton_v2 "$BOX/baton.json" "deep_review" "prativadi" 4 \
+  '.disagreement_cap = 3 | .loop_counts = {"deep_review:phase_fixing": 3}'
+make_baton_v2 "$BOX/baton.next.json" "human_decision" "human" 5 \
+  '.disagreement_cap = 3 | .loop_counts = {"deep_review:phase_fixing": 3}'
+run_case "v2 loop cap permits human_decision escalation" 0 \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-approval-out-of-band-rejected)"
+make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4
+make_baton_v2 "$BOX/baton.next.json" "phase_fixing" "vadi" 5 \
+  '.vadi_final_approval = true'
+run_case_contains "v2 final approval outside termination_review is rejected" 23 "approval_out_of_band" \
+  env DVANDVA_ROLE=vadi "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-stale-approval-reset-required)"
+make_baton_v2 "$BOX/baton.json" "termination_review" "team" 4 \
+  '.active_roles = ["vadi", "prativadi"] | .vadi_final_approval = true | .prativadi_final_approval = true'
+make_baton_v2 "$BOX/baton.next.json" "phase_fixing" "vadi" 5 \
+  '.vadi_final_approval = true | .prativadi_final_approval = true'
+run_case_contains "v2 termination_review to phase_fixing resets final approvals" 23 "stale_approval" \
+  "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
+BOX="$(new_box v2-termination-review-entry-can-set-own-approval)"
+make_baton_v2 "$BOX/baton.json" "deslop" "vadi" 4
+make_baton_v2 "$BOX/baton.next.json" "termination_review" "team" 5 \
+  '.active_roles = ["vadi", "prativadi"] | .vadi_final_approval = true | .prativadi_final_approval = false'
+run_case "v2 entering termination_review may set own final approval" 0 \
+  env DVANDVA_ROLE=vadi "$SCRIPT" "$BOX/baton.json" "$BOX/baton.next.json"
+
 # --- usage and hygiene ---
 
 run_case "usage error without args exits 2" 2 "$SCRIPT"
