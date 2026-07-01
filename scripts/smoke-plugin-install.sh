@@ -28,7 +28,7 @@ fail() {
   exit 1
 }
 
-readonly EXPECTED_DVANDVA_VERSION="1.1.0"
+readonly EXPECTED_DVANDVA_VERSION="1.2.0"
 readonly EXPECTED_AGENT_IDS=(
   "dvandva-adversarial-analyst"
   "dvandva-architect"
