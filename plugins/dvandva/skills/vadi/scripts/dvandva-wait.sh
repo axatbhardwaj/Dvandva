@@ -57,10 +57,11 @@ ALLOW_MISSING=0
 PERSIST=1
 PERSIST_MAX=0
 SINCE_CHECKPOINT=""
+UNTIL_ACTIONABLE=0
 
 usage() {
   cat >&2 <<'USAGE'
-Usage: dvandva-wait.sh --role <vadi|prativadi> [--file .dvandva/baton.json] [--interval seconds] [--max-wait seconds] [--allow-missing] [--persist] [--persist-max seconds] [--since-checkpoint checkpoint] [--finite]
+Usage: dvandva-wait.sh --role <vadi|prativadi> [--file .dvandva/baton.json] [--interval seconds] [--max-wait seconds] [--allow-missing] [--persist] [--persist-max seconds] [--since-checkpoint checkpoint] [--until-actionable] [--finite]
 
 Defaults: --interval 60 --max-wait 540
 Default file resolution: --file wins; otherwise DVANDVA_BATON_FILE,
@@ -88,6 +89,10 @@ Use --since-checkpoint after installing a handoff checkpoint: the helper keeps
 polling while the selected baton remains at or below that checkpoint, even when
 the current team-owned state lists this role in active_roles. Terminal done,
 human_question, and human_decision still stop immediately.
+
+Use --until-actionable in team-owned states to keep polling until this role has
+actionable work, not merely because active_roles names it. This prevents a
+parallel_implementing role from waking while only the peer has ready chunks.
 USAGE
 }
 
@@ -131,6 +136,10 @@ while [[ $# -gt 0 ]]; do
       [[ $# -ge 2 ]] || { usage; exit 2; }
       SINCE_CHECKPOINT="$2"
       shift 2
+      ;;
+    --until-actionable)
+      UNTIL_ACTIONABLE=1
+      shift 1
       ;;
     --finite)
       PERSIST=0
@@ -298,7 +307,7 @@ scan_sibling_runs() {
         continue
         ;;
       human_decision|human_question)
-        if [[ "${DVANDVA_CONCURRENT:-0}" != "1" && "$selected_assignee" == "$(peer_role)" && -n "$selected_updated_at" && -n "$sibling_updated_at" && "$sibling_updated_at" > "$selected_updated_at" ]]; then
+        if [[ "${DVANDVA_CONCURRENT:-0}" != "1" && -n "$selected_updated_at" && -n "$sibling_updated_at" && "$sibling_updated_at" > "$selected_updated_at" ]]; then
           SIBLING_HUMAN_STATUS="$sibling_status"
           SIBLING_HUMAN_RUN_ID="$sibling_run_id"
           SIBLING_HUMAN_QUESTION="$sibling_question"
@@ -353,6 +362,50 @@ handle_sibling_interrupts() {
     echo "DVANDVA_WAIT split_brain role=$ROLE selected_run_id=$selected_run_id sibling_run_id=$SPLIT_BRAIN_SIBLING_RUN_ID waiting_on=$assignee phase=$phase status=$status checkpoint=$checkpoint active_roles=$active_roles $(heartbeat_selector_meta "$selected_run_id") elapsed=${elapsed}s last_seen_engine=$current_engine updated_at=$updated_at$run_id_note"
     exit 29
   fi
+}
+
+role_has_actionable_work() {
+  local status="$1"
+  local phase="$2"
+
+  case "$status" in
+    parallel_implementing|cross_fixing)
+      jq -e --arg role "$ROLE" --arg phase "$phase" '
+        def terminal_status:
+          . == "completed" or
+          . == "approved" or
+          . == "passed" or
+          . == "closed" or
+          . == "done" or
+          . == "rejected" or
+          . == "collapsed" or
+          . == "skipped" or
+          . == "cancelled";
+        def work_items:
+          if (.work_split | type) == "array" then
+            .work_split[]?
+          else
+            .work_split[]?
+          end;
+        [ work_items | {id: (.id // ""), status: (.status // "")} ] as $all |
+        any(work_items;
+          (((.phase // "") | tostring) == $phase) and
+          (((.chunk_type // .type // "implementation") == "implementation") or ((.chunk_type // .type // "") == "cross_fixing") or ((.chunk_type // .type // "") == "fix")) and
+          ((.owner_role // .owner // "") == $role) and
+          (((.status // "") | terminal_status) | not) and
+          all((.depends_on // [])[]; . as $dep |
+            any($all[]; (.id == $dep) and ((.status // "") | terminal_status))
+          )
+        )
+      ' "$BATON_FILE" >/dev/null 2>&1
+      ;;
+    *)
+      # Other active team states, especially termination_review and cross_review,
+      # are inherently actionable for both active roles under the current
+      # protocol. Keep legacy ready behavior there.
+      return 0
+      ;;
+  esac
 }
 
 resolve_default_baton() {
@@ -434,6 +487,8 @@ wait_one_interval() {
 resolve_default_baton
 
 while true; do
+  wait_detail=""
+
   if [[ ! -f "$BATON_FILE" ]]; then
     selected_run_id="$(derive_run_id "$BATON_FILE")"
     scan_sibling_runs "" ""
@@ -496,14 +551,32 @@ while true; do
       ;;
   esac
 
+  if [[ "$PERSIST" -eq 1 ]]; then
+    handle_sibling_interrupts "$selected_run_id" "$assignee" "$phase" "$status" "$checkpoint" "$active_roles" "$updated_at" "$current_engine" "$run_id_note"
+  fi
+
   if [[ -n "$SINCE_CHECKPOINT" ]]; then
     if ! [[ "$checkpoint" =~ ^[0-9]+$ ]]; then
       echo "DVANDVA_WAIT invalid_checkpoint file=$BATON_FILE checkpoint=$checkpoint"
       exit 22
     fi
     if [[ "$checkpoint" -gt "$SINCE_CHECKPOINT" ]]; then
-      echo "DVANDVA_WAIT checkpoint_advanced role=$ROLE phase=$phase status=$status checkpoint=$checkpoint since_checkpoint=$SINCE_CHECKPOINT assignee=$assignee active_roles=$active_roles"
-      exit 0
+      if [[ "$UNTIL_ACTIONABLE" -eq 1 ]]; then
+        if [[ "$assignee" == "$ROLE" ]]; then
+          echo "DVANDVA_WAIT checkpoint_advanced role=$ROLE phase=$phase status=$status checkpoint=$checkpoint since_checkpoint=$SINCE_CHECKPOINT assignee=$assignee active_roles=$active_roles"
+          exit 0
+        fi
+        if contains_role "$active_roles"; then
+          if role_has_actionable_work "$status" "$phase"; then
+            echo "DVANDVA_WAIT actionable role=$ROLE phase=$phase status=$status checkpoint=$checkpoint since_checkpoint=$SINCE_CHECKPOINT assignee=$assignee active_roles=$active_roles"
+            exit 0
+          fi
+          wait_detail=" no_actionable_work=true"
+        fi
+      else
+        echo "DVANDVA_WAIT checkpoint_advanced role=$ROLE phase=$phase status=$status checkpoint=$checkpoint since_checkpoint=$SINCE_CHECKPOINT assignee=$assignee active_roles=$active_roles"
+        exit 0
+      fi
     fi
   else
     if [[ "$assignee" == "$ROLE" ]]; then
@@ -511,14 +584,14 @@ while true; do
       exit 0
     fi
 
-    if [[ ",$active_roles," == *",$ROLE,"* ]]; then
-      echo "DVANDVA_WAIT ready role=$ROLE phase=$phase status=$status checkpoint=$checkpoint assignee=$assignee active_roles=$active_roles"
-      exit 0
+    if contains_role "$active_roles"; then
+      if [[ "$UNTIL_ACTIONABLE" -eq 1 ]] && ! role_has_actionable_work "$status" "$phase"; then
+        wait_detail=" no_actionable_work=true"
+      else
+        echo "DVANDVA_WAIT ready role=$ROLE phase=$phase status=$status checkpoint=$checkpoint assignee=$assignee active_roles=$active_roles"
+        exit 0
+      fi
     fi
-  fi
-
-  if [[ "$PERSIST" -eq 1 ]]; then
-    handle_sibling_interrupts "$selected_run_id" "$assignee" "$phase" "$status" "$checkpoint" "$active_roles" "$updated_at" "$current_engine" "$run_id_note"
   fi
 
   if [[ "$elapsed" -ge "$MAX_WAIT" ]]; then
@@ -527,7 +600,7 @@ while true; do
         echo "ERROR: continuous wait mode requires --interval > 0 when the baton is not ready; use --finite for an immediate heartbeat" >&2
         exit 2
       fi
-      echo "DVANDVA_WAIT heartbeat role=$ROLE waiting_on=$assignee phase=$phase status=$status checkpoint=$checkpoint active_roles=$active_roles $(heartbeat_selector_meta "$selected_run_id") elapsed=${elapsed}s last_seen_engine=$current_engine updated_at=$updated_at$run_id_note"
+      echo "DVANDVA_WAIT heartbeat role=$ROLE waiting_on=$assignee phase=$phase status=$status checkpoint=$checkpoint active_roles=$active_roles$(printf '%s' "$wait_detail") $(heartbeat_selector_meta "$selected_run_id") elapsed=${elapsed}s last_seen_engine=$current_engine updated_at=$updated_at$run_id_note"
       elapsed=0
       wait_one_interval
       record_wait_elapsed

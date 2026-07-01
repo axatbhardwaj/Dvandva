@@ -49,17 +49,20 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
   heartbeat interval by default, and the helper keeps polling until role
   ownership, shared terminal `done`, `human_question`, `human_decision`, or user
   interrupt. `human_question` and `human_decision` are a paired run pause that
-  stops both roles together. When the selected run is waiting on the peer, the
-  wait helper propagates a newer sibling run's `human_decision` or
+  stops both roles together. During a selected non-terminal wait, the wait
+  helper propagates a newer sibling run's `human_decision` or
   `human_question` unless `DVANDVA_CONCURRENT=1`; older sibling
   human-intervention batons are ignored so parked runs cannot hijack newer work.
   For a sibling `human_question`, output must preserve the sibling baton's
   `question`, `resume_assignee`, and `resume_status`.
   After installing a handoff checkpoint, the writer must run the helper with
-  `--since-checkpoint <written_checkpoint>`; while the selected baton remains at
-  or below that checkpoint, the helper keeps polling even if a team-owned
-  `active_roles` field names the writer. It exits 0 with `checkpoint_advanced`
-  only after a peer write advances the baton, so the role re-reads before
+  `--since-checkpoint <written_checkpoint> --until-actionable`; while the
+  selected baton remains at or below that checkpoint, the helper keeps polling
+  even if a team-owned `active_roles` field names the writer. `--until-actionable`
+  also keeps a role asleep in team-owned states such as `parallel_implementing`
+  until that role owns a ready, dependency-unblocked chunk; it does not suppress
+  shared active states such as `termination_review`. It exits 0 only after the
+  baton advances and the role has actionable work, so the role re-reads before
   deciding whether to work, wait again, or stop together.
   `termination_review` is not terminal; it wakes both roles.
   `--persist` is accepted for older snippets and is redundant. Optional

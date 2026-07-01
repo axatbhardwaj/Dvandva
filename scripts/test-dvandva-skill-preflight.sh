@@ -99,6 +99,9 @@ for file in "$VADI" "$PRATIVADI"; do
   require_match "$file" \
     '--since-checkpoint' \
     "$role skill uses checkpoint-gated wait after handoff"
+  require_match "$file" \
+    '--until-actionable' \
+    "$role skill uses action-aware waiting for team-owned states"
 done
 
 for file in "$COMMAND_VADI" "$COMMAND_PRATIVADI"; do
@@ -127,6 +130,9 @@ for file in "$COMMAND_VADI" "$COMMAND_PRATIVADI"; do
   require_match "$file" \
     '--since-checkpoint' \
     "$command_role command uses checkpoint-gated wait after handoff"
+  require_match "$file" \
+    '--until-actionable' \
+    "$command_role command uses action-aware waiting for team-owned states"
 done
 
 require_match "$VADI" \
@@ -194,6 +200,9 @@ require_match "$STATE_REF" \
 require_match "$STATE_REF" \
   '--since-checkpoint' \
   "state reference documents checkpoint-gated handoff waits"
+require_match "$STATE_REF" \
+  '--until-actionable' \
+  "state reference documents action-aware waits"
 
 # Static README coverage: reject stale Run-4 guidance that predates the
 # delegating-wrapper coexistence model.
@@ -228,6 +237,9 @@ require_match "$README" \
 require_match "$README" \
   'approval and explainer-review ownership|explainer-review ownership|run_explainer_reviews.{0,120}DVANDVA_ROLE.{0,120}ownership|DVANDVA_ROLE.{0,120}run_explainer_reviews.{0,120}ownership' \
   "README documents DVANDVA_ROLE ownership for explainer reviews"
+require_match "$README" \
+  '--until-actionable' \
+  "README documents action-aware waits"
 
 for file in "$ROOT_DIR/product.md" "$ROOT_DIR/docs/protocol/local-baton-channel.md" "$ROOT_DIR/plugins/dvandva/references/local-baton-channel.md"; do
   label="${file#$ROOT_DIR/}"
@@ -246,6 +258,9 @@ for file in "$ROOT_DIR/product.md" "$ROOT_DIR/docs/protocol/local-baton-channel.
   require_match "$file" \
     '--since-checkpoint' \
     "$label documents checkpoint-gated handoff waits"
+  require_match "$file" \
+    '--until-actionable' \
+    "$label documents action-aware waits"
 done
 
 if [[ "$failures" -gt 0 ]]; then

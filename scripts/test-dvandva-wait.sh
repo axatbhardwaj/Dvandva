@@ -154,6 +154,71 @@ write_termination_review_baton() {
 JSON
 }
 
+write_named_parallel_work_baton() {
+  local file="$1"
+  local run_id="$2"
+  local checkpoint="$3"
+  local updated_at="$4"
+  local ready_owner="$5"
+  local vadi_status="completed"
+  local prativadi_status="completed"
+
+  case "$ready_owner" in
+    vadi)
+      vadi_status="ready"
+      ;;
+    prativadi)
+      prativadi_status="ready"
+      ;;
+    none)
+      ;;
+    *)
+      echo "test bug: unknown ready owner $ready_owner" >&2
+      exit 99
+      ;;
+  esac
+
+  mkdir -p "$(dirname "$file")"
+  cat > "$file" <<JSON
+{
+  "schema": "dvandva.baton.v2",
+  "run_id": "$run_id",
+  "assignee": "team",
+  "active_roles": ["vadi", "prativadi"],
+  "status": "parallel_implementing",
+  "phase": 1,
+  "checkpoint": $checkpoint,
+  "question": null,
+  "resume_assignee": null,
+  "resume_status": null,
+  "updated_at": "$updated_at",
+  "current_engine": "codex",
+  "work_split": [
+    {
+      "id": "vadi-ready-chunk",
+      "phase": "1",
+      "chunk_type": "implementation",
+      "owner_role": "vadi",
+      "status": "$vadi_status",
+      "depends_on": [],
+      "paths": ["src/vadi.rs"],
+      "cross_review_by": "prativadi"
+    },
+    {
+      "id": "prativadi-ready-chunk",
+      "phase": "1",
+      "chunk_type": "implementation",
+      "owner_role": "prativadi",
+      "status": "$prativadi_status",
+      "depends_on": [],
+      "paths": ["src/prativadi.rs"],
+      "cross_review_by": "vadi"
+    }
+  ]
+}
+JSON
+}
+
 run_case() {
   local name="$1"
   local expected_exit="$2"
@@ -216,6 +281,44 @@ elif [[ "$handoff_advance_output" != *"checkpoint_advanced"* || "$handoff_advanc
   failures=$((failures + 1))
 else
   echo "PASS: --since-checkpoint wakes when baton checkpoint advances"
+fi
+
+ACTION_WAIT_BOX="$TMP_DIR/action-wait-box"
+write_named_parallel_work_baton "$ACTION_WAIT_BOX/.dvandva/runs/alpha/baton.json" "alpha" 80 "2026-07-01T09:00:00Z" "vadi"
+action_wait_output="$(env DVANDVA_RUN_ID="alpha" timeout 3 bash -c 'cd "$1" && "$2" --role prativadi --until-actionable --interval 1 --max-wait 1' _ "$ACTION_WAIT_BOX" "$PRATIVADI_SCRIPT" 2>&1)"
+action_wait_exit=$?
+if [[ "$action_wait_exit" -ne 124 ]]; then
+  echo "FAIL: --until-actionable should keep prativadi polling when only vadi has ready team-owned work, got $action_wait_exit"
+  echo "$action_wait_output"
+  failures=$((failures + 1))
+elif [[ "$action_wait_output" != *"no_actionable_work"* || "$action_wait_output" != *"run_id=alpha"* ]]; then
+  echo "FAIL: --until-actionable heartbeat missing no-actionable metadata"
+  echo "$action_wait_output"
+  failures=$((failures + 1))
+else
+  echo "PASS: --until-actionable keeps inactive team role polling"
+fi
+
+ACTION_READY_BOX="$TMP_DIR/action-ready-box"
+write_named_parallel_work_baton "$ACTION_READY_BOX/.dvandva/runs/alpha/baton.json" "alpha" 80 "2026-07-01T09:05:00Z" "prativadi"
+run_case "--until-actionable returns ready when team-owned work is actionable for role" 0 \
+  env DVANDVA_RUN_ID="alpha" bash -c 'cd "$1" && "$2" --role prativadi --until-actionable --interval 0 --max-wait 0' _ "$ACTION_READY_BOX" "$PRATIVADI_SCRIPT"
+
+ACTION_HUMAN_BOX="$TMP_DIR/action-human-box"
+write_named_parallel_work_baton "$ACTION_HUMAN_BOX/.dvandva/runs/alpha/baton.json" "alpha" 80 "2026-07-01T09:10:00Z" "vadi"
+write_named_observed_baton "$ACTION_HUMAN_BOX/.dvandva/runs/beta/baton.json" "beta" "human" "human_decision" "2026-07-01T09:11:00Z" "claude"
+action_human_output="$(env DVANDVA_RUN_ID="alpha" timeout 5 bash -c 'cd "$1" && "$2" --role prativadi --until-actionable --since-checkpoint 80 --interval 1 --max-wait 540' _ "$ACTION_HUMAN_BOX" "$PRATIVADI_SCRIPT" 2>&1)"
+action_human_exit=$?
+if [[ "$action_human_exit" -ne 11 ]]; then
+  echo "FAIL: newer sibling human_decision should stop an action-aware team-state waiter, got $action_human_exit"
+  echo "$action_human_output"
+  failures=$((failures + 1))
+elif [[ "$action_human_output" != *"sibling_run_id=beta"* || "$action_human_output" != *"selected_run_id=alpha"* ]]; then
+  echo "FAIL: action-aware sibling human_decision output missing selected/sibling metadata"
+  echo "$action_human_output"
+  failures=$((failures + 1))
+else
+  echo "PASS: newer sibling human_decision stops action-aware team-state waiter"
 fi
 
 BATON_TERMINATION_REVIEW="$TMP_DIR/termination-review.json"
