@@ -17,6 +17,25 @@ When invoked through the delegating shims `dvandva-state.sh` /
 Prerelease (`2.0.0-alpha.1`) covering the read path only. Licensed under
 `MIT OR Apache-2.0`.
 
+## Install
+
+```bash
+cargo install dvandva --version 2.0.0-alpha.1
+```
+
+This alpha intentionally covers only the read path (`state` and `resolve`).
+The repository's shell shims remain the compatibility boundary and delegate to
+the Rust binary when `DVANDVA_BIN`, a co-located binary, or `PATH` exposes
+`dvandva`.
+
+This installs only the Rust binary. To install the Dvandva skills, commands,
+agents, references, and shell helpers into Claude Code and Codex, run the
+repository installer instead:
+
+```bash
+bash scripts/install.sh
+```
+
 ## Known limitations
 
 - **Exponential number literals.** The read path is byte-for-value equal to the

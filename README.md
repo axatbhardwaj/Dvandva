@@ -25,6 +25,11 @@ Dvandva model classes are vendor-neutral. Agent frontmatter uses `model: opus` a
 
 Dvandva ships as an installable plugin for both engines. The repo lives at https://github.com/axatbhardwaj/Dvandva.
 
+The Rust read-path crate is published separately on crates.io as
+`dvandva 2.0.0-alpha.1`. This prerelease contains the first Rust-native
+implementation slice for `state` and `resolve`; write-path helpers and the
+full plugin distribution still live in this repository.
+
 ## Quickstart
 
 Install the marketplace in both Claude Code and Codex:
@@ -46,6 +51,11 @@ For Codex, the wrapper delegates to `scripts/install-codex.sh`, which runs
 `codex plugin add dvandva@dvandva` non-interactively so no TUI navigation is
 required. Older Codex builds without `plugin add` fall back to the legacy
 app-server RPC path.
+
+This plugin install is separate from `cargo install dvandva`. The plugin
+installer adds the Dvandva skills, commands, agents, references, and shell
+helpers to Claude Code and/or Codex. `cargo install dvandva --version
+2.0.0-alpha.1` installs only the Rust read-path binary.
 
 See `docs/research/2026-05-16-codex-install.md` for the install-history note:
 Codex `0.130.0` required app-server RPC, while current Codex exposes
@@ -94,9 +104,35 @@ $vadi
 $prativadi
 ```
 
+## Rust Read-Path Crate
+
+Install the published Rust read-path binary from crates.io:
+
+```bash
+cargo install dvandva --version 2.0.0-alpha.1
+```
+
+This command does not install Claude Code or Codex skills. Use
+`bash scripts/install.sh` for the engine plugins; use `cargo install` only when
+you want the Rust `dvandva` binary available to the shell shims through
+`DVANDVA_BIN`, a co-located binary, or `PATH`.
+
+The crate provides the `dvandva` multicall binary:
+
+```bash
+dvandva state --compact --file <baton> --role <vadi|prativadi|team|human>
+dvandva resolve --role <vadi|prativadi> --cwd <repo>
+```
+
+The bundled shell shims still define the compatibility boundary. When
+`DVANDVA_BIN` points at the Rust binary, or a `dvandva` binary is available next
+to the shim or on `PATH`, the read-path shims delegate to Rust. Without a Rust
+binary, the original shell fallback remains in place. The prerelease is
+intentionally scoped to the read path only.
+
 ## Current State
 
-v1.1.0 ships as one `dvandva` plugin with:
+Dvandva ships as one `dvandva` plugin with:
 
 - `plugins/dvandva/skills/vadi/SKILL.md`
 - `plugins/dvandva/skills/prativadi/SKILL.md`
@@ -280,7 +316,7 @@ checks exact 15-agent roster parity in the installed development copies.
 2. Run the validation commands above.
 3. Run `bash scripts/install.sh <repo-or-path>` from isolated `HOME` and `CODEX_HOME`, then verify `/skills` exposes `dvandva:vadi`, `dvandva:prativadi`, `dvandva:research`, `dvandva:testing`, `dvandva:understanding`, and `dvandva:worktree-setup` in the installed engines.
 4. If testing engine-specific fallback paths, run `bash scripts/install-codex.sh <repo-or-path>` from an isolated `CODEX_HOME` and `HOME`.
-5. Tag the release, for example `v1.1.0`.
+5. Tag the release, for example `vX.Y.Z`.
 6. Push the branch and tag only after both Dvandva roles approve the final diff.
 
 ## Reading Order
