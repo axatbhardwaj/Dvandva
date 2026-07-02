@@ -235,7 +235,7 @@ pub fn evaluate(cwd: &Path, role: Option<&str>) -> GateResult {
 
     // Allow if this role is the assignee or appears in active_roles.
     if role_allowed(value, role) {
-        return check_staged_paths(&repo_root, value);
+        return check_staged_paths(&repo_root, value, role);
     }
 
     // Block — emit a clear diagnostic.
@@ -286,20 +286,48 @@ fn staged_paths(repo_root: &Path) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The baton's declared path scope: `changed_paths` union every `work_split`
-/// chunk's `paths` and `write_paths`. Run-level union across the WHOLE split
-/// (not role-filtered) — simpler, and matches the run-level `changed_paths`
-/// union semantics the baton already carries at the top level.
-fn allowed_paths_from_baton(value: &Value) -> HashSet<String> {
+/// The baton's declared path scope, role-visible to `role`: `changed_paths`
+/// (always included, run-level — unconditional on role) union every
+/// `work_split` chunk whose owner matches `role`, via `paths` and
+/// `write_paths`. A chunk's owner is `owner_role` when non-empty, else
+/// `owner` — the same coalesce fallback `write.rs`'s (private)
+/// `owner_role_or_owner` uses. Chunks owned by another role — including
+/// `team` — are not visible here.
+fn allowed_paths_from_baton(value: &Value, role: &str) -> HashSet<String> {
     let mut allowed = HashSet::new();
     push_path_strings(&mut allowed, coalesce(value.get("changed_paths")));
     if let Some(Value::Array(chunks)) = coalesce(value.get("work_split")) {
         for chunk in chunks {
+            if chunk_owner_role(chunk) != role {
+                continue;
+            }
             push_path_strings(&mut allowed, coalesce(chunk.get("paths")));
             push_path_strings(&mut allowed, coalesce(chunk.get("write_paths")));
         }
     }
     allowed
+}
+
+/// A `work_split` chunk's owning role: `owner_role` when present and
+/// non-empty, else `owner`. Mirrors `write.rs`'s (private) coalesce
+/// fallback so a chunk's declared owner reads the same way here.
+fn chunk_owner_role(chunk: &Value) -> String {
+    let owner_role = field_str(chunk, "owner_role", "");
+    if !owner_role.is_empty() {
+        owner_role
+    } else {
+        field_str(chunk, "owner", "")
+    }
+}
+
+/// Whether the baton declares ANY path scope at all: `changed_paths` or
+/// `work_split` present as a top-level key, regardless of its value (an
+/// explicit `[]` counts as present). Checked via raw key presence, not
+/// [`coalesce`] — a baton silent about scope (legacy/undeclared) fails open,
+/// but one that declares an EMPTY scope is opinionated and the subset rule
+/// applies literally.
+fn baton_declares_scope(value: &Value) -> bool {
+    value.get("changed_paths").is_some() || value.get("work_split").is_some()
 }
 
 fn push_path_strings(out: &mut HashSet<String>, value: Option<&Value>) {
@@ -344,18 +372,23 @@ fn matches_reminder_hard_path(path: &str) -> bool {
 }
 
 /// The S4-T9 staged-path crosscheck, run once the ordinary role checks have
-/// already allowed the commit against `value` (the single active baton).
-fn check_staged_paths(repo_root: &Path, value: &Value) -> GateResult {
+/// already allowed the commit against `value` (the single active baton), for
+/// the calling `role`.
+fn check_staged_paths(repo_root: &Path, value: &Value, role: &str) -> GateResult {
     let mode = commit_gate_paths_mode();
     if mode == PathsMode::Off {
         return GateResult::allow();
     }
 
-    let allowed = allowed_paths_from_baton(value);
-    if allowed.is_empty() {
-        // The baton hasn't declared a changed_paths/work_split scope, so
-        // there is nothing to crosscheck staged paths against — fail open,
-        // matching the gate's baseline behavior when it has no opinion.
+    let allowed = allowed_paths_from_baton(value, role);
+    if allowed.is_empty() && !baton_declares_scope(value) {
+        // The baton hasn't declared a changed_paths/work_split scope at all
+        // (legacy/undeclared), so there is nothing to crosscheck staged
+        // paths against — fail open, matching the gate's baseline behavior
+        // when it has no opinion. A baton that DOES declare a scope but
+        // ends up with nothing role-visible (e.g. `changed_paths: []`, or a
+        // work_split with no chunk owned by `role`) falls through instead:
+        // it is opinionated, so the subset rule below applies literally.
         return GateResult::allow();
     }
 

@@ -22,9 +22,9 @@ use crate::Role;
 /// The v2 status catalog, mirrored locally (S2-T3 read-only sanity check):
 /// a status token outside this set is `invalid_baton`. A local literal list
 /// rather than a `write.rs` coupling — matches `crate::baton::Status`'s
-/// current 21-token catalog. Future status additions (e.g. `abandoned`) need
-/// a matching update here; the S6-T1 schema-parity lint is the intended
-/// long-term guard against that drift.
+/// current 22-token catalog. Future status additions need a matching update
+/// here; the S6-T1 schema-parity lint is the intended long-term guard
+/// against that drift.
 const V2_STATUS_TOKENS: &[&str] = &[
     "research_drafting",
     "research_review",
@@ -47,6 +47,7 @@ const V2_STATUS_TOKENS: &[&str] = &[
     "human_question",
     "human_decision",
     "done",
+    "abandoned",
 ];
 
 /// Outcome of the read-only baton sanity check run on a RESOLVED baton,

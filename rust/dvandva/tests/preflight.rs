@@ -539,6 +539,42 @@ fn sanity_check_team_status_with_active_roles_proceeds() {
     );
 }
 
+// (cross-wave fix) A v2 baton in the human-declared `abandoned` terminal
+// resolves through the sanity check instead of failing closed with
+// `unknown_status`: `abandoned` is part of the v2 status catalog, and its
+// write-path transition always sets assignee=human, matching
+// `expected_owner`'s human-owned mapping for the status.
+#[test]
+fn sanity_check_abandoned_v2_baton_resolves_via_run_id() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    write_baton_v2(
+        &repo.join(".dvandva/runs/accuracy/baton.json"),
+        "accuracy",
+        "abandoned",
+        "human",
+        "[]",
+        "2026-06-29T00:00:00Z",
+    );
+
+    let mut cmd = base_cmd(bin());
+    cmd.arg("preflight")
+        .args(["--role", "vadi"])
+        .current_dir(repo)
+        .env("DVANDVA_ROLE", "vadi")
+        .env("DVANDVA_RUN_ID", "accuracy");
+    let out = cmd.output().expect("dvandva preflight");
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("result=resolved"), "stdout: {text}");
+    assert!(
+        text.contains("selected_by=DVANDVA_RUN_ID"),
+        "stdout: {text}"
+    );
+    assert!(!text.contains("reason=invalid_baton"), "stdout: {text}");
+}
+
 // (v1 legacy) A v1-schema baton skips the sanity check entirely and notes the
 // skip on the result=resolved line.
 #[test]

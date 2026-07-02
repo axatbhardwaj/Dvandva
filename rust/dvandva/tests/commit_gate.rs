@@ -90,6 +90,44 @@ fn make_baton_with_paths(
     fs::write(path, json).unwrap();
 }
 
+/// A v2 baton with a two-role `work_split`, for the role-visibility
+/// crosscheck tests (cross-wave fix): each chunk carries `owner`/`owner_role`
+/// plus its own `paths`.
+fn make_baton_with_work_split(
+    path: &Path,
+    status: &str,
+    assignee: &str,
+    active_roles: &str,
+    changed_paths: &[&str],
+    chunks: &[(&str, &[&str])],
+) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let paths_json = changed_paths
+        .iter()
+        .map(|p| format!("\"{p}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    let chunks_json = chunks
+        .iter()
+        .map(|(owner, paths)| {
+            let ps = paths
+                .iter()
+                .map(|p| format!("\"{p}\""))
+                .collect::<Vec<_>>()
+                .join(",");
+            format!("{{\"owner\":\"{owner}\",\"owner_role\":\"{owner}\",\"paths\":[{ps}]}}")
+        })
+        .collect::<Vec<_>>()
+        .join(",");
+    let json = format!(
+        "{{\n  \"schema\": \"dvandva.baton.v2\",\n  \"status\": \"{status}\",\n  \
+         \"assignee\": \"{assignee}\",\n  \"checkpoint\": 1,\n  \
+         \"active_roles\": {active_roles},\n  \"profile\": \"full\",\n  \
+         \"changed_paths\": [{paths_json}],\n  \"work_split\": [{chunks_json}]\n}}\n"
+    );
+    fs::write(path, json).unwrap();
+}
+
 fn write_hook(path: &Path, body: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, body).unwrap();
@@ -576,6 +614,112 @@ fn gate_paths_hard_path_reminder_fires() {
     assert_eq!(code(&out), 1);
     let err = stderr(&out);
     assert!(err.contains("recompute the profile floor"), "err: {err}");
+}
+
+// (cross-wave fix) `work_split` chunks are role-visible: the calling role's
+// own chunk allows its declared path.
+#[test]
+fn gate_paths_work_split_own_chunk_allowed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    make_baton_with_work_split(
+        &repo.join(".dvandva/baton.json"),
+        "parallel_implementing",
+        "team",
+        "[\"vadi\",\"prativadi\"]",
+        &[],
+        &[
+            ("vadi", &["vadi-file.txt"]),
+            ("prativadi", &["prativadi-file.txt"]),
+        ],
+    );
+    fs::write(repo.join("vadi-file.txt"), "x").unwrap();
+    git(repo, &["add", "vadi-file.txt"]);
+
+    let out = run_gate(repo, Some("vadi"));
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+}
+
+// (cross-wave fix) A path declared only in the OTHER role's chunk is no
+// longer visible to this role and blocks the commit.
+#[test]
+fn gate_paths_work_split_other_role_chunk_blocks() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    make_baton_with_work_split(
+        &repo.join(".dvandva/baton.json"),
+        "parallel_implementing",
+        "team",
+        "[\"vadi\",\"prativadi\"]",
+        &[],
+        &[
+            ("vadi", &["vadi-file.txt"]),
+            ("prativadi", &["prativadi-file.txt"]),
+        ],
+    );
+    fs::write(repo.join("prativadi-file.txt"), "x").unwrap();
+    git(repo, &["add", "prativadi-file.txt"]);
+
+    let out = run_gate(repo, Some("vadi"));
+    assert_eq!(code(&out), 1, "stderr: {}", stderr(&out));
+    let err = stderr(&out);
+    assert!(
+        err.contains("outside the baton's allowed set"),
+        "err: {err}"
+    );
+    assert!(err.contains("prativadi-file.txt"), "err: {err}");
+}
+
+// (cross-wave fix) A baton that DECLARES an empty scope (`changed_paths: []`
+// present, no work_split) is opinionated — the subset rule applies literally
+// and a staged path outside that (empty) scope blocks.
+#[test]
+fn gate_paths_declared_empty_scope_blocks() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    make_baton_with_paths(
+        &repo.join(".dvandva/baton.json"),
+        "implementing",
+        "vadi",
+        "[]",
+        &[],
+        "standard",
+    );
+    fs::write(repo.join("intruder.txt"), "x").unwrap();
+    git(repo, &["add", "intruder.txt"]);
+
+    let out = run_gate(repo, Some("vadi"));
+    assert_eq!(code(&out), 1, "stderr: {}", stderr(&out));
+    assert!(
+        stderr(&out).contains("outside the baton's allowed set"),
+        "err: {}",
+        stderr(&out)
+    );
+}
+
+// A baton that never declares `changed_paths`/`work_split` at all stays
+// fail-open (legacy/undeclared compat, unchanged from before the S4-T9
+// crosscheck).
+#[test]
+fn gate_paths_missing_scope_stays_open() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    make_baton(
+        &repo.join(".dvandva/baton.json"),
+        "implementing",
+        "vadi",
+        5,
+        "[]",
+    );
+    fs::write(repo.join("anything.txt"), "x").unwrap();
+    git(repo, &["add", "anything.txt"]);
+
+    let out = run_gate(repo, Some("vadi"));
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
 }
 
 // ===========================================================================
