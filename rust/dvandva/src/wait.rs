@@ -15,8 +15,9 @@
 //!
 //! Exit codes (protocol surface, never unified with sibling helpers):
 //! `0` assigned/actionable · `10` done · `11` human_decision · `12`
-//! human_question · `20` finite timeout · `21` baton missing · `22` invalid
-//! JSON · `23` persist-max · `24` stall-max · `29` split-brain · `2` usage.
+//! human_question · `13` abandoned · `20` finite timeout · `21` baton missing
+//! · `22` invalid JSON · `23` persist-max · `24` stall-max · `29` split-brain
+//! · `2` usage.
 
 use std::path::Path;
 use std::sync::mpsc;
@@ -24,6 +25,7 @@ use std::time::Duration;
 
 use notify::{RecursiveMode, Watcher};
 use serde_json::Value;
+use time::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time, UtcOffset};
 use ureq::Agent;
 
 use crate::util::{coalesce, now_epoch, read_json_lenient};
@@ -193,6 +195,11 @@ pub fn run(cfg: &WaitConfig) -> i32 {
                     &resume_status,
                 );
                 return 12;
+            }
+            "abandoned" => {
+                println!("DVANDVA_WAIT abandoned run_id={selected_run_id} checkpoint={checkpoint}");
+                notify_plain(cfg, "abandoned", &selected_run_id, &next_action);
+                return 13;
             }
             _ => {}
         }
@@ -531,10 +538,39 @@ struct SiblingScan {
     human_next_action: String,
 }
 
+/// A human-pause sibling (`human_decision` / `human_question`) that qualifies
+/// to propagate to the selected waiter — strictly newer than the selected
+/// baton by RFC3339-parsed `updated_at` (see [`newer_sibling_time`]).
+struct HumanCandidate {
+    status: String,
+    run_id: String,
+    updated_at: OffsetDateTime,
+    question: String,
+    resume_assignee: String,
+    resume_status: String,
+    next_action: String,
+}
+
+/// A sibling that structurally triggers split-brain (claims this role while
+/// the selected baton waits on the peer). `updated_at` is best-effort — `None`
+/// when absent or unparseable — used only to rank *which* sibling gets
+/// reported; it never gates whether split-brain fires.
+struct SplitBrainCandidate {
+    run_id: String,
+    updated_at: Option<OffsetDateTime>,
+}
+
 /// Scan sibling runs under the selected run's `.dvandva` root. `selected_assignee`
 /// is who the selected baton waits on; split-brain only matters when that is the
 /// peer. The selected file is skipped by device+inode identity, never by run id,
 /// so a stale `.run_id` field cannot hide a genuine sibling.
+///
+/// Every sibling is visited (no early return): human-pause and split-brain
+/// candidates are collected across the whole set, then in each category the
+/// MAX by parsed `updated_at` wins (ties broken by lexicographic run id, for
+/// determinism) — a mid-listing sibling with the newest timestamp beats an
+/// earlier-sorted one with an older timestamp. A human-pause winner still
+/// takes priority over split-brain, matching the caller's check order.
 fn scan_sibling_runs(
     cfg: &WaitConfig,
     selected_assignee: &str,
@@ -568,6 +604,9 @@ fn scan_sibling_runs(
     }
 
     let selected_id = file_identity(&cfg.baton_file);
+    let mut human_candidates: Vec<HumanCandidate> = Vec::new();
+    let mut split_brain_candidates: Vec<SplitBrainCandidate> = Vec::new();
+
     for sibling_file in files {
         if let (Some(sel), Some(sib)) = (selected_id, file_identity(&sibling_file)) {
             if sel == sib {
@@ -584,23 +623,30 @@ fn scan_sibling_runs(
         let sibling_updated_at = field_str(&sibling, "updated_at");
 
         match sibling_status.as_str() {
-            // Completed run: not competing for my role.
-            "done" => continue,
+            // Completed or abandoned run: not competing for my role, and its
+            // pause state (if any) is over — neither counts as active nor
+            // propagates.
+            "done" | "abandoned" => continue,
             // Paused on a human. A newer sibling propagates its intervention to a
-            // paired waiter; an older one (or one without a timestamp) is parked.
+            // paired waiter; an older one (or one without a comparable
+            // timestamp) is parked.
             "human_decision" | "human_question" => {
-                if !cfg.concurrent
-                    && !selected_updated_at.is_empty()
-                    && !sibling_updated_at.is_empty()
-                    && sibling_updated_at.as_str() > selected_updated_at
-                {
-                    scan.human_status = Some(sibling_status);
-                    scan.human_run_id = sibling_run_id;
-                    scan.human_question = field_str(&sibling, "question");
-                    scan.human_resume_assignee = field_str(&sibling, "resume_assignee");
-                    scan.human_resume_status = field_str(&sibling, "resume_status");
-                    scan.human_next_action = field_str(&sibling, "next_action");
-                    return scan;
+                if !cfg.concurrent {
+                    if let Some(parsed) = newer_sibling_time(
+                        selected_updated_at,
+                        &sibling_updated_at,
+                        &sibling_run_id,
+                    ) {
+                        human_candidates.push(HumanCandidate {
+                            status: sibling_status,
+                            run_id: sibling_run_id,
+                            updated_at: parsed,
+                            question: field_str(&sibling, "question"),
+                            resume_assignee: field_str(&sibling, "resume_assignee"),
+                            resume_status: field_str(&sibling, "resume_status"),
+                            next_action: field_str(&sibling, "next_action"),
+                        });
+                    }
                 }
                 continue;
             }
@@ -611,13 +657,156 @@ fn scan_sibling_runs(
                     && (sibling_assignee == cfg.role
                         || contains_role(&sibling_active_roles, &cfg.role))
                 {
-                    scan.split_brain_run_id = Some(sibling_run_id);
-                    return scan;
+                    split_brain_candidates.push(SplitBrainCandidate {
+                        run_id: sibling_run_id,
+                        updated_at: parse_rfc3339(&sibling_updated_at),
+                    });
                 }
             }
         }
     }
+
+    if let Some(best) = human_candidates.into_iter().max_by(|a, b| {
+        a.updated_at
+            .cmp(&b.updated_at)
+            .then_with(|| a.run_id.cmp(&b.run_id))
+    }) {
+        scan.human_status = Some(best.status);
+        scan.human_run_id = best.run_id;
+        scan.human_question = best.question;
+        scan.human_resume_assignee = best.resume_assignee;
+        scan.human_resume_status = best.resume_status;
+        scan.human_next_action = best.next_action;
+        return scan;
+    }
+
+    if let Some(best) = split_brain_candidates.into_iter().max_by(|a, b| {
+        a.updated_at
+            .cmp(&b.updated_at)
+            .then_with(|| a.run_id.cmp(&b.run_id))
+    }) {
+        scan.split_brain_run_id = Some(best.run_id);
+    }
+
     scan
+}
+
+/// Parsed sibling `updated_at`, but only when it is strictly newer than
+/// `selected_updated_at` — both non-empty and RFC3339-parseable. Fails closed
+/// (returns `None`, no propagation) when either side is empty or either
+/// non-empty side fails to parse; a genuinely malformed (non-empty) sibling
+/// value additionally logs `DVANDVA_WAIT note updated_at_unparseable
+/// run=<id>` to stderr. Cross-run checkpoints are not globally comparable, so
+/// there is no numeric fallback here — propagating on unparseable data is
+/// exactly the risk this closes.
+fn newer_sibling_time(
+    selected_updated_at: &str,
+    sibling_updated_at: &str,
+    sibling_run_id: &str,
+) -> Option<OffsetDateTime> {
+    if selected_updated_at.is_empty() || sibling_updated_at.is_empty() {
+        return None;
+    }
+    match (
+        parse_rfc3339(selected_updated_at),
+        parse_rfc3339(sibling_updated_at),
+    ) {
+        (Some(selected), Some(sibling)) if sibling > selected => Some(sibling),
+        (Some(_), Some(_)) => None,
+        _ => {
+            eprintln!("DVANDVA_WAIT note updated_at_unparseable run={sibling_run_id}");
+            None
+        }
+    }
+}
+
+/// Hand-rolled RFC3339 parse (`YYYY-MM-DDThh:mm:ss[.fff...][Z|±hh:mm]`,
+/// matching every `updated_at` this codebase writes via
+/// `next::now_iso8601_utc`). The `time` crate's format-description parser
+/// needs its `parsing` cargo feature, which is not enabled on this crate
+/// (`Cargo.toml` is a shared file outside this task's file ownership); this
+/// builds the same [`OffsetDateTime`] from the always-available core
+/// constructors instead. Returns `None` (never panics) on anything that does
+/// not match the shape, including non-ASCII input.
+fn parse_rfc3339(value: &str) -> Option<OffsetDateTime> {
+    if !value.is_ascii() || value.len() < 20 {
+        return None;
+    }
+    let bytes = value.as_bytes();
+    let two_digits = |s: &str| -> Option<u8> {
+        if s.len() == 2 && s.bytes().all(|b| b.is_ascii_digit()) {
+            s.parse().ok()
+        } else {
+            None
+        }
+    };
+
+    if !value[0..4].bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let year: i32 = value[0..4].parse().ok()?;
+    if bytes[4] != b'-' {
+        return None;
+    }
+    let month = two_digits(&value[5..7])?;
+    if bytes[7] != b'-' {
+        return None;
+    }
+    let day = two_digits(&value[8..10])?;
+    match bytes[10] {
+        b'T' | b't' | b' ' => {}
+        _ => return None,
+    }
+    let hour = two_digits(&value[11..13])?;
+    if bytes[13] != b':' {
+        return None;
+    }
+    let minute = two_digits(&value[14..16])?;
+    if bytes[16] != b':' {
+        return None;
+    }
+    let second = two_digits(&value[17..19])?;
+
+    let mut rest = &value[19..];
+    let mut nanosecond: u32 = 0;
+    if let Some(frac) = rest.strip_prefix('.') {
+        let end = frac
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(frac.len());
+        let (digits, remainder) = frac.split_at(end);
+        if digits.is_empty() {
+            return None;
+        }
+        let mut padded = digits.to_string();
+        padded.truncate(9);
+        while padded.len() < 9 {
+            padded.push('0');
+        }
+        nanosecond = padded.parse().ok()?;
+        rest = remainder;
+    }
+
+    let offset = if rest == "Z" || rest == "z" {
+        UtcOffset::UTC
+    } else {
+        let sign: i8 = match rest.as_bytes().first() {
+            Some(b'+') => 1,
+            Some(b'-') => -1,
+            _ => return None,
+        };
+        let body = &rest[1..];
+        if body.len() != 5 || body.as_bytes().get(2) != Some(&b':') {
+            return None;
+        }
+        let offset_hour = two_digits(&body[0..2])? as i8;
+        let offset_minute = two_digits(&body[3..5])? as i8;
+        UtcOffset::from_hms(sign * offset_hour, sign * offset_minute, 0).ok()?
+    };
+
+    let month = Month::try_from(month).ok()?;
+    let date = Date::from_calendar_date(year, month, day).ok()?;
+    let time = Time::from_hms_nano(hour, minute, second, nanosecond).ok()?;
+    Some(PrimitiveDateTime::new(date, time).assume_offset(offset))
 }
 
 #[cfg(unix)]
@@ -852,6 +1041,12 @@ fn wait_one_interval(cfg: &WaitConfig) {
 /// Directories to watch: the baton's own dir plus, for a managed layout, the
 /// `.dvandva` root, its `runs`, and each run dir (so paired human intervention
 /// in another active run also wakes us). Only existing dirs, deduped.
+///
+/// `allow-missing` before the baton's own directory exists (e.g. a run
+/// directory not yet created) falls back to the nearest existing ancestor, so
+/// its creation still wakes the loop within one interval; the next iteration
+/// re-resolves this function once the real directory (and then the file)
+/// materializes, converging on the direct-watch case above.
 fn watch_dirs(baton_file: &str) -> Vec<String> {
     let mut dirs: Vec<String> = Vec::new();
     let add = |candidate: String, dirs: &mut Vec<String>| {
@@ -859,7 +1054,12 @@ fn watch_dirs(baton_file: &str) -> Vec<String> {
             dirs.push(candidate);
         }
     };
-    add(dirname(baton_file), &mut dirs);
+    let file_dir = dirname(baton_file);
+    if Path::new(&file_dir).is_dir() {
+        add(file_dir, &mut dirs);
+    } else if let Some(ancestor) = nearest_existing_ancestor(&file_dir) {
+        add(ancestor, &mut dirs);
+    }
     let root = derive_dvandva_root(baton_file);
     if !root.is_empty() {
         add(root.clone(), &mut dirs);
@@ -871,6 +1071,28 @@ fn watch_dirs(baton_file: &str) -> Vec<String> {
         }
     }
     dirs
+}
+
+/// Nearest existing ancestor of `dir` (including `dir` itself), walking up
+/// parents the same way [`dirname`] treats an exhausted relative path (empty
+/// parent -> `.`, the cwd). `None` only if no ancestor ever resolves to an
+/// existing directory.
+fn nearest_existing_ancestor(dir: &str) -> Option<String> {
+    let mut current = dir.to_string();
+    loop {
+        if Path::new(&current).is_dir() {
+            return Some(current);
+        }
+        let next = match Path::new(&current).parent() {
+            Some(parent) if parent.as_os_str().is_empty() => ".".to_string(),
+            Some(parent) => parent.to_string_lossy().into_owned(),
+            None => return None,
+        };
+        if next == current {
+            return None;
+        }
+        current = next;
+    }
 }
 
 #[cfg(test)]
@@ -1016,5 +1238,68 @@ mod tests {
             "parallel_implementing",
             "1"
         ));
+    }
+
+    #[test]
+    fn parse_rfc3339_accepts_the_zulu_second_precision_shape() {
+        let a = parse_rfc3339("2026-06-29T15:00:00Z").expect("parseable");
+        let b = parse_rfc3339("2026-06-29T15:01:00Z").expect("parseable");
+        assert!(b > a);
+    }
+
+    #[test]
+    fn parse_rfc3339_accepts_fractional_seconds_and_numeric_offset() {
+        let parsed = parse_rfc3339("2026-06-29T15:00:00.123456789+02:00").expect("parseable");
+        // 15:00 +02:00 is 13:00 UTC, strictly before the Zulu instant below.
+        let zulu = parse_rfc3339("2026-06-29T13:00:01Z").expect("parseable");
+        assert!(zulu > parsed);
+    }
+
+    #[test]
+    fn parse_rfc3339_rejects_malformed_or_invalid_input() {
+        assert!(parse_rfc3339("").is_none());
+        assert!(parse_rfc3339("not-a-timestamp").is_none());
+        assert!(parse_rfc3339("2026-13-29T15:00:00Z").is_none()); // month 13
+        assert!(parse_rfc3339("2026-06-29T15:00:00").is_none()); // missing offset
+    }
+
+    #[test]
+    fn newer_sibling_time_fails_closed_on_unparseable_sibling() {
+        assert!(newer_sibling_time("2026-06-29T15:00:00Z", "not-a-timestamp", "beta").is_none());
+    }
+
+    #[test]
+    fn newer_sibling_time_fails_closed_on_empty_side() {
+        assert!(newer_sibling_time("", "2026-06-29T15:00:00Z", "beta").is_none());
+        assert!(newer_sibling_time("2026-06-29T15:00:00Z", "", "beta").is_none());
+    }
+
+    #[test]
+    fn newer_sibling_time_returns_none_when_sibling_is_not_newer() {
+        assert!(
+            newer_sibling_time("2026-06-29T15:00:00Z", "2026-06-29T14:00:00Z", "beta").is_none()
+        );
+    }
+
+    #[test]
+    fn newer_sibling_time_returns_parsed_instant_when_sibling_is_newer() {
+        let parsed = newer_sibling_time("2026-06-29T15:00:00Z", "2026-06-29T16:00:00Z", "beta")
+            .expect("sibling is newer");
+        assert_eq!(parsed, parse_rfc3339("2026-06-29T16:00:00Z").unwrap());
+    }
+
+    #[test]
+    fn nearest_existing_ancestor_walks_up_to_an_existing_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let missing = dir.path().join("run-not-created-yet");
+        let found = nearest_existing_ancestor(missing.to_str().unwrap()).expect("ancestor");
+        assert_eq!(found, dir.path().to_string_lossy());
+    }
+
+    #[test]
+    fn nearest_existing_ancestor_returns_self_when_already_present() {
+        let dir = tempfile::tempdir().unwrap();
+        let found = nearest_existing_ancestor(dir.path().to_str().unwrap()).expect("ancestor");
+        assert_eq!(found, dir.path().to_string_lossy());
     }
 }

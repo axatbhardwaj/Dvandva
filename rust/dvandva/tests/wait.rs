@@ -2556,6 +2556,262 @@ fn notify_posts_sibling_human_question_with_sibling_fields() {
     assert!(request.contains("resume_status=spec_review"), "{request}");
 }
 
+// ── Task S2-T1 (abandoned terminal) ─────────────────────────────────────────
+
+#[test]
+fn returns_13_and_abandoned_line_grammar_when_run_is_abandoned() {
+    let d = tmp();
+    let f = d.path().join("abandoned.json");
+    write_baton(&f, "human", "abandoned");
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "0",
+            "--max-wait",
+            "0",
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(13), "{}", o.out);
+    assert!(o.contains("DVANDVA_WAIT abandoned run_id="), "{}", o.out);
+    assert!(o.contains("checkpoint=7"), "{}", o.out);
+}
+
+#[test]
+fn notify_posts_on_abandoned_with_title_and_event() {
+    let d = tmp();
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "human",
+        "abandoned",
+        "2026-07-02T09:00:00Z",
+        "codex",
+    );
+    let (port, rx) = start_notify_listener();
+    let url = format!("http://127.0.0.1:{port}/");
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "vadi",
+            "--interval",
+            "0",
+            "--max-wait",
+            "0",
+            "--notify",
+            &url,
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(13), "{}", o.out);
+    let request = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("notify request");
+    assert!(request.starts_with("POST"), "{request}");
+    assert!(
+        request
+            .to_lowercase()
+            .contains("title: dvandva alpha: abandoned"),
+        "{request}"
+    );
+    assert!(request.contains("run_id=alpha"), "{request}");
+    assert!(request.contains("event=abandoned"), "{request}");
+}
+
+#[test]
+fn sibling_abandoned_does_not_propagate_or_count_as_active() {
+    let d = tmp();
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "prativadi",
+        "phase_review",
+        "2026-06-29T15:00:00Z",
+        "codex",
+    );
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/beta/baton.json"),
+        "beta",
+        "vadi",
+        "abandoned",
+        "2026-06-29T15:01:00Z",
+        "claude",
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "vadi",
+            "--persist",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_POLL,
+    );
+    assert!(
+        o.kept_polling(),
+        "expected keeps-polling, got {:?}\n{}",
+        o.code,
+        o.out
+    );
+    assert!(!o.contains("split_brain"), "{}", o.out);
+    assert!(o.contains("sibling_active_runs=0"), "{}", o.out);
+}
+
+// ── Task S4-T11 (A-12/A-13: RFC3339 fail-closed + max-selection) ───────────
+
+#[test]
+fn unparseable_sibling_updated_at_does_not_propagate_and_logs_note() {
+    let d = tmp();
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "prativadi",
+        "phase_review",
+        "2026-06-29T18:01:00Z",
+        "codex",
+    );
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/beta/baton.json"),
+        "beta",
+        "vadi",
+        "human_decision",
+        "not-a-timestamp",
+        "claude",
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "vadi",
+            "--persist",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_POLL,
+    );
+    assert!(
+        o.kept_polling(),
+        "expected keeps-polling, got {:?}\n{}",
+        o.code,
+        o.out
+    );
+    assert!(!o.contains("human_decision role="), "{}", o.out);
+    assert!(o.contains("sibling_active_runs=0"), "{}", o.out);
+    assert!(
+        o.contains("DVANDVA_WAIT note updated_at_unparseable run=beta"),
+        "{}",
+        o.out
+    );
+}
+
+#[test]
+fn three_sibling_scan_selects_max_updated_at_not_first_in_listing_order() {
+    let d = tmp();
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "prativadi",
+        "phase_review",
+        "2026-06-29T10:00:00Z",
+        "codex",
+    );
+    // File-listing order is beta, delta, gamma (sorted). "delta" — the middle
+    // entry — carries the newest `updated_at` and must win over the
+    // earlier-sorted "beta", proving selection is by max timestamp, not by
+    // first match in directory order.
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/beta/baton.json"),
+        "beta",
+        "human",
+        "human_decision",
+        "2026-06-29T11:00:00Z",
+        "claude",
+    );
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/delta/baton.json"),
+        "delta",
+        "human",
+        "human_decision",
+        "2026-06-29T13:00:00Z",
+        "claude",
+    );
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/gamma/baton.json"),
+        "gamma",
+        "human",
+        "human_decision",
+        "2026-06-29T12:00:00Z",
+        "claude",
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "vadi",
+            "--persist",
+            "--interval",
+            "1",
+            "--max-wait",
+            "540",
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(11), "{}", o.out);
+    assert!(o.contains("sibling_run_id=delta"), "{}", o.out);
+    assert!(!o.contains("sibling_run_id=beta"), "{}", o.out);
+    assert!(!o.contains("sibling_run_id=gamma"), "{}", o.out);
+}
+
+#[test]
+fn allow_missing_wakes_within_interval_when_run_dir_does_not_exist_yet() {
+    let d = tmp();
+    // The run directory itself does not exist yet at wait-start; only its
+    // parent (`d`) does. A correct directory-watcher fallback must watch the
+    // nearest existing ancestor so the run dir's creation (and the baton
+    // write immediately after) wakes the loop well inside the interval,
+    // rather than sleeping the full interval blind.
+    let f = d.path().join("late-run/baton.json");
+    let late = f.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(400));
+        write_baton(&late, "prativadi", "phase_review");
+    });
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "prativadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--allow-missing",
+            "--interval",
+            "8",
+            "--max-wait",
+            "8",
+            "--finite",
+        ],
+        Duration::from_secs(4),
+    );
+    assert_eq!(o.code, Some(0), "{}", o.out);
+}
+
 #[test]
 fn notify_question_body_truncates_long_question_to_300_chars() {
     let d = tmp();
