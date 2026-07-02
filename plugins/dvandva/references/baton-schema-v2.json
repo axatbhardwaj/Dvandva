@@ -63,7 +63,7 @@
       "permission_class": "verify-only",
       "status": "closed",
       "work_item_ids": ["r3-dynamic-schema-and-write-gates"],
-      "read_paths": ["plugins/dvandva/skills/vadi/scripts/dvandva-write.sh"],
+      "read_paths": ["rust/dvandva/src/write.rs"],
       "write_paths": [],
       "depends_on": [],
       "conflict_group": "run3-helper-gates",

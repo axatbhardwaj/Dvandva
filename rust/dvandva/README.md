@@ -2,39 +2,51 @@
 
 A two-role (`vadi`/`prativadi`) multi-agent coordination engine.
 
-`dvandva` is a multicall binary implementing the **read path** over a JSON
-baton:
+`dvandva` is a multicall binary implementing the full Dvandva runtime over a
+JSON baton — the read path, the write path, foreground waiting, role preflight,
+git work-gating, and the installers. It is the runtime: earlier releases bundled
+these as shell helpers inside the plugin; that shell surface is now folded into
+this one binary.
 
-- `dvandva state --compact --file <baton> --role <r>` — emit the bounded
-  `BATON_STATE_COMPACT` projection.
-- `dvandva resolve --role <r> [--cwd <dir>]` — resolve the active run
-  selector-first, then by discovery.
+## Subcommands
 
-When invoked through the delegating shims `dvandva-state.sh` /
-`dvandva-resolve.sh`, the subcommand and role are derived from `argv[0]`.
+- **Runtime** — `state`, `resolve`, `write`, `wait`, `snapshot`.
+  - `dvandva state --compact --file <baton> [--role <role>]` — emit the bounded
+    `BATON_STATE_COMPACT` projection.
+  - `dvandva resolve --role <vadi|prativadi> [--cwd <dir>]` — resolve the active
+    run selector-first, then by discovery.
+  - `dvandva write "$BATON_FILE" "$BATON_NEXT_FILE"` — validate, atomically
+    install, and snapshot a baton candidate.
+  - `dvandva wait --role <role> [...]` — foreground continuous polling until the
+    baton assigns the role or reaches a terminal state.
+  - `dvandva snapshot "$BATON_FILE"` — write a history snapshot for the baton.
+- **Preflight** — `preflight`, `hook-preflight`.
+- **Git work-gate** — `commit-gate`, `drift-lint`, `install-hooks`, `git-hook <name>`.
+- **Install** — `install`, `install-codex`, `smoke-install`, `retire-agents`.
+- **Lints** — `lint <artifacts|skills|protocol-phase1|skill-phase3|phase4-research|run3-dynamic-agents|run4-path-gates|run4-standalone-agents>`.
+
+The binary is a multicall executable: when invoked through a git-hook symlink
+(`pre-commit`, `prepare-commit-msg`, ...) the hook name is taken from `argv[0]`.
 `dvandva --version` prints the version line.
 
-Prerelease (`2.0.0-alpha.1`) covering the read path only. Licensed under
-`MIT OR Apache-2.0`.
+Version `2.0.0-alpha.2`. Licensed under `MIT OR Apache-2.0`.
 
 ## Install
 
 ```bash
-cargo install dvandva --version 2.0.0-alpha.1
+cargo install dvandva --version 2.0.0-alpha.2
 ```
 
-This alpha intentionally covers only the read path (`state` and `resolve`).
-The repository's shell shims remain the compatibility boundary and delegate to
-the Rust binary when `DVANDVA_BIN`, a co-located binary, or `PATH` exposes
-`dvandva`.
-
-This installs only the Rust binary. To install the Dvandva skills, commands,
-agents, references, and shell helpers into Claude Code and Codex, run the
-repository installer instead:
+The binary must be on `PATH` for the Dvandva skills to run. `cargo install`
+installs only the Rust binary. After it is on `PATH`, register the Dvandva
+plugin into Claude Code and/or Codex with:
 
 ```bash
-bash scripts/install.sh
+dvandva install
 ```
+
+`dvandva install` adds the Dvandva skills, commands, agents, and references to
+the engines; the plugin no longer bundles executables.
 
 ## Known limitations
 

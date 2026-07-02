@@ -19,7 +19,7 @@ terminal archives.
 Recommended files:
 
 - `.dvandva/baton.json` - legacy v1 current state and next assignee.
-- `.dvandva/baton.next.json` - legacy v1 candidate the active agent writes; installed by the bundled `dvandva-write.sh`.
+- `.dvandva/baton.next.json` - legacy v1 candidate the active agent writes; installed by `dvandva write`.
 - `.dvandva/runs/<run_id>/baton.json` - v2 run-scoped current state and next assignee.
 - `.dvandva/runs/<run_id>/baton.next.json` - v2 run-scoped candidate.
 - `.dvandva/runs/<run_id>/history/*.json` - per-run checkpoint snapshots.
@@ -75,11 +75,13 @@ remain the only path to terminal `done`.
 
 Full-profile implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; the `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. `test_creation` routes to `cross_review` and records 100% test coverage evidence for new executable behavior or source-only rationale for docs/skills; `cross_review` may route to `cross_fixing`, and only completed cross-review evidence for both roles can advance to `deep_review`. Fast and standard development profiles use the compact `implementing -> phase_review -> termination_review -> done` path, still with `profile_decision`, passing final verification, completed `verification_matrix` evidence, a completed approved prativadi `phase-review` subagent track with current-cycle `review_checkpoint`, shared termination, and role-owned final approvals. Phase convention: implementation-chunk tracks use the numeric implementation phase, while cross-review, phase-review, and deep-review gate tracks use the status-name phase such as `phase: "cross_review"`, `phase: "phase_review"`, or `phase: "deep_review"`.
 
-Role preflight exports and asserts `DVANDVA_ROLE=<role>`, then invokes the
-per-role `dvandva-preflight.sh` hook stage. The hook stage records the prior
-hook path, installs a delegating wrapper at `.dvandva/githooks`, verifies
-repo-local `core.hooksPath=.dvandva/githooks`, and restores the prior hook path
-on uninstall so Dvandva does not hijack foreign repo hook configuration.
+Role preflight exports and asserts `DVANDVA_ROLE=<role>`, then runs the
+per-role `dvandva preflight --role <role>` hook stage in-process. The hook stage
+records the prior hook path, materializes delegating hooks at `.dvandva/githooks`
+(each a symlink to the `dvandva` binary, which dispatches on the invoking hook
+name in `argv[0]`), verifies repo-local `core.hooksPath=.dvandva/githooks`, and
+restores the prior hook path on uninstall so Dvandva does not hijack foreign repo
+hook configuration.
 
 For waiting, `human_question` and `human_decision` are a paired run pause that
 stops both roles together. If a selected run is in a non-terminal wait and a newer
@@ -109,7 +111,7 @@ early. Scalar-owner states still reject same-status rewrites.
     "decided_by": "vadi",
     "decided_at": "2026-05-13T10:30:00Z",
     "risk_inputs": ["helper"],
-    "hard_triggers": ["plugins/dvandva/skills/vadi/scripts/dvandva-write.sh"],
+    "hard_triggers": ["rust/dvandva/src/write.rs"],
     "allowlist_match": false,
     "allowlist_refs": [],
     "evidence_refs": ["research_ref"]
@@ -227,7 +229,7 @@ Run 3 turns the static 15-agent roster into a **seed roster** for run-scoped dyn
   "permission_class": "verify-only",
   "status": "closed",
   "work_item_ids": ["r3-dynamic-schema-and-write-gates"],
-  "read_paths": ["plugins/dvandva/skills/vadi/scripts/dvandva-write.sh"],
+  "read_paths": ["rust/dvandva/src/write.rs"],
   "write_paths": [],
   "depends_on": [],
   "conflict_group": "run3-helper-gates",
@@ -431,7 +433,7 @@ illegal transitions and route to `human_decision` instead.
 
 The active agent must stop doing LLM work after writing a baton that assigns the next action to another actor. In default `run_mode: "walkaway"`, it then blocks in the foreground wait helper instead of exiting the overall run. After installing a handoff checkpoint, call the helper with `--since-checkpoint <written_checkpoint> --until-actionable` so team-owned `active_roles` states do not return the writer as ready on the same checkpoint and do not wake a role until that role has dependency-unblocked actionable work; the helper exits 0 only after a peer write advances the baton and the selected role is actionable.
 
-Every baton write goes through `${CLAUDE_SKILL_DIR}/scripts/dvandva-write.sh`,
+Every baton write goes through `dvandva write`,
 which validates the v1 or v2 transition, installs atomically, and snapshots the
 checkpoint. The live v2 write-helper enforcement covers named-run research
 transitions, v2-only fields, safe run IDs, schema continuity, status-owner
@@ -461,7 +463,7 @@ This is the core anti-token-polling rule:
 
 - The vadi does not spend model turns asking whether the prativadi moved.
 - The prativadi does not spend model turns asking whether the vadi moved.
-- In walkaway mode, the assigned-away agent runs `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role <vadi|prativadi> --interval 60 --max-wait 540 --until-actionable`. After a baton write, add `--since-checkpoint <written_checkpoint> --until-actionable` so active team states poll until the baton advances and the role has dependency-unblocked actionable work instead of bouncing the writer back to ready immediately.
+- In walkaway mode, the assigned-away agent runs `dvandva wait --role <vadi|prativadi> --interval 60 --max-wait 540 --until-actionable`. After a baton write, add `--since-checkpoint <written_checkpoint> --until-actionable` so active team states poll until the baton advances and the role has dependency-unblocked actionable work instead of bouncing the writer back to ready immediately.
 - Continuous polling is the hard rule: `--max-wait` is a heartbeat interval, not a stop condition, and the helper keeps polling until this role owns the baton, the baton reaches post-handshake `done`, the baton enters `human_question`/`human_decision`, or the user interrupts. `termination_review` is active and wakes both roles; final approval alone is not a stop condition.
 - `--persist` is accepted for older call sites and is now redundant. `--persist-max <seconds>` is the optional total wall-clock cap; the wait-helper persist cap exit 23 means the cap was reached, not that the peer is done. Re-enter the wait unless the user interrupts. Explicit `--finite` compatibility mode is the only path to timeout exit 20 and is not valid for normal walkaway loops.
 - The write-helper validation exit 23 means a baton candidate failed schema, required-key, safe-run-id, v2 status-owner, status, or enum validation. Fix the candidate and rerun the write helper; do not edit the installed baton directly.
@@ -476,7 +478,7 @@ Use `/goal` around the baton state instead of around a timer.
 
 Do not paste goal text from this reference. Use the role skill bodies or engine command files as the canonical source, because they include current Existing baton discovery, conditional parallelism, `subagent_tracks`, `run_explainer_ref`, and terminal explainer gates. This reference intentionally avoids duplicating those long strings so it cannot drift into a stale legacy fallback.
 
-Both goals require the agent to surface a bounded `BATON_STATE_COMPACT` line at every checkpoint — produced by `dvandva-state.sh --compact` (refs, counts, current-role work, open findings, latest verification, and `next_action`) rather than pasting the full `work_split`/`subagent_tracks`/`verification_matrix` arrays or the full baton — and to read the authoritative full `baton.json` before any state-changing decision (baton write, approval, human handoff, or validator-failure diagnosis). The `/goal` evaluator detects exit conditions by reading that line in the transcript.
+Both goals require the agent to surface a bounded `BATON_STATE_COMPACT` line at every checkpoint — produced by `dvandva state --compact` (refs, counts, current-role work, open findings, latest verification, and `next_action`) rather than pasting the full `work_split`/`subagent_tracks`/`verification_matrix` arrays or the full baton — and to read the authoritative full `baton.json` before any state-changing decision (baton write, approval, human handoff, or validator-failure diagnosis). The `/goal` evaluator detects exit conditions by reading that line in the transcript.
 
 ## Why Not LLM Polling
 

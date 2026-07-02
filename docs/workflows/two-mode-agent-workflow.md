@@ -18,7 +18,7 @@ Claude should:
 - Implement the requested change phase by phase.
 - Run the motivating tests and any cheap relevant checks.
 - Write a checkpoint handoff to the local baton.
-- Block in `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role vadi` once the baton assigns review to prativadi.
+- Block in `dvandva wait --role vadi` once the baton assigns review to prativadi.
 
 Claude should not:
 
@@ -38,7 +38,7 @@ Codex should:
 - Apply narrow fixups when safe.
 - Return the baton to Claude only when broader implementation is needed.
 - Mark `DONE` only when the stated acceptance criteria are verified.
-- Block in `${CLAUDE_SKILL_DIR}/scripts/dvandva-wait.sh --role prativadi` once the baton assigns implementation back to vadi.
+- Block in `dvandva wait --role prativadi` once the baton assigns implementation back to vadi.
 
 Codex may directly fix:
 

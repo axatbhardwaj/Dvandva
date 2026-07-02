@@ -4,7 +4,7 @@ This is the plugin-local reference for `dvandva.baton.v1` and the v2 design
 contract. The skill bodies carry the operational checklist; this file is the
 bundled transition reference available after plugin install.
 
-The bundled `dvandva-write.sh` helper enforces v1 and v2 transition subsets deterministically at write time; `scripts/test-dvandva-write.sh` asserts every documented v1 edge plus the v2 research/test/review/deslop edges below.
+The `dvandva write` subcommand enforces v1 and v2 transition subsets deterministically at write time; the write port's `cargo test` suite asserts every documented v1 edge plus the v2 research/test/review/deslop edges below.
 
 ## v2 Additions
 
@@ -52,7 +52,7 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
   only `run_explainer_reviews` entries with `role: "vadi"`;
   `DVANDVA_ROLE=prativadi` may raise only `prativadi_final_approval` and may
   add/change only entries with `role: "prativadi"`.
-- `dvandva-wait.sh`: continuous polling is the hard rule. `--max-wait` is the
+- `dvandva wait`: continuous polling is the hard rule. `--max-wait` is the
   heartbeat interval by default, and the helper keeps polling until role
   ownership, shared terminal `done`, `human_question`, `human_decision`, or user
   interrupt. `human_question` and `human_decision` are a paired run pause that
@@ -76,7 +76,7 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
   `--persist-max <seconds>` is a total wall-clock cap; the wait-helper persist cap exit 23 is not a terminal baton state and must re-enter wait unless the
   user interrupts. Explicit `--finite` compatibility mode is the only path to
   exit 20 and is not valid for normal walkaway loops.
-- `dvandva-write.sh`: the write-helper validation exit 23 means a baton
+- `dvandva write`: the write-helper validation exit 23 means a baton
   candidate failed schema, required-key, safe-run-id, status-owner, status, or
   enum validation. Fix the candidate and rerun the helper; do not edit the
   installed baton directly.
@@ -115,22 +115,23 @@ terminal historical chunks do not block later sequential reuse because
 work_split has no `base_checkpoint` wave model.
 
 Run 4 work-gating uses repo-local git hooks activated by the single turn-entry
-gate `dvandva-preflight.sh --role <role>`. The preflight resolves the active run
-selector-first (stopping on exit 12 ASK), then runs the hook stage. The hook
-stage detects Dvandva hook adoption status via a functional probe: it installs a
-delegating wrapper under `.dvandva/githooks/` (gitignored) and sets only
-repo-local `git config core.hooksPath .dvandva/githooks`. When a prior `core.hooksPath`
-exists (e.g., set by Husky), the installer records it as `dvandva.priorHooksPath`, the
-delegating wrapper execs the prior hook chain on every commit so the foreign owner keeps
-firing, and the prior `core.hooksPath` is restored on uninstall — the foreign owner is
-preserved through record, delegate, and restore. The installer records
-`dvandva.hooksAdoptedAt` as the local drift baseline.
-The delegating `pre-commit` wrapper runs the gate then execs the prior hook; the
-`prepare-commit-msg` wrapper delegates first then stamps `Dvandva-Checkpoint`.
-`scripts/dvandva-drift-lint.sh` detects unstamped commits from the hook-adoption
-baseline floor, so a later checkpoint cannot hide an unstamped sandwich bypass.
-This is shell/git-hook enforcement only; it does not create a daemon, scheduler,
-or hidden central process.
+gate `dvandva preflight --role <role>`. The preflight resolves the active run
+selector-first (stopping on exit 12 ASK), then runs the hook stage in-process.
+The hook stage detects Dvandva hook adoption status via a functional probe: it
+materializes delegating hooks under `.dvandva/githooks/` (gitignored) — each is
+a symlink to the `dvandva` binary, which dispatches on the invoking hook name in
+`argv[0]` — and sets only repo-local `git config core.hooksPath .dvandva/githooks`.
+When a prior `core.hooksPath` exists (e.g., set by Husky), the installer records
+it as `dvandva.priorHooksPath`, the delegating hooks exec the prior hook chain on
+every commit so the foreign owner keeps firing, and the prior `core.hooksPath` is
+restored on uninstall — the foreign owner is preserved through record, delegate,
+and restore. The installer records `dvandva.hooksAdoptedAt` as the local drift
+baseline. The `pre-commit` symlink runs the in-binary commit gate then execs the
+prior hook; the `prepare-commit-msg` symlink delegates first then stamps
+`Dvandva-Checkpoint`. `dvandva drift-lint` detects unstamped commits from the
+hook-adoption baseline floor, so a later checkpoint cannot hide an unstamped
+sandwich bypass. This is local git-hook enforcement only; it does not create a
+daemon, scheduler, or hidden central process.
 For git work-gating, terminal `done`, `human_question`, and `human_decision`
 batons are inactive: the commit gate allows them, and drift lint only reports
 off-protocol commits while at least one non-terminal baton is active or when
@@ -141,32 +142,32 @@ checkpoint history gives it a scan floor.
 Two roles can advance the baton concurrently in team-owned states. The following
 exit codes guard against consistency failures.
 
-Exit codes 2, 23, 27, 28, and 29 (`lock_lost`) are `dvandva-write.sh` codes.
-Exit code 29 (`split_brain`) is a `dvandva-wait.sh` code. The two exit-29 codes
+Exit codes 2, 23, 27, 28, and 29 (`lock_lost`) are `dvandva write` codes.
+Exit code 29 (`split_brain`) is a `dvandva wait` code. The two exit-29 codes
 are distinct and must not be confused: `lock_lost` fires when a write-time
 fencing-token mismatch aborts an install; `split_brain` fires when the wait
 helper detects two concurrent active runs that both claim the same role.
 
 | Exit code | Name | Meaning and recovery |
 |---|---|---|
-| `2` | `bad_lock_timeout` | `dvandva-write.sh`: `DVANDVA_LOCK_TIMEOUT` is not a canonical positive decimal (`^[1-9][0-9]*$`). Zero, negative, leading-zero forms (`08`, `09`), and non-numeric values all fail closed before the lock loop fires. Fix or unset `DVANDVA_LOCK_TIMEOUT` (default is `30` seconds), then rerun. |
-| `23` | `bad_run_id_dir` | `dvandva-write.sh`: the baton at `.dvandva/runs/<seg>/baton.json` has `schema==v2` but its `run_id` field is null, missing, empty, or mismatches `<seg>`. Fix the candidate `run_id` and rerun; do not edit the installed baton directly. |
-| `27` | `stale_checkpoint` | `dvandva-write.sh`: emits `DVANDVA_WRITE stale_checkpoint current=<c> candidate=<n>` when `new_checkpoint <= cur_checkpoint` — the peer advanced while this candidate was being prepared. Re-read the installed baton, re-derive the next state from the mode table, rewrite the candidate, and rerun the helper. Never bump past the peer's checkpoint. |
-| `28` | `lock_unavailable` | `dvandva-write.sh`: a non-directory (e.g. a leftover file or a squatter) occupies the lock path `<baton-dir>/.baton.lock.d`; the critical section never runs unlocked. Fail closed. Investigate and remove the squatter, then rerun. |
-| `29` | `lock_lost` (`dvandva-write.sh`) | `dvandva-write.sh`: the fencing token was overwritten by a peer that age-stole the lock while this writer was slow. The install is aborted fail-closed; the baton is unchanged. Re-read the baton and re-derive the next state before retrying. **Distinct from** `dvandva-wait.sh` exit `29` (`split_brain`). |
-| `29` | `split_brain` (`dvandva-wait.sh`) | `dvandva-wait.sh`: a sibling active baton has `assignee == my role` while the selected baton is waiting on a peer — two simultaneous active runs both think they own the same role. Reconcile selector choice; park the stale duplicate to `human_decision`. Suppress with `DVANDVA_CONCURRENT=1` only when explicitly running two independent parallel Dvandva loops in the same worktree. **Distinct from** `dvandva-write.sh` exit `29` (`lock_lost`). |
+| `2` | `bad_lock_timeout` | `dvandva write`: `DVANDVA_LOCK_TIMEOUT` is not a canonical positive decimal (`^[1-9][0-9]*$`). Zero, negative, leading-zero forms (`08`, `09`), and non-numeric values all fail closed before the lock loop fires. Fix or unset `DVANDVA_LOCK_TIMEOUT` (default is `30` seconds), then rerun. |
+| `23` | `bad_run_id_dir` | `dvandva write`: the baton at `.dvandva/runs/<seg>/baton.json` has `schema==v2` but its `run_id` field is null, missing, empty, or mismatches `<seg>`. Fix the candidate `run_id` and rerun; do not edit the installed baton directly. |
+| `27` | `stale_checkpoint` | `dvandva write`: emits `DVANDVA_WRITE stale_checkpoint current=<c> candidate=<n>` when `new_checkpoint <= cur_checkpoint` — the peer advanced while this candidate was being prepared. Re-read the installed baton, re-derive the next state from the mode table, rewrite the candidate, and rerun the helper. Never bump past the peer's checkpoint. |
+| `28` | `lock_unavailable` | `dvandva write`: a non-directory (e.g. a leftover file or a squatter) occupies the lock path `<baton-dir>/.baton.lock.d`; the critical section never runs unlocked. Fail closed. Investigate and remove the squatter, then rerun. |
+| `29` | `lock_lost` (`dvandva write`) | `dvandva write`: the fencing token was overwritten by a peer that age-stole the lock while this writer was slow. The install is aborted fail-closed; the baton is unchanged. Re-read the baton and re-derive the next state before retrying. **Distinct from** `dvandva wait` exit `29` (`split_brain`). |
+| `29` | `split_brain` (`dvandva wait`) | `dvandva wait`: a sibling active baton has `assignee == my role` while the selected baton is waiting on a peer — two simultaneous active runs both think they own the same role. Reconcile selector choice; park the stale duplicate to `human_decision`. Suppress with `DVANDVA_CONCURRENT=1` only when explicitly running two independent parallel Dvandva loops in the same worktree. **Distinct from** `dvandva write` exit `29` (`lock_lost`). |
 
 ### Test-only seam: `DVANDVA_WRITE_BARRIER`
 
-`dvandva-write.sh` contains a synchronization seam gated on the `DVANDVA_WRITE_BARRIER`
-environment variable. When the variable is unset (all production runs), the `if`
+`dvandva write` contains a synchronization seam gated on the `DVANDVA_WRITE_BARRIER`
+environment variable. When the variable is unset (all production runs), the
 branch is never entered — it is a no-op, a single string test. When set by a
-test harness, the helper touches and stats sentinel files named
+test harness, the write port touches and stats sentinel files named
 `${DVANDVA_WRITE_BARRIER}.arrived` and `${DVANDVA_WRITE_BARRIER}.release` in
-order to let `scripts/test-dvandva-write.sh` park a writer after the transition
-check but before the atomic install, exercising the fencing-token and stale-
-checkpoint guarantees deterministically. The seam never reads or executes arbitrary
-input. This is an accepted test-only seam; no behavior change is required.
+order to let the write port's `cargo test` suite park a writer after the
+transition check but before the atomic install, exercising the fencing-token and
+stale-checkpoint guarantees deterministically. The seam never reads or executes
+arbitrary input. This is an accepted test-only seam; no behavior change is required.
 
 Run 4 retirement is Dvandva-only. It may retire only Dvandva-covered standalone
 Claude symlink workflows with functional parity via Runs 1-4 usage:
@@ -403,7 +404,7 @@ These gates keep the walkaway loop live and bound its cycles.
 
 - **Advance-owner wake.** In `parallel_implementing` and `cross_fixing`, once no
   implementation chunk is unblocked and non-terminal for either role (all
-  terminal or blocked), `dvandva-wait.sh --until-actionable` wakes the state's
+  terminal or blocked), `dvandva wait --until-actionable` wakes the state's
   advance-owner (`vadi`) so the outbound transition is written instead of both
   roles sleeping forever. Implementation chunks are identified by the same
   definition as the `>=5` parallel-implementing gate (implementation
@@ -428,9 +429,9 @@ These gates keep the walkaway loop live and bound its cycles.
   and both approvals reset to false on `termination_review->phase_fixing`
   (`stale_approval` otherwise), so a stale pre-fix approval cannot satisfy the
   done gate.
-- **Dead-peer watchdog.** `dvandva-wait.sh --stall-max <seconds>` exits 24
+- **Dead-peer watchdog.** `dvandva wait --stall-max <seconds>` exits 24
   (`stalled`) when the baton does not advance within the bound; the role then
-  writes `human_decision`. Wait exit 24 is distinct from `dvandva-write.sh`
+  writes `human_decision`. Wait exit 24 is distinct from `dvandva write`
   exit 24 (illegal transition).
 
 ## Regular checkpoint commits
