@@ -1,23 +1,69 @@
 //! `dvandva` multicall binary entry point.
 //!
-//! The subcommand is resolved from `argv[0]`'s basename when the binary is
-//! invoked through a delegating shim (`dvandva-state.sh` -> `state`,
-//! `dvandva-resolve.sh` -> `resolve`), otherwise from the first CLI argument.
-//! `--version`/`-V` prints the exact version line and exits 0; an unknown
-//! subcommand exits 2. Each subcommand returns an `i32` used as the exit code.
+//! The subcommand is resolved from `argv[0]`'s basename first, then from the
+//! first CLI argument:
+//!
+//! * Git-hook basenames (`pre-commit`, `prepare-commit-msg`, and the other
+//!   canonical client-side hook names materialized as symlinks by
+//!   `dvandva install-hooks`) dispatch to the git-hook handler.
+//! * Legacy shim basenames (`dvandva-state.sh`, `dvandva-resolve.sh`) keep
+//!   dispatching to `state`/`resolve` for compatibility.
+//! * Otherwise the first CLI argument names the subcommand. `--version`/`-V`
+//!   prints the exact version line and exits 0; an unknown subcommand exits 2.
+//!
+//! Each subcommand returns an `i32` used as the exit code. Exit-code
+//! namespaces are per-subcommand and are protocol surface (documented in the
+//! skills and the state-transition table) — never unified across helpers.
 
 mod cmd;
 
 use std::process::ExitCode;
 
-const VERSION_LINE: &str = "dvandva 2.0.0-alpha.1";
+const VERSION_LINE: &str = "dvandva 2.0.0-alpha.2";
 
 const USAGE: &str = "\
-Usage: dvandva <state|resolve> [args...]
+Usage: dvandva <subcommand> [args...]
        dvandva --version
 
-Multicall read-path binary. When invoked as dvandva-state.sh or
-dvandva-resolve.sh the subcommand is derived from argv[0].";
+Runtime:   state | resolve | write | wait | snapshot
+Preflight: preflight | hook-preflight
+Git gate:  commit-gate | drift-lint | install-hooks | git-hook <name>
+Install:   install | install-codex | smoke-install | retire-agents
+Lints:     lint <artifacts|skills|protocol-phase1|skill-phase3|phase4-research|
+                 run3-dynamic-agents|run4-path-gates|run4-standalone-agents>
+
+Multicall binary: when invoked through a git-hook symlink (pre-commit,
+prepare-commit-msg, ...) the hook name is taken from argv[0].";
+
+/// Canonical client-side git hook names (mirrors the hook installer's
+/// pass-through stub list). `pre-commit` and `prepare-commit-msg` carry
+/// Dvandva behavior; the rest delegate to the prior hook chain.
+const GIT_HOOK_NAMES: [&str; 24] = [
+    "applypatch-msg",
+    "pre-applypatch",
+    "post-applypatch",
+    "pre-commit",
+    "pre-merge-commit",
+    "prepare-commit-msg",
+    "commit-msg",
+    "post-commit",
+    "pre-rebase",
+    "post-checkout",
+    "post-merge",
+    "pre-push",
+    "pre-receive",
+    "update",
+    "proc-receive",
+    "post-receive",
+    "post-update",
+    "reference-transaction",
+    "push-to-checkout",
+    "pre-auto-gc",
+    "post-rewrite",
+    "sendemail-validate",
+    "fsmonitor-watchman",
+    "post-index-change",
+];
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -27,11 +73,15 @@ fn main() -> ExitCode {
         .and_then(|n| n.to_str())
         .unwrap_or("");
 
-    // argv[0] basename (shim multicall) takes precedence over the first CLI
-    // argument. `sub_args` are the arguments forwarded to the subcommand.
+    // argv[0] basename (hook symlink / legacy shim multicall) takes precedence
+    // over the first CLI argument. `sub_args` are forwarded to the subcommand.
     let (subcommand, sub_args): (Option<&str>, &[String]) = match basename {
         "dvandva-state.sh" => (Some("state"), &args[1..]),
         "dvandva-resolve.sh" => (Some("resolve"), &args[1..]),
+        name if GIT_HOOK_NAMES.contains(&name) => {
+            let code = cmd::git_hook::run(name, &args[1..]);
+            return ExitCode::from(u8::try_from(code).unwrap_or(2));
+        }
         _ => match args.get(1).map(String::as_str) {
             Some("--version") | Some("-V") => {
                 println!("{VERSION_LINE}");
@@ -49,6 +99,32 @@ fn main() -> ExitCode {
     let code = match subcommand {
         Some("state") => cmd::state::run(sub_args),
         Some("resolve") => cmd::resolve::run(sub_args),
+        Some("write") => cmd::write::run(sub_args),
+        Some("wait") => cmd::wait::run(sub_args),
+        Some("snapshot") => cmd::snapshot::run(sub_args),
+        Some("preflight") => cmd::preflight::run(sub_args),
+        Some("hook-preflight") => cmd::hook_preflight::run(sub_args),
+        Some("commit-gate") => cmd::commit_gate::run(sub_args),
+        Some("drift-lint") => cmd::drift_lint::run(sub_args),
+        Some("install-hooks") => cmd::install_hooks::run(sub_args),
+        Some("install") => cmd::install::run(sub_args),
+        Some("install-codex") => cmd::install_codex::run(sub_args),
+        Some("retire-agents") => cmd::retire::run(sub_args),
+        Some("smoke-install") => cmd::smoke::run(sub_args),
+        Some("lint") => cmd::lint::run(sub_args),
+        Some("git-hook") => match sub_args.split_first() {
+            Some((name, rest)) if GIT_HOOK_NAMES.contains(&name.as_str()) => {
+                cmd::git_hook::run(name, rest)
+            }
+            Some((name, _)) => {
+                eprintln!("dvandva git-hook: unknown hook name '{name}'");
+                2
+            }
+            None => {
+                eprintln!("dvandva git-hook: missing hook name");
+                2
+            }
+        },
         Some(other) => {
             eprintln!("dvandva: unknown subcommand '{other}'");
             eprintln!("{USAGE}");

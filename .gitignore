@@ -13,3 +13,4 @@ journal/
 
 # Rust build output
 /rust/target/
+.superpowers/

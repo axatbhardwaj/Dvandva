@@ -15,9 +15,25 @@
 //! parent-of-parent directory of `argv[0]`.
 
 pub mod baton;
+pub mod commit_gate;
+pub mod drift_lint;
 pub mod emit;
+pub mod gitcfg;
+pub mod hook_preflight;
+pub mod hooks;
+pub mod install_hooks;
+pub mod installers;
+pub mod lint;
+pub mod lock;
+pub mod preflight;
 pub mod resolve;
+pub mod retire;
+pub mod smoke;
+pub mod snapshot;
 pub mod state;
+pub mod util;
+pub mod wait;
+pub mod write;
 
 use std::path::Path;
 
