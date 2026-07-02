@@ -17,8 +17,8 @@ pub mod protocol_phase1;
 pub mod run3_dynamic_agents;
 pub mod run4_path_gates;
 pub mod run4_standalone_agents;
-pub mod skill_phase3;
 pub mod schema_parity;
+pub mod skill_phase3;
 pub mod skills;
 
 /// One PASS/FAIL assertion outcome.
