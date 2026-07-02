@@ -348,12 +348,29 @@ fn is_commit_gate_path_exempt(path: &str) -> bool {
         || path.starts_with("superpowers/")
 }
 
+/// The literal tokens [`matches_reminder_hard_path`] keys on, exposed so the
+/// S6-T1 schema-parity lint can assert this LOCAL subset ⊆ `write.rs`'s
+/// canonical hard-path source (each token must appear in the `hard_path` /
+/// `is_security_path` source there). Kept adjacent to the function and in
+/// lock-step with the matchers below; it carries no behavior of its own.
+pub(crate) const REMINDER_HARD_PATH_TOKENS: &[&str] = &[
+    ".env",
+    "secret",
+    "secrets",
+    "credential",
+    "credentials",
+    "product.md",
+    "plugins/dvandva/skills/",
+    "rust/dvandva/src/",
+];
+
 /// Conservative LOCAL subset of `write.rs`'s hard-path / security matchers
 /// (`hard_path`/`is_security_path` in `write.rs` are private, not
 /// `pub(crate)`, so they cannot be reused here). This subset only backs the
 /// commit-gate's "recompute the profile floor" reminder line — it is NOT
 /// byte-identical to `write.rs`'s canonical hard-path set, and drift between
-/// the two is a known surface for a future schema-parity lint to guard.
+/// the two is guarded by the S6-T1 schema-parity lint (see
+/// [`REMINDER_HARD_PATH_TOKENS`]).
 fn matches_reminder_hard_path(path: &str) -> bool {
     let base = path.rsplit('/').next().unwrap_or(path);
     base == ".env"

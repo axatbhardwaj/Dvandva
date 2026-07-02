@@ -11,7 +11,7 @@ use std::path::Path;
 
 use dvandva::lint::{
     phase4_research, protocol_phase1, run3_dynamic_agents, run4_path_gates, run4_standalone_agents,
-    skill_phase3,
+    schema_parity, skill_phase3,
 };
 use tempfile::TempDir;
 
@@ -1267,4 +1267,321 @@ fn phase4_aggregator_scopes_artifacts_to_superpowers_dir() {
         "scoped artifacts chain missed superpowers/stray.md:\n{stdout}"
     );
     assert_eq!(out.status.code(), Some(1));
+}
+
+// ---------------------------------------------------------------------------
+// schema-parity (S6-T1)
+//
+// These fixtures build temp trees per assertion. The lint's engine-side lists
+// (the v2 status catalog + `v2_required_keys()`) are compiled into the crate,
+// so a fixture supplies only the DOC/source copies and the lint compares them
+// against the compiled engine. The two literal lists below mirror the
+// `pub(crate)` engine lists (`write::V2_STATUS_CATALOG` and
+// `write::v2_required_keys()`), which an integration test cannot reach; if the
+// engine lists change these must move in lock-step (that drift is exactly what
+// the lint's in-crate unit tests catch).
+// ---------------------------------------------------------------------------
+
+const PARITY_STATUS_TOKENS: &[&str] = &[
+    "research_drafting",
+    "research_review",
+    "research_revision",
+    "spec_drafting",
+    "spec_review",
+    "spec_revision",
+    "implementing",
+    "parallel_implementing",
+    "test_creation",
+    "cross_review",
+    "cross_fixing",
+    "deep_review",
+    "review_of_review",
+    "counter_review",
+    "deslop",
+    "termination_review",
+    "phase_review",
+    "phase_fixing",
+    "human_question",
+    "human_decision",
+    "done",
+    "abandoned",
+];
+
+const PARITY_REQUIRED_KEYS: &[&str] = &[
+    "schema",
+    "updated_at",
+    "mode",
+    "run_mode",
+    "phase",
+    "total_phases",
+    "status",
+    "assignee",
+    "current_engine",
+    "review_target",
+    "plan_ref",
+    "master_plan_locked",
+    "question",
+    "resume_assignee",
+    "resume_status",
+    "disagreement_round",
+    "disagreement_cap",
+    "turn_cap",
+    "branch",
+    "checkpoint",
+    "allow_commit",
+    "allow_push",
+    "allow_pr",
+    "vadi_final_approval",
+    "prativadi_final_approval",
+    "final_commit",
+    "pushed_ref",
+    "summary",
+    "changed_paths",
+    "verification",
+    "findings",
+    "narrow_fixups",
+    "vadi_counter",
+    "deferred",
+    "blockers",
+    "next_action",
+    "run_id",
+    "original_ask",
+    "research_ref",
+    "run_explainer_ref",
+    "active_roles",
+    "agent_instances",
+    "work_split",
+    "subagent_tracks",
+    "verification_matrix",
+];
+
+/// The `Status catalog (22):` marker line the lint parses out of `product.md`
+/// and `state-transition-table.md`.
+fn parity_catalog_line(tokens: &[&str]) -> String {
+    format!("Status catalog (22): {}\n", tokens.join(", "))
+}
+
+/// A `baton-schema-v2.json` body carrying `status_catalog` as a JSON array.
+fn parity_status_catalog_json(tokens: &[&str]) -> String {
+    let items: Vec<String> = tokens.iter().map(|t| format!("    \"{t}\"")).collect();
+    format!(
+        "{{\n  \"schema\": \"dvandva.baton.v2\",\n  \"status_catalog\": [\n{}\n  ]\n}}\n",
+        items.join(",\n")
+    )
+}
+
+/// A role SKILL.md whose inline ```json fence carries `keys` as its top-level
+/// keys (hand-built JSON so the integration test needs no serde_json import).
+fn parity_skill_md(name: &str, keys: &[&str]) -> String {
+    let entries: Vec<String> = keys
+        .iter()
+        .map(|k| {
+            let val = if *k == "schema" {
+                "\"dvandva.baton.v2\""
+            } else {
+                "null"
+            };
+            format!("  \"{k}\": {val}")
+        })
+        .collect();
+    format!(
+        "---\nname: {name}\ndescription: role skill.\n---\n# {name}\n```json\n{{\n{}\n}}\n```\n",
+        entries.join(",\n")
+    )
+}
+
+/// A fully-passing schema-parity fixture tree.
+fn parity_fixture(root: &Path) {
+    // A1 — status-enum doc copies.
+    w(
+        root,
+        "plugins/dvandva/references/baton-schema-v2.json",
+        &parity_status_catalog_json(PARITY_STATUS_TOKENS),
+    );
+    w(
+        root,
+        "product.md",
+        &format!("# Product\n{}", parity_catalog_line(PARITY_STATUS_TOKENS)),
+    );
+    w(
+        root,
+        "plugins/dvandva/references/state-transition-table.md",
+        &format!(
+            "# State transition table\n{}",
+            parity_catalog_line(PARITY_STATUS_TOKENS)
+        ),
+    );
+
+    // A2 — role SKILL.md inline contract blocks.
+    w(
+        root,
+        "plugins/dvandva/skills/vadi/SKILL.md",
+        &parity_skill_md("vadi", PARITY_REQUIRED_KEYS),
+    );
+    w(
+        root,
+        "plugins/dvandva/skills/prativadi/SKILL.md",
+        &parity_skill_md("prativadi", PARITY_REQUIRED_KEYS),
+    );
+
+    // A3 — byte-identical channel docs.
+    let channel = "Local baton channel.\nContinuous polling is the hard rule.\n";
+    w(root, "docs/protocol/local-baton-channel.md", channel);
+    w(
+        root,
+        "plugins/dvandva/references/local-baton-channel.md",
+        channel,
+    );
+
+    // A4 — HISTORICAL markers.
+    w(
+        root,
+        "plugins/dvandva/references/baton-schema.json",
+        "{\n  \"note\": \"HISTORICAL: dvandva.baton.v1 retired-from-writes seed\",\n  \"turn_cap\": 60\n}\n",
+    );
+    w(
+        root,
+        "templates/channel/baton.json",
+        "{\n  \"note\": \"HISTORICAL: dvandva.baton.v1 operational seed\",\n  \"turn_cap\": 60\n}\n",
+    );
+
+    // A5 — write.rs hard-path source must carry every commit-gate reminder token.
+    w(
+        root,
+        "rust/dvandva/src/write.rs",
+        "// hard_path floor set.\n// .env secret secrets credential credentials product.md\n// plugins/dvandva/skills/ rust/dvandva/src/ rust/dvandva/tests/\n",
+    );
+}
+
+#[test]
+fn parity_accepts_complete_fixture() {
+    let d = tmp();
+    parity_fixture(d.path());
+    let r = schema_parity::report(d.path());
+    assert!(r.passed(), "expected clean, failures: {}", r.failures());
+}
+
+#[test]
+fn parity_rejects_schema_catalog_missing_token() {
+    let d = tmp();
+    parity_fixture(d.path());
+    // Drop `abandoned` from the JSON status_catalog.
+    let short = &PARITY_STATUS_TOKENS[..PARITY_STATUS_TOKENS.len() - 1];
+    w(
+        d.path(),
+        "plugins/dvandva/references/baton-schema-v2.json",
+        &parity_status_catalog_json(short),
+    );
+    let r = schema_parity::report(d.path());
+    assert!(r.fails_with("baton-schema-v2.json status_catalog"));
+}
+
+#[test]
+fn parity_rejects_product_catalog_line_drift() {
+    let d = tmp();
+    parity_fixture(d.path());
+    // A stray extra token on the catalog line.
+    let mut extra: Vec<&str> = PARITY_STATUS_TOKENS.to_vec();
+    extra.push("bogus_status");
+    w(
+        d.path(),
+        "product.md",
+        &format!("# Product\n{}", parity_catalog_line(&extra)),
+    );
+    let r = schema_parity::report(d.path());
+    assert!(r.fails_with("product.md status catalog line"));
+}
+
+#[test]
+fn parity_rejects_transition_table_missing_catalog() {
+    let d = tmp();
+    parity_fixture(d.path());
+    w(
+        d.path(),
+        "plugins/dvandva/references/state-transition-table.md",
+        "# State transition table\nno catalog marker here.\n",
+    );
+    let r = schema_parity::report(d.path());
+    assert!(r.fails_with("state-transition-table.md status catalog"));
+}
+
+#[test]
+fn parity_rejects_vadi_skill_missing_required_key() {
+    let d = tmp();
+    parity_fixture(d.path());
+    // Drop `verification_matrix` from the vadi inline contract block.
+    let short = &PARITY_REQUIRED_KEYS[..PARITY_REQUIRED_KEYS.len() - 1];
+    w(
+        d.path(),
+        "plugins/dvandva/skills/vadi/SKILL.md",
+        &parity_skill_md("vadi", short),
+    );
+    let r = schema_parity::report(d.path());
+    assert!(r.fails_with("vadi SKILL.md inline baton keys"));
+}
+
+#[test]
+fn parity_rejects_prativadi_skill_extra_key() {
+    let d = tmp();
+    parity_fixture(d.path());
+    let mut extra: Vec<&str> = PARITY_REQUIRED_KEYS.to_vec();
+    extra.push("bogus_key");
+    w(
+        d.path(),
+        "plugins/dvandva/skills/prativadi/SKILL.md",
+        &parity_skill_md("prativadi", &extra),
+    );
+    let r = schema_parity::report(d.path());
+    assert!(r.fails_with("prativadi SKILL.md inline baton keys"));
+}
+
+#[test]
+fn parity_rejects_channel_doc_byte_mismatch() {
+    let d = tmp();
+    parity_fixture(d.path());
+    w(
+        d.path(),
+        "plugins/dvandva/references/local-baton-channel.md",
+        "Local baton channel.\nDIVERGED COPY.\n",
+    );
+    let r = schema_parity::report(d.path());
+    assert!(r.fails_with("local-baton-channel.md copies are byte-identical"));
+}
+
+#[test]
+fn parity_rejects_missing_historical_marker() {
+    let d = tmp();
+    parity_fixture(d.path());
+    w(
+        d.path(),
+        "templates/channel/baton.json",
+        "{\n  \"turn_cap\": 60\n}\n",
+    );
+    let r = schema_parity::report(d.path());
+    assert!(r.fails_with("templates/channel/baton.json carries the HISTORICAL"));
+}
+
+#[test]
+fn parity_rejects_commit_gate_token_absent_from_write_source() {
+    let d = tmp();
+    parity_fixture(d.path());
+    // A write.rs source that omits the `rust/dvandva/src/` reminder token.
+    w(
+        d.path(),
+        "rust/dvandva/src/write.rs",
+        "// .env secret secrets credential credentials product.md plugins/dvandva/skills/\n",
+    );
+    let r = schema_parity::report(d.path());
+    assert!(r.fails_with("commit_gate reminder hard-path tokens"));
+}
+
+// The full lint against the real repo tree. It only goes green once the
+// hardening docs wave lands the status-catalog lines, the HISTORICAL markers,
+// and the byte-identical channel-doc copy, so it is ignored until then.
+#[test]
+#[ignore = "flips on after hardening docs wave"]
+fn parity_live_tree_passes() {
+    let root = dvandva::lint::resolve_root(&[]);
+    let r = schema_parity::report(&root);
+    assert!(r.passed(), "live-tree parity failures: {}", r.failures());
 }

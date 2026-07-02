@@ -23,9 +23,10 @@ use crate::Role;
 /// a status token outside this set is `invalid_baton`. A local literal list
 /// rather than a `write.rs` coupling — matches `crate::baton::Status`'s
 /// current 22-token catalog. Future status additions need a matching update
-/// here; the S6-T1 schema-parity lint is the intended long-term guard
-/// against that drift.
-const V2_STATUS_TOKENS: &[&str] = &[
+/// here; the S6-T1 schema-parity lint guards against that drift via a unit
+/// test comparing this list to [`crate::write::V2_STATUS_CATALOG`] (hence the
+/// `pub(crate)` exposure).
+pub(crate) const V2_STATUS_TOKENS: &[&str] = &[
     "research_drafting",
     "research_review",
     "research_revision",

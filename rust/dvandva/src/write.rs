@@ -2461,6 +2461,40 @@ pub(crate) fn v2_required_keys() -> Vec<&'static str> {
     required_keys(true)
 }
 
+/// The canonical `dvandva.baton.v2` status catalog — the single in-code source
+/// of truth for the 22 lifecycle status tokens. `status_enum_ok` (this file),
+/// [`crate::baton::Status`], [`crate::preflight::V2_STATUS_TOKENS`], and every
+/// doc copy the S6-T1 schema-parity lint checks
+/// (`baton-schema-v2.json` `status_catalog`, `product.md`'s status catalog
+/// line, `state-transition-table.md`'s status catalog line) must all agree
+/// with this list. `status_enum_ok`'s match arm is kept as the hot-path
+/// acceptor; the code-side parity is asserted by the schema-parity lint's unit
+/// tests rather than by re-routing the acceptor through this slice.
+pub(crate) const V2_STATUS_CATALOG: &[&str] = &[
+    "research_drafting",
+    "research_review",
+    "research_revision",
+    "spec_drafting",
+    "spec_review",
+    "spec_revision",
+    "implementing",
+    "parallel_implementing",
+    "test_creation",
+    "cross_review",
+    "cross_fixing",
+    "deep_review",
+    "review_of_review",
+    "counter_review",
+    "deslop",
+    "termination_review",
+    "phase_review",
+    "phase_fixing",
+    "human_question",
+    "human_decision",
+    "done",
+    "abandoned",
+];
+
 fn review_target_ok(cand: &Value) -> bool {
     match field(cand, "review_target") {
         None | Some(Value::Null) => true,

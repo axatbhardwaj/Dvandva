@@ -155,9 +155,14 @@ impl Status {
         }
     }
 
-    /// Whether this status is run-terminal. Only [`Status::Done`] is terminal.
+    /// Whether this status is run-terminal. The engine's terminal set is
+    /// {`done`, `abandoned`} — `abandoned` (S2-T1) is the human-declared
+    /// dead-run terminal, just as final as `done`. (S6-T1 coherence fix: this
+    /// used to be `done`-only, which disagreed with the engine's terminal set;
+    /// it has no functional callers — the wait/commit-gate paths use their own
+    /// string-keyed terminal helpers — so the correction is behavior-safe.)
     pub fn is_terminal(&self) -> bool {
-        matches!(self, Status::Done)
+        matches!(self, Status::Done | Status::Abandoned)
     }
 }
 
@@ -346,8 +351,9 @@ mod tests {
     }
 
     #[test]
-    fn is_terminal_only_for_done() {
+    fn is_terminal_for_done_and_abandoned() {
         assert!(Status::Done.is_terminal());
+        assert!(Status::Abandoned.is_terminal());
         for s in [
             Status::ResearchReview,
             Status::Implementing,
