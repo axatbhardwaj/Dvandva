@@ -23,8 +23,8 @@ Status: rewritten 2026-05-14 for richer flow (spec phase + phased implementation
 > `dvandva install-codex`, `dvandva retire-agents`, `dvandva smoke-install`, and
 > `dvandva lint <target>` (git-hook installation is owned by `dvandva preflight`).
 > The plugin no longer bundles executables; the `dvandva` binary must be on
-> `PATH` (installed via `cargo install --path rust/dvandva`, or `cargo install
-> dvandva --version 2.0.0-alpha.2` once published). This supersedes §3.2's
+> `PATH` (installed via `cargo install dvandva --version 2.0.0-alpha.2`, or
+> `cargo install --path rust/dvandva` from a checkout). This supersedes §3.2's
 > "No standalone `dvandva` binary" non-goal — the binary now IS the runtime and
 > deterministic validator. The write helper's hard-risk path floor set is
 > re-expressed against the port: the coordination/helper triggers now cover
@@ -468,7 +468,7 @@ Auto-activation depends entirely on `description`. Tuning rules:
 dvandva install
 ```
 
-`dvandva install` wraps the public install path for users: it registers the Dvandva marketplace and installs `dvandva@dvandva` in both Claude Code and Codex. It accepts `--claude-only` and `--codex-only` for one-engine installs. For Codex, it delegates to `dvandva install-codex`, which runs `codex plugin add dvandva@dvandva` on current Codex builds and keeps the legacy app-server RPC install as a fallback for older builds. The `dvandva` binary must already be on `PATH` (`cargo install --path rust/dvandva`, or `cargo install dvandva --version 2.0.0-alpha.2` once published). The authoritative preflight is whether the current agent session can see and invoke the required Superpowers skills.
+`dvandva install` wraps the public install path for users: it registers the Dvandva marketplace and installs `dvandva@dvandva` in both Claude Code and Codex. It accepts `--claude-only` and `--codex-only` for one-engine installs. For Codex, it delegates to `dvandva install-codex`, which runs `codex plugin add dvandva@dvandva` on current Codex builds and keeps the legacy app-server RPC install as a fallback for older builds. The `dvandva` binary must already be on `PATH` (`cargo install dvandva --version 2.0.0-alpha.2`, or `cargo install --path rust/dvandva` from a checkout). The authoritative preflight is whether the current agent session can see and invoke the required Superpowers skills.
 
 ### 11.2 Development install fallback
 
