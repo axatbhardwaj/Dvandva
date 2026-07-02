@@ -8,7 +8,7 @@ use std::path::Path;
 
 use dvandva::write::run_write;
 
-const USAGE: &str = "Usage: dvandva-write.sh <path-to-baton.json> <path-to-candidate.json>";
+const USAGE: &str = "Usage: dvandva write <path-to-baton.json> <path-to-candidate.json>";
 
 /// Run the `write` subcommand, returning the process exit code.
 pub fn run(args: &[String]) -> i32 {

@@ -10,7 +10,7 @@
 
 use std::path::Path;
 
-use crate::lint::protocol_phase1::{
+use crate::lint::{
     file_exists, file_matches_ci, file_slurp_matches_ci, resolve_root, union_slurp_matches_ci,
     Report,
 };

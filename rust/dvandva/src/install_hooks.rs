@@ -55,7 +55,7 @@ enum MaterializeMode {
 pub fn run_install(repo: &Path, uninstall: bool) -> i32 {
     let Some(root) = repo_toplevel(repo) else {
         eprintln!(
-            "install-dvandva-hooks: not a git repository: {}",
+            "dvandva install-hooks: not a git repository: {}",
             repo.display()
         );
         return 1;
@@ -69,14 +69,14 @@ pub fn run_install(repo: &Path, uninstall: bool) -> i32 {
     let binary = match std::env::current_exe() {
         Ok(path) => path,
         Err(err) => {
-            eprintln!("install-dvandva-hooks: cannot resolve running binary: {err}");
+            eprintln!("dvandva install-hooks: cannot resolve running binary: {err}");
             return 1;
         }
     };
 
     if let Err(err) = fs::create_dir_all(&hook_dir_abs) {
         eprintln!(
-            "install-dvandva-hooks: cannot create hook dir {}: {err}",
+            "dvandva install-hooks: cannot create hook dir {}: {err}",
             hook_dir_abs.display()
         );
         return 1;
@@ -85,7 +85,7 @@ pub fn run_install(repo: &Path, uninstall: bool) -> i32 {
     let mode = match materialize_wrappers(&binary, &hook_dir_abs) {
         Ok(mode) => mode,
         Err(err) => {
-            eprintln!("install-dvandva-hooks: cannot materialize hook wrappers: {err}");
+            eprintln!("dvandva install-hooks: cannot materialize hook wrappers: {err}");
             return 1;
         }
     };
@@ -103,12 +103,12 @@ pub fn run_install(repo: &Path, uninstall: bool) -> i32 {
         if functional_probe(&root, &hook_dir_abs) {
             let prior = cfg_get(&root, "dvandva.priorHooksPath");
             println!(
-                "install-dvandva-hooks: already adopted; refreshed scripts + stubs and re-probed (prior={prior})."
+                "dvandva install-hooks: already adopted; refreshed scripts + stubs and re-probed (prior={prior})."
             );
             return 0;
         }
         eprintln!(
-            "install-dvandva-hooks: error: functional probe failed after refresh in {}.",
+            "dvandva install-hooks: error: functional probe failed after refresh in {}.",
             root.display()
         );
         return 1;
@@ -130,7 +130,7 @@ pub fn run_install(repo: &Path, uninstall: bool) -> i32 {
 
     if !functional_probe(&root, &hook_dir_abs) {
         eprintln!(
-            "install-dvandva-hooks: error: functional probe failed; rolling back in {}.",
+            "dvandva install-hooks: error: functional probe failed; rolling back in {}.",
             root.display()
         );
         restore_prior_state(&root, &hook_dir_abs);
@@ -139,7 +139,7 @@ pub fn run_install(repo: &Path, uninstall: bool) -> i32 {
 
     let prior = cfg_get(&root, "dvandva.priorHooksPath");
     println!(
-        "install-dvandva-hooks: adopted core.hooksPath={HOOK_REL} (prior={prior}) in {}",
+        "dvandva install-hooks: adopted core.hooksPath={HOOK_REL} (prior={prior}) in {}",
         root.display()
     );
     0
@@ -207,7 +207,7 @@ fn record_hook_adoption_baseline(root: &Path) {
     let existing = local_get(root, "dvandva.hooksAdoptedAt");
     if !existing.is_empty() && commit_exists(root, &existing) {
         println!(
-            "install-dvandva-hooks: hook adoption baseline already recorded (dvandva.hooksAdoptedAt={existing})"
+            "dvandva install-hooks: hook adoption baseline already recorded (dvandva.hooksAdoptedAt={existing})"
         );
         return;
     }
@@ -223,7 +223,7 @@ fn record_hook_adoption_baseline(root: &Path) {
                     gitcfg::cfg_set_local(root, "dvandva.hooksAdoptedAt", &root_sha);
                     gitcfg::cfg_set_local(root, "dvandva.hooksAdoptedAtInclusive", "true");
                     println!(
-                        "install-dvandva-hooks: backfilled hook adoption baseline dvandva.hooksAdoptedAt={root_sha}"
+                        "dvandva install-hooks: backfilled hook adoption baseline dvandva.hooksAdoptedAt={root_sha}"
                     );
                     return;
                 }
@@ -231,14 +231,14 @@ fn record_hook_adoption_baseline(root: &Path) {
             gitcfg::cfg_set_local(root, "dvandva.hooksAdoptedAt", &head_sha);
             gitcfg::cfg_unset_local(root, "dvandva.hooksAdoptedAtInclusive");
             println!(
-                "install-dvandva-hooks: recorded hook adoption baseline dvandva.hooksAdoptedAt={head_sha}"
+                "dvandva install-hooks: recorded hook adoption baseline dvandva.hooksAdoptedAt={head_sha}"
             );
         }
         None => {
             gitcfg::cfg_set_local(root, "dvandva.hooksAdoptedAt", PENDING_ROOT_BASELINE);
             gitcfg::cfg_set_local(root, "dvandva.hooksAdoptedAtInclusive", "true");
             println!(
-                "install-dvandva-hooks: no HEAD commit yet; recorded pending root hook adoption baseline."
+                "dvandva install-hooks: no HEAD commit yet; recorded pending root hook adoption baseline."
             );
         }
     }
@@ -286,14 +286,14 @@ fn uninstall_hooks(root: &Path, hook_dir_abs: &Path) -> i32 {
     let prior_seen = cfg_get(root, "dvandva.priorHooksPath");
     let current_seen = cfg_get(root, "core.hooksPath");
     if prior_seen.is_empty() && current_seen != HOOK_REL && !hook_dir_abs.is_dir() {
-        println!("install-dvandva-hooks: nothing to uninstall (no Dvandva hook adoption found).");
+        println!("dvandva install-hooks: nothing to uninstall (no Dvandva hook adoption found).");
         return 0;
     }
     restore_prior_state(root, hook_dir_abs);
     let restored = git_stdout(root, &["config", "--local", "core.hooksPath"])
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "(default/unset)".to_string());
-    println!("install-dvandva-hooks: uninstalled; core.hooksPath restored to: {restored}");
+    println!("dvandva install-hooks: uninstalled; core.hooksPath restored to: {restored}");
     0
 }
 
@@ -323,11 +323,11 @@ fn materialize_wrappers(binary: &Path, hook_dir_abs: &Path) -> std::io::Result<M
 fn report_mode(binary: &Path, mode: &MaterializeMode) {
     match mode {
         MaterializeMode::Symlink => println!(
-            "install-dvandva-hooks: materialized pre-commit + prepare-commit-msg as symlinks -> {}",
+            "dvandva install-hooks: materialized pre-commit + prepare-commit-msg as symlinks -> {}",
             binary.display()
         ),
         MaterializeMode::Copy(err) => println!(
-            "install-dvandva-hooks: symlink unavailable ({err}); materialized pre-commit + prepare-commit-msg by copying {}",
+            "dvandva install-hooks: symlink unavailable ({err}); materialized pre-commit + prepare-commit-msg by copying {}",
             binary.display()
         ),
     }

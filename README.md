@@ -25,17 +25,20 @@ Dvandva model classes are vendor-neutral. Agent frontmatter uses `model: opus` a
 
 Dvandva ships as an installable plugin for both engines. The repo lives at https://github.com/axatbhardwaj/Dvandva.
 
-The `dvandva` binary is published on crates.io as `dvandva 2.0.0-alpha.2` and is
-the Dvandva runtime: read path, write path, waiting, preflight, git work-gating,
-installers, and lints. Install it with `cargo install dvandva` before installing
-the plugin; the plugin no longer bundles executables.
+The `dvandva` binary IS the Dvandva runtime: read path, write path, waiting,
+preflight, git work-gating, installers, and lints. It ships from this repo;
+crates.io currently carries only the older `2.0.0-alpha.1` read-path
+prerelease. Install it from a checkout with `cargo install --path
+rust/dvandva` before installing the plugin; the plugin no longer bundles
+executables.
 
 ## Quickstart
 
 Install the `dvandva` binary, then the marketplace in both Claude Code and Codex:
 
 ```bash
-cargo install dvandva --version 2.0.0-alpha.2
+cargo install --path rust/dvandva
+# or, once 2.0.0-alpha.2 is published: cargo install dvandva --version 2.0.0-alpha.2
 dvandva install
 ```
 
@@ -53,11 +56,12 @@ For Codex, `dvandva install` delegates to `dvandva install-codex`, which runs
 required. Older Codex builds without `plugin add` fall back to the legacy
 app-server RPC path.
 
-`dvandva install` is separate from `cargo install dvandva`. `dvandva install`
+`dvandva install` is separate from installing the binary itself. `dvandva install`
 adds the Dvandva skills, commands, agents, and references to Claude Code and/or
-Codex; `cargo install dvandva --version 2.0.0-alpha.2` installs only the
-`dvandva` binary. The binary must be on `PATH` for the installed skills to run —
-the plugin no longer bundles executables.
+Codex; `cargo install --path rust/dvandva` (or, once published, `cargo install
+dvandva --version 2.0.0-alpha.2`) installs only the `dvandva` binary. The binary
+must be on `PATH` for the installed skills to run — the plugin no longer
+bundles executables.
 
 See `docs/research/2026-05-16-codex-install.md` for the install-history note:
 Codex `0.130.0` required app-server RPC, while current Codex exposes
@@ -159,7 +163,7 @@ The default `run_mode` is `walkaway`: start both sessions once, then let the bat
 
 | Prerequisite | Verify |
 |---|---|
-| `dvandva` binary on `PATH`, hard runtime dependency | `dvandva --version` (install with `cargo install dvandva`) |
+| `dvandva` binary on `PATH`, hard runtime dependency | `dvandva --version` (install with `cargo install --path rust/dvandva`, or `cargo install dvandva --version 2.0.0-alpha.2` once published) |
 | Claude Code, if using Claude | `claude --version` |
 | Codex CLI, if using Codex | `codex --version` |
 | Superpowers plugin on every engine running a Dvandva role, hard runtime dependency | `/skills` lists `superpowers:using-superpowers`, `superpowers:brainstorming`, `superpowers:test-driven-development`, and `superpowers:verification-before-completion` |

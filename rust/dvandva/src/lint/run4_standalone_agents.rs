@@ -11,7 +11,7 @@ use std::path::Path;
 use regex::Regex;
 use serde_json::Value;
 
-use crate::lint::protocol_phase1::{
+use crate::lint::{
     file_contains, file_exists, file_matches_ci, file_slurp_matches_ci, list_md, read,
     resolve_root, union_slurp_matches_ci, Report,
 };

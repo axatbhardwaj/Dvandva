@@ -4,7 +4,7 @@ use std::path::Path;
 
 use dvandva::snapshot::snapshot_baton;
 
-const USAGE: &str = "Usage: dvandva-snapshot.sh <path-to-baton.json>";
+const USAGE: &str = "Usage: dvandva snapshot <path-to-baton.json>";
 
 /// Run the `snapshot` subcommand, returning the process exit code.
 pub fn run(args: &[String]) -> i32 {

@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use crate::lint::protocol_phase1::{file_contains, resolve_root, Report};
+use crate::lint::{file_contains, resolve_root, Report};
 
 /// Build the skill-phase3 findings for a repo root.
 pub fn report(root: &Path) -> Report {

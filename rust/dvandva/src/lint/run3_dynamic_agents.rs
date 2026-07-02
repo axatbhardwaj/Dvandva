@@ -8,7 +8,7 @@ use std::path::Path;
 
 use regex::Regex;
 
-use crate::lint::protocol_phase1::{
+use crate::lint::{
     gather_surface, list_md, resolve_root, surface_contains, surface_matches, Report,
 };
 

@@ -10,7 +10,7 @@ use dvandva::hook_preflight::{run_hook_preflight, HookMode};
 use dvandva::Role;
 
 const USAGE: &str =
-    "Usage: dvandva-hook-preflight.sh --role <vadi|prativadi> [--repo <path>] [--mode auto|strict|off]";
+    "Usage: dvandva hook-preflight --role <vadi|prativadi> [--repo <path>] [--mode auto|strict|off]";
 
 /// Run the `hook-preflight` subcommand, returning the process exit code.
 pub fn run(args: &[String]) -> i32 {

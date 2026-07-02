@@ -5,11 +5,10 @@
 //!
 //! These tests read the *live* repo tree (SKILL.md, README, command files,
 //! references) rather than fixtures, so they assert the target contract for
-//! the post-port docs, not today's pre-rewrite wording. The doc rewrite
-//! (Wave C) happens in a separate, parallel task — until it lands every
-//! live-tree case here is `#[ignore = "flips on after doc rewrite (Wave
-//! C)"]` so the suite stays green. Only the `require_match`/`reject_match`
-//! matcher self-tests (`matcher_engine` module) run by default.
+//! the post-port docs, not today's pre-rewrite wording. The doc rewrite (Wave
+//! C) has landed, so every live-tree case here runs by default alongside the
+//! `require_match`/`reject_match` matcher self-tests (`matcher_engine`
+//! module).
 //!
 //! Case naming mirrors the shell script's `for file in ...` loop bodies: one
 //! Rust test per distinct contract, asserted against every file the shell
@@ -152,7 +151,6 @@ fn reject_match(path: &Path, pattern: &str, message: &str) {
 macro_rules! live_tree_test {
     ($name:ident, $body:block) => {
         #[test]
-        #[ignore = "flips on after doc rewrite (Wave C)"]
         fn $name() {
             $body
         }

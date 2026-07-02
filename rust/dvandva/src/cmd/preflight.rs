@@ -8,7 +8,7 @@ use dvandva::hook_preflight::HookMode;
 use dvandva::preflight::run_preflight;
 use dvandva::Role;
 
-const USAGE: &str = "Usage: dvandva-preflight.sh --role <vadi|prativadi> [--mode auto|strict|off]";
+const USAGE: &str = "Usage: dvandva preflight --role <vadi|prativadi> [--mode auto|strict|off]";
 
 /// Run the `preflight` subcommand, returning the process exit code.
 pub fn run(args: &[String]) -> i32 {

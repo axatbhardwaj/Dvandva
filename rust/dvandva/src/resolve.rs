@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::{emit, Role};
+use crate::{emit, util, Role};
 
 const UNSAFE_RUN_ID_MESSAGE: &str = "DVANDVA_RUN_ID must be one safe path segment (letters, numbers, dot, underscore, dash; no slash, backslash, or '..')";
 
@@ -144,7 +144,7 @@ fn explicit_selector(env: &ResolveEnv) -> Result<Option<String>, ResolveError> {
         return Ok(Some(format!("{base}/baton.json")));
     }
     if let Some(run_id) = env.run_id.as_ref() {
-        if !is_safe_run_id(run_id) {
+        if !util::is_safe_run_id(run_id) {
             return Err(ResolveError::Usage(UNSAFE_RUN_ID_MESSAGE.to_string()));
         }
         return Ok(Some(format!(".dvandva/runs/{run_id}/baton.json")));
@@ -154,16 +154,6 @@ fn explicit_selector(env: &ResolveEnv) -> Result<Option<String>, ResolveError> {
 
 fn strip_one_trailing_slash(value: &str) -> &str {
     value.strip_suffix('/').unwrap_or(value)
-}
-
-fn is_safe_run_id(value: &str) -> bool {
-    let mut chars = value.chars();
-    let Some(first) = chars.next() else {
-        return false;
-    };
-    first.is_ascii_alphanumeric()
-        && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
-        && !value.contains("..")
 }
 
 fn resolve_cwd(cwd: Option<&Path>) -> Result<PathBuf, ResolveError> {

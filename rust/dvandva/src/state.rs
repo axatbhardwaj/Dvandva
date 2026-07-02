@@ -116,11 +116,9 @@ fn get<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
     value.as_object()?.get(key)
 }
 
+/// Thin alias for the shared jq `//` coalesce (see [`crate::util::coalesce`]).
 fn jq_coalesce(value: Option<&Value>) -> Option<&Value> {
-    match value {
-        None | Some(Value::Null) | Some(Value::Bool(false)) => None,
-        Some(value) => Some(value),
-    }
+    crate::util::coalesce(value)
 }
 
 fn clone_or_null(value: Option<&Value>) -> Value {

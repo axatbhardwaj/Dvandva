@@ -16,7 +16,7 @@
 
 use std::path::Path;
 
-use crate::lint::protocol_phase1::{
+use crate::lint::{
     count_lines_matching, file_contains, file_has_exact_line, output_contract_contains,
     resolve_root, Report,
 };
