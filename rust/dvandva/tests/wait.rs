@@ -11,9 +11,10 @@
 //! case needs. `timeout 124` (shell "keeps polling") maps to "process still
 //! running at the kill deadline" — asserted via [`Outcome::kept_polling`].
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -21,12 +22,13 @@ fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_dvandva"))
 }
 
-const SELECTOR_ENV: [&str; 5] = [
+const SELECTOR_ENV: [&str; 6] = [
     "DVANDVA_ROLE",
     "DVANDVA_BATON_FILE",
     "DVANDVA_RUN_DIR",
     "DVANDVA_RUN_ID",
     "DVANDVA_CONCURRENT",
+    "DVANDVA_NOTIFY_URL",
 ];
 
 /// Result of a spawned `dvandva wait`: `code: None` means the process was still
@@ -2086,4 +2088,326 @@ fn usage_advertises_540_default_and_help_exits_0() {
     let o = run_wait(None, &[], &["--help"], BUDGET_FAST);
     assert_eq!(o.code, Some(0), "{}", o.out);
     assert!(o.contains("--max-wait 540"), "{}", o.out);
+}
+
+// ── Task B3 (F3 notify) ────────────────────────────────────────────────────
+//
+// Spin a TCP listener on 127.0.0.1:0, accept exactly one connection in a
+// background thread, read the raw HTTP request off it, respond 200, and hand
+// the captured request text back over a channel. `dvandva wait` is a plain
+// `ureq` POST client here, so a bare socket is enough to assert on method,
+// headers, and body without pulling in a full HTTP server dependency.
+
+fn start_notify_listener() -> (u16, mpsc::Receiver<String>) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind notify listener");
+    let port = listener.local_addr().expect("local_addr").port();
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        if let Ok((mut stream, _)) = listener.accept() {
+            let request = read_full_http_request(&mut stream);
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            let _ = tx.send(request);
+        }
+    });
+    (port, rx)
+}
+
+/// Read headers, then (per a `Content-Length` header, case-insensitive) the
+/// full body. A single `read()` call can return just the headers if the
+/// client's headers and body land in separate TCP segments, so this loops
+/// with a short read timeout until the declared body length is satisfied.
+fn read_full_http_request(stream: &mut std::net::TcpStream) -> String {
+    stream
+        .set_read_timeout(Some(Duration::from_millis(500)))
+        .ok();
+    let mut raw: Vec<u8> = Vec::new();
+    let mut buf = [0u8; 8192];
+    loop {
+        match stream.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                raw.extend_from_slice(&buf[..n]);
+                if let Some(header_end) = find_subslice(&raw, b"\r\n\r\n") {
+                    let headers = String::from_utf8_lossy(&raw[..header_end]).to_lowercase();
+                    let want_body = headers
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length:"))
+                        .and_then(|value| value.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    if raw.len() >= header_end + 4 + want_body {
+                        break;
+                    }
+                }
+            }
+            Err(_) => break, // read timeout: stop waiting for more data
+        }
+    }
+    String::from_utf8_lossy(&raw).into_owned()
+}
+
+fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+#[test]
+fn notify_posts_on_human_question_with_title_and_body() {
+    let d = tmp();
+    write_named_question_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "2026-07-02T09:00:00Z",
+        "codex",
+    );
+    let (port, rx) = start_notify_listener();
+    let url = format!("http://127.0.0.1:{port}/");
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "prativadi",
+            "--interval",
+            "0",
+            "--max-wait",
+            "0",
+            "--notify",
+            &url,
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(12), "{}", o.out);
+    let request = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("notify request");
+    assert!(request.starts_with("POST"), "{request}");
+    // HTTP header names are case-insensitive; ureq serializes them lowercase
+    // on the wire.
+    assert!(
+        request
+            .to_lowercase()
+            .contains("title: dvandva alpha: human_question"),
+        "{request}"
+    );
+    assert!(request.contains("run_id=alpha"), "{request}");
+    assert!(request.contains("event=human_question"), "{request}");
+    assert!(
+        request.contains("question=Which scope should Dvandva choose?"),
+        "{request}"
+    );
+    assert!(request.contains("resume_assignee=prativadi"), "{request}");
+    assert!(request.contains("resume_status=spec_review"), "{request}");
+}
+
+#[test]
+fn notify_unreachable_port_still_exits_12_and_logs_notify_failed() {
+    let d = tmp();
+    let f = d.path().join("question.json");
+    write_question_baton(&f);
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "0",
+            "--max-wait",
+            "0",
+            "--notify",
+            "http://127.0.0.1:1/",
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(12), "{}", o.out);
+    assert!(o.contains("notify_failed"), "{}", o.out);
+    assert!(o.contains("url=http://127.0.0.1:1/"), "{}", o.out);
+}
+
+#[test]
+fn notify_env_fallback_used_when_flag_absent() {
+    let d = tmp();
+    write_named_question_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "2026-07-02T09:05:00Z",
+        "codex",
+    );
+    let (port, rx) = start_notify_listener();
+    let url = format!("http://127.0.0.1:{port}/");
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha"), ("DVANDVA_NOTIFY_URL", &url)],
+        &["--role", "vadi", "--interval", "0", "--max-wait", "0"],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(12), "{}", o.out);
+    let request = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("notify request");
+    assert!(request.contains("event=human_question"), "{request}");
+}
+
+#[test]
+fn notify_flag_takes_precedence_over_env() {
+    let d = tmp();
+    write_named_question_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "2026-07-02T09:10:00Z",
+        "codex",
+    );
+    let (flag_port, flag_rx) = start_notify_listener();
+    let (env_port, env_rx) = start_notify_listener();
+    let flag_url = format!("http://127.0.0.1:{flag_port}/");
+    let env_url = format!("http://127.0.0.1:{env_port}/");
+    let o = run_wait(
+        Some(d.path()),
+        &[
+            ("DVANDVA_RUN_ID", "alpha"),
+            ("DVANDVA_NOTIFY_URL", &env_url),
+        ],
+        &[
+            "--role",
+            "vadi",
+            "--interval",
+            "0",
+            "--max-wait",
+            "0",
+            "--notify",
+            &flag_url,
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(12), "{}", o.out);
+    assert!(
+        flag_rx.recv_timeout(Duration::from_secs(3)).is_ok(),
+        "flag-selected listener should have received the notify POST"
+    );
+    assert!(
+        env_rx.recv_timeout(Duration::from_millis(300)).is_err(),
+        "env-selected listener should NOT receive a notify POST when --notify is set"
+    );
+}
+
+#[test]
+fn notify_posts_on_done() {
+    let d = tmp();
+    let f = d.path().join("done.json");
+    write_baton(&f, "human", "done");
+    let (port, rx) = start_notify_listener();
+    let url = format!("http://127.0.0.1:{port}/");
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "0",
+            "--max-wait",
+            "0",
+            "--notify",
+            &url,
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(10), "{}", o.out);
+    let request = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("notify request");
+    assert!(request.starts_with("POST"), "{request}");
+    assert!(request.contains("event=done"), "{request}");
+    assert!(request.contains("run_id="), "{request}");
+}
+
+#[test]
+fn notify_posts_on_split_brain() {
+    let d = tmp();
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "prativadi",
+        "phase_review",
+        "2026-06-29T15:00:00Z",
+        "codex",
+    );
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/beta/baton.json"),
+        "beta",
+        "vadi",
+        "implementing",
+        "2026-06-29T15:01:00Z",
+        "claude",
+    );
+    let (port, rx) = start_notify_listener();
+    let url = format!("http://127.0.0.1:{port}/");
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "vadi",
+            "--persist",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+            "--notify",
+            &url,
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(29), "{}", o.out);
+    let request = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("notify request");
+    assert!(request.starts_with("POST"), "{request}");
+    assert!(request.contains("event=split_brain"), "{request}");
+    assert!(request.contains("run_id=alpha"), "{request}");
+}
+
+#[test]
+fn notify_posts_on_stalled() {
+    let d = tmp();
+    write_named_parallel_work_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        80,
+        "2026-07-01T10:08:00Z",
+        "vadi",
+    );
+    let (port, rx) = start_notify_listener();
+    let url = format!("http://127.0.0.1:{port}/");
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "prativadi",
+            "--until-actionable",
+            "--interval",
+            "1",
+            "--max-wait",
+            "540",
+            "--stall-max",
+            "1",
+            "--notify",
+            &url,
+        ],
+        BUDGET_SLOW,
+    );
+    assert_eq!(o.code, Some(24), "{}", o.out);
+    let request = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("notify request");
+    assert!(request.starts_with("POST"), "{request}");
+    assert!(request.contains("event=stalled"), "{request}");
+    assert!(request.contains("run_id=alpha"), "{request}");
 }
