@@ -3,9 +3,10 @@
 //! Lints a single `SKILL.md`: closed frontmatter, required `name` /
 //! `description` fields, a description length cap, and a body length cap.
 //! For `vadi`/`prativadi` role skills only, it additionally rejects
-//! out-of-band final-approval instructions and requires a fenced ```json
-//! block whose top-level keys exactly match the engine's `dvandva.baton.v2`
-//! required-key list (schema `dvandva.baton.v2`).
+//! out-of-band final-approval instructions and requires EXACTLY ONE fenced
+//! ` ```json ` block (the A2 precondition — a body carrying more than one
+//! FAILS outright) whose top-level keys exactly match the engine's
+//! `dvandva.baton.v2` required-key list (schema `dvandva.baton.v2`).
 //!
 //! S5-T2 (D5) re-key: the check compares the inline block against
 //! [`crate::write::v2_required_keys`] — the engine's OWN required-key list, the
@@ -104,6 +105,14 @@ pub fn run(args: &[String]) -> i32 {
         return 1;
     }
 
+    let fence_count = count_json_fences(&content);
+    if fence_count > 1 {
+        eprintln!(
+            "FAIL: {fence_count} fenced json blocks found in body of {file_arg} (single JSON fence required)"
+        );
+        return 1;
+    }
+
     let json_block = extract_fenced_json_block(&content);
     if json_block.trim().is_empty() {
         eprintln!("FAIL: no fenced JSON block found in body of {file_arg}");
@@ -187,9 +196,15 @@ fn body_line_count(content: &str) -> usize {
     n
 }
 
-/// Port of the shell's awk fence scanner: collects lines inside the first
-/// ` ```json ` … ` ``` ` fence found in the body (after the second `---`).
-fn extract_fenced_json_block(content: &str) -> String {
+/// Port of the shell's awk fence scanner: collects lines inside every
+/// ` ```json ` … ` ``` ` fence found in the body (after the second `---`),
+/// concatenated in document order. `pub(crate)` so the schema-parity lint
+/// consumes this SAME scanner rather than a local re-implementation, keeping
+/// the two lints' notion of "the inline contract block" from ever diverging.
+/// Callers that require exactly one fence should check [`count_json_fences`]
+/// first — a body with more than one fence is rejected upstream by both
+/// lints before this function's concatenating behavior can mask the drift.
+pub(crate) fn extract_fenced_json_block(content: &str) -> String {
     let mut c = 0u32;
     let mut flag = false;
     let mut collected: Vec<&str> = Vec::new();
@@ -210,4 +225,23 @@ fn extract_fenced_json_block(content: &str) -> String {
         }
     }
     collected.join("\n")
+}
+
+/// Count of ` ```json ` fence-open lines in the body (after the second
+/// `---`). The A2 precondition: a SKILL.md body must carry exactly one JSON
+/// fence — more than one is rejected outright rather than silently
+/// concatenated by [`extract_fenced_json_block`].
+pub(crate) fn count_json_fences(content: &str) -> usize {
+    let mut c = 0u32;
+    let mut n = 0usize;
+    for line in content.lines() {
+        if line == "---" {
+            c += 1;
+            continue;
+        }
+        if c >= 2 && line == "```json" {
+            n += 1;
+        }
+    }
+    n
 }

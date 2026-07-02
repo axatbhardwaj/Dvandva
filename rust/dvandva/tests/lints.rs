@@ -1107,21 +1107,21 @@ fn standalone_fixture(root: &Path) {
         "// dvandva install and dvandva install-codex ports; 1.3.0 canonical 15-agent roster.\n",
     );
 
-    // manifests at 1.3.0.
+    // manifests at 1.4.0.
     w(
         root,
         ".claude-plugin/marketplace.json",
-        "{\n  \"plugins\": [\n    { \"name\": \"dvandva\", \"source\": \"./plugins/dvandva\", \"version\": \"1.3.0\" }\n  ]\n}\n",
+        "{\n  \"plugins\": [\n    { \"name\": \"dvandva\", \"source\": \"./plugins/dvandva\", \"version\": \"1.4.0\" }\n  ]\n}\n",
     );
     w(
         root,
         "plugins/dvandva/.claude-plugin/plugin.json",
-        "{ \"name\": \"dvandva\", \"version\": \"1.3.0\" }\n",
+        "{ \"name\": \"dvandva\", \"version\": \"1.4.0\" }\n",
     );
     w(
         root,
         "plugins/dvandva/.codex-plugin/plugin.json",
-        "{ \"name\": \"dvandva\", \"version\": \"1.3.0\" }\n",
+        "{ \"name\": \"dvandva\", \"version\": \"1.4.0\" }\n",
     );
 
     // 15 canonical agents.
@@ -1179,7 +1179,7 @@ fn standalone_rejects_version_mismatch() {
         "{ \"name\": \"dvandva\", \"version\": \"0.3.0\" }\n",
     );
     let r = run4_standalone_agents::report(d.path());
-    assert!(r.fails_with("Dvandva manifest versions must all equal 1.3.0"));
+    assert!(r.fails_with("Dvandva manifest versions must all equal 1.4.0"));
 }
 
 #[test]
@@ -1390,6 +1390,28 @@ fn parity_skill_md(name: &str, keys: &[&str]) -> String {
     )
 }
 
+/// A role SKILL.md carrying TWO fenced ```json blocks in its body — the
+/// fixture for the A2 single-JSON-fence precondition (schema-parity's
+/// `required_keys_parity` and `lint skills` must both reject this with the
+/// same "single JSON fence required" message family).
+fn parity_skill_md_multi_fence(name: &str, keys: &[&str]) -> String {
+    let entries: Vec<String> = keys
+        .iter()
+        .map(|k| {
+            let val = if *k == "schema" {
+                "\"dvandva.baton.v2\""
+            } else {
+                "null"
+            };
+            format!("  \"{k}\": {val}")
+        })
+        .collect();
+    format!(
+        "---\nname: {name}\ndescription: role skill.\n---\n# {name}\n```json\n{{\n{}\n}}\n```\nSome prose between the two fences.\n```json\n{{}}\n```\n",
+        entries.join(",\n")
+    )
+}
+
 /// A fully-passing schema-parity fixture tree.
 fn parity_fixture(root: &Path) {
     // A1 — status-enum doc copies.
@@ -1521,6 +1543,19 @@ fn parity_rejects_vadi_skill_missing_required_key() {
 }
 
 #[test]
+fn parity_rejects_vadi_skill_multiple_json_fences() {
+    let d = tmp();
+    parity_fixture(d.path());
+    w(
+        d.path(),
+        "plugins/dvandva/skills/vadi/SKILL.md",
+        &parity_skill_md_multi_fence("vadi", PARITY_REQUIRED_KEYS),
+    );
+    let r = schema_parity::report(d.path());
+    assert!(r.fails_with("single JSON fence required"));
+}
+
+#[test]
 fn parity_rejects_prativadi_skill_extra_key() {
     let d = tmp();
     parity_fixture(d.path());
@@ -1575,11 +1610,54 @@ fn parity_rejects_commit_gate_token_absent_from_write_source() {
     assert!(r.fails_with("commit_gate reminder hard-path tokens"));
 }
 
+// `dvandva lint skills` (single-fence precondition, driven via the compiled
+// binary since `lint::skills::run` prints its FAIL text directly rather than
+// returning a `Report`). Exercises the SAME "single JSON fence required"
+// guard as `parity_rejects_vadi_skill_multiple_json_fences` above, against
+// the SAME fixture shape, so the two lints are pinned to one message family.
+
+#[test]
+fn skills_lint_accepts_single_json_fence() {
+    let d = tmp();
+    let p = d.path().join("SKILL.md");
+    fs::write(&p, parity_skill_md("vadi", PARITY_REQUIRED_KEYS)).unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_dvandva"))
+        .args(["lint", "skills", &p.display().to_string()])
+        .output()
+        .expect("run dvandva lint skills");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+fn skills_lint_rejects_multiple_json_fences() {
+    let d = tmp();
+    let p = d.path().join("SKILL.md");
+    fs::write(
+        &p,
+        parity_skill_md_multi_fence("vadi", PARITY_REQUIRED_KEYS),
+    )
+    .unwrap();
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_dvandva"))
+        .args(["lint", "skills", &p.display().to_string()])
+        .output()
+        .expect("run dvandva lint skills");
+    assert_eq!(out.status.code(), Some(1));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("single JSON fence required"),
+        "stderr: {stderr}"
+    );
+}
+
 // The full lint against the real repo tree. It only goes green once the
 // hardening docs wave lands the status-catalog lines, the HISTORICAL markers,
 // and the byte-identical channel-doc copy, so it is ignored until then.
 #[test]
-#[ignore = "flips on after hardening docs wave"]
 fn parity_live_tree_passes() {
     let root = dvandva::lint::resolve_root(&[]);
     let r = schema_parity::report(&root);

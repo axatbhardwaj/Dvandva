@@ -28,8 +28,13 @@
 //!      `Status catalog (22):` marker line.
 //! 2. **Required-keys parity.** The `vadi` + `prativadi` SKILL.md inline
 //!    fenced `json` blocks' top-level keys must equal
-//!    [`crate::write::v2_required_keys`]. The fence is parsed locally (the
-//!    sibling `lint::skills` helper is not `pub(crate)`).
+//!    [`crate::write::v2_required_keys`]. The fence is extracted with the
+//!    SAME scanner `lint skills` uses
+//!    ([`crate::lint::skills::extract_fenced_json_block`], `pub(crate)`), so
+//!    the two lints can never diverge on which lines belong to the inline
+//!    contract block. A body carrying more than one ` ```json ` fence FAILS
+//!    outright — the A2 precondition the hardening docs wave pins for
+//!    single-fence SKILL.md files.
 //! 3. **Channel-doc parity.** `docs/protocol/local-baton-channel.md` and
 //!    `plugins/dvandva/references/local-baton-channel.md` must be byte-identical.
 //! 4. **Historical markers.** `plugins/dvandva/references/baton-schema.json` and
@@ -52,6 +57,7 @@ use regex::Regex;
 use serde_json::Value;
 
 use crate::commit_gate::REMINDER_HARD_PATH_TOKENS;
+use crate::lint::skills;
 use crate::lint::{file_contains, read, resolve_root, Report};
 use crate::write::{v2_required_keys, V2_STATUS_CATALOG};
 
@@ -160,7 +166,20 @@ fn required_keys_parity(root: &Path, r: &mut Report) {
         ("plugins/dvandva/skills/vadi/SKILL.md", "vadi"),
         ("plugins/dvandva/skills/prativadi/SKILL.md", "prativadi"),
     ] {
-        let ok = skill_inline_keys(root, rel)
+        let text = read(root, rel);
+        let fence_count = text.as_deref().map(skills::count_json_fences).unwrap_or(0);
+        if fence_count > 1 {
+            r.add(
+                false,
+                format!(
+                    "{label} SKILL.md body carries {fence_count} fenced json blocks (single JSON fence required)"
+                ),
+            );
+            continue;
+        }
+        let ok = text
+            .as_deref()
+            .and_then(skill_inline_keys)
             .map(|mut got| {
                 got.sort();
                 got == want
@@ -173,51 +192,20 @@ fn required_keys_parity(root: &Path, r: &mut Report) {
     }
 }
 
-/// The top-level keys of the first fenced `json` object in a SKILL.md. `None`
-/// when the file is absent, has no such fence, or the fence is not a JSON
-/// object.
-fn skill_inline_keys(root: &Path, rel: &str) -> Option<Vec<String>> {
-    let text = read(root, rel)?;
-    let block = extract_fenced_json_block(&text);
+/// The top-level keys of the first fenced `json` object in an already-read
+/// SKILL.md body. `None` when there is no such fence, or the fence is not a
+/// JSON object. The fence itself is extracted via the shared
+/// [`crate::lint::skills::extract_fenced_json_block`] scanner — the same one
+/// `lint skills` uses — so the two lints can never diverge on which lines
+/// belong to the inline contract block.
+fn skill_inline_keys(text: &str) -> Option<Vec<String>> {
+    let block = skills::extract_fenced_json_block(text);
     if block.trim().is_empty() {
         return None;
     }
     let value: Value = serde_json::from_str(&block).ok()?;
     let obj = value.as_object()?;
     Some(obj.keys().cloned().collect())
-}
-
-/// Collect the lines inside the first fenced `json` block that appears after the
-/// SKILL.md frontmatter (opened by a line that is exactly a triple-backtick
-/// `json`, closed by a bare triple-backtick).
-///
-/// A local re-implementation of `crate::lint::skills`' private
-/// `extract_fenced_json_block`: that helper is not `pub(crate)`. Like the
-/// sibling, this gates on the second `---` frontmatter marker so a fence in
-/// the frontmatter can never be mistaken for the inline contract block.
-fn extract_fenced_json_block(content: &str) -> String {
-    let mut dashes = 0u32;
-    let mut inside = false;
-    let mut collected: Vec<&str> = Vec::new();
-    for line in content.lines() {
-        if line == "---" {
-            dashes += 1;
-            continue;
-        }
-        if dashes < 2 {
-            continue;
-        }
-        if !inside {
-            if line.trim_end() == "```json" {
-                inside = true;
-            }
-        } else if line.trim_end() == "```" {
-            break;
-        } else {
-            collected.push(line);
-        }
-    }
-    collected.join("\n")
 }
 
 // ---------------------------------------------------------------------------
@@ -271,8 +259,9 @@ mod tests {
     use std::str::FromStr;
 
     use crate::baton::Status;
+    use crate::commit_gate::{matches_reminder_hard_path, REMINDER_HARD_PATH_TOKENS};
     use crate::preflight::V2_STATUS_TOKENS;
-    use crate::write::{v2_required_keys, V2_STATUS_CATALOG};
+    use crate::write::{status_enum_ok, v2_required_keys, V2_STATUS_CATALOG};
 
     #[test]
     fn engine_catalog_has_22_unique_tokens() {
@@ -337,5 +326,44 @@ mod tests {
             total,
             "v2_required_keys must have no duplicates"
         );
+    }
+
+    #[test]
+    fn status_enum_ok_accepts_every_catalog_token() {
+        // Pins the hot-path acceptor (`write.rs`'s match arm) equal to the
+        // canonical catalog list, so the two can never silently diverge.
+        for tok in V2_STATUS_CATALOG {
+            assert!(
+                status_enum_ok(tok),
+                "status_enum_ok must accept catalog token {tok}"
+            );
+        }
+    }
+
+    #[test]
+    fn reminder_hard_path_tokens_each_match_a_representative_path() {
+        // Closes the const->function direction the source-scan in
+        // `reminder_hard_path_subset` misses: that scan only asserts every
+        // token is a SUBSTRING of write.rs's source, not that
+        // `matches_reminder_hard_path` actually accepts a path built from it.
+        // A future token added to REMINDER_HARD_PATH_TOKENS without a
+        // fixture here panics instead of silently passing unverified.
+        for tok in REMINDER_HARD_PATH_TOKENS {
+            let path = match *tok {
+                ".env" => ".env",
+                "secret" => "secret/foo",
+                "secrets" => "secrets/foo",
+                "credential" => "credential/foo",
+                "credentials" => "credentials/foo",
+                "product.md" => "product.md",
+                "plugins/dvandva/skills/" => "plugins/dvandva/skills/vadi/SKILL.md",
+                "rust/dvandva/src/" => "rust/dvandva/src/write.rs",
+                other => panic!("no representative path fixture for reminder token {other}"),
+            };
+            assert!(
+                matches_reminder_hard_path(path),
+                "matches_reminder_hard_path({path:?}) must be true for token {tok}"
+            );
+        }
     }
 }

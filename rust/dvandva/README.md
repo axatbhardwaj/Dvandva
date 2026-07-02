@@ -23,7 +23,7 @@ this one binary.
 - **Preflight** — `preflight`, `hook-preflight`.
 - **Git work-gate** — `commit-gate`, `drift-lint`, `install-hooks`, `git-hook <name>`.
 - **Install** — `install`, `install-codex`, `smoke-install`, `retire-agents`.
-- **Lints** — `lint <artifacts|skills|protocol-phase1|skill-phase3|phase4-research|run3-dynamic-agents|run4-path-gates|run4-standalone-agents>`.
+- **Lints** — `lint <artifacts|skills|schema-parity|protocol-phase1|skill-phase3|phase4-research|run3-dynamic-agents|run4-path-gates|run4-standalone-agents>`.
 
 The binary is a multicall executable: when invoked through a git-hook symlink
 (`pre-commit`, `prepare-commit-msg`, ...) the hook name is taken from `argv[0]`.

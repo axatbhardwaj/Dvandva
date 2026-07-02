@@ -370,8 +370,10 @@ pub(crate) const REMINDER_HARD_PATH_TOKENS: &[&str] = &[
 /// commit-gate's "recompute the profile floor" reminder line — it is NOT
 /// byte-identical to `write.rs`'s canonical hard-path set, and drift between
 /// the two is guarded by the S6-T1 schema-parity lint (see
-/// [`REMINDER_HARD_PATH_TOKENS`]).
-fn matches_reminder_hard_path(path: &str) -> bool {
+/// [`REMINDER_HARD_PATH_TOKENS`]). `pub(crate)` so the schema-parity lint's
+/// unit tests can assert a representative path per token — the
+/// function-owns-the-const direction the lint's source-scan otherwise misses.
+pub(crate) fn matches_reminder_hard_path(path: &str) -> bool {
     let base = path.rsplit('/').next().unwrap_or(path);
     base == ".env"
         || base.starts_with(".env.")
