@@ -143,13 +143,11 @@ fn role_skill_with_block(name: &str, description: &str, block: &Value) -> String
 // SKILL.md blocks are v2. The v2 accept path is covered self-contained below.
 
 #[test]
-#[ignore = "docs wave swaps SKILL.md inline blocks v1->v2 after WE3; un-ignore then"]
 fn vadi_role_skill_passes_full_lint() {
     assert_exit(&real_skill("plugins/dvandva/skills/vadi/SKILL.md"), 0);
 }
 
 #[test]
-#[ignore = "docs wave swaps SKILL.md inline blocks v1->v2 after WE3; un-ignore then"]
 fn prativadi_role_skill_passes_full_lint() {
     assert_exit(&real_skill("plugins/dvandva/skills/prativadi/SKILL.md"), 0);
 }

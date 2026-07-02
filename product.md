@@ -86,6 +86,35 @@ Status: rewritten 2026-05-14 for richer flow (spec phase + phased implementation
 > safety valve (never fired across ~24 recorded runs); findings→fixing loops with
 > `loop_counts` caps are the primary dispute mechanism, and the counter machinery
 > is retained. All new fields are additive nullable; absent = pre-patch behavior.
+>
+> **Spec rev 2026-07-02 (hardening S2/S4/S5/S6):** Protocol-hardening slices
+> re-keyed to the Rust engine; crate → `2.0.0-alpha.4`, plugin manifests →
+> `1.4.0`. **S2-T1/T3:** a new terminal status `abandoned` (enterable only from
+> `human_question`/`human_decision`, `assignee: "human"`, `active_roles: []`, no
+> artifact/approval/loop gates, snapshot-archived like `done`); `dvandva wait`
+> exits `13`; the resolver resumable-set, commit gate, and drift lint treat
+> `{done, abandoned}` as terminal; `dvandva preflight` adds an `invalid_baton`
+> sanity check (owner/status mismatch, or a team status with empty `active_roles`
+> → exit 1). **S4:** the done gate now also requires every required ref to be an
+> existing non-empty file (`missing_artifact`), a complete-and-fresh
+> `verification_matrix` (`stale_verification_matrix`, anchored at the last
+> implementation-family checkpoint), and candidate id-sets/findings that are a
+> superset of the installed team-owned baton (`lost_update`); spec entry requires
+> candidate `master_plan_locked == true` and unlock is forbidden except into
+> `human_decision` (`bad_master_plan_locked`); `human_question` widens post-lock
+> (D1); review mode gains `deep_review -> phase_fixing` (loop-capped); the commit
+> gate crosschecks staged paths against `changed_paths ∪ work_split`
+> (`DVANDVA_COMMIT_GATE_PATHS=warn|off`); the install path re-verifies the lock
+> after the rename (`lock_lost_post_install`, exit 29). **S5:** the standard
+> profile gains the capped mutual-review edges (D4); the v1 WRITE path is retired
+> (`schema_retired`; the READ path stays lenient); the five-chunk parallel floor
+> becomes `>=2` write-capable chunks per role AND (`>=5` total OR a reviewed
+> `work_split_waiver`, `bad_work_split_waiver` when malformed); research-mode
+> exploratory terminals label phase `"research"` (seed paths keep `"spec"`, with
+> current-side leniency for old labels). **S6:** `dvandva lint schema-parity`
+> holds the status catalog, required-key list, channel-doc copies, and HISTORICAL
+> markers in parity. All new fields are additive nullable; absent = pre-hardening
+> behavior.
 
 ## 1. What it is
 
@@ -418,7 +447,7 @@ Three caps the spec enforces operationally:
 - **Disagreement round cap (default 3).** Counter resets at the start of each phase. On the 3rd mutual-review disapproval, the writing agent must set `status: human_decision` and exit. Tunable per-phase via a `disagreement_cap` field on the baton (set during spec phase by either agent).
 - **Per-invocation turn cap (default 60).** Each agent's `/goal` invocation must stop after the active model-work turn cap even if the baton condition has not been hit, and surface its current state for human review. Passive shell wait heartbeats do not count against this cap.
 - **No phase count cap.** Plans declare `total_phases` during the spec phase; the protocol does not constrain how many phases are reasonable. The spec phase itself is responsible for sane phase scoping.
-- **Planning-question boundary.** Before `master_plan_locked: true`, either agent may route to `human_question`. After the master plan is locked, agents should resolve internally or escalate with `human_decision`. The Claude Code-hosted session owns surfacing `human_question` and `human_decision` to the human (F5, see §12).
+- **Planning-question boundary (S4-T5/D1).** `human_question` may be entered pre-lock (`master_plan_locked: false`) from any planning state (`research_*`/`spec_*`), AND post-lock from the working states `implementing`, `parallel_implementing`, `test_creation`, `cross_fixing`, and `phase_fixing`. The rule: when a genuine requirement ambiguity — not a design or scope decision — blocks progress, route one concrete question to the human instead of guessing; `resume_status`/`resume_assignee` restore the exact prior state on the answer. Entering `human_question` is not a loop edge (it is a human-bounded stop-together pause). `human_decision` stays the re-routing and scope-escalation state. The Claude Code-hosted session owns surfacing both to the human (F5, see §12).
 - **Counter demotion.** The `review_of_review`/`counter_review` vadi-counter mutual-review loop is a rarely-exercised safety valve — it has never fired across the ~24 recorded runs. The primary dispute mechanism is the findings→fixing loops (`deep_review->phase_fixing`, `cross_review->cross_fixing`, `phase_review->phase_fixing`) bounded by `loop_counts` caps at `disagreement_cap`. The counter machinery is retained (not removed) for the rare case a reviewer's own inline fixup is itself disputed.
 
 ## 7. vadi skill design
@@ -521,7 +550,7 @@ Auto-activation depends entirely on `description`. Tuning rules:
 dvandva install
 ```
 
-`dvandva install` wraps the public install path for users: it registers the Dvandva marketplace and installs `dvandva@dvandva` in both Claude Code and Codex. It accepts `--claude-only` and `--codex-only` for one-engine installs. For Codex, it delegates to `dvandva install-codex`, which runs `codex plugin add dvandva@dvandva` on current Codex builds and keeps the legacy app-server RPC install as a fallback for older builds. The `dvandva` binary must already be on `PATH` (`cargo install dvandva --version 2.0.0-alpha.3`, or `cargo install --path rust/dvandva` from a checkout). The authoritative preflight is whether the current agent session can see and invoke the required Superpowers skills.
+`dvandva install` wraps the public install path for users: it registers the Dvandva marketplace and installs `dvandva@dvandva` in both Claude Code and Codex. It accepts `--claude-only` and `--codex-only` for one-engine installs. For Codex, it delegates to `dvandva install-codex`, which runs `codex plugin add dvandva@dvandva` on current Codex builds and keeps the legacy app-server RPC install as a fallback for older builds. The `dvandva` binary must already be on `PATH` (`cargo install --path rust/dvandva` from a checkout is the primary form and builds the current `2.0.0-alpha.4`; `cargo install dvandva --version 2.0.0-alpha.3` installs the latest published crate, and `--version 2.0.0-alpha.4` works once that version is published). The authoritative preflight is whether the current agent session can see and invoke the required Superpowers skills.
 
 ### 11.2 Development install fallback
 
@@ -546,7 +575,7 @@ Consumer repos may check the plugin into their own tree or use project-scoped ma
 | `schema` field is not `dvandva.baton.v1` or `dvandva.baton.v2` | Both: refuse to operate. Surface schema mismatch. Exit. |
 | `assignee` does not match this agent's role | In `run_mode: "walkaway"`, run the wait helper for this role. Outside walkaway, surface "wrong actor for this state" and exit. Never silently overwrite the assignee. |
 | Superpowers absent on an engine running a Dvandva role | Surface install instructions referencing section 4 and the relevant plugin marketplace/install path. Do not continue with active work; if the baton exists and the role owns it, route to `human_decision` rather than writing a success or advancement baton. |
-| `status: human_question` | Stop and surface the one concrete `question` plus `resume_assignee` and `resume_status`. If the user answers in the current prompt, restore `assignee` and `status` from those fields, clear the question fields, and continue. This is valid only before `master_plan_locked: true`; after that, use `human_decision`. |
+| `status: human_question` | Stop and surface the one concrete `question` plus `resume_assignee` and `resume_status`. If the user answers in the current prompt, restore `assignee` and `status` from those fields, clear the question fields, and continue. Enterable pre-lock from any planning state and post-lock from the working states `implementing`/`parallel_implementing`/`test_creation`/`cross_fixing`/`phase_fixing` (S4-T5/D1); `human_decision` remains the re-routing and scope escalation. |
 | `status: human_question` or `human_decision` written or observed (F5) | The Claude Code-hosted session owns surfacing human_question and human_decision to the human. Whichever role the Claude Code session hosts asks the human directly in-session (question, options, resume fields) — on writing the pause or on wait exit 11/12 (including sibling propagation) — and stays available for the answer via Claude Code's mobile/remote surface. The Codex-hosted role writes/observes the pause and stops silently; it must not compete to consume the answer. If no Claude Code session is part of the run, the writer of the pause surfaces it. `current_engine` still records the writer for traceability. Recommended pairing: run waits with `dvandva wait --notify <url>` (or `DVANDVA_NOTIFY_URL`) so the pause also pings your phone. |
 | `plan_ref` missing, or referenced plan file missing during a phase mode | Doer: surface "spec phase did not complete; cannot start phase implementation." Exit. Reviewer: same. |
 | `total_phases` is 0 or unset during phase mode | Both: surface schema integrity error, exit. The spec phase is responsible for setting this. |
@@ -555,6 +584,14 @@ Consumer repos may check the plugin into their own tree or use project-scoped ma
 | Wait helper exits 20 (`timeout`) | This can only happen in explicit `--finite` compatibility mode. Normal walkaway loops must not use `--finite`; immediately re-enter continuous wait unless the user interrupts. |
 | Wait helper exits 23 (`persist_max`) | This is the wait-helper persist cap exit 23. Surface the still-waiting state and immediately re-enter the wait helper with a fresh cap unless the user interrupts. The cap protects shell budgets; it is not a baton terminal state and is not evidence the peer stopped. |
 | Write helper exits 23 during candidate install | This is the write-helper validation exit 23. The candidate failed schema, required-key, safe-run-id, v2 status-owner, status, or enum validation. Fix the candidate file and rerun `dvandva write`; never edit the installed baton directly. |
+| Write helper exits 23 `schema_retired` | The candidate (or the current baton) carries `schema: "dvandva.baton.v1"`; the v1 WRITE path is retired (S5-T2/D5). Migrate the candidate to `dvandva.baton.v2` and rerun. Old v1 batons stay readable on the `state`/`resolve`/`wait` path. |
+| Write helper exits 23 `missing_artifact` / `stale_verification_matrix` / `lost_update` (done gate) | At a `done` candidate: each required ref (`research_ref`, plus `plan_ref`/`run_explainer_ref`/`review_ref` when the mode requires it) must be an existing non-empty file (`missing_artifact`, S4-T1); every `verification_matrix` row must be complete with a numeric `evidence_checkpoint`/`review_checkpoint` at or after the last implementation-family checkpoint (`stale_verification_matrix`, S4-T6); and a team-owned candidate's `subagent_tracks`/`agent_instances`/`work_split` ids and `findings` must be a superset of the installed baton's (`lost_update`, S4-T4). Fix the candidate and rerun. |
+| Write helper exits 23 `bad_master_plan_locked` | Spec entry (`spec_review -> implementing`/`parallel_implementing`) requires candidate `master_plan_locked == true` (S4-T2/D2), and `master_plan_locked` `true->false` is rejected on every development edge except a write whose `new_status` is `human_decision`. Set the lock, or route to `human_decision` to unlock, then rerun. |
+| Write helper exits 23 `bad_work_split_waiver` | The `work_split_waiver` object is malformed (S5-T3); a valid waiver is `{reason: <non-blank string>, approved_by: "prativadi", checkpoint: <number>}`. The per-role `>=2` write-capable-chunk floor is never waivable; only the `>=5`-total floor is. |
+| Write helper exits 29 `lock_lost_post_install` | The install renamed the baton, then the fencing token was found overwritten by a peer that age-stole the lock (S4-T10). The install DID happen and may be superseded; re-read the installed baton before deciding anything (`caller_must_reread=true`). |
+| `status: abandoned` / wait exit 13 | Terminal (S2-T1): the run was abandoned from `human_question`/`human_decision`. Surface it and stop; do not scaffold or advance. Reopen only via a hand-authored `human_decision` write. |
+| Preflight `invalid_baton` (exit 1) | After resolve, `dvandva preflight` read-only-validates the installed baton (S2-T3): an assignee/status owner mismatch, or a team-owned status with empty `active_roles`, prints `reason=invalid_baton detail=<violation>` and exits 1 without mutating. Fix the baton owner/roles, or route via `human_decision`. |
+| Commit gate blocks on staged paths (S4-T9) | While a baton is active, the pre-commit `dvandva commit-gate` blocks a commit whose staged paths fall outside `changed_paths ∪ role-visible work_split paths/write_paths` (`.dvandva/` and `superpowers/` are always exempt). Keep `changed_paths` honest, or set `DVANDVA_COMMIT_GATE_PATHS=warn` (print offenders, allow) or `=off` (skip). Declared-empty scope (`changed_paths: []`/empty role-visible `work_split` present) blocks all non-exempt staged paths; a baton that declares no scope key at all is exempt (fail-open) for legacy compatibility. |
 | Final phase approved by only one role | Do not commit or push. Keep routing until both `vadi_final_approval` and `prativadi_final_approval` are true, or escalate. |
 | Commit or push fails in walkaway mode | Set `status: human_decision`, keep the working tree as-is, and record the failing command in `blockers`. Never try to create a PR as recovery. |
 | Dirty paths outside `changed_paths` at final ship | Set `status: human_decision`; do not commit unrelated work. |
@@ -599,7 +636,7 @@ Open questions to revisit after the pilot:
 
 - **Spec version:** this document is v1's source of truth. Changes to in-scope behavior require a spec rev with a `docs:` commit prefix and a section number reference.
 - **Schema version:** baton field is `dvandva.baton.v1` for legacy runs and `dvandva.baton.v2` for named runs. Breaking changes increment the schema version; both skills must update in lockstep. Skills refuse to operate on a schema string outside the supported set (section 12).
-- **Schema maintenance.** The schema lives in three places: Appendix A (canonical), `templates/channel/baton.json` (operational seed for `.dvandva/`), inlined in each SKILL.md (agent in-context contract). On changes: update Appendix A first, then template file, then both SKILL.md inlines. The v2 deterministic validator (section 16) will make Appendix A machine-checkable.
+- **Schema maintenance.** The v2 contract is copied across many hand-maintained files, all held in parity by `dvandva lint schema-parity` (S6-T1): the engine's own `dvandva.baton.v2` status enum and `v2_required_keys()` (`rust/dvandva/src/write.rs`); `plugins/dvandva/references/baton-schema-v2.json` (its `status_catalog`); the `Status catalog (22)` marker line in this spec (Appendix A) and in `plugins/dvandva/references/state-transition-table.md`; the inline `json` seed block in each of `plugins/dvandva/skills/vadi/SKILL.md` and `plugins/dvandva/skills/prativadi/SKILL.md` (top-level keys ≡ `v2_required_keys()`, one `json` fence per file); the byte-identical channel-doc copies `docs/protocol/local-baton-channel.md` and `plugins/dvandva/references/local-baton-channel.md`; and the HISTORICAL v1 references `plugins/dvandva/references/baton-schema.json` and `templates/channel/baton.json` (each carrying a `HISTORICAL: dvandva.baton.v1` marker). On a schema change, update the engine first, then every copy above, and run `dvandva lint schema-parity` and `dvandva lint skills` until green.
 - **Policy fields in baton.** `allow_commit`, `allow_push`, and `allow_pr` intentionally live in the baton for v1 so every agent and transcript sees the run authority in the same file as state. `allow_commit` authorizes regular local checkpoint commits after verified logical slices; `allow_push` is still final-ship only. A separate `.dvandva/policy.json` is a v2 option if policy grows beyond these booleans.
 - **Skill versions:** each SKILL.md may carry a `# Skill version: <semver>` comment in the body. Bumped on body changes that alter agent behavior.
 
@@ -642,7 +679,7 @@ This appendix is the spec-level authoritative reference for the schema (includin
   "phase": "research | spec | review | 1 | 2 | ... | done",
   "total_phases": "integer, set during spec phase; engine-frozen once master_plan_locked is true (reason bad_amendment total_phases_frozen), changeable only inside an F7 amendment loop (amendment_from_phase non-null) or on a write into human_decision",
   "phase_profiles": "additive nullable object {\"<numeric phase>\": \"standard\" | \"full\"} (F9); effective profile of numeric phase N = phase_profiles[N] // run profile; set/changed only in spec states, and never below the per-phase hard-path floor (reason bad_phase_profiles); absent = every phase uses the run profile",
-  "status": "spec_drafting | spec_review | spec_revision | human_question | implementing | parallel_implementing | test_creation | cross_review | cross_fixing | deep_review | deslop | termination_review | phase_review | phase_fixing | review_of_review | counter_review | human_decision | done",
+  "status": "research_drafting | research_review | research_revision | spec_drafting | spec_review | spec_revision | human_question | implementing | parallel_implementing | test_creation | cross_review | cross_fixing | deep_review | deslop | termination_review | phase_review | phase_fixing | review_of_review | counter_review | human_decision | done | abandoned (22-token v2 catalog; see the Status catalog line above; abandoned is the S2-T1 terminal enterable only from human_question/human_decision)",
   "assignee": "non-empty string; v1 conventions are vadi | prativadi | human; v2 status-owner pairs include team for concurrent states",
   "active_roles": "v2 concurrent roles array, usually [] or [\"vadi\", \"prativadi\"]",
   "current_engine": "optional; \"claude\" | \"codex\" | null. Records which CLI wrote the most recent baton; for traceability only, not used for correctness.",
@@ -665,6 +702,7 @@ This appendix is the spec-level authoritative reference for the schema (includin
   "resume_status": "spec_drafting | spec_review | spec_revision | null; status to restore after a human_question answer",
   "disagreement_round": "integer, set to 0 by the agent that writes the first baton of each new phase; incremented by the agent that disagrees during mutual review",
   "disagreement_cap": "integer, default 3, optionally set during spec phase",
+  "work_split_waiver": "S5-T3 additive nullable object gating the parallel/test-creation chunk floor: {reason: <non-blank string>, approved_by: \"prativadi\", checkpoint: <number>}. When valid it waives ONLY the >=5-total chunk floor; the per-role >=2 write-capable-chunk floor is never waivable. Any other present shape is rejected (bad_work_split_waiver). Absent = the >=5 floor is in force.",
   "loop_counts": "v2 additive map keyed \"<kind>:<phase>\" to a per-cycle counter for repeated review/fix loops; the write helper mandates increment-by-one on every loop-edge write (an absent counter reads as 0 but the candidate must still write the increment, so the cap cannot be bypassed by omission) and routes a counter that reaches disagreement_cap to human_decision. The counter resets on phase advance.",
   "turn_cap": "integer, default 60; passive shell wait heartbeats do not count",
   "branch": "git branch name",
@@ -695,6 +733,10 @@ This appendix is the spec-level authoritative reference for the schema (includin
 This spec is authoritative for the accepted v2 mode tables and the legacy v1
 fallback. The protocol doc and plugin-local transition table carry the same
 runtime contract.
+
+Status catalog (22): research_drafting, research_review, research_revision, spec_drafting, spec_review, spec_revision, implementing, parallel_implementing, test_creation, cross_review, cross_fixing, deep_review, review_of_review, counter_review, deslop, termination_review, phase_review, phase_fixing, human_question, human_decision, done, abandoned
+
+The engine's `dvandva.baton.v2` status enum, the `baton-schema-v2.json` `status_catalog`, the state-transition-table copy, and this line are held equal by `dvandva lint schema-parity` (S6-T1). `abandoned` (S2-T1) is the new terminal status; `done` and `abandoned` are the two terminal states.
 
 **Development full profile (v2, 28 edges):**
 
@@ -750,6 +792,11 @@ forces `full`.
 | `implementing` | `phase_review` | Vadi records implementation and verification evidence, including a profile-floor recheck. |
 | `phase_review` | `phase_fixing` | Prativadi finds substantive issues. |
 | `phase_review` | `implementing` | Prativadi requests additional implementation or verification without leaving compact profile. |
+| `phase_review` | `review_of_review, review_target: prativadi_fixups` | S5-T1/D4: standard gains the same rarely-exercised mutual-review safety valve `full` has — prativadi applied narrow fixups and mutual review is owed (requires non-empty `narrow_fixups`). Loop-capped. |
+| `review_of_review (prativadi_fixups)` | `counter_review, review_target: vadi_counter` | S5-T1: vadi disapproves the fixups and writes a counter-change. Loop-capped (`review_of_review<->counter_review`). |
+| `review_of_review (prativadi_fixups)` | `phase_review` | S5-T1: vadi approves the fixups; standard returns to compact phase review rather than advancing directly. |
+| `counter_review (vadi_counter)` | `review_of_review, review_target: prativadi_fixups` | S5-T1: prativadi disapproves the counter and applies a different narrow fixup. Loop-capped. |
+| `counter_review (vadi_counter)` | `phase_review` | S5-T1: prativadi approves the counter; standard returns to compact phase review. |
 | `phase_review` | `phase: N+1, status: "parallel_implementing"` | F9 cross-profile advance: a clean standard phase advances into a next phase whose effective profile is `full` (the entry state is chosen by the target phase's effective profile). |
 | `phase_review` | `phase: "spec", status: "spec_revision"` | F7 amendment entry (standard equivalent): the writer opens a capped plan-amendment episode for a post-lock scope change — sets `amendment_from_phase` to the current numeric phase, lands `phase: "spec"`, assignee `vadi`, and increments loop key `plan_amendment:<from-phase>` (cap = `disagreement_cap`). The loop exits via `spec_review -> implementing`, which MUST null `amendment_from_phase` and re-enter at a numeric phase ≥ `amendment_from_phase`; the exit resets `loop_counts`. |
 | `phase_fixing` | `phase_review` | Vadi fixes and refreshes evidence. |
@@ -798,12 +845,14 @@ plan before termination; when it does, set `research_outcome:
 | `phase_fixing` | `research_review` | The focused fix is complete and the research package must be re-reviewed. |
 | `termination_review` | final `done` | Both roles explicitly decide to stop; `research_ref` exists, and `plan_ref` also exists iff `research_outcome == seed_development`. |
 
-**Review mode (v2, 9 edges):**
+**Review mode (v2, 10 edges):**
 
 Review mode reuses the existing research statuses for intake and the existing
 review statuses for the review package. Set `review_intake` and `review_target`
 before the first `deep_review`, and produce `review_ref` before shared
-termination. Every review-mode status uses `phase: "review"`.
+termination. Every review-mode status uses `phase: "review"`. S4-T7 adds the
+`deep_review -> phase_fixing` hand-back edge (loop-capped), taking the table from
+9 to 10 edges.
 
 | From | To | Trigger |
 |---|---|---|
@@ -811,6 +860,7 @@ termination. Every review-mode status uses `phase: "review"`.
 | `research_review` | `research_revision` | Prativadi finds intake gaps and routes back to vadi. |
 | `research_revision` | `research_review` | Vadi fixes intake gaps and hands back. |
 | `research_review` | `deep_review` | Intake is sufficient and the review package can be evaluated. |
+| `deep_review` | `phase_fixing` | S4-T7: the reviewer hands back substantive fixes (bugs, missing tests, verification gaps) without lapping the stop gate. Loop-capped (`deep_review->phase_fixing`). |
 | `deep_review` | `deslop` | Substantive review passes and only cleanup or wording polish remains. |
 | `deslop` | `termination_review` | Review cleanup is complete and `review_ref` is ready for the shared stop gate. |
 | `termination_review` | `phase_fixing` | Shared stop review finds review-package work still owed. |
@@ -845,10 +895,22 @@ termination. Every review-mode status uses `phase: "review"`.
 
 | From | To | Trigger |
 |---|---|---|
-| development or research planning state with `master_plan_locked: false` | `human_question` | Either agent needs one human answer before plan lock. |
+| planning state (`research_*`/`spec_*`) with `master_plan_locked: false`, OR a post-lock working state (`implementing`/`parallel_implementing`/`test_creation`/`cross_fixing`/`phase_fixing`) | `human_question` | S4-T5/D1: either agent routes one concrete requirement question to the human instead of guessing; `resume_status`/`resume_assignee` restore the exact prior state. Not a loop edge. |
 | `human_question` | `resume_status` with `assignee: resume_assignee` | Human answers and the receiving skill clears question fields. |
+| `human_question` | `abandoned` (`assignee: human`, `active_roles: []`) | S2-T1: the run is abandoned. Terminal, snapshot-archived like `done`, no artifact/approval/loop gates. |
+| `human_decision` | `abandoned` (`assignee: human`, `active_roles: []`) | S2-T1: the run is abandoned. Terminal. |
+| `abandoned` | — (no outgoing edge) | S2-T1: terminal; `dvandva wait` exits 13; the resolver/commit-gate/drift inactive set is `{done, abandoned}`. Reopen only via a hand-authored `human_decision` write. |
 | any state | `human_decision` | Escalation (`disagreement_round >= cap`, `turn_cap` hit, blocker, malformed input). |
 | `human_decision` | any mode-owned state chosen by the human | After human edits baton or prompts an agent. |
+
+**Hardening gates layered onto these edges (S4/S5):**
+
+- **Spec-entry lock (S4-T2/D2).** `spec_review -> implementing`/`parallel_implementing` requires candidate `master_plan_locked == true` (`bad_master_plan_locked`, 23). `master_plan_locked` `true->false` is rejected on every development edge except a write whose `new_status` is `human_decision`; amendment loops keep the lock.
+- **Done-gate refs, matrix, and superset (S4-T1/T4/T6).** Every `done` candidate must resolve each required ref (`research_ref`, plus `plan_ref`/`run_explainer_ref`/`review_ref` per mode) to an existing non-empty file (`missing_artifact`); the `verification_matrix` must be complete with a numeric `evidence_checkpoint`/`review_checkpoint` at or after the last implementation-family checkpoint (`stale_verification_matrix`); and a team-owned candidate's `subagent_tracks`/`agent_instances`/`work_split` ids and `findings` must be a superset of the installed baton's (`lost_update`).
+- **v1 write retirement (S5-T2/D5).** A `dvandva.baton.v1` write candidate — or a current baton still carrying `schema: "dvandva.baton.v1"` — is rejected with `schema_retired` and a migration hint to v2. The lenient READ path (`state`/`resolve`/`wait`/`brief`) is untouched, so old v1 batons stay observable.
+- **Parallel-chunk floor + waiver (S5-T3).** `parallel_implementing` entry and `parallel_implementing -> test_creation` require `>=2` write-capable chunks per role AND (`>=5` total OR a valid `work_split_waiver`); a malformed waiver is `bad_work_split_waiver`.
+- **Research-mode phase labels (S5-T5).** Research-mode `termination_review`/`phase_fixing`/`done` use phase `"research"` for exploratory runs and phase `"spec"` for seed runs (`research_outcome == seed_development` or `plan_ref` set). Candidates are strict; existing batons carrying the old `"spec"` label are accepted on the CURRENT side of a same-status/relabel transition (current-side leniency).
+- **Post-install fence (S4-T10).** After the atomic rename, the write path re-verifies the lock; loss is `lock_lost_post_install` (exit 29) — the install DID happen and may be superseded, so the caller must re-read.
 
 Any other transition is illegal in v1 or v2 and must be rejected by the
 writing agent.

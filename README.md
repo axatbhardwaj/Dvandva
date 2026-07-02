@@ -10,6 +10,17 @@ Accepted v2 baton modes are `development`, `research`, and `review`.
 `feature-pr` remains a legacy alias for `development` on older batons. Public
 docs no longer treat `campaign` as the current mode enum.
 
+The v2 status catalog has 22 statuses; `done` and `abandoned` are the two
+terminal states. `abandoned` is a human bailout enterable only from
+`human_question`/`human_decision`, and `dvandva wait` exits 13 on it. The v1
+baton schema is retired on the WRITE path: a `dvandva.baton.v1` write candidate
+(or a current baton still on v1) is rejected with `schema_retired` plus a
+migration hint to `dvandva.baton.v2`, while the READ path (`state`/`resolve`/
+`wait`/`brief`) stays lenient so old v1 batons remain observable and
+resumable-for-read. `dvandva lint schema-parity` keeps the status catalog, the
+required-key list, the two byte-identical channel-doc copies, and the HISTORICAL
+v1 references in parity.
+
 Development runs also carry an orthogonal flow `profile`: `fast`, `standard`,
 or `full`. `mode` answers what kind of run this is; `profile` answers how much
 development lifecycle is required. New development scaffolds default to
@@ -26,10 +37,12 @@ Dvandva model classes are vendor-neutral. Agent frontmatter uses `model: opus` a
 Dvandva ships as an installable plugin for both engines. The repo lives at https://github.com/axatbhardwaj/Dvandva.
 
 The `dvandva` binary IS the Dvandva runtime: read path, write path, waiting,
-preflight, git work-gating, installers, and lints. It is published on
-crates.io as `dvandva 2.0.0-alpha.3`. Install it with `cargo install dvandva
---version 2.0.0-alpha.3` (or `cargo install --path rust/dvandva` from a
-checkout) before installing the plugin; the plugin no longer bundles
+preflight, git work-gating, installers, and lints. Install it with `cargo
+install --path rust/dvandva` from a checkout (primary form; it builds the current
+`2.0.0-alpha.4`). The latest version published on crates.io is
+`2.0.0-alpha.3` (`cargo install dvandva --version 2.0.0-alpha.3`); use `cargo
+install dvandva --version 2.0.0-alpha.4` once that version is published. Install
+the binary before installing the plugin; the plugin no longer bundles
 executables.
 
 ## Quickstart
@@ -37,8 +50,9 @@ executables.
 Install the `dvandva` binary, then the marketplace in both Claude Code and Codex:
 
 ```bash
-cargo install dvandva --version 2.0.0-alpha.3
-# or, from a checkout: cargo install --path rust/dvandva
+cargo install --path rust/dvandva            # primary; builds 2.0.0-alpha.4
+# once published: cargo install dvandva --version 2.0.0-alpha.4
+# latest published on crates.io: cargo install dvandva --version 2.0.0-alpha.3
 dvandva install
 ```
 
@@ -58,8 +72,9 @@ app-server RPC path.
 
 `dvandva install` is separate from installing the binary itself. `dvandva install`
 adds the Dvandva skills, commands, agents, and references to Claude Code and/or
-Codex; `cargo install dvandva --version 2.0.0-alpha.3` (or `cargo install
---path rust/dvandva` from a checkout) installs only the `dvandva` binary. The binary
+Codex; `cargo install --path rust/dvandva` from a checkout (primary; or `cargo
+install dvandva --version 2.0.0-alpha.3` for the latest published crate, or
+`--version 2.0.0-alpha.4` once published) installs only the `dvandva` binary. The binary
 must be on `PATH` for the installed skills to run — the plugin no longer
 bundles executables.
 
@@ -117,8 +132,9 @@ waiting, preflight, git work-gating, and the installers, all in one multicall
 binary. Install it from crates.io:
 
 ```bash
-cargo install dvandva --version 2.0.0-alpha.3
-# or, from a checkout: cargo install --path rust/dvandva
+cargo install --path rust/dvandva            # primary; builds 2.0.0-alpha.4
+# from crates.io (latest published): cargo install dvandva --version 2.0.0-alpha.3
+# pinned alpha.4 once published: cargo install dvandva --version 2.0.0-alpha.4
 ```
 
 The binary must be on `PATH` for the Dvandva skills to run. `cargo install`
@@ -162,7 +178,8 @@ New subcommands (flow patches):
 
 Invoked through a git-hook symlink (`pre-commit`, `prepare-commit-msg`, ...) the
 binary takes the hook name from `argv[0]`. `dvandva --version` prints the
-version line (`dvandva 2.0.0-alpha.3`).
+version line (`dvandva 2.0.0-alpha.4` from a current checkout; the latest
+crates.io release prints `dvandva 2.0.0-alpha.3`).
 
 ## Current State
 
@@ -180,7 +197,7 @@ Dvandva ships as one `dvandva` plugin with:
   Terminal `done`, `human_question`, and `human_decision` batons are inactive for this git gate: commits are not blocked by terminal batons, and drift lint only reports off-protocol commits while a non-terminal baton is active or checkpoint history gives it a scan floor.
 - Run 4 Dvandva-only retirement: `dvandva retire-agents` can retire only the five Claude Code symlink agents whose Dvandva-covered workflows are replaced by the seed roster: `adversarial-analyst`, `architect`, `developer`, `quality-reviewer`, and `sandbox-executor`. Functional parity is based on equivalent-or-better empirical usage across Runs 1-4, plus 1.1.0 cache/roster parity and reversibility. Codex agent-axis retirement is a no-op; skills are out of scope and no skill files are touched. The helper is dry-run first, writes a backup manifest, and supports restore.
 - the `dvandva` binary as the protocol runtime (`state`, `resolve`, `write`, `wait`, `snapshot`, `preflight`, the git work-gate, installers, and lints); the plugin bundles no executables
-- plugin-local protocol references in `plugins/dvandva/references/`
+- plugin-local protocol references in `plugins/dvandva/references/` (the live v2 contract is `baton-schema-v2.json`; `baton-schema.json` and `templates/channel/baton.json` are HISTORICAL `dvandva.baton.v1` references only, each carrying a `HISTORICAL: dvandva.baton.v1` marker, and are not written by the retired v1 path)
 - Codex marketplace metadata in `.agents/plugins/marketplace.json`
 - root marketplace metadata in `.claude-plugin/marketplace.json`
 
@@ -190,7 +207,7 @@ The default `run_mode` is `walkaway`: start both sessions once, then let the bat
 
 | Prerequisite | Verify |
 |---|---|
-| `dvandva` binary on `PATH`, hard runtime dependency | `dvandva --version` (install with `cargo install dvandva --version 2.0.0-alpha.3`, or `cargo install --path rust/dvandva` from a checkout) |
+| `dvandva` binary on `PATH`, hard runtime dependency | `dvandva --version` (install with `cargo install --path rust/dvandva` from a checkout, primary; or `cargo install dvandva --version 2.0.0-alpha.3` for the latest published crate, `--version 2.0.0-alpha.4` once published) |
 | Claude Code, if using Claude | `claude --version` |
 | Codex CLI, if using Codex | `codex --version` |
 | Superpowers plugin on every engine running a Dvandva role, hard runtime dependency | `/skills` lists `superpowers:using-superpowers`, `superpowers:brainstorming`, `superpowers:test-driven-development`, and `superpowers:verification-before-completion` |
@@ -249,6 +266,13 @@ is also unset, no `Dvandva-Checkpoint` trailer is stamped. Treat drift lint as
 the backstop for that explicit bypass. While a baton is active, drift lint also
 reports unstamped commits when no earlier checkpoint baseline exists, so a first
 bypass commit is still visible.
+While a baton is active, `dvandva commit-gate` also crosschecks staged paths
+(S4-T9): a commit whose staged paths fall outside `changed_paths ∪ role-visible
+`work_split` paths/write_paths` is blocked (`.dvandva/` and `superpowers/` are
+always exempt). Set `DVANDVA_COMMIT_GATE_PATHS=warn` to print offenders without
+blocking, or `=off` to skip the crosscheck; a baton that declares no
+`changed_paths`/`work_split` scope at all is exempt (fail-open), while a baton
+that declares an empty scope blocks all non-exempt staged paths.
 
 Before post-handshake terminal `done`, a v2 run must satisfy the
 mode/profile-conditional terminal artifact gate. Full-profile development runs
@@ -323,6 +347,7 @@ dvandva lint artifacts superpowers/research
 dvandva lint run3-dynamic-agents
 dvandva lint run4-path-gates
 dvandva lint run4-standalone-agents
+dvandva lint schema-parity
 for skill in vadi prativadi research testing understanding worktree-setup; do
   dvandva lint skills "plugins/dvandva/skills/$skill/SKILL.md"
 done

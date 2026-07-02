@@ -6,6 +6,10 @@ bundled transition reference available after plugin install.
 
 The `dvandva write` subcommand enforces v1 and v2 transition subsets deterministically at write time; the write port's `cargo test` suite asserts every documented v1 edge plus the v2 research/test/review/deslop edges below.
 
+Status catalog (22): research_drafting, research_review, research_revision, spec_drafting, spec_review, spec_revision, implementing, parallel_implementing, test_creation, cross_review, cross_fixing, deep_review, review_of_review, counter_review, deslop, termination_review, phase_review, phase_fixing, human_question, human_decision, done, abandoned
+
+`dvandva lint schema-parity` (S6-T1) holds this line equal to the engine `dvandva.baton.v2` status enum, `baton-schema-v2.json` `status_catalog`, and the `product.md` copy. `done` and `abandoned` (S2-T1) are the two terminal statuses.
+
 ## v2 Additions
 
 `dvandva.baton.v2` is the run-scoped schema for named runs at
@@ -68,8 +72,8 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
   add/change only entries with `role: "prativadi"`.
 - `dvandva wait`: continuous polling is the hard rule. `--max-wait` is the
   heartbeat interval by default, and the helper keeps polling until role
-  ownership, shared terminal `done`, `human_question`, `human_decision`, or user
-  interrupt. `human_question` and `human_decision` are a paired run pause that
+  ownership, shared terminal `done`, the terminal `abandoned` (S2-T1; wait exits
+  13), `human_question`, `human_decision`, or user interrupt. `human_question` and `human_decision` are a paired run pause that
   stops both roles together. During a selected non-terminal wait, the wait
   helper propagates a newer sibling run's `human_decision` or
   `human_question` unless `DVANDVA_CONCURRENT=1`; older sibling
@@ -95,7 +99,13 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
   enum validation. Fix the candidate and rerun the helper; do not edit the
   installed baton directly.
 
-Legacy `.dvandva/baton.json` may continue using `dvandva.baton.v1`. The live
+Legacy `.dvandva/baton.json` may continue to be READ as `dvandva.baton.v1`, but
+the v1 WRITE path is retired (S5-T2/D5): a `dvandva.baton.v1` write candidate —
+or a current baton still carrying `schema: "dvandva.baton.v1"` — is rejected with
+`schema_retired` and a migration hint to `dvandva.baton.v2`. The lenient READ
+path (`state`/`resolve`/`wait`/`brief`) is untouched, so old v1 batons stay
+observable; `baton-schema.json` and `templates/channel/baton.json` are kept as
+HISTORICAL v1 references. The live
 v2 write-helper enforcement requires safe `run_id`, `original_ask`,
 `run_explainer_ref`, `active_roles`, `work_split`, `agent_instances`,
 `subagent_tracks`, and `verification_matrix`; it also requires a non-empty
@@ -210,7 +220,7 @@ early. Scalar-owner states still reject same-status rewrites.
   "phase": "research | spec | review | 1 | 2 | ... | done",
   "total_phases": "integer, set during spec phase; engine-frozen once master_plan_locked is true (write reason bad_amendment total_phases_frozen), changeable only inside an F7 amendment loop (amendment_from_phase non-null) or on a write into human_decision",
   "phase_profiles": "F9 additive nullable object {\"<numeric phase>\": \"standard\" | \"full\"}; effective profile of numeric phase N = phase_profiles[N] // run profile; set/changed only in spec states and never below the per-phase hard-path floor (write reason bad_phase_profiles); absent = null",
-  "status": "spec_drafting | spec_review | spec_revision | human_question | implementing | parallel_implementing | test_creation | cross_review | cross_fixing | deep_review | deslop | termination_review | phase_review | phase_fixing | review_of_review | counter_review | human_decision | done",
+  "status": "research_drafting | research_review | research_revision | spec_drafting | spec_review | spec_revision | human_question | implementing | parallel_implementing | test_creation | cross_review | cross_fixing | deep_review | deslop | termination_review | phase_review | phase_fixing | review_of_review | counter_review | human_decision | done | abandoned (22-token v2 catalog; see the Status catalog line near the top; abandoned is the S2-T1 terminal enterable only from human_question/human_decision)",
   "assignee": "non-empty string; v1 conventions are vadi | prativadi | human; v2 status-owner pairs include team for concurrent states",
   "active_roles": "v2 concurrent roles array, usually [] or [\"vadi\", \"prativadi\"]",
   "current_engine": "optional; claude | codex | null. Records which CLI wrote the most recent baton; traceability only.",
@@ -233,6 +243,7 @@ early. Scalar-owner states still reject same-status rewrites.
   "resume_status": "spec_drafting | spec_review | spec_revision | null; status to restore after a human_question answer",
   "disagreement_round": "integer, reset to 0 by the agent that writes the first baton of each new phase",
   "disagreement_cap": "integer, default 3, optionally set during spec phase",
+  "work_split_waiver": "S5-T3 additive nullable object gating the parallel/test-creation chunk floor: {reason: <non-blank string>, approved_by: \"prativadi\", checkpoint: <number>}. When valid it waives ONLY the >=5-total chunk floor; the per-role >=2 write-capable-chunk floor is never waivable. Any other present shape is rejected (write reason bad_work_split_waiver). Absent = the >=5 floor is in force.",
   "loop_counts": "v2 additive map keyed \"<kind>:<phase>\" to an integer per-cycle counter for repeated review/fix loops; the write helper mandates increment-by-one on every loop-edge write (grandfathering only the read of an absent counter to 0, so the cap cannot be bypassed by omitting loop_counts) and, at disagreement_cap, allows only a human_decision target. Absent counters read as 0; the counter resets on phase advance.",
   "turn_cap": "integer, default 60; passive shell wait heartbeats do not count",
   "branch": "git branch name",
@@ -257,6 +268,19 @@ early. Scalar-owner states still reject same-status rewrites.
   "next_action": "exact one-sentence instruction for the next actor"
 }
 ```
+
+`review_checkpoint` is a sub-field on a compact-profile phase-review
+`subagent_tracks[]` entry (`phase: "phase_review"`, `track: "phase-review"`),
+recording the checkpoint of the phase-review cycle it evidences. Two gates read
+it: (1) the compact `phase_review -> termination_review` and
+`termination_review -> done` gates require a completed approved prativadi
+phase-review track whose `review_checkpoint` matches the current cycle; and (2)
+the S4-T6 done gate reads `review_checkpoint` (coalesced with
+`evidence_checkpoint`) as the numeric freshness anchor for `verification_matrix`
+rows, so a row is stale unless its checkpoint is at or after the last
+implementation-family checkpoint. The `agent_instances_example` entry in
+`baton-schema-v2.json` is illustrative only — it is a documentation sample, not a
+required field, and the write helper never reads it.
 
 ## Development Profiles
 
@@ -318,6 +342,11 @@ implementation and review path.
 | `implementing` | `phase_review` | Vadi records implementation and verification evidence, including a profile-floor recheck. |
 | `phase_review` | `phase_fixing` | Prativadi finds substantive issues. |
 | `phase_review` | `implementing` | Prativadi requests additional implementation or verification without leaving compact profile. |
+| `phase_review` | `review_of_review, review_target: prativadi_fixups` | S5-T1/D4: standard gains the same rarely-exercised mutual-review safety valve `full` has — prativadi applied narrow fixups and mutual review is owed (requires non-empty `narrow_fixups`). Loop-capped (`review_of_review<->counter_review`). |
+| `review_of_review (prativadi_fixups)` | `counter_review, review_target: vadi_counter` | S5-T1: vadi disapproves the fixups and writes a counter-change. |
+| `review_of_review (prativadi_fixups)` | `phase_review` | S5-T1: vadi approves the fixups; standard returns to compact phase review rather than advancing directly. |
+| `counter_review (vadi_counter)` | `review_of_review, review_target: prativadi_fixups` | S5-T1: prativadi disapproves the counter and applies a different narrow fixup. |
+| `counter_review (vadi_counter)` | `phase_review` | S5-T1: prativadi approves the counter; standard returns to compact phase review. |
 | `phase_review` | `phase: N+1, status: "parallel_implementing"` | F9 cross-profile advance: a clean standard phase advances into a next phase whose effective profile is `full` (entry state chosen by the target phase's effective profile). |
 | `phase_review` | `phase: "spec", status: "spec_revision"` | F7 amendment entry (standard equivalent): opens a capped plan-amendment episode for a post-lock scope change — sets `amendment_from_phase` to the current numeric phase, lands `phase: "spec"`, assignee `vadi`, increments loop key `plan_amendment:<from-phase>` (cap = `disagreement_cap`); exit via `spec_review -> implementing` nulls the field, resets `loop_counts`, and re-enters at a numeric phase ≥ `amendment_from_phase`. |
 | `phase_fixing` | `phase_review` | Vadi fixes and refreshes evidence. |
@@ -366,12 +395,14 @@ plan before termination; when it does, set `research_outcome:
 | `phase_fixing` | `research_review` | The focused fix is complete and the research package must be re-reviewed. |
 | `termination_review` | final `done` | Both roles explicitly decide to stop; `research_ref` exists, and `plan_ref` also exists iff `research_outcome == seed_development`. |
 
-## Review Mode (v2, 9 edges)
+## Review Mode (v2, 10 edges)
 
 Review mode reuses the existing research statuses for intake and the existing
 review statuses for the review package. Set `review_intake` and `review_target`
 before the first `deep_review`, and produce `review_ref` before shared
-termination. Every review-mode status uses `phase: "review"`.
+termination. Every review-mode status uses `phase: "review"`. S4-T7 adds the
+`deep_review -> phase_fixing` hand-back edge (loop-capped), taking the table from
+9 to 10 edges.
 
 | From | To | Trigger |
 |---|---|---|
@@ -379,6 +410,7 @@ termination. Every review-mode status uses `phase: "review"`.
 | `research_review` | `research_revision` | Prativadi finds intake gaps and routes back to vadi. |
 | `research_revision` | `research_review` | Vadi fixes intake gaps and hands back. |
 | `research_review` | `deep_review` | Intake is sufficient and the review package can be evaluated. |
+| `deep_review` | `phase_fixing` | S4-T7: the reviewer hands back substantive fixes (bugs, missing tests, verification gaps) without lapping the stop gate. Loop-capped (`deep_review->phase_fixing`). |
 | `deep_review` | `deslop` | Substantive review passes and only cleanup or wording polish remains. |
 | `deslop` | `termination_review` | Review cleanup is complete and `review_ref` is ready for the shared stop gate. |
 | `termination_review` | `phase_fixing` | Shared stop review finds review-package work still owed. |
@@ -413,10 +445,21 @@ termination. Every review-mode status uses `phase: "review"`.
 
 | From | To | Trigger |
 |---|---|---|
-| development or research planning state with `master_plan_locked: false` | `human_question` | Either agent needs one human answer before plan lock. |
+| planning state (`research_*`/`spec_*`) with `master_plan_locked: false`, OR a post-lock working state (`implementing`/`parallel_implementing`/`test_creation`/`cross_fixing`/`phase_fixing`) | `human_question` | S4-T5/D1: route one concrete requirement question to the human instead of guessing. `resume_status`/`resume_assignee` restore the exact prior state. Not a loop edge. |
 | `human_question` | `resume_status` with `assignee: resume_assignee` | Human answers and the receiving skill clears question fields. |
+| `human_question` | `abandoned` (`assignee: human`, `active_roles: []`) | S2-T1: the run is abandoned. Terminal, snapshot-archived like `done`, no artifact/approval/loop gates; `dvandva wait` exits 13. |
+| `human_decision` | `abandoned` (`assignee: human`, `active_roles: []`) | S2-T1: the run is abandoned. Terminal. |
+| `abandoned` | — (no outgoing edge) | S2-T1: terminal; reopen only via a hand-authored `human_decision` write. The resolver/commit-gate/drift inactive set is `{done, abandoned}`. |
 | any state | `human_decision` | Escalation, cap hit, blocker, malformed input, or unsafe dirty tree. |
 | `human_decision` | any mode-owned state chosen by the human | Human edits baton or prompts an agent with a decision. |
+
+**Hardening gates layered onto these edges (S4/S5):**
+
+- **Spec-entry lock (S4-T2/D2).** `spec_review -> implementing`/`parallel_implementing` requires candidate `master_plan_locked == true` (`bad_master_plan_locked`); `master_plan_locked` `true->false` is rejected on every development edge except a write whose `new_status` is `human_decision`.
+- **Done-gate refs/matrix/superset (S4-T1/T4/T6).** A `done` candidate must resolve each required ref to an existing non-empty file (`missing_artifact`), carry a complete-and-fresh `verification_matrix` (`stale_verification_matrix`, anchored at the last implementation-family checkpoint), and (team-owned) preserve installed `subagent_tracks`/`agent_instances`/`work_split` ids and `findings` as a superset (`lost_update`).
+- **v1 write retirement (S5-T2/D5).** A `dvandva.baton.v1` write candidate — or a current baton still on v1 — is rejected with `schema_retired` and a migration hint. The READ path (`state`/`resolve`/`wait`/`brief`) stays lenient, so old v1 batons remain observable.
+- **Parallel-chunk floor + waiver (S5-T3).** `parallel_implementing` entry and `parallel_implementing -> test_creation` require `>=2` write-capable chunks per role AND (`>=5` total OR a valid `work_split_waiver`); malformed waivers are `bad_work_split_waiver`.
+- **Post-install fence (S4-T10).** After the atomic rename the write path re-verifies the lock; loss is `lock_lost_post_install` (exit 29) — the install DID happen and may be superseded, so the caller must re-read.
 
 ## Liveness and loop gates (Slice 1)
 
@@ -477,7 +520,12 @@ writes:
   `termination_review`; these require `active_roles: ["vadi", "prativadi"]`.
 - Prativadi-owned: `research_review`, `spec_review`, `deep_review`,
   `phase_review`, `counter_review`.
-- Human-owned: `human_question`, `human_decision`.
+- Human-owned: `human_question`, `human_decision`, and the terminal `abandoned`
+  (S2-T1: `assignee: "human"`, `active_roles: []`, reachable only from
+  `human_question`/`human_decision`).
+- Terminal statuses are `done` and `abandoned`. `abandoned` (S2-T1) is a human
+  bailout — terminal with no gates and no outgoing edge, snapshot-archived like
+  `done`, and `dvandva wait` exits 13 on it.
 - Terminal `done` has no status owner. It is accepted as terminal for a
   coordinator assignee (`human`, `team`, `vadi`, or `prativadi`) only from
   `termination_review` in any v2 mode. The final gate still requires both

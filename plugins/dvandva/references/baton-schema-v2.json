@@ -45,7 +45,8 @@
     "phase_fixing",
     "human_question",
     "human_decision",
-    "done"
+    "done",
+    "abandoned"
   ],
   "assignee": "vadi",
   "active_roles": [],

@@ -60,6 +60,14 @@ and `subagent_tracks`, profile floors/allowlists, the full-profile terminal
 `run_explainer_ref` and `run_explainer_reviews` invariants, and v2 lifecycle
 transitions.
 
+The v1 WRITE path is retired (S5-T2). A `dvandva.baton.v1` write candidate — a
+scaffold or a transition — is rejected with `schema_retired` (exit 23) plus a
+migration hint to `dvandva.baton.v2`; a current baton still carrying
+`schema: "dvandva.baton.v1"` also has no legal forward write. The lenient READ
+path (`dvandva state`/`resolve`/`wait`/`brief`) is untouched, so existing v1
+batons remain observable and resumable-for-read. `references/baton-schema.json`
+and `templates/channel/baton.json` are kept as HISTORICAL v1 references only.
+
 Accepted terminal artifact gates are mode/profile-conditional: full-profile
 development runs require `run_explainer_ref` plus completed approved
 `run_explainer_reviews` from both roles for that exact artifact; fast and
@@ -75,17 +83,40 @@ remain the only path to terminal `done`.
 
 Full-profile implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; the `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. `test_creation` routes to `cross_review` and records 100% test coverage evidence for new executable behavior or source-only rationale for docs/skills; `cross_review` may route to `cross_fixing`, and only completed cross-review evidence for both roles can advance to `deep_review`. Fast and standard development profiles use the compact `implementing -> phase_review -> termination_review -> done` path, still with `profile_decision`, passing final verification, completed `verification_matrix` evidence, a completed approved prativadi `phase-review` subagent track with current-cycle `review_checkpoint`, shared termination, and role-owned final approvals. Phase convention: implementation-chunk tracks use the numeric implementation phase, while cross-review, phase-review, and deep-review gate tracks use the status-name phase such as `phase: "cross_review"`, `phase: "phase_review"`, or `phase: "deep_review"`.
 
-Role preflight exports and asserts `DVANDVA_ROLE=<role>`, then runs the
-per-role `dvandva preflight --role <role>` hook stage in-process. The hook stage
-records the prior hook path, materializes delegating hooks at `.dvandva/githooks`
-(each a symlink to the `dvandva` binary, which dispatches on the invoking hook
-name in `argv[0]`), verifies repo-local `core.hooksPath=.dvandva/githooks`, and
-restores the prior hook path on uninstall so Dvandva does not hijack foreign repo
-hook configuration.
+Run 4 generalizes the path gate from dynamic `agent_instances` to `work_split`.
+The write helper applies `safe_rel_path` to `work_split.paths`,
+`work_split.read_paths`, and `work_split.write_paths`. For write-capable chunks
+(`implementation`, `cross_fixing`, and `fix`), `write_paths` supplements rather
+than narrows `paths`; the effective write set is their union, so
+`write_paths: []` cannot mask the backward-compatible `paths` write surface.
+`cross_review` is read-only unless explicit `write_paths` are present. Any live
+overlap between write-capable chunks is rejected unless both chunks share the
+same non-empty `conflict_group` and one chunk's `depends_on` serializes it after
+the other. Closed or terminal historical chunks do not block later sequential
+reuse because work_split has no `base_checkpoint` wave model.
+
+Run 4 also adds local git work-gating. Role preflight exports and asserts
+`DVANDVA_ROLE=<role>`, then runs the per-role `dvandva preflight --role <role>`
+hook stage in-process. The hook stage records the prior hook path, materializes
+delegating hooks at `.dvandva/githooks` (each a symlink to the `dvandva` binary,
+which dispatches on the invoking hook name in `argv[0]`), verifies repo-local
+`core.hooksPath=.dvandva/githooks`, and records `dvandva.hooksAdoptedAt` as the
+local drift baseline. The `.dvandva/githooks/pre-commit` symlink runs the
+in-binary `dvandva commit-gate` then delegates to the prior hook chain; commits
+during an active baton require `DVANDVA_ROLE` to match `assignee` or
+`active_roles`; `.dvandva/githooks/prepare-commit-msg` stamps
+`Dvandva-Checkpoint`; and `dvandva drift-lint` reports unstamped commits from the
+hook-adoption baseline floor when present, so a later stamped checkpoint cannot
+hide a `--no-verify` bypass. This is local git-hook enforcement only. There is no
+daemon or hidden orchestrator.
+For git work-gating, completed `done` batons and human-intervention
+`human_question` / `human_decision` batons are inactive: the commit gate allows
+them, and drift lint only reports off-protocol commits while at least one active
+baton is present or when checkpoint history gives it a scan floor.
 
 For waiting, `human_question` and `human_decision` are a paired run pause that
 stops both roles together. If a selected run is in a non-terminal wait and a newer
-sibling run enters `human_question` or `human_decision`, the wait helper
+sibling run enters `human_decision` or `human_question`, the wait helper
 propagates that sibling human-intervention state to the selected waiter unless
 `DVANDVA_CONCURRENT=1`. Older sibling human-intervention batons remain parked
 and ignored, and a sibling `human_question` must surface `question`,
@@ -98,16 +129,20 @@ sibling propagation) — asks the human directly in-session (question, options,
 resume fields) and stays available for the answer, using Claude Code's
 mobile/remote surface to reach the user away from the PC. The Codex-hosted role
 writes or observes the pause and stops silently and must not compete to consume
-the human answer. If no Claude Code session is part of the run, the writer of the
-pause surfaces it; `current_engine` still records the writer for traceability.
-Recommended pairing: run waits with `dvandva wait --notify <url>` (or
-`DVANDVA_NOTIFY_URL`) so a pause also pings your phone.
+the human answer. If no Claude Code session is part of the run (both roles
+Codex-hosted), the writer of the pause surfaces it; `current_engine` still
+records the writer for traceability. Recommended pairing: run waits with
+`dvandva wait --notify <url>` (or `DVANDVA_NOTIFY_URL`) so a pause also pings your
+phone.
 
-Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`,
-`termination_review`) may write same-status sync checkpoints when both roles
-remain active. Use them to record partial completion, task distribution, peer
-wait state, or shared stop-review evidence without advancing the lifecycle
-early. Scalar-owner states still reject same-status rewrites.
+Run 4 standalone-agent retirement is intentionally Dvandva-only: it covers only
+Dvandva-covered workflows with functional parity via Runs 1-4 usage. The
+allowlist is the five Claude symlink agents `adversarial-analyst`, `architect`,
+`developer`, `quality-reviewer`, and `sandbox-executor`. Codex agent-axis files
+are reported as no-op, skill directories are not touched, and the helper writes
+a backup manifest so `--restore` can reverse an apply run.
+
+Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`, `termination_review`) may write same-status sync checkpoints when both roles remain active. Use them to record partial completion, task distribution, peer wait state, or shared stop-review evidence without advancing the lifecycle early. Scalar-owner states still reject same-status rewrites.
 
 ```json
 {
@@ -156,12 +191,31 @@ early. Scalar-owner states still reject same-status rewrites.
       "owner_role": "vadi",
       "scope": "Implement feature scaffolding.",
       "paths": ["src/example.ts"],
+      "read_paths": ["src/example.ts"],
+      "write_paths": ["src/example.ts"],
       "cross_review_by": "prativadi",
       "can_parallelize": true,
       "parallel_rationale": "Independent implementation chunk in the two-team plan.",
       "depends_on": ["research-codebase"],
+      "conflict_group": "",
       "status": "complete",
       "artifact_refs": ["./superpowers/research/2026-05-13-example-feature.html"]
+    },
+    {
+      "id": "cross-review-vadi-chunk",
+      "phase": "cross_review",
+      "chunk_type": "cross_review",
+      "owner": "prativadi",
+      "owner_role": "prativadi",
+      "scope": "Read-only review of the vadi-owned implementation chunk.",
+      "paths": ["src/example.ts"],
+      "read_paths": ["src/example.ts"],
+      "cross_review_by": null,
+      "can_parallelize": true,
+      "depends_on": ["implementation-chunk-1"],
+      "conflict_group": "",
+      "status": "planned",
+      "artifact_refs": []
     }
   ],
   "subagent_tracks": [
@@ -437,11 +491,23 @@ Every review-mode status uses `phase: "review"`.
 
 ### Shared intervention and ownership rules
 
-- Development or research planning states may route to `human_question` while
-  `master_plan_locked: false`, then resume via `resume_status` and
-  `resume_assignee`.
+- `human_question` (S4-T5/D1) may be entered pre-lock (`master_plan_locked:
+  false`) from any `research_*`/`spec_*` planning state, AND post-lock from the
+  working states `implementing`, `parallel_implementing`, `test_creation`,
+  `cross_fixing`, and `phase_fixing`: route a concrete question to the human
+  instead of guessing. Resume restores the exact prior state via `resume_status`
+  and `resume_assignee`. Entering `human_question` is not a loop edge — it is a
+  human-bounded stop-together pause. `human_decision` remains the re-routing
+  escalation.
 - Any state may route to `human_decision`; a human may then route the baton back
   to any mode-owned state.
+- `abandoned` (S2-T1) is a terminal status enterable ONLY from `human_question`
+  or `human_decision` (any v2 mode/profile), with `assignee: "human"` and
+  `active_roles: []`, and no artifact/approval/loop gates. It has no outgoing
+  edges (reopen only via a hand-authored `human_decision` write) and is
+  snapshot-archived like `done`. `wait` exits 13 on it; the resolver
+  resumable-set, commit gate, and drift lint all treat `{done, abandoned}` as
+  terminal.
 - There is no wildcard `* -> termination_review`; every stop-review entry is an
   explicit row in the mode tables above.
 - `termination_review` plus both final approvals are shared across all v2
@@ -449,8 +515,10 @@ Every review-mode status uses `phase: "review"`.
 - Terminal `done` is valid only from `termination_review` and only with the
   mode/profile-conditional terminal artifact or evidence: `run_explainer_ref`
   plus both roles' completed approved `run_explainer_reviews` for that exact
-  artifact in development/full, `profile_decision` plus final verification and
-  independent review evidence in development/fast and development/standard,
+  artifact in development/full, `profile_decision`, passing final verification,
+  completed `verification_matrix` evidence, and a completed approved prativadi
+  `phase-review` subagent track with current-cycle `review_checkpoint` in
+  development/fast and development/standard,
   `research_ref` plus `plan_ref` iff `research_outcome == seed_development` for
   research, and `review_ref` for review.
 - Approval ownership is role-owned: `DVANDVA_ROLE=vadi` may raise only
@@ -501,8 +569,8 @@ This is the core anti-token-polling rule:
 - Claude Code has a Bash-tool wall-clock cap around 600 seconds, so Claude-hosted sessions must relaunch the wait if a harness cap stops the shell before a terminal baton state. Codex-hosted sessions may use unbounded default continuous polling or pass `--persist` for older snippets.
 - In supervised mode, the assigned-away agent exits and the human invokes the next role manually.
 - When the helper exits 0 (`ready` or `checkpoint_advanced`), the agent re-reads the baton and resumes.
-- When the helper exits 10, the agent surfaces post-handshake `done` and stops. When it exits 11 or 12, the agent surfaces the human-intervention `human_decision` or `human_question` state and pauses for the human. For `human_question`, the helper also prints `question`, `resume_assignee`, and `resume_status`. Per F5, the Claude Code-hosted session owns surfacing these to the human in-session.
-- With `--notify <url>` (or the `DVANDVA_NOTIFY_URL` env var; the flag wins), the wait sends a best-effort ntfy-style POST on `human_question`, `human_decision`, `done`, `split_brain`, and `stalled` (3s timeout, `Title: Dvandva <run_id>: <event>` header, never changes exit codes or timing) so a Claude-hosted session's pause reaches the human's phone. Failures log `DVANDVA_WAIT notify_failed url=… err=…` on stderr only.
+- When the helper exits 10, the agent surfaces post-handshake `done` and stops. When it exits 13, the agent surfaces the terminal `abandoned` state (`DVANDVA_WAIT abandoned phase=… checkpoint=… assignee=…`) and stops. When it exits 11 or 12, the agent surfaces the human-intervention `human_decision` or `human_question` state and pauses for the human. For `human_question`, the helper also prints `question`, `resume_assignee`, and `resume_status`. Per F5, the Claude Code-hosted session owns surfacing these to the human in-session.
+- With `--notify <url>` (or the `DVANDVA_NOTIFY_URL` env var; the flag wins), the wait sends a best-effort ntfy-style POST on `human_question`, `human_decision`, `done`, `abandoned`, `split_brain`, and `stalled` (3s timeout, `Title: Dvandva <run_id>: <event>` header, never changes exit codes or timing) so a Claude-hosted session's pause reaches the human's phone. Failures log `DVANDVA_WAIT notify_failed url=… err=…` on stderr only.
 
 ## Goal Conditions
 

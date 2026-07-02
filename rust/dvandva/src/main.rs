@@ -21,7 +21,7 @@ use std::process::ExitCode;
 
 use dvandva::hooks::GIT_HOOK_NAMES;
 
-const VERSION_LINE: &str = "dvandva 2.0.0-alpha.3";
+const VERSION_LINE: &str = "dvandva 2.0.0-alpha.4";
 
 const USAGE: &str = "\
 Usage: dvandva <subcommand> [args...]

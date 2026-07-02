@@ -200,9 +200,7 @@ fn validate_candidate_shape(
     if schema != "dvandva.baton.v1" && schema != "dvandva.baton.v2" {
         return Err((
             23,
-            format!(
-                "DVANDVA_WRITE schema_mismatch candidate={cf} want=dvandva.baton.v1|dvandva.baton.v2"
-            ),
+            format!("DVANDVA_WRITE schema_mismatch candidate={cf} want=dvandva.baton.v2"),
         ));
     }
     let is_v2 = schema == "dvandva.baton.v2";
@@ -2604,7 +2602,9 @@ fn is_amendment_exit_edge(profile: &str, cur_status: &str, new_status: &str) -> 
 
 /// The v2 status vocabulary. The v1 arm was removed with S5-T2 (v1 candidates
 /// are rejected upstream with `schema_retired`), so only v2 statuses remain.
-fn status_enum_ok(status: &str) -> bool {
+/// `pub(crate)` so the schema-parity lint's unit tests can assert this
+/// hot-path acceptor agrees with [`V2_STATUS_CATALOG`] for every token.
+pub(crate) fn status_enum_ok(status: &str) -> bool {
     matches!(
         status,
         "research_drafting"

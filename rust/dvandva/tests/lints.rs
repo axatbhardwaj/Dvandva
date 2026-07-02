@@ -200,7 +200,7 @@ Plans live at ./superpowers/plans/YYYY-MM-DD-<topic>.html
 Full-profile v2 writes `status: "test_creation"`; fast/standard-profile v2 writes `status: "phase_review"`.
 Development/full fixbacks keep the numeric implementation phase, set `status: "test_creation"`.
 Development/fast and development/standard fixbacks keep the numeric implementation phase, set `status: "phase_review"`.
-fast` is allowlisted prose-only work with an optional `research_drafting -> research_review -> implementing` prelude.
+fast` is allowlisted prose-only work with a `research_drafting -> research_review -> implementing` prelude.
 For full-profile v2, approval routes to `deslop`; do not advance directly to `implementing` or `done`.
 "#,
     );
@@ -1047,12 +1047,12 @@ fn pathgate_rejects_missing_required_rust_source() {
 }
 
 // ---------------------------------------------------------------------------
-// run4-standalone-agents (re-keyed: version 1.3.0, retire-agents, Rust ports)
+// run4-standalone-agents (re-keyed: version 1.4.0, retire-agents, Rust ports)
 // ---------------------------------------------------------------------------
 
 fn standalone_fixture(root: &Path) {
     let mut readme = String::new();
-    readme.push_str("Dvandva 1.3.0 ships the canonical Dvandva roster. Run 4 makes Dvandva-only ");
+    readme.push_str("Dvandva 1.4.0 ships the canonical Dvandva roster. Run 4 makes Dvandva-only ");
     readme.push_str("retirement available only for Dvandva-covered workflows. The retired Claude ");
     readme.push_str(
         "symlink allowlist is adversarial-analyst, architect, developer, quality-reviewer, ",
@@ -1071,7 +1071,7 @@ fn standalone_fixture(root: &Path) {
     w(
         root,
         "product.md",
-        "Run 4 retires only Dvandva-covered standalone agents after version 1.3.0 cache parity and functional parity via Runs 1-4 usage. The Claude allowlist is adversarial-analyst, architect, developer, quality-reviewer, and sandbox-executor. Codex agent-axis cleanup is explicitly no-op. Skills are out of scope. Restore uses the backup manifest.\n",
+        "Run 4 retires only Dvandva-covered standalone agents after version 1.4.0 cache parity and functional parity via Runs 1-4 usage. The Claude allowlist is adversarial-analyst, architect, developer, quality-reviewer, and sandbox-executor. Codex agent-axis cleanup is explicitly no-op. Skills are out of scope. Restore uses the backup manifest.\n",
     );
     w(
         root,
@@ -1081,7 +1081,7 @@ fn standalone_fixture(root: &Path) {
     w(
         root,
         "plugins/dvandva/references/state-transition-table.md",
-        "Run 4 records the 1.3.0 Dvandva roster parity, Dvandva-only retirement, Codex agent-axis no-op, and functional parity via Runs 1-4 usage.\n",
+        "Run 4 records the 1.4.0 Dvandva roster parity, Dvandva-only retirement, Codex agent-axis no-op, and functional parity via Runs 1-4 usage.\n",
     );
     w(
         root,
@@ -1104,7 +1104,7 @@ fn standalone_fixture(root: &Path) {
     w(
         root,
         "rust/dvandva/src/installers.rs",
-        "// dvandva install and dvandva install-codex ports; 1.3.0 canonical 15-agent roster.\n",
+        "// dvandva install and dvandva install-codex ports; 1.4.0 canonical 15-agent roster.\n",
     );
 
     // manifests at 1.4.0.

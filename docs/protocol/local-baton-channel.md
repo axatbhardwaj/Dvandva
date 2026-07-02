@@ -60,6 +60,14 @@ and `subagent_tracks`, profile floors/allowlists, the full-profile terminal
 `run_explainer_ref` and `run_explainer_reviews` invariants, and v2 lifecycle
 transitions.
 
+The v1 WRITE path is retired (S5-T2). A `dvandva.baton.v1` write candidate — a
+scaffold or a transition — is rejected with `schema_retired` (exit 23) plus a
+migration hint to `dvandva.baton.v2`; a current baton still carrying
+`schema: "dvandva.baton.v1"` also has no legal forward write. The lenient READ
+path (`dvandva state`/`resolve`/`wait`/`brief`) is untouched, so existing v1
+batons remain observable and resumable-for-read. `references/baton-schema.json`
+and `templates/channel/baton.json` are kept as HISTORICAL v1 references only.
+
 Accepted terminal artifact gates are mode/profile-conditional: full-profile
 development runs require `run_explainer_ref` plus completed approved
 `run_explainer_reviews` from both roles for that exact artifact; fast and
@@ -483,11 +491,23 @@ Every review-mode status uses `phase: "review"`.
 
 ### Shared intervention and ownership rules
 
-- Development or research planning states may route to `human_question` while
-  `master_plan_locked: false`, then resume via `resume_status` and
-  `resume_assignee`.
+- `human_question` (S4-T5/D1) may be entered pre-lock (`master_plan_locked:
+  false`) from any `research_*`/`spec_*` planning state, AND post-lock from the
+  working states `implementing`, `parallel_implementing`, `test_creation`,
+  `cross_fixing`, and `phase_fixing`: route a concrete question to the human
+  instead of guessing. Resume restores the exact prior state via `resume_status`
+  and `resume_assignee`. Entering `human_question` is not a loop edge — it is a
+  human-bounded stop-together pause. `human_decision` remains the re-routing
+  escalation.
 - Any state may route to `human_decision`; a human may then route the baton back
   to any mode-owned state.
+- `abandoned` (S2-T1) is a terminal status enterable ONLY from `human_question`
+  or `human_decision` (any v2 mode/profile), with `assignee: "human"` and
+  `active_roles: []`, and no artifact/approval/loop gates. It has no outgoing
+  edges (reopen only via a hand-authored `human_decision` write) and is
+  snapshot-archived like `done`. `wait` exits 13 on it; the resolver
+  resumable-set, commit gate, and drift lint all treat `{done, abandoned}` as
+  terminal.
 - There is no wildcard `* -> termination_review`; every stop-review entry is an
   explicit row in the mode tables above.
 - `termination_review` plus both final approvals are shared across all v2
@@ -549,8 +569,8 @@ This is the core anti-token-polling rule:
 - Claude Code has a Bash-tool wall-clock cap around 600 seconds, so Claude-hosted sessions must relaunch the wait if a harness cap stops the shell before a terminal baton state. Codex-hosted sessions may use unbounded default continuous polling or pass `--persist` for older snippets.
 - In supervised mode, the assigned-away agent exits and the human invokes the next role manually.
 - When the helper exits 0 (`ready` or `checkpoint_advanced`), the agent re-reads the baton and resumes.
-- When the helper exits 10, the agent surfaces post-handshake `done` and stops. When it exits 11 or 12, the agent surfaces the human-intervention `human_decision` or `human_question` state and pauses for the human. For `human_question`, the helper also prints `question`, `resume_assignee`, and `resume_status`. Per F5, the Claude Code-hosted session owns surfacing these to the human in-session.
-- With `--notify <url>` (or the `DVANDVA_NOTIFY_URL` env var; the flag wins), the wait sends a best-effort ntfy-style POST on `human_question`, `human_decision`, `done`, `split_brain`, and `stalled` (3s timeout, `Title: Dvandva <run_id>: <event>` header, never changes exit codes or timing) so a Claude-hosted session's pause reaches the human's phone. Failures log `DVANDVA_WAIT notify_failed url=… err=…` on stderr only.
+- When the helper exits 10, the agent surfaces post-handshake `done` and stops. When it exits 13, the agent surfaces the terminal `abandoned` state (`DVANDVA_WAIT abandoned phase=… checkpoint=… assignee=…`) and stops. When it exits 11 or 12, the agent surfaces the human-intervention `human_decision` or `human_question` state and pauses for the human. For `human_question`, the helper also prints `question`, `resume_assignee`, and `resume_status`. Per F5, the Claude Code-hosted session owns surfacing these to the human in-session.
+- With `--notify <url>` (or the `DVANDVA_NOTIFY_URL` env var; the flag wins), the wait sends a best-effort ntfy-style POST on `human_question`, `human_decision`, `done`, `abandoned`, `split_brain`, and `stalled` (3s timeout, `Title: Dvandva <run_id>: <event>` header, never changes exit codes or timing) so a Claude-hosted session's pause reaches the human's phone. Failures log `DVANDVA_WAIT notify_failed url=… err=…` on stderr only.
 
 ## Goal Conditions
 

@@ -138,9 +138,9 @@ pub fn report(root: &Path) -> Report {
         file_contains(
             root,
             vadi,
-            "fast` is allowlisted prose-only work with an optional `research_drafting -> research_review -> implementing` prelude",
+            "fast` is allowlisted prose-only work with a `research_drafting -> research_review -> implementing` prelude",
         ),
-        "vadi fast profile documents optional research prelude",
+        "vadi fast profile documents research prelude",
     );
     r.add(
         file_contains(
