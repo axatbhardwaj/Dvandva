@@ -293,7 +293,7 @@ fn skill_phase3_rejects_markdown_plan_ref() {
 fn skill_phase3_rejects_command_missing_explainer_reviews() {
     let d = tmp();
     skill_fixture(d.path());
-    w(d.path(), "plugins/dvandva/commands/prativadi.md", "Goal: drive the resolved Dvandva baton. DVANDVA_RUN_ID turn_cap wait heartbeats as turns. continuous polling is the hard rule.\n");
+    w(d.path(), "plugins/dvandva/commands/prativadi.md", "Goal: drive the resolved Dvandva baton. DVANDVA_RUN_ID turn_cap do not count wait heartbeats as turns. continuous polling is the hard rule.\n");
     let r = skill_phase3::report(d.path());
     assert!(r.fails_with("goal requires final explainer reviews"));
 }
@@ -851,7 +851,7 @@ fn pathgate_fixture(root: &Path) {
     w(
         root,
         "rust/dvandva/src/hooks.rs",
-        "// materialized prepare-commit-msg stamps Dvandva-Checkpoint trailers.\n// scans .dvandva/runs/*/baton.json; terminal done human_question human_decision are inactive.\n// fail closed via read_json_lenient on malformed baton JSON.\n",
+        "// materialized prepare-commit-msg stamps Dvandva-Checkpoint trailers.\n// delegates to commit_gate::collect_baton_paths and commit_gate::is_gate_terminal.\n// fail closed via read_json_lenient on malformed baton JSON.\n",
     );
     w(
         root,
@@ -861,7 +861,7 @@ fn pathgate_fixture(root: &Path) {
     w(
         root,
         "rust/dvandva/src/drift_lint.rs",
-        "// dvandva drift-lint inspects Dvandva-Checkpoint trailers.\n// honors dvandva.hooksAdoptedAt baseline.\n// __DVANDVA_ROOT_PENDING__ backfilled via rev-list.\n// hooksAdoptedAtInclusive scan_log_shas preserved.\n// scans .dvandva/runs/*/baton.json; terminal done human_question human_decision.\n// fail closed via read_json_lenient.\n",
+        "// dvandva drift-lint inspects Dvandva-Checkpoint trailers.\n// honors dvandva.hooksAdoptedAt baseline.\n// __DVANDVA_ROOT_PENDING__ backfilled via rev-list.\n// hooksAdoptedAtInclusive scan_log_shas preserved.\n// delegates to commit_gate::collect_baton_paths and commit_gate::is_gate_terminal.\n// fail closed via read_json_lenient.\n",
     );
 }
 
@@ -929,7 +929,7 @@ fn pathgate_rejects_hooks_without_checkpoint_stamp() {
     w(
         d.path(),
         "rust/dvandva/src/hooks.rs",
-        "// scans .dvandva/runs/*/baton.json; terminal done human_question human_decision.\n// fail closed via read_json_lenient.\n",
+        "// delegates to commit_gate::collect_baton_paths and commit_gate::is_gate_terminal.\n// fail closed via read_json_lenient.\n",
     );
     let r = run4_path_gates::report(d.path());
     assert!(r.fails_with("prepare-commit-msg hook must stamp Dvandva-Checkpoint"));
@@ -965,13 +965,61 @@ fn pathgate_rejects_vadi_missing_preflight_rekey() {
 fn pathgate_rejects_resolver_without_run_scope() {
     let d = tmp();
     pathgate_fixture(d.path());
+    // `commit_gate.rs` is the sole owner of the run-scan literal; drift_lint.rs
+    // and hooks.rs delegate rather than duplicating it (see
+    // `pathgate_rejects_drift_lint_without_baton_path_delegation` and
+    // `pathgate_rejects_hooks_without_terminal_status_delegation` for the
+    // consumer-side delegation checks).
+    w(
+        d.path(),
+        "rust/dvandva/src/commit_gate.rs",
+        "// dvandva commit-gate enforces DVANDVA_ROLE.\n// terminal done human_question human_decision.\n// fail closed via read_json_lenient.\n",
+    );
+    let r = run4_path_gates::report(d.path());
+    assert!(r.fails_with("commit_gate.rs must scan run-scoped baton paths"));
+}
+
+#[test]
+fn pathgate_rejects_owner_without_terminal_statuses() {
+    let d = tmp();
+    pathgate_fixture(d.path());
+    w(
+        d.path(),
+        "rust/dvandva/src/commit_gate.rs",
+        "// dvandva commit-gate enforces DVANDVA_ROLE.\n// scans .dvandva/runs/*/baton.json.\n// fail closed via read_json_lenient.\n",
+    );
+    let r = run4_path_gates::report(d.path());
+    assert!(r.fails_with("commit_gate.rs must share terminal baton statuses"));
+}
+
+#[test]
+fn pathgate_rejects_drift_lint_without_baton_path_delegation() {
+    let d = tmp();
+    pathgate_fixture(d.path());
     w(
         d.path(),
         "rust/dvandva/src/drift_lint.rs",
-        "// dvandva drift-lint inspects Dvandva-Checkpoint trailers.\n// honors dvandva.hooksAdoptedAt baseline.\n// __DVANDVA_ROOT_PENDING__ backfilled via rev-list.\n// hooksAdoptedAtInclusive scan_log_shas preserved.\n// terminal done human_question human_decision.\n// fail closed via read_json_lenient.\n",
+        "// dvandva drift-lint inspects Dvandva-Checkpoint trailers.\n// honors dvandva.hooksAdoptedAt baseline.\n// __DVANDVA_ROOT_PENDING__ backfilled via rev-list.\n// hooksAdoptedAtInclusive scan_log_shas preserved.\n// delegates to commit_gate::is_gate_terminal.\n// fail closed via read_json_lenient.\n",
     );
     let r = run4_path_gates::report(d.path());
-    assert!(r.fails_with("must scan run-scoped baton paths"));
+    assert!(r.fails_with(
+        "drift_lint.rs must delegate baton-path discovery to commit_gate::collect_baton_paths"
+    ));
+}
+
+#[test]
+fn pathgate_rejects_hooks_without_terminal_status_delegation() {
+    let d = tmp();
+    pathgate_fixture(d.path());
+    w(
+        d.path(),
+        "rust/dvandva/src/hooks.rs",
+        "// materialized prepare-commit-msg stamps Dvandva-Checkpoint trailers.\n// delegates to commit_gate::collect_baton_paths.\n// fail closed via read_json_lenient on malformed baton JSON.\n",
+    );
+    let r = run4_path_gates::report(d.path());
+    assert!(r.fails_with(
+        "hooks.rs must delegate terminal-status classification to commit_gate::is_gate_terminal"
+    ));
 }
 
 #[test]
@@ -1165,4 +1213,23 @@ fn standalone_rejects_retire_port_without_no_skill_touches() {
     );
     let r = run4_standalone_agents::report(d.path());
     assert!(r.fails_with("retirement helper must document no skill touches"));
+}
+
+#[test]
+fn standalone_accepts_retire_port_with_two_line_wrapped_no_skill_touches_prose() {
+    // The shell's `require_match` slurped the file (`tr '\n' ' '`) before
+    // regex-matching, so a multi-token needle like "skills...never" could be
+    // satisfied even when a line-length wrap (a real rustdoc wrap, each line
+    // still `//`-prefixed) split "skills" and "never" onto different lines.
+    // Per-line matching would false-fail this; slurp-style matching restores
+    // that fidelity.
+    let d = tmp();
+    standalone_fixture(d.path());
+    w(
+        d.path(),
+        "rust/dvandva/src/retire.rs",
+        "// dvandva retire-agents: Dvandva-only, Dvandva-covered workflows, functional parity via Runs 1-4 usage.\n// adversarial-analyst architect developer quality-reviewer sandbox-executor allowlist.\n// Codex agent-axis no-op; skills are out of scope for this helper\n// since it never touches skill files; backup manifest restore path.\n#[cfg(test)]\nmod tests { #[test] fn covered() {} }\n",
+    );
+    let r = run4_standalone_agents::report(d.path());
+    assert!(r.passed(), "expected clean, failures: {}", r.failures());
 }

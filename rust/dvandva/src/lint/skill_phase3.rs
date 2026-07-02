@@ -301,9 +301,12 @@ pub fn report(root: &Path) -> Report {
             format!("{name} goal keeps active turn cap"),
         );
         // RE-KEYED: shell-era "do not count shell wait heartbeats as turns" ->
-        // "wait heartbeats as turns" (the wait is now `dvandva wait`, not shell).
+        // "do not count wait heartbeats as turns" (the docs rewrite drops only
+        // "shell"; the wait is now `dvandva wait`, not shell). The full phrase
+        // is required so an inverted directive (e.g. "count wait heartbeats as
+        // turns") cannot satisfy this check by substring coincidence.
         r.add(
-            file_contains(root, &path, "wait heartbeats as turns"),
+            file_contains(root, &path, "do not count wait heartbeats as turns"),
             format!("{name} goal separates waits from active turns"),
         );
         r.add(

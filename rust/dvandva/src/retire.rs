@@ -16,6 +16,9 @@
 //! RETIRE`, `RETIRED`, `RESTORED`, `parity`, `no-op`, `allowlist`, `already
 //! restored`, `N agent(s) retired`, `Invalid manifest entry`) is preserved
 //! verbatim.
+//!
+//! Skills are out of scope: the retirement helper never touches skill
+//! files — only the five allowlisted agent symlinks.
 
 use std::fs;
 use std::path::Path;

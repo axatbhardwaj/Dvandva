@@ -12,8 +12,8 @@ use regex::Regex;
 use serde_json::Value;
 
 use crate::lint::protocol_phase1::{
-    file_contains, file_exists, file_matches_ci, list_md, read, resolve_root,
-    union_slurp_matches_ci, Report,
+    file_contains, file_exists, file_matches_ci, file_slurp_matches_ci, list_md, read,
+    resolve_root, union_slurp_matches_ci, Report,
 };
 
 const EXPECTED_VERSION: &str = "1.2.0";
@@ -97,8 +97,12 @@ pub fn report(root: &Path) -> Report {
         "install-codex command port present",
     );
 
+    // RE-KEYED: the shell's `require_match` slurped the file (`tr '\n' ' '`)
+    // before regex-matching, so multi-token patterns could span line wraps in
+    // prose; match per-file slurp here to restore that fidelity rather than
+    // false-failing on wrapped Markdown/comment lines.
     r.add(
-        file_matches_ci(
+        file_slurp_matches_ci(
             root,
             "README.md",
             "Dvandva-only.*retire|retire.*Dvandva-only",
@@ -131,7 +135,7 @@ pub fn report(root: &Path) -> Report {
         "Run4 docs/scripts must cite functional parity via Runs 1-4 usage",
     );
     r.add(
-        file_matches_ci(
+        file_slurp_matches_ci(
             root,
             "rust/dvandva/src/retire.rs",
             "backup.*manifest.*restore|manifest.*restore|restore.*manifest",
@@ -139,7 +143,7 @@ pub fn report(root: &Path) -> Report {
         "Run4 retirement surface must document backup manifest and restore",
     );
     r.add(
-        file_matches_ci(
+        file_slurp_matches_ci(
             root,
             "rust/dvandva/src/retire.rs",
             "skills.*never|never.*skills|no skill touches|skills out of scope",

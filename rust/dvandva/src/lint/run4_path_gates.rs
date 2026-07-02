@@ -228,28 +228,51 @@ pub fn report(root: &Path) -> Report {
 
     // RE-KEYED resolvers: the three shell resolvers (commit-gate, drift-lint,
     // prepare-commit-msg) are now these binary modules. `jq empty` -> the shared
-    // lenient reader `read_json_lenient`.
+    // lenient reader `read_json_lenient`. `commit_gate.rs` owns baton-path
+    // discovery and terminal-status classification; `drift_lint.rs` and
+    // `hooks.rs` share that logic by delegating to
+    // `commit_gate::collect_baton_paths` / `commit_gate::is_gate_terminal`
+    // rather than duplicating the literals, so the run-scan/terminal-status
+    // literals are asserted once against the owner and delegation is asserted
+    // against the consumers.
+    r.add(
+        file_slurp_matches_ci(
+            root,
+            "rust/dvandva/src/commit_gate.rs",
+            "\\.dvandva/runs.*baton\\.json|baton\\.json.*\\.dvandva/runs",
+        ),
+        "rust/dvandva/src/commit_gate.rs must scan run-scoped baton paths",
+    );
+    r.add(
+        file_slurp_matches_ci(
+            root,
+            "rust/dvandva/src/commit_gate.rs",
+            "done.*human_question.*human_decision|human_question.*human_decision.*done",
+        ),
+        "rust/dvandva/src/commit_gate.rs must share terminal baton statuses",
+    );
+
+    for rel in [
+        "rust/dvandva/src/drift_lint.rs",
+        "rust/dvandva/src/hooks.rs",
+    ] {
+        r.add(
+            file_matches_ci(root, rel, "collect_baton_paths"),
+            format!("{rel} must delegate baton-path discovery to commit_gate::collect_baton_paths"),
+        );
+        r.add(
+            file_matches_ci(root, rel, "is_gate_terminal"),
+            format!(
+                "{rel} must delegate terminal-status classification to commit_gate::is_gate_terminal"
+            ),
+        );
+    }
+
     for rel in [
         "rust/dvandva/src/commit_gate.rs",
         "rust/dvandva/src/drift_lint.rs",
         "rust/dvandva/src/hooks.rs",
     ] {
-        r.add(
-            file_slurp_matches_ci(
-                root,
-                rel,
-                "\\.dvandva/runs.*baton\\.json|baton\\.json.*\\.dvandva/runs",
-            ),
-            format!("{rel} must scan run-scoped baton paths"),
-        );
-        r.add(
-            file_slurp_matches_ci(
-                root,
-                rel,
-                "done.*human_question.*human_decision|human_question.*human_decision.*done",
-            ),
-            format!("{rel} must share terminal baton statuses"),
-        );
         r.add(
             file_matches_ci(root, rel, "read_json_lenient"),
             format!("{rel} must fail closed on malformed baton JSON"),
