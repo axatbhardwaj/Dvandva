@@ -2723,3 +2723,151 @@ fn f10_explainer_verification_present_accepted() {
     });
     run(&b, &n).assert("f10 explainer-verification present", 0);
 }
+
+/// F10 (stale-track bypass): the done gate must reject an explainer-verification
+/// track from a SUPERSEDED termination_review cycle. The current
+/// termination_review entered at checkpoint 4, but the only doc-verifier track
+/// carries review_checkpoint=1 (an older cycle) — merely naming
+/// phase="termination_review" must NOT satisfy the gate.
+#[test]
+fn f10_stale_explainer_verification_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    f10_termination(&b); // current termination_review entered at checkpoint 4
+    make_baton_v2(&n, "done", "team", 5, |v| {
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+        push(
+            v,
+            "subagent_tracks",
+            json!({
+                "id": "explainer-verification-stale",
+                "phase": "termination_review",
+                "status": "completed",
+                "track": "explainer-verification",
+                "owner": "dvandva-doc-verifier",
+                "review_checkpoint": 1,
+                "parallelized": false,
+                "rationale": "Stale doc-verifier evidence from a superseded termination cycle.",
+                "inputs": ["run explainer", "final diff"],
+                "outputs": ["Explainer claims verified against observable behavior."],
+                "evidence_refs": ["subagent:explainer-verification-stale"],
+                "result": "approved"
+            }),
+        );
+    });
+    run(&b, &n).assert_contains(
+        "f10 stale explainer-verification from a superseded cycle rejected",
+        23,
+        "bad_explainer_verification",
+    );
+}
+
+// ===================== F9: advancement entry-state gating =====================
+
+/// F9: a full phase's `deslop` advancing into a FULL next phase must use
+/// `parallel_implementing`; the wrong (`implementing`) entry state is rejected.
+#[test]
+fn f9_full_deslop_rejects_wrong_entry_state_for_full_next_phase() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deslop", "vadi", 4, |v| {
+        v["phase_profiles"] = json!({"2": "full"});
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+    });
+    make_baton_v2(&n, "implementing", "vadi", 5, |v| {
+        v["phase_profiles"] = json!({"2": "full"});
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(2);
+    });
+    run(&b, &n).assert_contains(
+        "f9 full deslop rejects implementing entry for a full next phase",
+        24,
+        "target_phase=2 effective_profile=full requires=parallel_implementing",
+    );
+}
+
+/// F9 (symmetric): a standard phase's `phase_review` advancing into a STANDARD
+/// next phase must use `implementing`; the wrong (`parallel_implementing`) entry
+/// state is rejected.
+#[test]
+fn f9_standard_phase_review_rejects_wrong_entry_state_for_standard_next_phase() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "phase_review", "prativadi", 4, |v| {
+        standard_profile(v);
+        v["phase_profiles"] = json!({"2": "standard"});
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+    });
+    make_baton_v2(&n, "parallel_implementing", "team", 5, |v| {
+        standard_profile(v);
+        v["phase_profiles"] = json!({"2": "standard"});
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(2);
+        parallel_chunks_phase(v, "2");
+    });
+    run(&b, &n).assert_contains(
+        "f9 standard phase_review rejects parallel_implementing entry for a standard next phase",
+        24,
+        "target_phase=2 effective_profile=standard requires=implementing",
+    );
+}
+
+/// F9 accept (pairs with the reject above): full deslop -> full next phase with
+/// the CORRECT `parallel_implementing` entry state.
+#[test]
+fn f9_full_deslop_accepts_parallel_implementing_for_full_next_phase() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deslop", "vadi", 4, |v| {
+        v["phase_profiles"] = json!({"2": "full"});
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+    });
+    make_baton_v2(&n, "parallel_implementing", "team", 5, |v| {
+        v["phase_profiles"] = json!({"2": "full"});
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(2);
+        parallel_chunks_phase(v, "2");
+    });
+    run(&b, &n).assert(
+        "f9 full deslop accepts parallel_implementing for a full next phase",
+        0,
+    );
+}
+
+/// F9 accept (pairs with the symmetric reject): standard phase_review -> standard
+/// next phase with the CORRECT `implementing` entry state.
+#[test]
+fn f9_standard_phase_review_accepts_implementing_for_standard_next_phase() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "phase_review", "prativadi", 4, |v| {
+        standard_profile(v);
+        v["phase_profiles"] = json!({"2": "standard"});
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+    });
+    make_baton_v2(&n, "implementing", "vadi", 5, |v| {
+        standard_profile(v);
+        v["phase_profiles"] = json!({"2": "standard"});
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(2);
+    });
+    run(&b, &n).assert(
+        "f9 standard phase_review accepts implementing for a standard next phase",
+        0,
+    );
+}

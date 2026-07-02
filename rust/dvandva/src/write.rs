@@ -778,10 +778,11 @@ fn whitelist_targets(
 
 /// The legal next transitions from `current`, derived from the same whitelists
 /// and precedence the validator uses. See [`TransitionOption`] for what is and
-/// is not reflected. For the spec→implementation entry boundary this uses the
-/// RUN profile (not a per-phase F9 override): a full run offers
-/// `parallel_implementing`, a standard run `implementing`; the caller refines
-/// the entry state when phase 1 carries an F9 override.
+/// is not reflected. Advancement/entry into a numeric phase is EXACT under F9:
+/// the emitted entry state is pinned to the TARGET phase's effective profile
+/// (`implementing` for a standard next phase, `parallel_implementing` for a full
+/// one), so a phase_profiles override on the next phase is reflected here rather
+/// than left for the caller to refine.
 #[allow(dead_code)]
 pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
     let schema = str_field(current, "schema");
@@ -806,10 +807,16 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
     let cur_amendment = amendment_value(current);
     let cur_locked = bool_field(current, "master_plan_locked");
 
-    // Edge-selection profile mirrors decide_transition: numeric-source states
-    // use the current phase's effective profile; spec/research use the run one.
+    // Edge-selection profile mirrors decide_transition: numeric-source states use
+    // the current phase's effective profile; the spec_review entry/amendment-exit
+    // boundary uses the TARGET phase's effective profile (phase 1, or the active
+    // amendment's from-phase on re-entry) so the enumerated entry state matches
+    // the next phase; everything else uses the run profile.
+    let spec_entry_target = cur_amendment.or(Some(1));
     let edge_profile = if is_v2 && is_numeric_phase_status(&cur_status) {
         effective_phase_profile(current, cur_phase_num, &run_profile)
+    } else if is_v2 && cur_eff_mode == "development" && cur_status == "spec_review" {
+        effective_phase_profile(current, spec_entry_target, &run_profile)
     } else {
         run_profile.clone()
     };
@@ -843,6 +850,35 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
         }
 
         let to_phase = classify_phase_move(&cur_status, &new_status, is_enter);
+        // F9: pin an advancement/entry to the TARGET phase's entry state
+        // (implementing <=> standard, parallel_implementing <=> full). For a
+        // numeric source both entry states surface under the source profile; the
+        // next phase (N+1) fixes which one is legal. The spec_review boundary is
+        // already enumerated under the target profile above, so it keeps its
+        // single state.
+        if is_v2
+            && cur_eff_mode == "development"
+            && to_phase == PhaseMove::Advance
+            && matches!(
+                new_status.as_str(),
+                "implementing" | "parallel_implementing"
+            )
+        {
+            let target = if cur_status == "spec_review" {
+                spec_entry_target
+            } else {
+                cur_phase_num.map(|n| n + 1)
+            };
+            let target_eff = effective_phase_profile(current, target, &run_profile);
+            let want = if target_eff == "full" {
+                "parallel_implementing"
+            } else {
+                "implementing"
+            };
+            if new_status.as_str() != want {
+                continue;
+            }
+        }
         let (assignee, active_roles) = owner_for(&schema, &cur_mode, &edge_profile, &new_status);
         out.push(TransitionOption {
             to_status: new_status.clone(),
@@ -1187,11 +1223,13 @@ fn explainer_verification_ok(cand: &Value, required: i64) -> bool {
     arr(field(cand, "subagent_tracks")).iter().any(|t| {
         let name_ok = str_field(t, "track").contains("explainer-verification")
             || str_field(t, "name").contains("explainer-verification");
-        let cycle_ok = jq_render(field(t, "phase")) == "termination_review"
-            || field(t, "review_checkpoint")
-                .and_then(json_int)
-                .map(|c| c >= required)
-                .unwrap_or(false);
+        // Current-cycle only: the track must be stamped with the checkpoint at
+        // which the run entered its CURRENT termination_review block. A track's
+        // phase == "termination_review" is NOT sufficient — a superseded cycle's
+        // doc-verifier track carries that phase but an older review_checkpoint,
+        // which would bypass the done gate. Key on == required, mirroring the
+        // F6/base deep-review angle gates.
+        let cycle_ok = field(t, "review_checkpoint").and_then(json_int) == Some(required);
         name_ok
             && str_field(t, "owner") == "dvandva-doc-verifier"
             && str_field(t, "status") == "completed"
@@ -1628,6 +1666,38 @@ fn decide_transition(
     }
 
     // ---- post-legality edge gates ------------------------------------------
+    // F9 advancement entry-state gate: any advancement/entry into a numeric phase
+    // must use the entry state that matches the TARGET phase's effective profile
+    // (implementing <=> standard, parallel_implementing <=> full). The whitelist
+    // alone cannot enforce this for cross-profile advancement — a full phase's
+    // `deslop` reaches BOTH `implementing` and `parallel_implementing`, and a
+    // standard phase's `phase_review` likewise — so the entry state is pinned to
+    // the next phase's profile here. (The spec_review entry is already gated by
+    // the target-profile whitelist selection above; this makes it uniform.)
+    if legal
+        && cx.is_v2
+        && cur_effective_mode == "development"
+        && matches!(cx.new_status, "implementing" | "parallel_implementing")
+        && matches!(
+            cur_status.as_str(),
+            "spec_review" | "deslop" | "phase_review"
+        )
+    {
+        let want = if new_phase_eff == "full" {
+            "parallel_implementing"
+        } else {
+            "implementing"
+        };
+        if cx.new_status != want {
+            return Err((
+                24,
+                format!(
+                    "DVANDVA_WRITE illegal_transition entry_state={} target_phase={} effective_profile={} requires={}",
+                    cx.new_status, cx.new_phase, new_phase_eff, want
+                ),
+            ));
+        }
+    }
     if legal
         && cx.is_v2
         && cx.new_status == "parallel_implementing"
@@ -3801,6 +3871,122 @@ mod surface_tests {
         // The non-loop review edges and human_decision remain.
         assert!(opts.iter().any(|o| o.to_status == "deslop"));
         assert!(opts.iter().any(|o| o.to_status == "human_decision"));
+    }
+
+    #[test]
+    fn legal_transitions_advance_pins_entry_state_to_target_phase_profile() {
+        // A full phase's deslop advancing into a phase_profiles-overridden
+        // STANDARD next phase (2) must offer only `implementing` (not
+        // `parallel_implementing`).
+        let cur = json!({
+            "schema": "dvandva.baton.v2",
+            "status": "deslop",
+            "mode": "development",
+            "profile": "full",
+            "phase": 1,
+            "phase_profiles": {"2": "standard"},
+            "master_plan_locked": true,
+            "loop_counts": {},
+            "disagreement_cap": 3
+        });
+        let opts = legal_transitions(&cur);
+        let advance: Vec<&str> = opts
+            .iter()
+            .filter(|o| o.to_phase == PhaseMove::Advance)
+            .map(|o| o.to_status.as_str())
+            .collect();
+        assert_eq!(
+            advance,
+            vec!["implementing"],
+            "full deslop -> standard next phase offers only implementing"
+        );
+        assert!(!opts.iter().any(|o| o.to_status == "parallel_implementing"));
+
+        // Symmetric: a standard phase's phase_review advancing into a FULL next
+        // phase (2) must offer only `parallel_implementing`.
+        let cur2 = json!({
+            "schema": "dvandva.baton.v2",
+            "status": "phase_review",
+            "mode": "development",
+            "profile": "standard",
+            "phase": 1,
+            "phase_profiles": {"2": "full"},
+            "master_plan_locked": true,
+            "loop_counts": {},
+            "disagreement_cap": 3
+        });
+        let opts2 = legal_transitions(&cur2);
+        let advance2: Vec<&str> = opts2
+            .iter()
+            .filter(|o| o.to_phase == PhaseMove::Advance)
+            .map(|o| o.to_status.as_str())
+            .collect();
+        assert_eq!(
+            advance2,
+            vec!["parallel_implementing"],
+            "standard phase_review -> full next phase offers only parallel_implementing"
+        );
+        assert!(!opts2.iter().any(|o| o.to_status == "implementing"));
+    }
+
+    /// Reject-parity for a schema-mismatch candidate (23): validate_candidate and
+    /// the spawned binary agree on the exit code.
+    #[test]
+    fn validate_candidate_parity_rejects_bad_schema_23() {
+        let dir = tempfile::tempdir().unwrap();
+        let baton_dir = dir.path();
+        let baton_file = baton_dir.join("baton.json");
+        let cand_file = baton_dir.join("baton.next.json");
+
+        let cur = seed_v2("spec_drafting", "vadi", 4, json!("spec"));
+        let mut cand = seed_v2("spec_review", "prativadi", 5, json!("spec"));
+        cand["schema"] = json!("dvandva.baton.v3");
+        std::fs::write(&baton_file, serde_json::to_string(&cur).unwrap()).unwrap();
+        std::fs::write(&cand_file, serde_json::to_string(&cand).unwrap()).unwrap();
+
+        let vc = validate_candidate(baton_dir, Some(&cur), &cand);
+        assert!(matches!(vc, Err((23, _))), "expected 23, got {vc:?}");
+        assert_eq!(run_write(&baton_file, &cand_file), 23);
+    }
+
+    /// Reject-parity for an unparseable-strict current baton (25): a valid-JSON
+    /// current baton with a non-numeric checkpoint trips the strict current-baton
+    /// guard identically in validate_candidate and the binary.
+    #[test]
+    fn validate_candidate_parity_rejects_unparseable_current_25() {
+        let dir = tempfile::tempdir().unwrap();
+        let baton_dir = dir.path();
+        let baton_file = baton_dir.join("baton.json");
+        let cand_file = baton_dir.join("baton.next.json");
+
+        let mut cur = seed_v2("spec_drafting", "vadi", 4, json!("spec"));
+        cur["checkpoint"] = json!("not-a-number");
+        let cand = seed_v2("spec_review", "prativadi", 5, json!("spec"));
+        std::fs::write(&baton_file, serde_json::to_string(&cur).unwrap()).unwrap();
+        std::fs::write(&cand_file, serde_json::to_string(&cand).unwrap()).unwrap();
+
+        let vc = validate_candidate(baton_dir, Some(&cur), &cand);
+        assert!(matches!(vc, Err((25, _))), "expected 25, got {vc:?}");
+        assert_eq!(run_write(&baton_file, &cand_file), 25);
+    }
+
+    /// Reject-parity for a stale checkpoint (27): a candidate at the same
+    /// checkpoint as the current baton is rejected identically.
+    #[test]
+    fn validate_candidate_parity_rejects_stale_checkpoint_27() {
+        let dir = tempfile::tempdir().unwrap();
+        let baton_dir = dir.path();
+        let baton_file = baton_dir.join("baton.json");
+        let cand_file = baton_dir.join("baton.next.json");
+
+        let cur = seed_v2("spec_drafting", "vadi", 5, json!("spec"));
+        let cand = seed_v2("spec_review", "prativadi", 5, json!("spec"));
+        std::fs::write(&baton_file, serde_json::to_string(&cur).unwrap()).unwrap();
+        std::fs::write(&cand_file, serde_json::to_string(&cand).unwrap()).unwrap();
+
+        let vc = validate_candidate(baton_dir, Some(&cur), &cand);
+        assert!(matches!(vc, Err((27, _))), "expected 27, got {vc:?}");
+        assert_eq!(run_write(&baton_file, &cand_file), 27);
     }
 
     #[test]
