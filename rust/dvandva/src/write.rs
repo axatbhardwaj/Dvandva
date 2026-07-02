@@ -197,6 +197,13 @@ fn validate_candidate_and_transition(
             eprintln!("DVANDVA_WRITE bad_original_ask candidate={cf}");
             return Err(23);
         }
+        // F7: amendment_from_phase is additive and nullable (number | null;
+        // absent == null). Only its shape is checked here; transition legality is
+        // enforced in decide_transition.
+        if !amendment_from_phase_shape_ok(cand) {
+            eprintln!("DVANDVA_WRITE bad_amendment candidate={cf}");
+            return Err(23);
+        }
 
         let baton_exists = baton_file.is_file();
 
@@ -618,6 +625,12 @@ fn decide_transition(
         }
     }
 
+    // ---- F7 amendment state -----------------------------------------------
+    let cur_amendment = amendment_value(&cur_doc);
+    let cand_amendment = amendment_value(cand);
+    let cur_phase_num: Option<i64> = cur_phase.parse::<i64>().ok();
+    let new_phase_num: Option<i64> = cx.new_phase.parse::<i64>().ok();
+
     // ---- approval gate reason ----------------------------------------------
     let writer_role = std::env::var("DVANDVA_ROLE").unwrap_or_default();
     let mut approval_reason = String::new();
@@ -665,33 +678,23 @@ fn decide_transition(
                 | "review_of_review:counter_review"
                 | "counter_review:review_of_review"
         );
-        if cx.new_phase != cur_phase && loop_counts_nonempty(cand) {
+        let amendment_enter = cur_effective_mode == "development"
+            && cx.new_effective_mode == "development"
+            && is_amendment_enter_edge(cx.new_effective_profile, &cur_status, cx.new_status);
+        if amendment_enter {
+            // F7: the amendment entry edge is loop-capped on
+            // plan_amendment:<from-phase> (from-phase = current numeric phase),
+            // and is exempt from the phase-advance loop-reset (spec is not a
+            // numeric phase advance).
+            let amendment_edge = format!("plan_amendment:{cur_phase}");
+            loop_reason = loop_edge_reason(&cur_doc, cand, &amendment_edge);
+        } else if cx.new_phase != cur_phase && loop_counts_nonempty(cand) {
             loop_reason = format!(
                 "bad_loop_counts phase_advanced current={cur_phase} candidate={} must_reset=true",
                 cx.new_phase
             );
         } else if is_loop_edge {
-            let cur_count = loop_count(&cur_doc, &edge);
-            let new_count = loop_count(cand, &edge);
-            let cap = loop_cap(cand);
-            match (cur_count, new_count, cap) {
-                (Some(cur_c), Some(new_c), Some(cap)) if cap > 0 => {
-                    if cur_c >= cap {
-                        loop_reason = format!("loop_cap edge={edge} count={cur_c} cap={cap}");
-                    } else if new_c != cur_c + 1 {
-                        loop_reason = format!(
-                            "bad_loop_counts edge={edge} expected={} got={new_c}",
-                            cur_c + 1
-                        );
-                    }
-                }
-                (_, new_c, _) => {
-                    let got = new_c
-                        .map(|n| n.to_string())
-                        .unwrap_or_else(|| loop_count_raw_display(cand, &edge));
-                    loop_reason = format!("bad_loop_counts edge={edge} count={got}");
-                }
-            }
+            loop_reason = loop_edge_reason(&cur_doc, cand, &edge);
         }
     }
 
@@ -941,6 +944,62 @@ fn decide_transition(
         if !deep_review_angles_ok(cand, required) {
             legal = false;
             reason = "deep_review->deslop requires current-cycle three completed review-angle subagent_tracks".to_string();
+        }
+    }
+
+    // ---- F7 plan-amendment gates -------------------------------------------
+    // total_phases is frozen once the master plan is locked, EXCEPT while a plan
+    // amendment loop is active (amendment_from_phase non-null on either side).
+    if legal
+        && dev_dev
+        && cur_locked
+        && cur_amendment.is_none()
+        && cand_amendment.is_none()
+        && cx.new_status != "human_decision"
+        && jq_render(field(&cur_doc, "total_phases")) != jq_render(field(cand, "total_phases"))
+    {
+        eprintln!("DVANDVA_WRITE bad_amendment total_phases_frozen candidate={cf}");
+        return TransitionOutcome::Exit(23);
+    }
+
+    let is_enter =
+        dev_dev && is_amendment_enter_edge(cx.new_effective_profile, &cur_status, cx.new_status);
+    let is_exit =
+        dev_dev && is_amendment_exit_edge(cx.new_effective_profile, &cur_status, cx.new_status);
+
+    // The amendment entry edge MUST set amendment_from_phase == current phase.
+    if legal && is_enter && (cand_amendment.is_none() || cand_amendment != cur_phase_num) {
+        eprintln!("DVANDVA_WRITE bad_amendment candidate={cf}");
+        return TransitionOutcome::Exit(23);
+    }
+
+    // amendment_from_phase may only BECOME non-null on an entry edge.
+    if cx.is_v2 && cur_amendment.is_none() && cand_amendment.is_some() && !is_enter {
+        eprintln!("DVANDVA_WRITE bad_amendment candidate={cf}");
+        return TransitionOutcome::Exit(23);
+    }
+
+    // While the amendment loop is active (cur non-null, outside human states):
+    // the exit edge must null the field and re-enter at phase >= from-phase; any
+    // other step must leave amendment_from_phase unchanged.
+    if let Some(from) = cur_amendment {
+        if cx.is_v2 && cur_status != "human_decision" && cx.new_status != "human_decision" {
+            if is_exit {
+                if cand_amendment.is_some() {
+                    eprintln!("DVANDVA_WRITE bad_amendment candidate={cf}");
+                    return TransitionOutcome::Exit(23);
+                }
+                if new_phase_num.map(|p| p < from).unwrap_or(true) {
+                    legal = false;
+                    reason = format!(
+                        "amendment re-entry phase {} below amendment_from_phase {from}",
+                        cx.new_phase
+                    );
+                }
+            } else if cand_amendment != Some(from) {
+                eprintln!("DVANDVA_WRITE bad_amendment candidate={cf}");
+                return TransitionOutcome::Exit(23);
+            }
         }
     }
 
@@ -1212,11 +1271,14 @@ fn profile_rank(profile: &str) -> i32 {
 
 fn v2_expected_assignee(status: &str) -> &'static str {
     match status {
+        // F8: test_creation is team-owned in the v2 full profile (its only home).
         "research_drafting" | "research_revision" | "spec_drafting" | "spec_revision"
-        | "implementing" | "test_creation" | "deslop" | "phase_fixing" | "review_of_review" => {
-            "vadi"
-        }
-        "parallel_implementing" | "cross_review" | "cross_fixing" | "termination_review" => "team",
+        | "implementing" | "deslop" | "phase_fixing" | "review_of_review" => "vadi",
+        "parallel_implementing"
+        | "test_creation"
+        | "cross_review"
+        | "cross_fixing"
+        | "termination_review" => "team",
         "research_review" | "spec_review" | "deep_review" | "phase_review" | "counter_review" => {
             "prativadi"
         }
@@ -1228,8 +1290,50 @@ fn v2_expected_assignee(status: &str) -> &'static str {
 fn is_team_sync_status(status: &str) -> bool {
     matches!(
         status,
-        "parallel_implementing" | "cross_review" | "cross_fixing" | "termination_review"
+        // F8: test_creation joins the team-sync same-status set.
+        "parallel_implementing"
+            | "test_creation"
+            | "cross_review"
+            | "cross_fixing"
+            | "termination_review"
     )
+}
+
+// ---------------------------------------------------------------------------
+// F7 plan-amendment loop helpers.
+// ---------------------------------------------------------------------------
+
+/// `amendment_from_phase`: absent/null/non-integer-number -> None; integer -> Some.
+fn amendment_from_phase_shape_ok(cand: &Value) -> bool {
+    match field(cand, "amendment_from_phase") {
+        None | Some(Value::Null) => true,
+        Some(Value::Number(n)) => n.as_i64().is_some(),
+        _ => false,
+    }
+}
+
+/// The numeric `amendment_from_phase` value, or None when null/absent.
+fn amendment_value(doc: &Value) -> Option<i64> {
+    match field(doc, "amendment_from_phase") {
+        Some(Value::Number(n)) => n.as_i64(),
+        _ => None,
+    }
+}
+
+/// The plan-amendment entry edges: full `deslop -> spec_revision`, standard
+/// `phase_review -> spec_revision`.
+fn is_amendment_enter_edge(profile: &str, cur_status: &str, new_status: &str) -> bool {
+    new_status == "spec_revision"
+        && ((profile == "full" && cur_status == "deslop")
+            || (profile == "standard" && cur_status == "phase_review"))
+}
+
+/// The plan-amendment exit edges: full `spec_review -> parallel_implementing`,
+/// standard `spec_review -> implementing`.
+fn is_amendment_exit_edge(profile: &str, cur_status: &str, new_status: &str) -> bool {
+    cur_status == "spec_review"
+        && ((profile == "full" && new_status == "parallel_implementing")
+            || (profile == "standard" && new_status == "implementing"))
 }
 
 fn status_enum_ok(is_v2: bool, status: &str) -> bool {
@@ -2303,6 +2407,35 @@ fn loop_cap(cand: &Value) -> Option<u64> {
     }
 }
 
+/// The loop-gate reason (empty when legal) for a single loop `edge`: cap
+/// enforcement plus the mandatory exactly-one increment. Shared by the existing
+/// review/fix loop edges and the F7 `plan_amendment:<from-phase>` edge.
+fn loop_edge_reason(cur_doc: &Value, cand: &Value, edge: &str) -> String {
+    let cur_count = loop_count(cur_doc, edge);
+    let new_count = loop_count(cand, edge);
+    let cap = loop_cap(cand);
+    match (cur_count, new_count, cap) {
+        (Some(cur_c), Some(new_c), Some(cap)) if cap > 0 => {
+            if cur_c >= cap {
+                format!("loop_cap edge={edge} count={cur_c} cap={cap}")
+            } else if new_c != cur_c + 1 {
+                format!(
+                    "bad_loop_counts edge={edge} expected={} got={new_c}",
+                    cur_c + 1
+                )
+            } else {
+                String::new()
+            }
+        }
+        (_, new_c, _) => {
+            let got = new_c
+                .map(|n| n.to_string())
+                .unwrap_or_else(|| loop_count_raw_display(cand, edge));
+            format!("bad_loop_counts edge={edge} count={got}")
+        }
+    }
+}
+
 // ===========================================================================
 // run_explainer_reviews ownership
 // ===========================================================================
@@ -2432,6 +2565,7 @@ fn edge_whitelist(
                         | "implementing:phase_review"
                         | "phase_review:phase_fixing"
                         | "phase_review:implementing"
+                        | "phase_review:spec_revision"
                         | "phase_fixing:phase_review"
                         | "phase_review:termination_review"
                         | "termination_review:phase_fixing"
@@ -2462,6 +2596,7 @@ fn edge_whitelist(
                         | "phase_fixing:test_creation"
                         | "deslop:phase_fixing"
                         | "deslop:parallel_implementing"
+                        | "deslop:spec_revision"
                         | "deslop:termination_review"
                         | "termination_review:phase_fixing"
                         | "termination_review:done"

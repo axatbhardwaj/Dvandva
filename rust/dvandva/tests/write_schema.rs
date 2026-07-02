@@ -1530,6 +1530,38 @@ fn v2_backcompat_transition_missing_optional_fields() {
     run(&b, &n).assert("backcompat transition", 0);
 }
 
+// ===================== F7: amendment_from_phase schema =====================
+
+/// amendment_from_phase is additive and NOT a required key: a transition with it
+/// stripped entirely still validates.
+#[test]
+fn f7_amendment_from_phase_absent_is_null() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "research_review", "prativadi", 4, |v| {
+        v.as_object_mut().unwrap().remove("amendment_from_phase");
+    });
+    make_baton_v2(&n, "research_revision", "vadi", 5, |v| {
+        v.as_object_mut().unwrap().remove("amendment_from_phase");
+    });
+    run(&b, &n).assert("f7 amendment_from_phase absent is null", 0);
+}
+
+/// A non-numeric amendment_from_phase fails the shape check.
+#[test]
+fn f7_amendment_from_phase_bad_shape_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |v| {
+        v["amendment_from_phase"] = json!("foo");
+    });
+    run(&b, &n).assert_contains(
+        "f7 amendment_from_phase bad shape rejected",
+        23,
+        "bad_amendment",
+    );
+}
+
 // ===================== usage =====================
 
 #[test]

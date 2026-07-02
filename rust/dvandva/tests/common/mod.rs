@@ -128,10 +128,12 @@ fn write_json(path: &Path, value: &Value) {
 pub fn v2_status_owner(status: &str) -> &'static str {
     match status {
         "research_drafting" | "research_revision" | "spec_drafting" | "spec_revision"
-        | "implementing" | "test_creation" | "deslop" | "phase_fixing" | "review_of_review" => {
-            "vadi"
-        }
-        "parallel_implementing" | "cross_review" | "cross_fixing" | "termination_review" => "team",
+        | "implementing" | "deslop" | "phase_fixing" | "review_of_review" => "vadi",
+        "parallel_implementing"
+        | "test_creation"
+        | "cross_review"
+        | "cross_fixing"
+        | "termination_review" => "team",
         "research_review" | "spec_review" | "deep_review" | "phase_review" | "counter_review" => {
             "prativadi"
         }
@@ -414,6 +416,28 @@ pub fn test_creation_track(b: &mut Value) {
             "rationale": "Vadi test_creation recorded coverage evidence before cross-review.",
             "inputs": ["implementation evidence"],
             "outputs": ["Motivating tests and coverage evidence recorded."],
+            "evidence_refs": ["bash scripts/test PASS"],
+            "result": "passed"
+        }),
+    );
+}
+
+/// A prativadi-owned adversarial-test track (F8: accepted, not required).
+pub fn adversarial_test_track(b: &mut Value) {
+    push(
+        b,
+        "subagent_tracks",
+        json!({
+            "id": "adversarial-test-evidence",
+            "phase": "test_creation",
+            "status": "completed",
+            "track": "adversarial-test",
+            "owner": "dvandva-adversarial-analyst",
+            "owner_role": "prativadi",
+            "parallelized": true,
+            "rationale": "Prativadi authored decorrelated adversarial tests for the phase.",
+            "inputs": ["implementation evidence"],
+            "outputs": ["Adversarial edge-case tests recorded."],
             "evidence_refs": ["bash scripts/test PASS"],
             "result": "passed"
         }),

@@ -142,7 +142,7 @@ fn v2_edges_legal() {
             if new == "parallel_implementing" {
                 parallel_chunks(v);
             }
-            if new == "cross_review" || new == "cross_fixing" {
+            if new == "cross_review" || new == "cross_fixing" || new == "test_creation" {
                 v["active_roles"] = json!(["vadi", "prativadi"]);
             }
             if new == "termination_review" {
@@ -160,7 +160,7 @@ fn v2_edges_legal() {
             }
             if edge == "parallel_implementing:test_creation" {
                 parallel_chunks(v);
-                v["active_roles"] = json!([]);
+                v["active_roles"] = json!(["vadi", "prativadi"]);
                 implementation_tracks(v);
             }
             if edge == "cross_review:deep_review" {
@@ -650,9 +650,9 @@ fn v2_parallel_implementing_to_test_creation_rejects_missing_impl_evidence() {
     let d = tmp();
     let (b, n) = paths(&d);
     make_baton_v2(&b, "parallel_implementing", "team", 4, parallel_chunks);
-    make_baton_v2(&n, "test_creation", "vadi", 5, |v| {
+    make_baton_v2(&n, "test_creation", "team", 5, |v| {
         parallel_chunks(v);
-        v["active_roles"] = json!([]);
+        v["active_roles"] = json!(["vadi", "prativadi"]);
     });
     run(&b, &n).assert_contains(
         "v2 parallel_implementing->test_creation rejects missing implementation evidence",
@@ -666,9 +666,9 @@ fn v2_parallel_implementing_to_test_creation_requires_both_implementation_roles(
     let d = tmp();
     let (b, n) = paths(&d);
     make_baton_v2(&b, "parallel_implementing", "team", 4, parallel_chunks);
-    make_baton_v2(&n, "test_creation", "vadi", 5, |v| {
+    make_baton_v2(&n, "test_creation", "team", 5, |v| {
         parallel_chunks(v);
-        v["active_roles"] = json!([]);
+        v["active_roles"] = json!(["vadi", "prativadi"]);
         implementation_tracks(v);
         if let Some(arr) = v["subagent_tracks"].as_array_mut() {
             for t in arr.iter_mut() {
@@ -1104,8 +1104,8 @@ fn v2_team_sync_rejects_whitespace_next_action() {
 fn v2_non_team_same_status_rewrite_still_rejects() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "test_creation", "vadi", 4, |_| {});
-    make_baton_v2(&n, "test_creation", "vadi", 5, |_| {});
+    make_baton_v2(&b, "implementing", "vadi", 4, |_| {});
+    make_baton_v2(&n, "implementing", "vadi", 5, |_| {});
     run(&b, &n).assert_contains(
         "v2 non-team same-status rewrite still rejects",
         24,
@@ -1514,9 +1514,10 @@ fn review_mode_parallel_implementing_test_creation_illegal() {
         v["phase"] = json!("review");
         v["active_roles"] = json!(["vadi", "prativadi"]);
     });
-    make_baton_v2(&n, "test_creation", "vadi", 5, |v| {
+    make_baton_v2(&n, "test_creation", "team", 5, |v| {
         v["mode"] = json!("review");
         v["phase"] = json!("review");
+        v["active_roles"] = json!(["vadi", "prativadi"]);
     });
     run(&b, &n).assert_contains(
         "review mode parallel_implementing:test_creation exits 24",
@@ -1900,6 +1901,465 @@ fn v2_termination_review_entry_can_set_own_approval() {
     });
     run_env(&b, &n, &[("DVANDVA_ROLE", "vadi")]).assert(
         "v2 entering termination_review may set own final approval",
+        0,
+    );
+}
+
+// ===================== F7: plan-amendment loop =====================
+
+/// Full-profile amendment entry: deslop -> spec_revision sets amendment_from_phase
+/// to the current numeric phase, moves to the spec phase, and increments the
+/// plan_amendment loop counter.
+#[test]
+fn f7_amendment_enter_full_deslop_to_spec_revision() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deslop", "vadi", 4, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+    });
+    make_baton_v2(&n, "spec_revision", "vadi", 5, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["amendment_from_phase"] = json!(1);
+        set_loop_count(v, "plan_amendment:1", 1);
+    });
+    run(&b, &n).assert("f7 full deslop->spec_revision enters amendment loop", 0);
+}
+
+/// Standard-profile amendment entry: phase_review -> spec_revision.
+#[test]
+fn f7_amendment_enter_standard_phase_review_to_spec_revision() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "phase_review", "prativadi", 4, |v| {
+        standard_profile(v);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+    });
+    make_baton_v2(&n, "spec_revision", "vadi", 5, |v| {
+        standard_profile(v);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["amendment_from_phase"] = json!(1);
+        set_loop_count(v, "plan_amendment:1", 1);
+    });
+    run(&b, &n).assert(
+        "f7 standard phase_review->spec_revision enters amendment loop",
+        0,
+    );
+}
+
+/// The amendment entry edge must increment plan_amendment:<from-phase> by one.
+#[test]
+fn f7_amendment_enter_requires_loop_increment() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deslop", "vadi", 4, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+    });
+    make_baton_v2(&n, "spec_revision", "vadi", 5, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["amendment_from_phase"] = json!(1);
+        // no plan_amendment increment
+    });
+    run(&b, &n).assert_contains(
+        "f7 amendment enter requires loop increment",
+        23,
+        "bad_loop_counts edge=plan_amendment:1",
+    );
+}
+
+/// At the disagreement cap the amendment entry edge is rejected.
+#[test]
+fn f7_amendment_enter_loop_cap_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deslop", "vadi", 4, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+        v["disagreement_cap"] = json!(3);
+        set_loop_count(v, "plan_amendment:1", 3);
+    });
+    make_baton_v2(&n, "spec_revision", "vadi", 5, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["amendment_from_phase"] = json!(1);
+        v["disagreement_cap"] = json!(3);
+        set_loop_count(v, "plan_amendment:1", 4);
+    });
+    run(&b, &n).assert_contains(
+        "f7 amendment enter loop cap rejects",
+        23,
+        "loop_cap edge=plan_amendment:1",
+    );
+}
+
+/// At the cap, only human_decision remains legal from the amendment source state.
+#[test]
+fn f7_amendment_enter_at_cap_allows_human_decision() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deslop", "vadi", 4, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+        v["disagreement_cap"] = json!(3);
+        set_loop_count(v, "plan_amendment:1", 3);
+    });
+    make_baton_v2(&n, "human_decision", "human", 5, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["disagreement_cap"] = json!(3);
+        set_loop_count(v, "plan_amendment:1", 3);
+    });
+    run(&b, &n).assert("f7 amendment at cap permits human_decision", 0);
+}
+
+/// The entry edge must set amendment_from_phase (not leave it null).
+#[test]
+fn f7_amendment_enter_requires_field_set() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deslop", "vadi", 4, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+    });
+    make_baton_v2(&n, "spec_revision", "vadi", 5, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        set_loop_count(v, "plan_amendment:1", 1);
+        // amendment_from_phase left null
+    });
+    run(&b, &n).assert_contains("f7 amendment enter requires field set", 23, "bad_amendment");
+}
+
+/// The entry edge amendment_from_phase must equal the current numeric phase.
+#[test]
+fn f7_amendment_enter_wrong_from_phase_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deslop", "vadi", 4, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+    });
+    make_baton_v2(&n, "spec_revision", "vadi", 5, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["amendment_from_phase"] = json!(2);
+        set_loop_count(v, "plan_amendment:1", 1);
+    });
+    run(&b, &n).assert_contains(
+        "f7 amendment enter wrong from-phase rejected",
+        23,
+        "bad_amendment",
+    );
+}
+
+/// Setting amendment_from_phase on a non-amendment edge is rejected.
+#[test]
+fn f7_amendment_set_on_wrong_edge_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_drafting", "vadi", 4, |_| {});
+    make_baton_v2(&n, "spec_review", "prativadi", 5, |v| {
+        v["amendment_from_phase"] = json!(1);
+    });
+    run(&b, &n).assert_contains(
+        "f7 amendment set on wrong edge rejected",
+        23,
+        "bad_amendment",
+    );
+}
+
+/// While amendment_from_phase is non-null the spec loop is legal even post-lock,
+/// and total_phases may change.
+#[test]
+fn f7_amendment_spec_loop_legal_and_total_phases_may_change() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_revision", "vadi", 4, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["amendment_from_phase"] = json!(1);
+        set_loop_count(v, "plan_amendment:1", 1);
+    });
+    make_baton_v2(&n, "spec_review", "prativadi", 5, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(3);
+        v["amendment_from_phase"] = json!(1);
+        set_loop_count(v, "plan_amendment:1", 1);
+    });
+    run(&b, &n).assert(
+        "f7 amendment spec loop legal and total_phases may change",
+        0,
+    );
+}
+
+/// total_phases is frozen once locked when amendment_from_phase is null.
+#[test]
+fn f7_total_phases_frozen_while_amendment_null() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "implementing", "vadi", 4, |v| {
+        standard_profile(v);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+    });
+    make_baton_v2(&n, "phase_review", "prativadi", 5, |v| {
+        standard_profile(v);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(3);
+        v["phase"] = json!(1);
+    });
+    run(&b, &n).assert_contains(
+        "f7 total_phases frozen while amendment null",
+        23,
+        "total_phases_frozen",
+    );
+}
+
+/// Full-profile amendment exit: spec_review -> parallel_implementing nulls the
+/// field and re-enters at a phase >= amendment_from_phase.
+#[test]
+fn f7_amendment_exit_full_to_parallel_implementing() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_review", "prativadi", 4, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["amendment_from_phase"] = json!(1);
+    });
+    make_baton_v2(&n, "parallel_implementing", "team", 5, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+        parallel_chunks(v);
+    });
+    run(&b, &n).assert("f7 amendment exit to parallel_implementing", 0);
+}
+
+/// Standard-profile amendment exit: spec_review -> implementing.
+#[test]
+fn f7_amendment_exit_standard_to_implementing() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_review", "prativadi", 4, |v| {
+        standard_profile(v);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["amendment_from_phase"] = json!(1);
+    });
+    make_baton_v2(&n, "implementing", "vadi", 5, |v| {
+        standard_profile(v);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+    });
+    run(&b, &n).assert("f7 amendment exit to implementing", 0);
+}
+
+/// The exit edge must null amendment_from_phase.
+#[test]
+fn f7_amendment_exit_must_null_field() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_review", "prativadi", 4, |v| {
+        standard_profile(v);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["amendment_from_phase"] = json!(1);
+    });
+    make_baton_v2(&n, "implementing", "vadi", 5, |v| {
+        standard_profile(v);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+        v["amendment_from_phase"] = json!(1);
+    });
+    run(&b, &n).assert_contains("f7 amendment exit must null field", 23, "bad_amendment");
+}
+
+/// Re-entry below amendment_from_phase is illegal.
+#[test]
+fn f7_amendment_reentry_below_from_phase_illegal() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_review", "prativadi", 4, |v| {
+        standard_profile(v);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(3);
+        v["amendment_from_phase"] = json!(2);
+    });
+    make_baton_v2(&n, "implementing", "vadi", 5, |v| {
+        standard_profile(v);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(3);
+        v["phase"] = json!(1);
+    });
+    run(&b, &n).assert_contains(
+        "f7 amendment re-entry below from-phase illegal",
+        24,
+        "below amendment_from_phase",
+    );
+}
+
+/// The amendment_from_phase value cannot be changed mid-loop.
+#[test]
+fn f7_amendment_loop_cannot_change_from_phase() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_revision", "vadi", 4, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["amendment_from_phase"] = json!(1);
+        set_loop_count(v, "plan_amendment:1", 1);
+    });
+    make_baton_v2(&n, "spec_review", "prativadi", 5, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["amendment_from_phase"] = json!(2);
+        set_loop_count(v, "plan_amendment:1", 1);
+    });
+    run(&b, &n).assert_contains(
+        "f7 amendment loop cannot change from-phase",
+        23,
+        "bad_amendment",
+    );
+}
+
+/// Post-lock human_question stays illegal during the amendment loop.
+#[test]
+fn f7_post_lock_human_question_illegal_during_amendment() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_revision", "vadi", 4, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["amendment_from_phase"] = json!(1);
+        set_loop_count(v, "plan_amendment:1", 1);
+    });
+    make_baton_v2(&n, "human_question", "human", 5, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["amendment_from_phase"] = json!(1);
+        v["question"] = json!("Change the plan further?");
+        v["resume_assignee"] = json!("vadi");
+        v["resume_status"] = json!("spec_revision");
+    });
+    run(&b, &n).assert_contains(
+        "f7 post-lock human_question illegal during amendment",
+        24,
+        "human_question is only legal before master_plan_locked",
+    );
+}
+
+// ===================== F8: team-owned test_creation =====================
+
+/// v2 full-profile test_creation requires the team owner.
+#[test]
+fn f8_test_creation_requires_team_owner() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "parallel_implementing", "team", 4, parallel_chunks);
+    make_baton_v2(&n, "test_creation", "vadi", 5, |v| {
+        parallel_chunks(v);
+        implementation_tracks(v);
+    });
+    run(&b, &n).assert_contains(
+        "f8 test_creation requires team owner",
+        23,
+        "bad_assignee_owner",
+    );
+}
+
+/// team-owned test_creation requires both active_roles.
+#[test]
+fn f8_test_creation_requires_both_active_roles() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "parallel_implementing", "team", 4, parallel_chunks);
+    make_baton_v2(&n, "test_creation", "team", 5, |v| {
+        parallel_chunks(v);
+        v["active_roles"] = json!(["vadi"]);
+        implementation_tracks(v);
+    });
+    run(&b, &n).assert_contains(
+        "f8 test_creation requires both active_roles",
+        23,
+        "bad_active_roles",
+    );
+}
+
+/// Entry edge parallel_implementing -> team-owned test_creation is legal.
+#[test]
+fn f8_parallel_implementing_to_test_creation_team_owned() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "parallel_implementing", "team", 4, parallel_chunks);
+    make_baton_v2(&n, "test_creation", "team", 5, |v| {
+        parallel_chunks(v);
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        implementation_tracks(v);
+    });
+    run(&b, &n).assert("f8 parallel_implementing->team test_creation", 0);
+}
+
+/// test_creation joins the same-status team-sync set.
+#[test]
+fn f8_test_creation_same_status_team_sync_legal() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "test_creation", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v2(&n, "test_creation", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["summary"] = json!("Team sync: coverage and adversarial tracks in progress.");
+        v["next_action"] = json!("Team: both roles recording their test-creation tracks.");
+    });
+    run(&b, &n).assert("f8 test_creation same-status team sync", 0);
+}
+
+/// Exit edge test_creation -> cross_review keeps the required dvandva-test-creator
+/// track under the team owner.
+#[test]
+fn f8_test_creation_to_cross_review_team() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "test_creation", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v2(&n, "cross_review", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        test_creation_track(v);
+    });
+    run(&b, &n).assert("f8 test_creation->cross_review team", 0);
+}
+
+/// The exit gate accepts an additional prativadi-owned adversarial-test track.
+#[test]
+fn f8_test_creation_to_cross_review_accepts_adversarial_track() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "test_creation", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v2(&n, "cross_review", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        test_creation_track(v);
+        adversarial_test_track(v);
+    });
+    run(&b, &n).assert(
+        "f8 test_creation->cross_review accepts adversarial track",
         0,
     );
 }
