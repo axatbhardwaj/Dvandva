@@ -7,10 +7,9 @@
 //! lacks the trailer. A repo with no checkpointed commits at all and no
 //! active baton is not drift — pre-run or non-Dvandva history is exempt.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use serde_json::Value;
-
+use crate::commit_gate;
 use crate::gitcfg;
 use crate::util;
 
@@ -283,57 +282,16 @@ fn collect_drift(
     drift
 }
 
-/// Terminal statuses are inactive for drift purposes.
-fn is_terminal_status(status: &str) -> bool {
-    matches!(status, "done" | "human_question" | "human_decision")
-}
-
-/// Baton file candidates: `.dvandva/baton.json` plus one level of
-/// `.dvandva/runs/*/baton.json` (mirrors `find -maxdepth 2 -name
-/// baton.json`).
-fn baton_candidates(repo_root: &Path) -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-
-    let root_baton = repo_root.join(".dvandva").join("baton.json");
-    if root_baton.is_file() {
-        candidates.push(root_baton);
-    }
-
-    let runs_dir = repo_root.join(".dvandva").join("runs");
-    if let Ok(entries) = std::fs::read_dir(&runs_dir) {
-        let mut run_dirs: Vec<PathBuf> = entries
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path())
-            .filter(|path| path.is_dir())
-            .collect();
-        run_dirs.sort();
-        for dir in run_dirs {
-            let candidate = dir.join("baton.json");
-            if candidate.is_file() {
-                candidates.push(candidate);
-            }
-        }
-    }
-
-    candidates
-}
-
-/// jq `-r '.status // ""'` semantics: coalesce null/false to absent, then
-/// render as a raw string.
-fn status_string(value: &Value) -> String {
-    let status = value.as_object().and_then(|map| map.get("status"));
-    match util::coalesce(status) {
-        Some(Value::String(s)) => s.clone(),
-        Some(other) => other.to_string(),
-        None => String::new(),
-    }
-}
-
 /// True when at least one candidate baton represents active (non-terminal)
 /// work. Malformed JSON fails closed: it is treated as active and pushes a
 /// warning, matching the shell's `jq empty` check.
+///
+/// Baton discovery and terminal-status classification are shared with
+/// [`crate::commit_gate`] (see [`commit_gate::collect_baton_paths`] and
+/// [`commit_gate::is_gate_terminal`]) so both consumers agree on which
+/// batons exist and which are inactive.
 fn active_baton_exists(repo_root: &Path, stderr: &mut Vec<String>) -> bool {
-    let candidates = baton_candidates(repo_root);
+    let candidates = commit_gate::collect_baton_paths(repo_root);
     if candidates.is_empty() {
         return false;
     }
@@ -348,7 +306,8 @@ fn active_baton_exists(repo_root: &Path, stderr: &mut Vec<String>) -> bool {
                 return true;
             }
             Ok(value) => {
-                if !is_terminal_status(&status_string(&value)) {
+                let status = commit_gate::field_str(&value, "status", "");
+                if !commit_gate::is_gate_terminal(&status) {
                     return true;
                 }
             }
@@ -371,9 +330,17 @@ fn commit_exists(repo_root: &Path, sha: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Read `dvandva.hooksAdoptedAtInclusive` with git's `--bool` truthy
+/// spellings (`true`/`1`/`yes`/`on`, case-insensitive); anything else,
+/// including unset, is false.
 fn adoption_inclusive_flag(repo_root: &Path) -> bool {
     gitcfg::cfg_get(repo_root, "dvandva.hooksAdoptedAtInclusive")
-        .map(|value| value.eq_ignore_ascii_case("true"))
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "true" | "1" | "yes" | "on"
+            )
+        })
         .unwrap_or(false)
 }
 

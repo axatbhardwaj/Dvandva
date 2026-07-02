@@ -247,6 +247,44 @@ fn case_l_empty_git_repo_exits_0() {
 }
 
 // ---------------------------------------------------------------------------
+// Unborn HEAD (a freshly `git init`ed repo with zero commits) plus a
+// non-terminal baton still reports "no checkpointed commits" rather than
+// attempting to scan a HEAD that doesn't exist yet.
+// ---------------------------------------------------------------------------
+#[test]
+fn unborn_head_with_active_baton_reports_no_checkpoints() {
+    let repo = empty_git_repo();
+    let root = repo.path();
+    write_baton(root, ".dvandva/baton.json", "implementing");
+
+    let (code, out) = run_drift_lint(root, &[]);
+    assert_eq!(code, 0, "output: {out}");
+    assert!(
+        out.contains("DVANDVA_DRIFT ok: no checkpointed commits in history — nothing to lint."),
+        "output: {out}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Depth-1 regression: a baton living directly at `.dvandva/runs/baton.json`
+// (no intervening run-id directory) must still be discovered, mirroring the
+// shell's `find .dvandva/runs -maxdepth 2 -name baton.json`, which matches
+// both `.dvandva/runs/baton.json` (depth 1) and `.dvandva/runs/<id>/baton.json`
+// (depth 2).
+// ---------------------------------------------------------------------------
+#[test]
+fn case_depth1_run_baton_is_discovered() {
+    let repo = new_git_repo();
+    let root = repo.path();
+    write_baton(root, ".dvandva/runs/baton.json", "implementing");
+    commit(root, "bypass.txt", &["bypass without trailer"]);
+
+    let (code, out) = run_drift_lint(root, &[]);
+    assert_eq!(code, 1, "output: {out}");
+    assert!(out.contains("bypass without trailer"), "output: {out}");
+}
+
+// ---------------------------------------------------------------------------
 // (m) A pending root-commit baseline recorded before any commit existed is
 // backfilled to the root sha as soon as one exists.
 // ---------------------------------------------------------------------------
@@ -301,8 +339,10 @@ fn case_m_flags_unstamped_root_after_pending_baseline() {
 #[test]
 fn unknown_option_exits_2() {
     let repo = new_git_repo();
-    let (code, _out) = run_drift_lint(repo.path(), &["--bogus"]);
-    assert_eq!(code, 2);
+    let (code, out) = run_drift_lint(repo.path(), &["--bogus"]);
+    assert_eq!(code, 2, "output: {out}");
+    assert!(out.contains("unknown option"), "output: {out}");
+    assert!(out.contains("--bogus"), "output: {out}");
 }
 
 // ---------------------------------------------------------------------------

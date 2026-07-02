@@ -1,5 +1,5 @@
 //! Dvandva commit-gate policy plus the baton helpers shared with the
-//! git-hook family (`hooks`).
+//! git-hook family (`hooks`) and with [`crate::drift_lint`].
 //!
 //! Ports `scripts/dvandva-commit-gate.sh`: resolve the active baton(s) under
 //! `.dvandva/` and allow a commit only when `DVANDVA_ROLE` is the assignee or
@@ -44,7 +44,10 @@ impl GateResult {
 /// Statuses the gate treats as inactive (a run in one of these states is not
 /// baton-gated). Distinct from [`crate::baton::Status::is_terminal`], which is
 /// `Done`-only; the gate's terminal set is broader by design.
-pub(crate) fn is_gate_terminal(status: &str) -> bool {
+///
+/// Shared with [`crate::drift_lint`], which uses the same terminal set to
+/// decide whether an active baton makes unstamped commits reportable drift.
+pub fn is_gate_terminal(status: &str) -> bool {
     matches!(status, "done" | "human_question" | "human_decision")
 }
 
@@ -58,6 +61,8 @@ fn render_scalar(value: &Value) -> String {
 /// Read a top-level field as a string with jq `//`-style coalescing: `null`
 /// and `false` fall back to `default`, strings render unquoted, numbers render
 /// as their literal.
+///
+/// Also used by [`crate::drift_lint`] to read a baton's `status` field.
 pub(crate) fn field_str(value: &Value, key: &str, default: &str) -> String {
     match coalesce(value.get(key)) {
         Some(val) => render_scalar(val),
@@ -100,7 +105,10 @@ fn active_roles_str(value: &Value) -> String {
 /// the legacy `.dvandva/baton.json` first, then run-scoped
 /// `.dvandva/runs/*/baton.json` (via `find … -maxdepth 2 -name baton.json`).
 /// Run-scoped paths are sorted for deterministic ordering.
-pub(crate) fn collect_baton_paths(repo_root: &Path) -> Vec<PathBuf> {
+///
+/// Shared with [`crate::drift_lint`], which reuses this exact discovery
+/// logic to locate the batons it checks for active-run status.
+pub fn collect_baton_paths(repo_root: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
 
     let legacy = repo_root.join(".dvandva").join("baton.json");
