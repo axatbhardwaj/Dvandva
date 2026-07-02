@@ -34,8 +34,8 @@ Version `2.0.0-alpha.3`. Licensed under `MIT OR Apache-2.0`.
 ## Install
 
 ```bash
-cargo install --path rust/dvandva
-# or, once 2.0.0-alpha.3 is published: cargo install dvandva --version 2.0.0-alpha.3
+cargo install dvandva --version 2.0.0-alpha.3
+# or, from a checkout: cargo install --path rust/dvandva
 ```
 
 The binary must be on `PATH` for the Dvandva skills to run. `cargo install`
