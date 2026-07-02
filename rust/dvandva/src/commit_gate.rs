@@ -43,8 +43,8 @@ impl GateResult {
 }
 
 /// Statuses the gate treats as inactive (a run in one of these states is not
-/// baton-gated). Distinct from [`crate::baton::Status::is_terminal`], which is
-/// `Done`-only; the gate's terminal set is broader by design.
+/// baton-gated). Broader than [`crate::baton::Status::is_terminal`]
+/// (`done`/`abandoned`): the gate also treats human pauses as inactive.
 ///
 /// Shared with [`crate::drift_lint`], which uses the same terminal set to
 /// decide whether an active baton makes unstamped commits reportable drift.

@@ -29,13 +29,14 @@ The binary is a multicall executable: when invoked through a git-hook symlink
 (`pre-commit`, `prepare-commit-msg`, ...) the hook name is taken from `argv[0]`.
 `dvandva --version` prints the version line.
 
-Version `2.0.0-alpha.3`. Licensed under `MIT OR Apache-2.0`.
+Version `2.0.0-alpha.4`. Licensed under `MIT OR Apache-2.0`.
 
 ## Install
 
 ```bash
-cargo install dvandva --version 2.0.0-alpha.3
-# or, from a checkout: cargo install --path rust/dvandva
+cargo install --path rust/dvandva   # primary; builds 2.0.0-alpha.4 from a checkout
+# latest published on crates.io: cargo install dvandva --version 2.0.0-alpha.3
+# once published: cargo install dvandva --version 2.0.0-alpha.4
 ```
 
 The binary must be on `PATH` for the Dvandva skills to run. `cargo install`
