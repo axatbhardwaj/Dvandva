@@ -606,6 +606,8 @@ fn v2_work_split_anchor_depends_on_accepted() {
     let (b, n) = paths(&d);
     make_baton_v2(&b, "spec_review", "prativadi", 4, |_| {});
     make_baton_v2(&n, "parallel_implementing", "team", 5, |b| {
+        // S4-T2 (D2): the spec→implementation boundary locks the plan.
+        b["master_plan_locked"] = json!(true);
         parallel_chunks(b);
         for item in b["work_split"].as_array_mut().unwrap() {
             if item["chunk_type"].as_str().unwrap_or("") == "implementation" {
@@ -852,6 +854,8 @@ fn profile_missing_existing_dev_full_only_edge_legal() {
     make_baton_v2(&b, "spec_review", "prativadi", 4, strip);
     make_baton_v2(&n, "parallel_implementing", "team", 5, |b| {
         strip(b);
+        // S4-T2 (D2): the spec→implementation boundary locks the plan.
+        b["master_plan_locked"] = json!(true);
         parallel_chunks(b);
     });
     run(&b, &n).assert(

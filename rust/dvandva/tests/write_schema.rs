@@ -1635,3 +1635,62 @@ fn f9_phase_profiles_absent_accepted() {
     });
     run(&b, &n).assert("f9 phase_profiles null accepted", 0);
 }
+
+// ===========================================================================
+// S2-T1: `abandoned` owner / active_roles / phase shape (v2 only).
+// ===========================================================================
+
+#[test]
+fn s2t1_abandoned_owner_must_be_human() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "human_question", "human", 4, |v| {
+        v["phase"] = json!(1);
+        v["question"] = json!("Continue?");
+        v["resume_assignee"] = json!("vadi");
+        v["resume_status"] = json!("implementing");
+    });
+    make_baton_v2(&n, "abandoned", "vadi", 5, |v| {
+        v["phase"] = json!(1);
+    });
+    run(&b, &n).assert_contains(
+        "s2t1 abandoned candidate must be human-owned",
+        23,
+        "bad_assignee_owner",
+    );
+}
+
+#[test]
+fn s2t1_abandoned_rejects_nonempty_active_roles() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "human_decision", "human", 4, |v| {
+        v["phase"] = json!(1);
+    });
+    make_baton_v2(&n, "abandoned", "human", 5, |v| {
+        v["phase"] = json!(1);
+        v["active_roles"] = json!(["vadi"]);
+    });
+    run(&b, &n).assert_contains(
+        "s2t1 abandoned carries no active_roles",
+        23,
+        "bad_active_roles",
+    );
+}
+
+#[test]
+fn s2t1_abandoned_accepts_the_carried_human_phase() {
+    // The human state carried a numeric phase; abandoned must accept it unchanged.
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "human_question", "human", 4, |v| {
+        v["phase"] = json!(2);
+        v["question"] = json!("Stop the run?");
+        v["resume_assignee"] = json!("vadi");
+        v["resume_status"] = json!("implementing");
+    });
+    make_baton_v2(&n, "abandoned", "human", 5, |v| {
+        v["phase"] = json!(2);
+    });
+    run(&b, &n).assert("s2t1 abandoned accepts the carried numeric phase", 0);
+}

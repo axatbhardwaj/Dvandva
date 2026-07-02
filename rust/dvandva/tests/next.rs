@@ -734,3 +734,76 @@ fn human_decision_lists_human_resume_marker_hand_authored() {
         "the rejection guides toward hand-authoring the candidate file\n{stderr}"
     );
 }
+
+// ===================== S2-T1: abandoned surfaced by legal_transitions =====================
+
+#[test]
+fn s2t1_list_human_states_offer_abandoned() {
+    // legal_transitions (the `next` LIST surface) must offer `abandoned` from both
+    // human states with a human owner — the human declaring the run dead.
+    let dir = tempfile::tempdir().unwrap();
+
+    let hq = dir.path().join("hq.json");
+    make_baton_v2(&hq, "human_question", "human", 4, |b| {
+        b["phase"] = Value::from(1);
+        b["question"] = Value::from("Continue?");
+        b["resume_assignee"] = Value::from("vadi");
+        b["resume_status"] = Value::from("implementing");
+    });
+    let (code, out, err) = run_next(&["--file", hq.to_str().unwrap()]);
+    assert_eq!(code, 0, "list exits 0\n{err}");
+    assert!(
+        out.contains("DVANDVA_NEXT abandoned owner=human phase=same"),
+        "human_question LIST offers abandoned\n{out}"
+    );
+
+    let hd = dir.path().join("hd.json");
+    make_baton_v2(&hd, "human_decision", "human", 4, |b| {
+        b["phase"] = Value::from(1);
+    });
+    let (code2, out2, err2) = run_next(&["--file", hd.to_str().unwrap()]);
+    assert_eq!(code2, 0, "list exits 0\n{err2}");
+    assert!(
+        out2.contains("DVANDVA_NEXT abandoned owner=human phase=same"),
+        "human_decision LIST offers abandoned\n{out2}"
+    );
+}
+
+#[test]
+fn s2t1_list_abandoned_is_terminal_no_options() {
+    // From `abandoned`, the LIST surface offers no protocol transitions (only the
+    // fixed over-approximation note) — abandoned is terminal like done.
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    make_baton_v2(&baton, "abandoned", "human", 4, |b| {
+        b["phase"] = Value::from(1);
+    });
+    let (code, out, err) = run_next(&["--file", baton.to_str().unwrap()]);
+    assert_eq!(code, 0, "list exits 0\n{err}");
+    assert!(
+        !out.contains("owner="),
+        "abandoned offers no transitions\n{out}"
+    );
+    assert!(
+        out.contains("DVANDVA_NEXT note content_gates_not_reflected"),
+        "the fixed note still prints\n{out}"
+    );
+}
+
+#[test]
+fn s4t5_list_working_state_offers_human_question() {
+    // S4-T5 (D1): the LIST surface stays coherent with the widened write path —
+    // a post-lock working state offers human_question (owner human, same phase).
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    make_baton_v2(&baton, "implementing", "vadi", 4, |b| {
+        b["phase"] = Value::from(1);
+        b["master_plan_locked"] = Value::Bool(true);
+    });
+    let (code, out, err) = run_next(&["--file", baton.to_str().unwrap()]);
+    assert_eq!(code, 0, "list exits 0\n{err}");
+    assert!(
+        out.contains("DVANDVA_NEXT human_question owner=human phase=same"),
+        "implementing LIST offers post-lock human_question\n{out}"
+    );
+}

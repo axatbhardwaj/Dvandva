@@ -48,8 +48,8 @@ impl fmt::Display for SnapshotError {
 impl std::error::Error for SnapshotError {}
 
 /// Snapshot a baton checkpoint: copy it into `<parent>/history/` (`mkdir -p`
-/// first), and — when `status` is `done`, `human_decision`, or
-/// `human_question` — additionally into
+/// first), and — when `status` is `done`, `human_decision`, `human_question`,
+/// or `abandoned` — additionally into
 /// `<parent>/baton.<sanitized-branch>-<checkpoint>-<status>.json` (`/` in
 /// `branch` replaced with `-`).
 ///
@@ -112,7 +112,8 @@ pub fn snapshot_baton(baton_path: &Path) -> Result<(), SnapshotError> {
 
     if matches!(
         status.as_str(),
-        "done" | "human_decision" | "human_question"
+        // S2-T1: abandoned is a human-declared terminal; archive it like done.
+        "done" | "human_decision" | "human_question" | "abandoned"
     ) {
         let archive_target = parent_dir.join(format!(
             "baton.{sanitized_branch}-{checkpoint}-{status}.json"

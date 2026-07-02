@@ -122,6 +122,8 @@ pub enum Status {
     HumanQuestion,
     HumanDecision,
     Done,
+    /// S2-T1: the human-declared dead-run terminal (v2 write path only).
+    Abandoned,
 }
 
 impl Status {
@@ -149,6 +151,7 @@ impl Status {
             Status::HumanQuestion => "human_question",
             Status::HumanDecision => "human_decision",
             Status::Done => "done",
+            Status::Abandoned => "abandoned",
         }
     }
 
@@ -196,6 +199,7 @@ impl FromStr for Status {
             "human_question" => Ok(Status::HumanQuestion),
             "human_decision" => Ok(Status::HumanDecision),
             "done" => Ok(Status::Done),
+            "abandoned" => Ok(Status::Abandoned),
             other => Err(ParseStatusError(other.to_string())),
         }
     }
@@ -304,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn status_covers_all_twenty_one_tokens() {
+    fn status_covers_all_twenty_two_tokens() {
         let catalog = [
             "research_drafting",
             "research_review",
@@ -327,8 +331,9 @@ mod tests {
             "human_question",
             "human_decision",
             "done",
+            "abandoned",
         ];
-        assert_eq!(catalog.len(), 21);
+        assert_eq!(catalog.len(), 22);
         for token in catalog {
             let parsed: Status = token
                 .parse()

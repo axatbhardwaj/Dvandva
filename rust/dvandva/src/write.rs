@@ -415,6 +415,7 @@ fn validate_candidate_shape(
         if new_status != "research_drafting"
             && new_status != "human_question"
             && new_status != "human_decision"
+            && new_status != "abandoned"
             && !matches!(field(cand, "research_ref"), Some(Value::String(s)) if !s.is_empty())
         {
             return Err((23, format!("DVANDVA_WRITE bad_research_ref candidate={cf}")));
@@ -715,7 +716,7 @@ pub(crate) fn expected_owner(
 pub(crate) fn expected_phase_for(mode: &str, status: &str, current_phase: &Value) -> Value {
     let effective = canonical_mode(mode);
     match (effective.as_deref(), status) {
-        (_, "human_question") | (_, "human_decision") => current_phase.clone(),
+        (_, "human_question") | (_, "human_decision") | (_, "abandoned") => current_phase.clone(),
         (Some("development"), "research_drafting" | "research_review" | "research_revision") => {
             Value::from("research")
         }
@@ -990,7 +991,7 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
     }
 
     // Universal escalation to human_decision (never from a terminal state).
-    if cur_status != "done" {
+    if cur_status != "done" && cur_status != "abandoned" {
         out.push(TransitionOption {
             to_status: "human_decision".to_string(),
             to_phase: PhaseMove::Same,
@@ -1003,9 +1004,10 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
         });
     }
 
-    // human_question is only legal before the master plan is locked, from a
-    // spec/research state.
-    if !cur_locked
+    // human_question (S4-T5/D1): enters pre-lock from a research/spec planning
+    // state, AND — for a v2 run — from a working state regardless of lock. Mirrors
+    // the widened entry set decide_transition accepts, so the LIST stays coherent.
+    let planning_hq = !cur_locked
         && matches!(
             cur_status.as_str(),
             "spec_drafting"
@@ -1014,8 +1016,17 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
                 | "research_drafting"
                 | "research_review"
                 | "research_revision"
-        )
-    {
+        );
+    let working_hq = is_v2
+        && matches!(
+            cur_status.as_str(),
+            "implementing"
+                | "parallel_implementing"
+                | "test_creation"
+                | "cross_fixing"
+                | "phase_fixing"
+        );
+    if planning_hq || working_hq {
         out.push(TransitionOption {
             to_status: "human_question".to_string(),
             to_phase: PhaseMove::Same,
@@ -1056,6 +1067,21 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
     if cur_status == "human_decision" {
         out.push(TransitionOption {
             to_status: "human_resume".to_string(),
+            to_phase: PhaseMove::Same,
+            assignee: "human".to_string(),
+            active_roles: Vec::new(),
+            review_target: None,
+            loop_key: None,
+            sets_amendment_from_phase: None,
+            clears_amendment: false,
+        });
+    }
+
+    // S2-T1: from either human state the human may declare the run dead. The
+    // abandoned terminal is human-owned, phase-preserving, and carries no roles.
+    if cur_status == "human_question" || cur_status == "human_decision" {
+        out.push(TransitionOption {
+            to_status: "abandoned".to_string(),
             to_phase: PhaseMove::Same,
             assignee: "human".to_string(),
             active_roles: Vec::new(),
@@ -1525,6 +1551,23 @@ fn decide_transition(
         ));
     }
 
+    // ---- S4-T2 (D2): master_plan_locked is a one-way latch -----------------
+    // Once the current baton has the plan locked, no write may clear it — except
+    // a human_decision, the human's authority to re-open the plan. Amendment
+    // loops keep locked=true (F7), so they never trip this.
+    if cx.is_v2
+        && cur_effective_mode == "development"
+        && cx.new_effective_mode == "development"
+        && cur_locked
+        && cx.new_status != "human_decision"
+        && !bool_field(cand, "master_plan_locked")
+    {
+        return Err((
+            23,
+            format!("DVANDVA_WRITE bad_master_plan_locked unlock_forbidden candidate={cf}"),
+        ));
+    }
+
     // ---- Fix 3: numeric phase never exceeds total_phases -------------------
     // A numeric phase is 1-indexed within [1, total_phases]. The F7 amendment
     // loop is the one path that can LOWER total_phases, so an exit could otherwise
@@ -1755,7 +1798,9 @@ fn decide_transition(
             reason = "same-status rewrite (one baton write per handoff)".to_string();
         }
     } else if cur_status == "human_question" {
-        if cx.new_status == "human_decision" {
+        if cx.new_status == "human_decision" || cx.new_status == "abandoned" {
+            // Escalate to human_decision, or the human declares the run dead
+            // (S2-T1 abandoned).
             legal = true;
         } else if cur_resume_status == "done" || cx.new_status == "done" {
             reason = "human_question cannot resume directly to done".to_string();
@@ -1782,9 +1827,11 @@ fn decide_transition(
         // to any non-terminal protocol state.
         legal = true;
     } else if cx.new_status == "human_question" {
-        if cur_locked {
-            reason = "human_question is only legal before master_plan_locked".to_string();
-        } else if !matches!(
+        // S4-T5 (D1): human_question enters pre-lock from the research/spec
+        // planning states, AND — for v2 development runs — from the working states
+        // regardless of lock. Entering it is a stop-together pause, never a loop
+        // edge; the resume machinery restores the exact prior state.
+        let planning_entry = matches!(
             cur_status.as_str(),
             "spec_drafting"
                 | "spec_review"
@@ -1792,9 +1839,21 @@ fn decide_transition(
                 | "research_drafting"
                 | "research_review"
                 | "research_revision"
-        ) {
+        );
+        let working_entry = cx.is_v2
+            && matches!(
+                cur_status.as_str(),
+                "implementing"
+                    | "parallel_implementing"
+                    | "test_creation"
+                    | "cross_fixing"
+                    | "phase_fixing"
+            );
+        if planning_entry && cur_locked && !working_entry {
+            reason = "human_question from a research/spec planning state is only legal before master_plan_locked; post-lock, enter it from a working state (implementing, parallel_implementing, test_creation, cross_fixing, phase_fixing)".to_string();
+        } else if !planning_entry && !working_entry {
             reason = format!(
-                "human_question only enters from spec or research states, not {cur_status}"
+                "human_question enters from a research/spec planning state (pre-lock) or a working state (implementing, parallel_implementing, test_creation, cross_fixing, phase_fixing), not {cur_status}"
             );
         } else if cx.cand_q_null || cx.cand_ra_null || cx.cand_rs_null {
             reason = "human_question requires non-null question, resume_assignee, resume_status"
@@ -1861,6 +1920,21 @@ fn decide_transition(
                 ),
             ));
         }
+    }
+    // S4-T2 (D2): the spec→implementation boundary — including a plan-amendment
+    // exit — requires the master plan to be locked. Development graph only;
+    // research/review modes never enter numeric implementation states.
+    if legal
+        && cx.is_v2
+        && cur_effective_mode == "development"
+        && cur_status == "spec_review"
+        && matches!(cx.new_status, "implementing" | "parallel_implementing")
+        && !bool_field(cand, "master_plan_locked")
+    {
+        return Err((
+            23,
+            format!("DVANDVA_WRITE bad_master_plan_locked candidate={cf}"),
+        ));
     }
     if legal
         && cx.is_v2
@@ -2287,7 +2361,9 @@ fn v2_expected_assignee(status: &str) -> &'static str {
         "research_review" | "spec_review" | "deep_review" | "phase_review" | "counter_review" => {
             "prativadi"
         }
-        "human_question" | "human_decision" => "human",
+        // S2-T1: abandoned is a human-declared terminal, human-owned like the
+        // other human states.
+        "human_question" | "human_decision" | "abandoned" => "human",
         _ => "",
     }
 }
@@ -2376,6 +2452,7 @@ fn status_enum_ok(is_v2: bool, status: &str) -> bool {
                 | "counter_review"
                 | "human_decision"
                 | "done"
+                | "abandoned"
         )
     } else {
         matches!(
@@ -2422,7 +2499,9 @@ fn phase_status_ok(mode: &str, status: &str, cand: &Value) -> bool {
     let is_str = |want: &str| matches!(phase, Some(Value::String(s)) if s == want);
     let is_num = || matches!(phase, Some(Value::Number(_)));
     match (mode, status) {
-        (_, "human_question") | (_, "human_decision") => true,
+        // S2-T1: abandoned preserves whatever phase the human state carried, just
+        // like the other human statuses.
+        (_, "human_question") | (_, "human_decision") | (_, "abandoned") => true,
         ("development", "research_drafting" | "research_review" | "research_revision") => {
             is_str("research")
         }
@@ -3650,6 +3729,9 @@ fn edge_whitelist(
                     | "research_revision:research_review"
                     | "research_review:deep_review"
                     | "deep_review:deslop"
+                    // S4-T7: prativadi hands substantive fixes back to vadi without
+                    // lapping the stop gate (loop-capped like every :phase_fixing).
+                    | "deep_review:phase_fixing"
                     | "deslop:termination_review"
                     | "termination_review:phase_fixing"
                     | "phase_fixing:deep_review"

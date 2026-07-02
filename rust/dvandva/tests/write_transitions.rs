@@ -142,6 +142,10 @@ fn v2_edges_legal() {
             if new == "parallel_implementing" {
                 parallel_chunks(v);
             }
+            // S4-T2 (D2): the spec→implementation boundary must lock the plan.
+            if edge == "spec_review:parallel_implementing" {
+                v["master_plan_locked"] = json!(true);
+            }
             if new == "cross_review" || new == "cross_fixing" || new == "test_creation" {
                 v["active_roles"] = json!(["vadi", "prativadi"]);
             }
@@ -2287,7 +2291,9 @@ fn f7_post_lock_human_question_illegal_during_amendment() {
     run(&b, &n).assert_contains(
         "f7 post-lock human_question illegal during amendment",
         24,
-        "human_question is only legal before master_plan_locked",
+        // S4-T5 (D1): the planning-state entry stays pre-lock-only; the message
+        // now spells out that post-lock questions come from working states.
+        "only legal before master_plan_locked",
     );
 }
 
@@ -2406,6 +2412,8 @@ fn f9_standard_phase_entry_in_full_run() {
     });
     make_baton_v2(&n, "implementing", "vadi", 5, |v| {
         v["phase_profiles"] = json!({"1": "standard"});
+        // S4-T2 (D2): the spec→implementation boundary locks the plan.
+        v["master_plan_locked"] = json!(true);
     });
     run(&b, &n).assert("f9 standard phase entry in full run", 0);
 }
@@ -2510,6 +2518,8 @@ fn f9_full_phase_entry_in_standard_run() {
         standard_profile(v);
         v["phase_profiles"] = json!({"1": "full"});
         v["phase"] = json!(1);
+        // S4-T2 (D2): the spec→implementation boundary locks the plan.
+        v["master_plan_locked"] = json!(true);
         parallel_chunks(v);
     });
     run(&b, &n).assert("f9 full phase entry in standard run", 0);
@@ -2896,6 +2906,362 @@ fn f9_standard_phase_review_accepts_implementing_for_standard_next_phase() {
     });
     run(&b, &n).assert(
         "f9 standard phase_review accepts implementing for a standard next phase",
+        0,
+    );
+}
+
+// ===========================================================================
+// S2-T1: `abandoned` terminal status (v2 only).
+// ===========================================================================
+
+#[test]
+fn s2t1_abandoned_from_human_question_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "human_question", "human", 4, |v| {
+        v["phase"] = json!(1);
+        v["question"] = json!("Should we keep going?");
+        v["resume_assignee"] = json!("vadi");
+        v["resume_status"] = json!("implementing");
+    });
+    make_baton_v2(&n, "abandoned", "human", 5, |v| {
+        v["phase"] = json!(1);
+    });
+    run(&b, &n).assert("s2t1 abandoned from human_question is legal", 0);
+}
+
+#[test]
+fn s2t1_abandoned_from_human_decision_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "human_decision", "human", 4, |v| {
+        v["phase"] = json!(1);
+    });
+    make_baton_v2(&n, "abandoned", "human", 5, |v| {
+        v["phase"] = json!(1);
+    });
+    run(&b, &n).assert("s2t1 abandoned from human_decision is legal", 0);
+}
+
+#[test]
+fn s2t1_abandoned_from_working_state_illegal_24() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "implementing", "vadi", 4, |v| {
+        v["phase"] = json!(1);
+    });
+    make_baton_v2(&n, "abandoned", "human", 5, |v| {
+        v["phase"] = json!(1);
+    });
+    run(&b, &n).assert("s2t1 abandoned from a working state is illegal", 24);
+}
+
+#[test]
+fn s2t1_abandoned_from_spec_state_illegal_24() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_review", "prativadi", 4, |_| {});
+    make_baton_v2(&n, "abandoned", "human", 5, |v| {
+        v["phase"] = json!("spec");
+    });
+    run(&b, &n).assert("s2t1 abandoned from a spec state is illegal", 24);
+}
+
+#[test]
+fn s2t1_abandoned_has_no_exit_edges_24() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "abandoned", "human", 4, |v| {
+        v["phase"] = json!(1);
+    });
+    make_baton_v2(&n, "implementing", "vadi", 5, |v| {
+        v["phase"] = json!(1);
+    });
+    run(&b, &n).assert(
+        "s2t1 abandoned is terminal (no exit edge to implementing)",
+        24,
+    );
+}
+
+#[test]
+fn s2t1_v1_abandoned_status_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&b, "spec_review", "prativadi", 4, |_| {});
+    make_baton(&n, "abandoned", "human", 5, |_| {});
+    run(&b, &n).assert_contains("s2t1 v1 never gains abandoned", 23, "bad_status");
+}
+
+// ===========================================================================
+// S4-T2: master_plan_locked modeling (D2).
+// ===========================================================================
+
+#[test]
+fn s4t2_spec_review_to_parallel_implementing_requires_locked() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_review", "prativadi", 4, |_| {});
+    make_baton_v2(&n, "parallel_implementing", "team", 5, |v| {
+        v["phase"] = json!(1);
+        v["master_plan_locked"] = json!(false);
+        parallel_chunks(v);
+    });
+    run(&b, &n).assert_contains(
+        "s4t2 spec_review->parallel_implementing requires master_plan_locked",
+        23,
+        "bad_master_plan_locked",
+    );
+}
+
+#[test]
+fn s4t2_spec_review_to_parallel_implementing_locked_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_review", "prativadi", 4, |_| {});
+    make_baton_v2(&n, "parallel_implementing", "team", 5, |v| {
+        v["phase"] = json!(1);
+        v["master_plan_locked"] = json!(true);
+        parallel_chunks(v);
+    });
+    run(&b, &n).assert(
+        "s4t2 spec_review->parallel_implementing with lock is legal",
+        0,
+    );
+}
+
+#[test]
+fn s4t2_spec_review_to_implementing_requires_locked() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_review", "prativadi", 4, standard_profile);
+    make_baton_v2(&n, "implementing", "vadi", 5, |v| {
+        standard_profile(v);
+        v["phase"] = json!(1);
+        v["master_plan_locked"] = json!(false);
+    });
+    run(&b, &n).assert_contains(
+        "s4t2 spec_review->implementing requires master_plan_locked",
+        23,
+        "bad_master_plan_locked",
+    );
+}
+
+#[test]
+fn s4t2_amendment_exit_requires_locked() {
+    // "incl. amendment exits": a spec_review amendment exit that clears the lock
+    // is rejected exactly like the fresh spec entry.
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_review", "prativadi", 4, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["amendment_from_phase"] = json!(1);
+    });
+    make_baton_v2(&n, "parallel_implementing", "team", 5, |v| {
+        v["master_plan_locked"] = json!(false);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+        parallel_chunks(v);
+    });
+    run(&b, &n).assert_contains(
+        "s4t2 amendment exit cannot clear master_plan_locked",
+        23,
+        "bad_master_plan_locked",
+    );
+}
+
+#[test]
+fn s4t2_unlock_forbidden_on_a_normal_edge() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "implementing", "vadi", 4, |v| {
+        standard_profile(v);
+        v["phase"] = json!(1);
+        v["master_plan_locked"] = json!(true);
+    });
+    make_baton_v2(&n, "phase_review", "prativadi", 5, |v| {
+        standard_profile(v);
+        v["phase"] = json!(1);
+        v["master_plan_locked"] = json!(false);
+    });
+    run(&b, &n).assert_contains(
+        "s4t2 master_plan_locked true->false is forbidden",
+        23,
+        "unlock_forbidden",
+    );
+}
+
+#[test]
+fn s4t2_unlock_allowed_into_human_decision() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "implementing", "vadi", 4, |v| {
+        standard_profile(v);
+        v["phase"] = json!(1);
+        v["master_plan_locked"] = json!(true);
+    });
+    make_baton_v2(&n, "human_decision", "human", 5, |v| {
+        standard_profile(v);
+        v["phase"] = json!(1);
+        v["master_plan_locked"] = json!(false);
+    });
+    run(&b, &n).assert("s4t2 human_decision may clear master_plan_locked", 0);
+}
+
+// ===========================================================================
+// S4-T5: widen human_question entry (D1).
+// ===========================================================================
+
+fn s4t5_working_baton(status: &str, b: &std::path::Path) {
+    let owner = v2_status_owner(status);
+    make_baton_v2(b, status, owner, 4, |v| {
+        v["phase"] = json!(1);
+        v["master_plan_locked"] = json!(true);
+        if v2_status_owner(status) == "team" {
+            v["active_roles"] = json!(["vadi", "prativadi"]);
+        }
+    });
+}
+
+fn s4t5_human_question_candidate(resume_status: &str, resume_assignee: &str, n: &std::path::Path) {
+    let rs = resume_status.to_string();
+    let ra = resume_assignee.to_string();
+    make_baton_v2(n, "human_question", "human", 5, move |v| {
+        v["phase"] = json!(1);
+        v["master_plan_locked"] = json!(true);
+        v["question"] = json!("Human, should we keep going down this path?");
+        v["resume_assignee"] = json!(ra);
+        v["resume_status"] = json!(rs);
+    });
+}
+
+#[test]
+fn s4t5_human_question_from_implementing_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    s4t5_working_baton("implementing", &b);
+    s4t5_human_question_candidate("implementing", "vadi", &n);
+    run(&b, &n).assert("s4t5 post-lock human_question from implementing", 0);
+}
+
+#[test]
+fn s4t5_human_question_from_parallel_implementing_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    s4t5_working_baton("parallel_implementing", &b);
+    s4t5_human_question_candidate("parallel_implementing", "team", &n);
+    run(&b, &n).assert(
+        "s4t5 post-lock human_question from parallel_implementing",
+        0,
+    );
+}
+
+#[test]
+fn s4t5_human_question_from_test_creation_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    s4t5_working_baton("test_creation", &b);
+    s4t5_human_question_candidate("test_creation", "team", &n);
+    run(&b, &n).assert("s4t5 post-lock human_question from test_creation", 0);
+}
+
+#[test]
+fn s4t5_human_question_from_cross_fixing_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    s4t5_working_baton("cross_fixing", &b);
+    s4t5_human_question_candidate("cross_fixing", "team", &n);
+    run(&b, &n).assert("s4t5 post-lock human_question from cross_fixing", 0);
+}
+
+#[test]
+fn s4t5_human_question_from_phase_fixing_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    s4t5_working_baton("phase_fixing", &b);
+    s4t5_human_question_candidate("phase_fixing", "vadi", &n);
+    run(&b, &n).assert("s4t5 post-lock human_question from phase_fixing", 0);
+}
+
+#[test]
+fn s4t5_human_question_from_cross_review_illegal_24() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    s4t5_working_baton("cross_review", &b);
+    s4t5_human_question_candidate("cross_review", "team", &n);
+    run(&b, &n).assert("s4t5 human_question NOT allowed from cross_review", 24);
+}
+
+#[test]
+fn s4t5_human_question_from_deep_review_illegal_24() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    s4t5_working_baton("deep_review", &b);
+    s4t5_human_question_candidate("deep_review", "prativadi", &n);
+    run(&b, &n).assert("s4t5 human_question NOT allowed from deep_review", 24);
+}
+
+#[test]
+fn s4t5_human_question_from_deslop_illegal_24() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    s4t5_working_baton("deslop", &b);
+    s4t5_human_question_candidate("deslop", "vadi", &n);
+    run(&b, &n).assert("s4t5 human_question NOT allowed from deslop", 24);
+}
+
+#[test]
+fn s4t5_human_question_from_termination_review_illegal_24() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    s4t5_working_baton("termination_review", &b);
+    s4t5_human_question_candidate("termination_review", "team", &n);
+    run(&b, &n).assert(
+        "s4t5 human_question NOT allowed from termination_review",
+        24,
+    );
+}
+
+#[test]
+fn s4t5_human_question_resume_roundtrip_from_working_state() {
+    // Enter human_question from implementing, then resume back to implementing —
+    // the recorded resume fields restore the exact prior state.
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "human_question", "human", 4, |v| {
+        v["phase"] = json!(1);
+        v["master_plan_locked"] = json!(true);
+        v["question"] = json!("Human, should we keep going?");
+        v["resume_assignee"] = json!("vadi");
+        v["resume_status"] = json!("implementing");
+    });
+    make_baton_v2(&n, "implementing", "vadi", 5, |v| {
+        v["phase"] = json!(1);
+        v["master_plan_locked"] = json!(true);
+    });
+    run(&b, &n).assert("s4t5 human_question resumes back to the working state", 0);
+}
+
+// ===========================================================================
+// S4-T7: review-mode deep_review -> phase_fixing.
+// ===========================================================================
+
+#[test]
+fn s4t7_review_mode_deep_review_to_phase_fixing_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deep_review", "prativadi", 4, |v| {
+        v["mode"] = json!("review");
+        v["phase"] = json!("review");
+        set_loop_count(v, "deep_review:phase_fixing", 0);
+    });
+    make_baton_v2(&n, "phase_fixing", "vadi", 5, |v| {
+        v["mode"] = json!("review");
+        v["phase"] = json!("review");
+        set_loop_count(v, "deep_review:phase_fixing", 1);
+    });
+    run(&b, &n).assert(
+        "s4t7 review-mode deep_review->phase_fixing hands fixes back to vadi",
         0,
     );
 }
