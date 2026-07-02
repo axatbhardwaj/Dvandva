@@ -1233,3 +1233,36 @@ fn standalone_accepts_retire_port_with_two_line_wrapped_no_skill_touches_prose()
     let r = run4_standalone_agents::report(d.path());
     assert!(r.passed(), "expected clean, failures: {}", r.failures());
 }
+
+// phase4-research aggregator: artifacts must be chained against
+// `<root>/superpowers`, never the raw root arg (the shell aggregator invoked
+// lint-artifacts with its default target; forwarding the root verbatim would
+// reject every repo's own README.md as a "generated Markdown artifact").
+#[test]
+fn phase4_aggregator_scopes_artifacts_to_superpowers_dir() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_dvandva"))
+        .args(["lint", "phase4-research", &d.path().display().to_string()])
+        .output()
+        .expect("run dvandva lint phase4-research");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !stdout.contains("generated Markdown artifacts are not allowed"),
+        "aggregator leaked the raw root into the artifacts lint:\n{stdout}"
+    );
+
+    // And when superpowers/ does hold a stray .md, the scoped chain flags it.
+    fs::create_dir_all(d.path().join("superpowers")).unwrap();
+    w(d.path(), "superpowers/stray.md", "# generated\n");
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_dvandva"))
+        .args(["lint", "phase4-research", &d.path().display().to_string()])
+        .output()
+        .expect("run dvandva lint phase4-research");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("generated Markdown artifacts are not allowed"),
+        "scoped artifacts chain missed superpowers/stray.md:\n{stdout}"
+    );
+    assert_eq!(out.status.code(), Some(1));
+}

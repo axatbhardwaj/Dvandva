@@ -1644,7 +1644,11 @@ pub fn run(args: &[String]) -> i32 {
     if crate::lint::skill_phase3::run(args) != 0 {
         failed = true;
     }
-    if crate::lint::artifacts::run(args) != 0 {
+    // The shell aggregator chained lint-artifacts with its DEFAULT target
+    // (`<root>/superpowers`), never the repo root itself — forwarding the raw
+    // root would reject the repo's own README.md as a generated artifact.
+    let artifacts_target = root.join("superpowers").display().to_string();
+    if crate::lint::artifacts::run(&[artifacts_target]) != 0 {
         failed = true;
     }
     if failed {
