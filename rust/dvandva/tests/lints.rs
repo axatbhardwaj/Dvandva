@@ -1654,9 +1654,9 @@ fn skills_lint_rejects_multiple_json_fences() {
     );
 }
 
-// The full lint against the real repo tree. It only goes green once the
-// hardening docs wave lands the status-catalog lines, the HISTORICAL markers,
-// and the byte-identical channel-doc copy, so it is ignored until then.
+// The full lint against the real repo tree — an active CI guard now that the
+// hardening docs wave landed the status-catalog lines, HISTORICAL markers,
+// and the byte-identical channel-doc copy.
 #[test]
 fn parity_live_tree_passes() {
     let root = dvandva::lint::resolve_root(&[]);

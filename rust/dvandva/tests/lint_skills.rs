@@ -136,11 +136,10 @@ fn role_skill_with_block(name: &str, description: &str, block: &Value) -> String
 
 // --- real repo skill files ---
 //
-// S5-T2 (D5): the live vadi/prativadi SKILL.md still carry v1 inline contract
-// blocks; the docs wave (ordered AFTER this WE3 engine wave) swaps them to v2.
-// Until then `dvandva lint skills` on the real tree FAILS by design, so these two
-// real-tree assertions are #[ignore]d — the docs wave un-ignores them once the
-// SKILL.md blocks are v2. The v2 accept path is covered self-contained below.
+// S5-T2 (D5): the docs wave (ordered AFTER the WE3 engine wave) swapped the
+// vadi/prativadi SKILL.md inline contract blocks to v2, so these two real-tree
+// assertions run as active guards. The v2 accept path is also covered
+// self-contained below.
 
 #[test]
 fn vadi_role_skill_passes_full_lint() {

@@ -24,7 +24,7 @@ use crate::Role;
 pub struct Baton {
     /// Schema tag, e.g. `dvandva.baton.v2`.
     pub schema: String,
-    /// Lifecycle status (one of 21 catalog values).
+    /// Lifecycle status (one of 22 catalog values).
     pub status: Status,
     /// The actor the baton is currently handed to.
     pub assignee: Assignee,
