@@ -19,6 +19,8 @@ mod cmd;
 
 use std::process::ExitCode;
 
+use dvandva::hooks::GIT_HOOK_NAMES;
+
 const VERSION_LINE: &str = "dvandva 2.0.0-alpha.2";
 
 const USAGE: &str = "\
@@ -34,36 +36,6 @@ Lints:     lint <artifacts|skills|protocol-phase1|skill-phase3|phase4-research|
 
 Multicall binary: when invoked through a git-hook symlink (pre-commit,
 prepare-commit-msg, ...) the hook name is taken from argv[0].";
-
-/// Canonical client-side git hook names (mirrors the hook installer's
-/// pass-through stub list). `pre-commit` and `prepare-commit-msg` carry
-/// Dvandva behavior; the rest delegate to the prior hook chain.
-const GIT_HOOK_NAMES: [&str; 24] = [
-    "applypatch-msg",
-    "pre-applypatch",
-    "post-applypatch",
-    "pre-commit",
-    "pre-merge-commit",
-    "prepare-commit-msg",
-    "commit-msg",
-    "post-commit",
-    "pre-rebase",
-    "post-checkout",
-    "post-merge",
-    "pre-push",
-    "pre-receive",
-    "update",
-    "proc-receive",
-    "post-receive",
-    "post-update",
-    "reference-transaction",
-    "push-to-checkout",
-    "pre-auto-gc",
-    "post-rewrite",
-    "sendemail-validate",
-    "fsmonitor-watchman",
-    "post-index-change",
-];
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();

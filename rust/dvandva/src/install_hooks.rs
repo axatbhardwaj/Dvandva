@@ -30,6 +30,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::gitcfg::{self, git, git_stdout, repo_toplevel};
+use crate::hooks::GIT_HOOK_NAMES;
 
 /// Prior sentinel recorded when there was no prior hooksPath (or it was self).
 const SENTINEL_DEFAULT: &str = "__DVANDVA_DEFAULT__";
@@ -37,36 +38,6 @@ const SENTINEL_DEFAULT: &str = "__DVANDVA_DEFAULT__";
 const PENDING_ROOT_BASELINE: &str = "__DVANDVA_ROOT_PENDING__";
 /// The gitignored, per-repo Dvandva hook dir, relative to the repo root.
 const HOOK_REL: &str = ".dvandva/githooks";
-
-/// Canonical client-side git hook names enumerated for pass-through stubs.
-/// Mirrors `main.rs`'s `GIT_HOOK_NAMES` (a binary-private const) and the shell
-/// installer's `GIT_HOOK_NAMES` array.
-const GIT_HOOK_NAMES: [&str; 24] = [
-    "applypatch-msg",
-    "pre-applypatch",
-    "post-applypatch",
-    "pre-commit",
-    "pre-merge-commit",
-    "prepare-commit-msg",
-    "commit-msg",
-    "post-commit",
-    "pre-rebase",
-    "post-checkout",
-    "post-merge",
-    "pre-push",
-    "pre-receive",
-    "update",
-    "proc-receive",
-    "post-receive",
-    "post-update",
-    "reference-transaction",
-    "push-to-checkout",
-    "pre-auto-gc",
-    "post-rewrite",
-    "sendemail-validate",
-    "fsmonitor-watchman",
-    "post-index-change",
-];
 
 /// How the `pre-commit` / `prepare-commit-msg` wrappers were materialized.
 enum MaterializeMode {

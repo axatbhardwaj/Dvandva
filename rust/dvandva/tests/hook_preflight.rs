@@ -24,8 +24,8 @@
 //!   against a repo with nothing staged and asserts the same outcome
 //!   (`result=ok`, delegated wrapper adopted, prior recorded).
 //!
-//! RE-KEYED WITHOUT A DEDICATED TEST (documented, not silently dropped):
-//! `install_failed` / `broken_chain` / `probe_failed` are implemented for
+//! RE-KEYED, PARTIALLY WITHOUT A DEDICATED TEST (documented, not silently
+//! dropped): `broken_chain` / `probe_failed` are implemented for
 //! shell-output fidelity (exact reason tokens preserved) but are DEFENSIVE,
 //! UNREACHABLE branches through the CLI's normal flow post-port:
 //! `install_hooks::run_install`'s own internal functional probe (with full
@@ -40,6 +40,14 @@
 //! ran; there is no equivalent staged source to corrupt anymore. See
 //! `rust/dvandva/tests/install_hooks.rs` for the adjacent installer-level
 //! probe/rollback coverage this now depends on.
+//!
+//! `install_failed`, by contrast, IS reachable through ordinary filesystem
+//! failure, not just adversarial tampering: `run_install` calls
+//! `fs::create_dir_all(".dvandva/githooks")` before any probing happens, and
+//! that call fails whenever `.dvandva` already exists as a non-directory
+//! (a stray file, for example). See
+//! `dvandva_path_is_a_file_reports_install_failed` below for the dedicated
+//! regression.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -237,6 +245,28 @@ fn role_mismatch_exits_1() {
         stdout(&out)
     );
     assert!(!repo.join(HOOK_REL).exists());
+}
+
+// ===========================================================================
+// (B7) install_failed is reachable through ordinary filesystem failure: a
+// `.dvandva` path that already exists as a FILE (not a directory) makes
+// `run_install`'s `fs::create_dir_all(".dvandva/githooks")` fail before any
+// probing happens.
+// ===========================================================================
+#[test]
+fn dvandva_path_is_a_file_reports_install_failed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    fs::write(repo.join(".dvandva"), "not a directory").unwrap();
+
+    let out = hook_preflight("vadi", repo, Some("vadi"), &[]);
+    assert_eq!(code(&out), 1, "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("reason=install_failed"),
+        "stdout: {}",
+        stdout(&out)
+    );
 }
 
 // A role matching (or absent) DVANDVA_ROLE proceeds normally.

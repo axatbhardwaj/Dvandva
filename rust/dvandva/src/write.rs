@@ -688,7 +688,7 @@ fn decide_transition(
                 (_, new_c, _) => {
                     let got = new_c
                         .map(|n| n.to_string())
-                        .unwrap_or_else(|| "0".to_string());
+                        .unwrap_or_else(|| loop_count_raw_display(cand, &edge));
                     loop_reason = format!("bad_loop_counts edge={edge} count={got}");
                 }
             }
@@ -2274,6 +2274,24 @@ fn loop_count(doc: &Value, edge: &str) -> Option<u64> {
         Some(Value::Number(n)) => n.as_u64(),
         Some(Value::Null) | Some(Value::Bool(false)) => Some(0),
         _ => None,
+    }
+}
+
+/// The raw candidate value backing a [`loop_count`] `None` (malformed)
+/// result, for echoing in a `bad_loop_counts` diagnostic — mirrors the
+/// shell's `jq -r --arg edge "$edge" '(.loop_counts // {})[$edge] // 0'`,
+/// which prints the actual offending value (a string raw/unquoted, a
+/// non-scalar as its JSON text) rather than a canned "0".
+fn loop_count_raw_display(doc: &Value, edge: &str) -> String {
+    let counts = match field(doc, "loop_counts") {
+        Some(Value::Object(m)) => m,
+        None | Some(Value::Null) | Some(Value::Bool(false)) => return "0".to_string(),
+        _ => return "invalid".to_string(), // loop_counts is a non-object -> jq index error
+    };
+    match counts.get(edge) {
+        None | Some(Value::Null) | Some(Value::Bool(false)) => "0".to_string(),
+        Some(Value::String(s)) => s.clone(),
+        Some(other) => other.to_string(),
     }
 }
 

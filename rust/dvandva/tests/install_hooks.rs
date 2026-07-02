@@ -476,6 +476,40 @@ fn unborn_repo_records_pending_baseline() {
     assert_eq!(local_cfg(repo, "dvandva.hooksAdoptedAtInclusive"), "true");
 }
 
+// (B6) After the first commit lands, a re-install backfills the pending
+// baseline to the repo's actual root commit sha, inclusive.
+#[test]
+fn unborn_repo_then_first_commit_backfills_root_sha_baseline() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo_unborn(repo);
+
+    assert_eq!(code(&install(repo, &[])), 0);
+    assert_eq!(local_cfg(repo, "dvandva.hooksAdoptedAt"), PENDING_ROOT);
+
+    fs::write(repo.join("first.txt"), "x").unwrap();
+    git(repo, &["add", "first.txt"]);
+    let commit_out = commit(repo, None, "first commit");
+    assert_eq!(code(&commit_out), 0, "stderr: {}", stderr(&commit_out));
+
+    let out = install(repo, &[]);
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+
+    let root_sha = String::from_utf8_lossy(
+        &git(repo, &["rev-list", "--max-parents=0", "--reverse", "HEAD"]).stdout,
+    )
+    .lines()
+    .next()
+    .unwrap_or_default()
+    .to_string();
+    assert!(
+        !root_sha.is_empty(),
+        "expected a resolvable root commit sha"
+    );
+    assert_eq!(local_cfg(repo, "dvandva.hooksAdoptedAt"), root_sha);
+    assert_eq!(local_cfg(repo, "dvandva.hooksAdoptedAtInclusive"), "true");
+}
+
 // ===========================================================================
 // End-to-end: the materialized symlink chain actually fires.
 // ===========================================================================
@@ -655,7 +689,11 @@ fn linked_worktree_install_does_not_bypass_sibling() {
         ],
     );
     if !added.status.success() {
-        // Linked-worktree fixture infeasible in this environment; skip.
+        eprintln!(
+            "SKIP linked_worktree_install_does_not_bypass_sibling: `git worktree add` failed \
+             in this environment: {}",
+            String::from_utf8_lossy(&added.stderr)
+        );
         return;
     }
 

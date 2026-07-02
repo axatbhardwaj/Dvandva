@@ -27,9 +27,22 @@ condition, and the helper keeps polling until this role owns the baton, the
 baton reaches post-handshake done, it enters human_question / human_decision, or
 the user interrupts. termination_review is an active handoff state, not terminal.
 
+With --allow-missing, a missing baton file does not exit 21 immediately; the
+helper instead sleeps INTERVAL and retries until the file appears or --finite
+--max-wait elapses (returns 20 on timeout).
+
 --persist is accepted for older call sites and is now the default. Use
 --persist-max for a total wall-clock cap (0 = uncapped); --finite restores the
-old single-heartbeat exit-20 behavior.";
+old single-heartbeat exit-20 behavior.
+
+Use --since-checkpoint after installing a handoff checkpoint: the helper keeps
+polling while the selected baton remains at or below that checkpoint, even when
+the current team-owned state lists this role in active_roles. Terminal done,
+human_question, and human_decision still stop immediately.
+
+Use --until-actionable in team-owned states to keep polling until this role has
+actionable work, not merely because active_roles names it. This prevents a
+parallel_implementing role from waking while only the peer has ready chunks.";
 
 const RUN_ID_UNSAFE: &str =
     "DVANDVA_RUN_ID must be one safe path segment (letters, numbers, dot, underscore, dash; no slash or '..')";

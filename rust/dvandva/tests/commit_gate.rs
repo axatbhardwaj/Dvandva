@@ -610,6 +610,36 @@ fn allowed_role_delegates_and_stamps() {
     assert!(has_trailer(repo, 8), "body: {}", head_body(repo));
 }
 
+// (B4 regression) A PRIOR pre-commit that exits non-zero must propagate that
+// EXACT code when the Dvandva pre-commit symlink is invoked DIRECTLY (not
+// through `git commit`). Every other pre-commit prior-chain case above uses
+// an exit-0 prior, so a regression swapping the `exec()` process replacement
+// for a `status()`-then-`return 0` implementation would go uncaught.
+#[test]
+fn direct_invocation_propagates_prior_nonzero_exit() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    let hookdir = install_symlink_hooks(repo, ".dvandva/githooks", &["pre-commit"]);
+
+    write_hook(
+        &repo.join(".prior/pre-commit"),
+        "#!/usr/bin/env bash\nexit 42\n",
+    );
+    git(
+        repo,
+        &["config", "--local", "dvandva.priorHooksPath", ".prior"],
+    );
+
+    // No active baton -> the gate is a no-op and delegates straight to the
+    // prior chain.
+    let out = base_cmd(hookdir.join("pre-commit"))
+        .current_dir(repo)
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 42, "stderr: {}", stderr(&out));
+}
+
 // (o stub) Pass-through hook forwards argv unchanged and propagates exit code.
 #[test]
 fn passthrough_forwards_argv_and_exit() {

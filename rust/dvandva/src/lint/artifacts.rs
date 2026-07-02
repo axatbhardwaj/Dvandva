@@ -240,7 +240,7 @@ fn lint_html_file(file: &Path, base: &Path, root_dir: &Path, failures: &mut i32)
     }
 
     let meta_tag_re = Regex::new(
-        r#"<script[^>]+type="application/json"[^>]+id="dvandva-artifact-meta"|<script[^>]+id="dvandva-artifact-meta"[^>]+type="application/json""#,
+        r#"(?i)<script[^>]+type="application/json"[^>]+id="dvandva-artifact-meta"|<script[^>]+id="dvandva-artifact-meta"[^>]+type="application/json""#,
     )
     .expect("static regex");
     if any_line_matches(&content, &meta_tag_re) {
@@ -338,7 +338,6 @@ fn check_section_id(rel: &str, section: &str, content: &str, failures: &mut i32)
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn check_marker(
     rel: &str,
     content: &str,

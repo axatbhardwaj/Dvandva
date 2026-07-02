@@ -72,3 +72,11 @@ the engines; the plugin no longer bundles executables.
   when a field isn't a scalar. Real Dvandva batons always carry `status`/
   `assignee`/`branch` as strings, so this is an unreachable, synthetic-only
   divergence.
+- **Local-dir marketplace paths in `install-codex`'s app-server RPC
+  fallback.** A local directory argument is canonicalized (symlinks
+  resolved) before being passed to the app-server, unlike the shell's
+  `cd "$dir" && pwd`, which preserves a symlinked path component.
+- **Permission-denied candidate/baton files.** `read_json_lenient` maps any
+  read failure — missing file or permission-denied — to the same "missing"
+  outcome, so an existing-but-unreadable file surfaces as the missing-file
+  exit (21) rather than the shell's invalid-JSON exit (22).

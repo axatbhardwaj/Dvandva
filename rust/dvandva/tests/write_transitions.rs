@@ -1725,6 +1725,30 @@ fn v2_loop_count_first_increment_accepted() {
     run(&b, &n).assert("v2 loop count first increment is accepted", 0);
 }
 
+// (B2) A malformed (non-integer) candidate loop_counts value echoes the RAW
+// candidate value in the diagnostic, matching the shell's
+// `jq -r ... (.loop_counts // {})[$edge] // 0`, instead of a canned "0".
+#[test]
+fn v2_loop_count_malformed_candidate_value_echoes_raw_value() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deep_review", "prativadi", 4, |v| {
+        v["disagreement_cap"] = json!(3);
+        set_loop_count(v, "deep_review:phase_fixing", 1);
+    });
+    make_baton_v2(&n, "phase_fixing", "vadi", 5, |v| {
+        v["disagreement_cap"] = json!(3);
+        let mut map = serde_json::Map::new();
+        map.insert("deep_review:phase_fixing".to_string(), json!("bogus"));
+        v["loop_counts"] = Value::Object(map);
+    });
+    run(&b, &n).assert_contains(
+        "v2 malformed loop count echoes the raw candidate value",
+        23,
+        "bad_loop_counts edge=deep_review:phase_fixing count=bogus",
+    );
+}
+
 #[test]
 fn v2_loop_cap_rejects_edges_table() {
     let cases = [

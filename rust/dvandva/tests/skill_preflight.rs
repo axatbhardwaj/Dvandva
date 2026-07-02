@@ -302,14 +302,16 @@ mod role_skill_contract {
     });
 
     // Re-keyed: the bundled `scripts/install-dvandva-hooks.sh` invocation no
-    // longer exists; the equivalent direct-usage instruction to reject is
-    // `dvandva install-hooks` (the ported subcommand). Preflight owns
-    // calling it in-process.
+    // longer exists; the equivalent direct-usage instruction to reject is an
+    // imperative "run/bash dvandva install-hooks" instruction (the ported
+    // subcommand). Preflight owns calling it in-process. Narrowed from a
+    // bare `dvandva\s+install-hooks` match (which banned any mention,
+    // including a CLI-reference table row) to imperative framing only.
     live_tree_test!(does_not_require_direct_install_hooks_invocation, {
         for (path, role) in role_skills() {
             reject_match(
                 &path,
-                r"dvandva\s+install-hooks",
+                r"run\s+.{0,12}dvandva\s+install-hooks|bash\s+.{0,12}dvandva\s+install-hooks",
                 &format!("{role} skill does not require directly invoking dvandva install-hooks"),
             );
         }
@@ -918,10 +920,12 @@ mod readme_contract {
 
     // Re-keyed: README must not tell users to run `dvandva install-hooks`
     // directly — the preflight subcommand owns calling it in-process.
+    // Narrowed to imperative "run/bash dvandva install-hooks" framing so a
+    // CLI-reference table row that merely mentions the subcommand passes.
     live_tree_test!(does_not_instruct_direct_install_hooks_usage, {
         reject_match(
             &readme(),
-            r"dvandva\s+install-hooks",
+            r"run\s+.{0,12}dvandva\s+install-hooks|bash\s+.{0,12}dvandva\s+install-hooks",
             "README does not document running dvandva install-hooks directly as a user instruction",
         );
     });
@@ -985,11 +989,13 @@ mod final_triplet_contract {
 
     // Re-keyed: reject direct `dvandva install-hooks` usage instructions
     // (preflight owns calling it in-process), not the deleted shell script.
+    // Narrowed to imperative "run/bash dvandva install-hooks" framing so a
+    // CLI-reference table row that merely mentions the subcommand passes.
     live_tree_test!(does_not_document_direct_install_hooks_as_role_preflight, {
         for (path, label) in final_triplet_files() {
             reject_match(
                 &path,
-                r"dvandva\s+install-hooks",
+                r"run\s+.{0,12}dvandva\s+install-hooks|bash\s+.{0,12}dvandva\s+install-hooks",
                 &format!("{label} does not document running dvandva install-hooks directly as the role preflight"),
             );
         }

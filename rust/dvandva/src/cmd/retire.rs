@@ -84,6 +84,10 @@ pub fn run(args: &[String]) -> i32 {
             code
         }
         Mode::Restore(dir) => {
+            if dir.is_empty() {
+                eprintln!("ERROR: --restore requires a backup directory");
+                return 1;
+            }
             let (stdout, stderr, code) = retire::run_restore(&paths, &dir);
             print!("{stdout}");
             if !stderr.is_empty() {

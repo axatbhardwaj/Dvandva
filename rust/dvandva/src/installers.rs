@@ -15,6 +15,7 @@
 //! no subprocess spawn of the `dvandva` binary itself.
 
 use std::env;
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{ChildStdin, Command, Output, Stdio};
@@ -269,11 +270,22 @@ fn already_present_pattern() -> Regex {
 
 /// `${CODEX_HOME:-$HOME/.codex}`.
 fn codex_home_dir() -> PathBuf {
-    match env::var_os("CODEX_HOME") {
+    compute_codex_home_dir(env::var_os("CODEX_HOME"), env::var_os("HOME"))
+}
+
+/// Pure computation behind [`codex_home_dir`], split out for testability
+/// without mutating process-global environment variables.
+///
+/// Mirrors the shell's literal `${HOME}/.codex` string concatenation: an
+/// empty or unset `HOME` still yields the absolute path `/.codex`, not the
+/// current-directory-relative `.codex` that `PathBuf::join` would produce
+/// for an empty base.
+fn compute_codex_home_dir(codex_home: Option<OsString>, home: Option<OsString>) -> PathBuf {
+    match codex_home {
         Some(value) if !value.is_empty() => PathBuf::from(value),
         _ => {
-            let home = env::var_os("HOME").unwrap_or_default();
-            PathBuf::from(home).join(".codex")
+            let home = home.unwrap_or_default();
+            PathBuf::from(format!("{}/.codex", home.to_string_lossy()))
         }
     }
 }
@@ -436,6 +448,9 @@ fn install_via_app_server_rpc(marketplace_path: &Path) -> Result<(), AppServerEr
     let result = run_app_server_handshake(&mut stdin, &rx, marketplace_path);
 
     drop(stdin);
+    // The shell used SIGTERM, then a grace period, then SIGKILL; this sends
+    // SIGKILL only, since std has no portable SIGTERM without a new
+    // dependency and the app-server subprocess here is short-lived.
     let _ = child.kill();
     let _ = child.wait();
     let _ = reader_handle.join();
@@ -612,6 +627,34 @@ mod tests {
         std::fs::write(&other, r#"{"name": "somethingelse"}"#).unwrap();
 
         assert!(find_dvandva_marketplace_json(root.path()).is_none());
+    }
+
+    #[test]
+    fn compute_codex_home_dir_empty_or_unset_home_yields_absolute_path() {
+        assert_eq!(
+            compute_codex_home_dir(None, Some(OsString::new())),
+            PathBuf::from("/.codex")
+        );
+        assert_eq!(compute_codex_home_dir(None, None), PathBuf::from("/.codex"));
+    }
+
+    #[test]
+    fn compute_codex_home_dir_joins_home_when_set() {
+        assert_eq!(
+            compute_codex_home_dir(None, Some(OsString::from("/home/user"))),
+            PathBuf::from("/home/user/.codex")
+        );
+    }
+
+    #[test]
+    fn compute_codex_home_dir_prefers_codex_home_env() {
+        assert_eq!(
+            compute_codex_home_dir(
+                Some(OsString::from("/opt/codex")),
+                Some(OsString::from("/home/user"))
+            ),
+            PathBuf::from("/opt/codex")
+        );
     }
 
     #[test]

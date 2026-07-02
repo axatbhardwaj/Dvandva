@@ -30,6 +30,41 @@ use crate::commit_gate;
 use crate::gitcfg::{git_stdout, repo_toplevel};
 use crate::util::{read_json_lenient, JsonReadError};
 
+/// Canonical client-side git hook names. Shared by two consumers: `main.rs`'s
+/// multicall `argv[0]` dispatch (which hook basenames route to
+/// [`run`] instead of a normal subcommand) and
+/// [`crate::install_hooks`]'s pass-through stub materialization (which
+/// canonical hook names get a symlink stub for every executable prior hook).
+/// `pre-commit` and `prepare-commit-msg` carry Dvandva behavior
+/// ([`run_pre_commit`], [`run_prepare_commit_msg`]); the rest pass through to
+/// the prior hook chain ([`run_pass_through`]).
+pub const GIT_HOOK_NAMES: [&str; 24] = [
+    "applypatch-msg",
+    "pre-applypatch",
+    "post-applypatch",
+    "pre-commit",
+    "pre-merge-commit",
+    "prepare-commit-msg",
+    "commit-msg",
+    "post-commit",
+    "pre-rebase",
+    "post-checkout",
+    "post-merge",
+    "pre-push",
+    "pre-receive",
+    "update",
+    "proc-receive",
+    "post-receive",
+    "post-update",
+    "reference-transaction",
+    "push-to-checkout",
+    "pre-auto-gc",
+    "post-rewrite",
+    "sendemail-validate",
+    "fsmonitor-watchman",
+    "post-index-change",
+];
+
 /// Entry point for a git-hook invocation. `name` is the hook name (the
 /// invoking symlink's basename, or the `git-hook <name>` argument); `args` are
 /// the arguments git passed after `argv[0]`.

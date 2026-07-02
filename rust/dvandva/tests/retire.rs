@@ -802,6 +802,34 @@ fn restore_missing_argument_exits_1() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// (B9) An explicit empty-string --restore value must be rejected at
+// dispatch time with the shell's exact message, instead of proceeding and
+// failing later with a confusing "Manifest not found: /manifest.json".
+// ---------------------------------------------------------------------------
+#[test]
+fn restore_empty_string_argument_exits_1() {
+    let fixture = Fixture::new();
+    let fake_home =
+        fixture.build_fake_home("home-restore-empty-arg", true, CacheCompleteness::Full);
+
+    let output = run_retire(&fake_home, &["--restore", ""]);
+    assert_eq!(output.status.code(), Some(1));
+    let text = combined(&output);
+    assert!(
+        text.contains("ERROR: --restore requires a backup directory"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("backup directory argument"),
+        "empty-string case must not reuse the missing-argument message: {text}"
+    );
+    assert!(
+        !text.contains("Manifest not found"),
+        "must reject before attempting to read a manifest: {text}"
+    );
+}
+
 #[test]
 fn help_flag_exits_0() {
     let fixture = Fixture::new();

@@ -182,6 +182,26 @@ fn external_css_resource_is_rejected() {
     assert_exit(&[dir.path().to_str().unwrap()], 1);
 }
 
+// --- metadata tag presence check is case-insensitive (B10) ---
+
+#[test]
+fn uppercase_meta_tag_passes_presence_check() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("uppercase-meta.html");
+    std::fs::write(
+        &file,
+        "<!doctype html>\n<html lang=\"en\">\n<head>\n  <meta charset=\"utf-8\">\n  <title>Uppercase meta tag test</title>\n  <style>:root{color-scheme: dark;--bg:#090b10}body{background:var(--bg);color:#eef3f8}</style>\n</head>\n<body>\n<SCRIPT TYPE=\"application/json\" ID=\"dvandva-artifact-meta\">\n{\"schema\": \"dvandva.artifact.test.v1\", \"artifact_type\": \"test\"}\n</SCRIPT>\n</body>\n</html>\n",
+    )
+    .unwrap();
+
+    let out = run_lint(&[file.to_str().unwrap()]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("includes Dvandva artifact metadata block"),
+        "presence check must pass for an uppercase <SCRIPT ... ID=\"dvandva-artifact-meta\"> tag: {stdout}"
+    );
+}
+
 // --- generated Markdown is rejected ---
 
 #[test]
