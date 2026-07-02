@@ -401,7 +401,8 @@ fn notify_plain(cfg: &WaitConfig, event: &str, run_id: &str, next_action: &str) 
 }
 
 /// Best-effort webhook notification for a `human_question` pause, carrying the
-/// question text and resume fields instead of `next_action`.
+/// question text (truncated to 300 chars, per §F3) and resume fields instead
+/// of `next_action`.
 fn notify_question(
     cfg: &WaitConfig,
     run_id: &str,
@@ -410,7 +411,8 @@ fn notify_question(
     resume_status: &str,
 ) {
     let body = format!(
-        "run_id={run_id} event=human_question question={question} resume_assignee={resume_assignee} resume_status={resume_status}"
+        "run_id={run_id} event=human_question question={} resume_assignee={resume_assignee} resume_status={resume_status}",
+        truncate_chars(question, 300)
     );
     send_notify(cfg, "human_question", run_id, &body);
 }

@@ -2411,3 +2411,199 @@ fn notify_posts_on_stalled() {
     assert!(request.contains("event=stalled"), "{request}");
     assert!(request.contains("run_id=alpha"), "{request}");
 }
+
+// ── Fix round 1 (reviewer coverage + truncation) ─────────────────────────────
+
+#[test]
+fn notify_posts_on_own_human_decision() {
+    let d = tmp();
+    let f = d.path().join("human.json");
+    write_baton(&f, "human", "human_decision");
+    let (port, rx) = start_notify_listener();
+    let url = format!("http://127.0.0.1:{port}/");
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "0",
+            "--max-wait",
+            "0",
+            "--notify",
+            &url,
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(11), "{}", o.out);
+    let request = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("notify request");
+    assert!(request.starts_with("POST"), "{request}");
+    assert!(request.contains("event=human_decision"), "{request}");
+    assert!(request.contains("run_id="), "{request}");
+}
+
+#[test]
+fn notify_posts_sibling_human_decision_with_sibling_next_action() {
+    let d = tmp();
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "prativadi",
+        "phase_review",
+        "2026-07-02T09:20:00Z",
+        "codex",
+    );
+    let beta = d.path().join(".dvandva/runs/beta/baton.json");
+    mkparent(&beta);
+    std::fs::write(
+        &beta,
+        r#"{
+  "schema": "dvandva.baton.v2",
+  "run_id": "beta",
+  "assignee": "human",
+  "status": "human_decision",
+  "phase": 2,
+  "checkpoint": 8,
+  "updated_at": "2026-07-02T09:21:00Z",
+  "current_engine": "claude",
+  "next_action": "prativadi merges phase 2"
+}"#,
+    )
+    .unwrap();
+    let (port, rx) = start_notify_listener();
+    let url = format!("http://127.0.0.1:{port}/");
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "vadi",
+            "--persist",
+            "--interval",
+            "1",
+            "--max-wait",
+            "540",
+            "--notify",
+            &url,
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(11), "{}", o.out);
+    let request = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("notify request");
+    assert!(request.starts_with("POST"), "{request}");
+    assert!(request.contains("event=human_decision"), "{request}");
+    assert!(request.contains("run_id=beta"), "{request}");
+    assert!(
+        request.contains("next_action=prativadi merges phase 2"),
+        "{request}"
+    );
+}
+
+#[test]
+fn notify_posts_sibling_human_question_with_sibling_fields() {
+    let d = tmp();
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "vadi",
+        "phase_review",
+        "2026-07-02T09:30:00Z",
+        "codex",
+    );
+    write_named_question_baton(
+        &d.path().join(".dvandva/runs/beta/baton.json"),
+        "beta",
+        "2026-07-02T09:31:00Z",
+        "claude",
+    );
+    let (port, rx) = start_notify_listener();
+    let url = format!("http://127.0.0.1:{port}/");
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "prativadi",
+            "--persist",
+            "--interval",
+            "1",
+            "--max-wait",
+            "540",
+            "--notify",
+            &url,
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(12), "{}", o.out);
+    let request = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("notify request");
+    assert!(request.starts_with("POST"), "{request}");
+    assert!(request.contains("event=human_question"), "{request}");
+    assert!(request.contains("run_id=beta"), "{request}");
+    assert!(
+        request.contains("question=Which scope should Dvandva choose?"),
+        "{request}"
+    );
+    assert!(request.contains("resume_assignee=prativadi"), "{request}");
+    assert!(request.contains("resume_status=spec_review"), "{request}");
+}
+
+#[test]
+fn notify_question_body_truncates_long_question_to_300_chars() {
+    let d = tmp();
+    let long_question = "x".repeat(400);
+    let f = d.path().join("long-question.json");
+    std::fs::write(
+        &f,
+        format!(
+            r#"{{
+  "schema": "dvandva.baton.v1",
+  "assignee": "human",
+  "status": "human_question",
+  "phase": "spec",
+  "checkpoint": 8,
+  "question": "{long_question}",
+  "resume_assignee": "prativadi",
+  "resume_status": "spec_review"
+}}"#
+        ),
+    )
+    .unwrap();
+    let (port, rx) = start_notify_listener();
+    let url = format!("http://127.0.0.1:{port}/");
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "0",
+            "--max-wait",
+            "0",
+            "--notify",
+            &url,
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(12), "{}", o.out);
+    let request = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("notify request");
+    let truncated_question = "x".repeat(300);
+    assert!(
+        request.contains(&format!("question={truncated_question} resume_assignee=")),
+        "{request}"
+    );
+    assert!(!request.contains(&"x".repeat(301)), "{request}");
+}
