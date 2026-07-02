@@ -28,7 +28,8 @@ Status: rewritten 2026-05-14 for richer flow (spec phase + phased implementation
 > deterministic validator. The write helper's hard-risk path floor set is
 > re-expressed against the port: the coordination/helper triggers now cover
 > `rust/dvandva/src/**` and `rust/dvandva/tests/**` in place of the deleted
-> `scripts/*.sh` and `plugins/dvandva/skills/*/scripts/*.sh` patterns. The
+> `scripts/*.sh`, `plugins/dvandva/scripts/*.sh`, and
+> `plugins/dvandva/skills/*/scripts/dvandva-*.sh` patterns. The
 > regression suite is cargo-based: `cargo fmt --check && cargo clippy
 > --all-targets -- -D warnings && cargo test` in `rust/`, plus the `dvandva lint`
 > family.

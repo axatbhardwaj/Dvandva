@@ -110,10 +110,12 @@ $prativadi
 
 The `dvandva` binary IS the Dvandva runtime — the read path, the write path,
 waiting, preflight, git work-gating, and the installers, all in one multicall
-binary. Install it from crates.io:
+binary. Install it from a checkout of this repo (crates.io currently carries
+only the older `2.0.0-alpha.1` read-path prerelease):
 
 ```bash
-cargo install dvandva --version 2.0.0-alpha.2
+cargo install --path rust/dvandva
+# or, once 2.0.0-alpha.2 is published: cargo install dvandva --version 2.0.0-alpha.2
 ```
 
 The binary must be on `PATH` for the Dvandva skills to run. `cargo install`
@@ -162,7 +164,7 @@ The default `run_mode` is `walkaway`: start both sessions once, then let the bat
 | Codex CLI, if using Codex | `codex --version` |
 | Superpowers plugin on every engine running a Dvandva role, hard runtime dependency | `/skills` lists `superpowers:using-superpowers`, `superpowers:brainstorming`, `superpowers:test-driven-development`, and `superpowers:verification-before-completion` |
 | Work happens on a feature branch | `git branch --show-current` is not `main` or `master` |
-| inotify-tools, optional — instant wake on baton handoff instead of interval polling | `inotifywait --help` |
+| none extra for instant wake — the binary's file watcher is built in, with interval polling as fallback | `dvandva wait --role vadi --allow-missing --finite --max-wait 1` |
 
 ## Usage
 
@@ -176,7 +178,7 @@ The active baton is selected in this order: `DVANDVA_BATON_FILE`, then `DVANDVA_
 
 That is foreground waiting, not model polling. The agent resumes when the baton assigns its role again, or stops for completion only when the baton reaches post-handshake `done`. `human_question` and `human_decision` are human-intervention pauses, not completion.
 
-Continuous polling is the default hard rule: `--max-wait` is a heartbeat interval, not permission to stop. The helper keeps polling until the baton assigns the role, reaches post-handshake `done`, enters `human_question` / `human_decision`, or the user interrupts. Use `--until-actionable` for normal walkaway waits so team-owned `active_roles` states do not wake a role until that role has dependency-unblocked actionable work; after a handoff write, combine it with `--since-checkpoint <written_checkpoint>`. `termination_review` is the shared multipart termination state: it keeps both roles active so they either keep polling or stop together after both approve. Final approval and development explainer-review ownership are helper-enforced: `DVANDVA_ROLE=vadi` may raise only `vadi_final_approval` and may add/change only `run_explainer_reviews` entries with `role: "vadi"`; `DVANDVA_ROLE=prativadi` may raise only `prativadi_final_approval` and may add/change only entries with `role: "prativadi"`. `--persist` is accepted for older call sites and is now redundant. `--persist-max <seconds>` adds a total wall-clock cap and exits 23 when reached; in walkaway mode that cap is a shell-budget heartbeat, so the role must immediately re-enter the wait unless the user interrupts. `--finite` is compatibility-only and is not valid for normal walkaway loops. When `inotifywait` is installed the helper wakes the moment the baton changes instead of sleeping the full interval.
+Continuous polling is the default hard rule: `--max-wait` is a heartbeat interval, not permission to stop. The helper keeps polling until the baton assigns the role, reaches post-handshake `done`, enters `human_question` / `human_decision`, or the user interrupts. Use `--until-actionable` for normal walkaway waits so team-owned `active_roles` states do not wake a role until that role has dependency-unblocked actionable work; after a handoff write, combine it with `--since-checkpoint <written_checkpoint>`. `termination_review` is the shared multipart termination state: it keeps both roles active so they either keep polling or stop together after both approve. Final approval and development explainer-review ownership are helper-enforced: `DVANDVA_ROLE=vadi` may raise only `vadi_final_approval` and may add/change only `run_explainer_reviews` entries with `role: "vadi"`; `DVANDVA_ROLE=prativadi` may raise only `prativadi_final_approval` and may add/change only entries with `role: "prativadi"`. `--persist` is accepted for older call sites and is now redundant. `--persist-max <seconds>` adds a total wall-clock cap and exits 23 when reached; in walkaway mode that cap is a shell-budget heartbeat, so the role must immediately re-enter the wait unless the user interrupts. `--finite` is compatibility-only and is not valid for normal walkaway loops. The helper's built-in directory watcher wakes it the moment the baton changes instead of sleeping the full interval; if the watcher cannot start, it falls back to interval polling.
 
 The prativadi can also be launched *before* the vadi has scaffolded the baton. Its preflight detects the missing baton, runs the wait helper with `--allow-missing`, and resumes once the vadi writes the file. Simultaneous-launch dogfooding is therefore safe — no need to order the two starts.
 
