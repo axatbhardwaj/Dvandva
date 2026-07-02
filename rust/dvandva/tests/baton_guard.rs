@@ -95,6 +95,43 @@ fn blocks_relative_baton_json_path() {
     assert_blocked(&out);
 }
 
+#[test]
+fn blocks_multiedit_on_baton_json() {
+    let out = run_guard(payload("MultiEdit", "/repo/.dvandva/baton.json").as_bytes());
+    assert_blocked(&out);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("dvandva next"),
+        "stderr should name `dvandva next`, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("dvandva write"),
+        "stderr should name `dvandva write`, got: {stderr}"
+    );
+}
+
+#[test]
+fn blocks_notebookedit_via_notebook_path() {
+    let out = run_guard(
+        json!({
+            "tool_name": "NotebookEdit",
+            "tool_input": { "notebook_path": "/repo/.dvandva/baton.json" }
+        })
+        .to_string()
+        .as_bytes(),
+    );
+    assert_blocked(&out);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("dvandva next"),
+        "stderr should name `dvandva next`, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("dvandva write"),
+        "stderr should name `dvandva write`, got: {stderr}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Allow cases
 // ---------------------------------------------------------------------------
