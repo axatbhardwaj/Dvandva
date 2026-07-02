@@ -13,6 +13,12 @@ use crate::{emit, util, Role};
 
 const UNSAFE_RUN_ID_MESSAGE: &str = "DVANDVA_RUN_ID must be one safe path segment (letters, numbers, dot, underscore, dash; no slash, backslash, or '..')";
 
+/// Statuses excluded from the resumable set during discovery. A local literal
+/// terminal set — deliberately not coupled to `crate::baton::Status` or
+/// `write.rs` (this consumer's terminal taxonomy is its own, matching the
+/// gate/drift-lint modules' equivalent local sets).
+const RESOLVE_TERMINAL_STATUSES: &[&str] = &["done", "abandoned"];
+
 /// The three selector environment variables consumed by the resolver.
 ///
 /// `run_id: Some("")` intentionally differs from `None`: an empty but present
@@ -194,7 +200,7 @@ fn discover_runs(root: &Path) -> Result<ResolveOutcome, ResolveError> {
             });
         };
         let candidate = RunCandidate::from_value(&value, &file.relative, &file.fallback_run_id);
-        if candidate.status != "done" {
+        if !RESOLVE_TERMINAL_STATUSES.contains(&candidate.status.as_str()) {
             resumable.push(candidate);
         }
     }
@@ -459,6 +465,34 @@ mod tests {
         assert_eq!(
             outcome,
             ResolveOutcome::Create(".dvandva/runs/run-2/baton.json".to_string())
+        );
+    }
+
+    #[test]
+    fn only_abandoned_archives_create_first_free_run_slug() {
+        let root = temp_root("create-abandoned");
+        seed_baton(&root, "run", "abandoned", "2026-07-01T00:00:00Z");
+
+        let outcome = resolve_active_run(Role::Vadi, Some(&root), ResolveEnv::default()).unwrap();
+
+        assert_eq!(
+            outcome,
+            ResolveOutcome::Create(".dvandva/runs/run-2/baton.json".to_string())
+        );
+    }
+
+    #[test]
+    fn abandoned_and_done_are_both_excluded_from_resumable_set() {
+        let root = temp_root("abandoned-mixed");
+        seed_baton(&root, "done-run", "done", "2026-07-01T00:00:00Z");
+        seed_baton(&root, "abandoned-run", "abandoned", "2026-07-01T00:00:00Z");
+        seed_baton(&root, "active-run", "implementing", "2026-07-01T00:00:00Z");
+
+        let outcome = resolve_active_run(Role::Vadi, Some(&root), ResolveEnv::default()).unwrap();
+
+        assert_eq!(
+            outcome,
+            ResolveOutcome::Resolved(".dvandva/runs/active-run/baton.json".to_string())
         );
     }
 }

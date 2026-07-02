@@ -10,12 +10,13 @@
 //! baton — including future/unknown status tokens — is accepted while
 //! malformed JSON fails closed.
 
+use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::gitcfg::repo_toplevel;
+use crate::gitcfg::{git_stdout, repo_toplevel};
 use crate::util::{coalesce, read_json_lenient, JsonReadError};
 
 /// Outcome of a commit-gate evaluation: the process exit code plus the stderr
@@ -48,7 +49,10 @@ impl GateResult {
 /// Shared with [`crate::drift_lint`], which uses the same terminal set to
 /// decide whether an active baton makes unstamped commits reportable drift.
 pub fn is_gate_terminal(status: &str) -> bool {
-    matches!(status, "done" | "human_question" | "human_decision")
+    matches!(
+        status,
+        "done" | "human_question" | "human_decision" | "abandoned"
+    )
 }
 
 fn render_scalar(value: &Value) -> String {
@@ -231,7 +235,7 @@ pub fn evaluate(cwd: &Path, role: Option<&str>) -> GateResult {
 
     // Allow if this role is the assignee or appears in active_roles.
     if role_allowed(value, role) {
-        return GateResult::allow();
+        return check_staged_paths(&repo_root, value);
     }
 
     // Block — emit a clear diagnostic.
@@ -248,6 +252,157 @@ pub fn evaluate(cwd: &Path, role: Option<&str>) -> GateResult {
     GateResult::block(lines)
 }
 
+// ===========================================================================
+// S4-T9: staged-path crosscheck against the active baton's declared scope.
+// ===========================================================================
+
+/// The `DVANDVA_COMMIT_GATE_PATHS` escape hatch: `off` skips the crosscheck,
+/// `warn` prints offenders but allows, anything else (including unset) is the
+/// default `block`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PathsMode {
+    Block,
+    Warn,
+    Off,
+}
+
+fn commit_gate_paths_mode() -> PathsMode {
+    match std::env::var("DVANDVA_COMMIT_GATE_PATHS").ok().as_deref() {
+        Some("off") => PathsMode::Off,
+        Some("warn") => PathsMode::Warn,
+        _ => PathsMode::Block,
+    }
+}
+
+/// `git diff --cached --name-only` in `repo_root`, one path per line.
+fn staged_paths(repo_root: &Path) -> Vec<String> {
+    git_stdout(repo_root, &["diff", "--cached", "--name-only"])
+        .map(|out| {
+            out.lines()
+                .filter(|l| !l.is_empty())
+                .map(str::to_string)
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+/// The baton's declared path scope: `changed_paths` union every `work_split`
+/// chunk's `paths` and `write_paths`. Run-level union across the WHOLE split
+/// (not role-filtered) — simpler, and matches the run-level `changed_paths`
+/// union semantics the baton already carries at the top level.
+fn allowed_paths_from_baton(value: &Value) -> HashSet<String> {
+    let mut allowed = HashSet::new();
+    push_path_strings(&mut allowed, coalesce(value.get("changed_paths")));
+    if let Some(Value::Array(chunks)) = coalesce(value.get("work_split")) {
+        for chunk in chunks {
+            push_path_strings(&mut allowed, coalesce(chunk.get("paths")));
+            push_path_strings(&mut allowed, coalesce(chunk.get("write_paths")));
+        }
+    }
+    allowed
+}
+
+fn push_path_strings(out: &mut HashSet<String>, value: Option<&Value>) {
+    if let Some(Value::Array(items)) = value {
+        for item in items {
+            if let Value::String(s) = item {
+                out.insert(s.clone());
+            }
+        }
+    }
+}
+
+/// `.dvandva/` and `superpowers/` are always exempt from the crosscheck.
+fn is_commit_gate_path_exempt(path: &str) -> bool {
+    path == ".dvandva"
+        || path.starts_with(".dvandva/")
+        || path == "superpowers"
+        || path.starts_with("superpowers/")
+}
+
+/// Conservative LOCAL subset of `write.rs`'s hard-path / security matchers
+/// (`hard_path`/`is_security_path` in `write.rs` are private, not
+/// `pub(crate)`, so they cannot be reused here). This subset only backs the
+/// commit-gate's "recompute the profile floor" reminder line — it is NOT
+/// byte-identical to `write.rs`'s canonical hard-path set, and drift between
+/// the two is a known surface for a future schema-parity lint to guard.
+fn matches_reminder_hard_path(path: &str) -> bool {
+    let base = path.rsplit('/').next().unwrap_or(path);
+    base == ".env"
+        || base.starts_with(".env.")
+        || path.starts_with("secret/")
+        || path.contains("/secret/")
+        || path.starts_with("secrets/")
+        || path.contains("/secrets/")
+        || path.starts_with("credential/")
+        || path.contains("/credential/")
+        || path.starts_with("credentials/")
+        || path.contains("/credentials/")
+        || base == "product.md"
+        || path.starts_with("plugins/dvandva/skills/")
+        || path.starts_with("rust/dvandva/src/")
+}
+
+/// The S4-T9 staged-path crosscheck, run once the ordinary role checks have
+/// already allowed the commit against `value` (the single active baton).
+fn check_staged_paths(repo_root: &Path, value: &Value) -> GateResult {
+    let mode = commit_gate_paths_mode();
+    if mode == PathsMode::Off {
+        return GateResult::allow();
+    }
+
+    let allowed = allowed_paths_from_baton(value);
+    if allowed.is_empty() {
+        // The baton hasn't declared a changed_paths/work_split scope, so
+        // there is nothing to crosscheck staged paths against — fail open,
+        // matching the gate's baseline behavior when it has no opinion.
+        return GateResult::allow();
+    }
+
+    let offenders: Vec<String> = staged_paths(repo_root)
+        .into_iter()
+        .filter(|path| !is_commit_gate_path_exempt(path) && !allowed.contains(path.as_str()))
+        .collect();
+    if offenders.is_empty() {
+        return GateResult::allow();
+    }
+
+    let verb = if mode == PathsMode::Warn {
+        "warning"
+    } else {
+        "blocked"
+    };
+    let mut lines = vec![format!(
+        "DVANDVA_GATE {verb}: {} staged path(s) outside the baton's allowed set.",
+        offenders.len()
+    )];
+    for path in offenders.iter().take(10) {
+        lines.push(format!("  {path}"));
+    }
+    if offenders.len() > 10 {
+        lines.push(format!("  ... and {} more", offenders.len() - 10));
+    }
+
+    let profile = field_str(value, "profile", "");
+    if profile != "full"
+        && offenders
+            .iter()
+            .any(|path| matches_reminder_hard_path(path))
+    {
+        lines.push(
+            "DVANDVA_GATE reminder: a staged path matches the hard-path set while the baton's effective profile is not full — recompute the profile floor.".to_string(),
+        );
+    }
+
+    match mode {
+        PathsMode::Warn => GateResult {
+            code: 0,
+            stderr: lines,
+        },
+        _ => GateResult::block(lines),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -258,6 +413,7 @@ mod tests {
         assert!(is_gate_terminal("done"));
         assert!(is_gate_terminal("human_question"));
         assert!(is_gate_terminal("human_decision"));
+        assert!(is_gate_terminal("abandoned"));
         assert!(!is_gate_terminal("implementing"));
         assert!(!is_gate_terminal(""));
         assert!(!is_gate_terminal("some_future_status"));

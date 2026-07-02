@@ -236,6 +236,24 @@ fn case_j_flags_first_active_baton_bypass_commit() {
 }
 
 // ---------------------------------------------------------------------------
+// S2-T1: an `abandoned` baton is terminal for the shared inactive set drift
+// lint reuses from `commit_gate::is_gate_terminal` — an abandoned-only baton
+// is not an active Dvandva run, so an unstamped commit alongside it is not
+// drift.
+// ---------------------------------------------------------------------------
+#[test]
+fn abandoned_only_baton_is_not_active_for_drift_lint() {
+    let repo = new_git_repo();
+    let root = repo.path();
+    write_baton(root, ".dvandva/baton.json", "abandoned");
+    commit(root, "bypass.txt", &["bypass without trailer"]);
+
+    let (code, out) = run_drift_lint(root, &[]);
+    assert_eq!(code, 0, "output: {out}");
+    assert!(out.contains("no checkpointed commits"), "output: {out}");
+}
+
+// ---------------------------------------------------------------------------
 // (l) An empty git repo (no commits at all) has no drift.
 // ---------------------------------------------------------------------------
 #[test]

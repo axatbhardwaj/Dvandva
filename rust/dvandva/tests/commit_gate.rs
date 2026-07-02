@@ -25,7 +25,8 @@ fn base_cmd<P: AsRef<std::ffi::OsStr>>(program: P) -> Command {
     cmd.env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .env_remove("DVANDVA_ROLE")
-        .env_remove("DVANDVA_HOOK_SELFCHECK");
+        .env_remove("DVANDVA_HOOK_SELFCHECK")
+        .env_remove("DVANDVA_COMMIT_GATE_PATHS");
     cmd
 }
 
@@ -64,6 +65,31 @@ fn make_baton(path: &Path, status: &str, assignee: &str, checkpoint: i64, active
     fs::write(path, json).unwrap();
 }
 
+/// A v2 baton declaring a `changed_paths` scope plus an optional `profile`,
+/// for the S4-T9 staged-path crosscheck tests.
+fn make_baton_with_paths(
+    path: &Path,
+    status: &str,
+    assignee: &str,
+    active_roles: &str,
+    changed_paths: &[&str],
+    profile: &str,
+) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let paths_json = changed_paths
+        .iter()
+        .map(|p| format!("\"{p}\""))
+        .collect::<Vec<_>>()
+        .join(",");
+    let json = format!(
+        "{{\n  \"schema\": \"dvandva.baton.v2\",\n  \"status\": \"{status}\",\n  \
+         \"assignee\": \"{assignee}\",\n  \"checkpoint\": 1,\n  \
+         \"active_roles\": {active_roles},\n  \"profile\": \"{profile}\",\n  \
+         \"changed_paths\": [{paths_json}]\n}}\n"
+    );
+    fs::write(path, json).unwrap();
+}
+
 fn write_hook(path: &Path, body: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(path, body).unwrap();
@@ -88,10 +114,19 @@ fn install_symlink_hooks(repo: &Path, rel_hookdir: &str, names: &[&str]) -> Path
 
 /// Run `dvandva commit-gate` in `repo` with an optional role.
 fn run_gate(repo: &Path, role: Option<&str>) -> Output {
+    run_gate_with_paths_mode(repo, role, None)
+}
+
+/// Run `dvandva commit-gate` in `repo` with an optional role and an optional
+/// `DVANDVA_COMMIT_GATE_PATHS` override (S4-T9).
+fn run_gate_with_paths_mode(repo: &Path, role: Option<&str>, paths_mode: Option<&str>) -> Output {
     let mut cmd = base_cmd(bin());
     cmd.arg("commit-gate").current_dir(repo);
     if let Some(role) = role {
         cmd.env("DVANDVA_ROLE", role);
+    }
+    if let Some(mode) = paths_mode {
+        cmd.env("DVANDVA_COMMIT_GATE_PATHS", mode);
     }
     cmd.output().expect("commit-gate")
 }
@@ -224,6 +259,23 @@ fn gate_terminal_human_decision_exits_0() {
         "[]",
     );
     assert_eq!(code(&run_gate(repo, Some("prativadi"))), 0);
+}
+
+// S2-T1: `abandoned` is a terminal status too — a run that only has an
+// abandoned baton is inactive for gating purposes.
+#[test]
+fn gate_terminal_abandoned_exits_0() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    make_baton(
+        &repo.join(".dvandva/baton.json"),
+        "abandoned",
+        "human",
+        6,
+        "[]",
+    );
+    assert_eq!(code(&run_gate(repo, Some("vadi"))), 0);
 }
 
 // (f) Two active batons -> gate exits 1 (ambiguous).
@@ -378,6 +430,152 @@ fn gate_invalid_role_blocks() {
         "err: {}",
         stderr(&out)
     );
+}
+
+// ===========================================================================
+// S4-T9: commit-gate staged-path crosscheck.
+// ===========================================================================
+
+// A commit whose staged paths are entirely within the baton's declared
+// changed_paths passes.
+#[test]
+fn gate_paths_within_allowed_commits_pass() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    make_baton_with_paths(
+        &repo.join(".dvandva/baton.json"),
+        "implementing",
+        "vadi",
+        "[]",
+        &["allowed.txt"],
+        "standard",
+    );
+    fs::write(repo.join("allowed.txt"), "x").unwrap();
+    git(repo, &["add", "allowed.txt"]);
+
+    assert_eq!(code(&run_gate(repo, Some("vadi"))), 0);
+}
+
+// A staged path outside the baton's allowed set blocks the commit and lists
+// the offender.
+#[test]
+fn gate_paths_offender_blocks_with_listing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    make_baton_with_paths(
+        &repo.join(".dvandva/baton.json"),
+        "implementing",
+        "vadi",
+        "[]",
+        &["allowed.txt"],
+        "standard",
+    );
+    fs::write(repo.join("intruder.txt"), "x").unwrap();
+    git(repo, &["add", "intruder.txt"]);
+
+    let out = run_gate(repo, Some("vadi"));
+    assert_eq!(code(&out), 1);
+    let err = stderr(&out);
+    assert!(
+        err.contains("outside the baton's allowed set"),
+        "err: {err}"
+    );
+    assert!(err.contains("intruder.txt"), "err: {err}");
+}
+
+// DVANDVA_COMMIT_GATE_PATHS=warn prints the offenders but allows the commit.
+#[test]
+fn gate_paths_warn_mode_allows_with_output() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    make_baton_with_paths(
+        &repo.join(".dvandva/baton.json"),
+        "implementing",
+        "vadi",
+        "[]",
+        &["allowed.txt"],
+        "standard",
+    );
+    fs::write(repo.join("intruder.txt"), "x").unwrap();
+    git(repo, &["add", "intruder.txt"]);
+
+    let out = run_gate_with_paths_mode(repo, Some("vadi"), Some("warn"));
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    let err = stderr(&out);
+    assert!(err.contains("intruder.txt"), "err: {err}");
+}
+
+// DVANDVA_COMMIT_GATE_PATHS=off skips the crosscheck entirely.
+#[test]
+fn gate_paths_off_mode_skips() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    make_baton_with_paths(
+        &repo.join(".dvandva/baton.json"),
+        "implementing",
+        "vadi",
+        "[]",
+        &["allowed.txt"],
+        "standard",
+    );
+    fs::write(repo.join("intruder.txt"), "x").unwrap();
+    git(repo, &["add", "intruder.txt"]);
+
+    let out = run_gate_with_paths_mode(repo, Some("vadi"), Some("off"));
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+}
+
+// `.dvandva/` and `superpowers/` paths are always exempt from the crosscheck.
+#[test]
+fn gate_paths_exemptions_respected() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    make_baton_with_paths(
+        &repo.join(".dvandva/baton.json"),
+        "implementing",
+        "vadi",
+        "[]",
+        &["allowed.txt"],
+        "standard",
+    );
+    fs::create_dir_all(repo.join("superpowers")).unwrap();
+    fs::write(repo.join("superpowers/plan.html"), "x").unwrap();
+    git(
+        repo,
+        &["add", "superpowers/plan.html", ".dvandva/baton.json"],
+    );
+
+    assert_eq!(code(&run_gate(repo, Some("vadi"))), 0);
+}
+
+// An offender matching the hard-path reminder set, while the baton's
+// effective profile is not `full`, adds a recompute-floor reminder line.
+#[test]
+fn gate_paths_hard_path_reminder_fires() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    make_baton_with_paths(
+        &repo.join(".dvandva/baton.json"),
+        "implementing",
+        "vadi",
+        "[]",
+        &["allowed.txt"],
+        "standard",
+    );
+    fs::create_dir_all(repo.join("rust/dvandva/src")).unwrap();
+    fs::write(repo.join("rust/dvandva/src/extra.rs"), "x").unwrap();
+    git(repo, &["add", "rust/dvandva/src/extra.rs"]);
+
+    let out = run_gate(repo, Some("vadi"));
+    assert_eq!(code(&out), 1);
+    let err = stderr(&out);
+    assert!(err.contains("recompute the profile floor"), "err: {err}");
 }
 
 // ===========================================================================

@@ -80,6 +80,38 @@ fn write_baton(path: &Path, run_id: &str, status: &str, updated_at: &str) {
     .unwrap();
 }
 
+/// A schema-v2 baton with an explicit owner/active_roles combination, for the
+/// S2-T3 preflight sanity-check cases.
+fn write_baton_v2(
+    path: &Path,
+    run_id: &str,
+    status: &str,
+    assignee: &str,
+    active_roles: &str,
+    updated_at: &str,
+) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        path,
+        format!(
+            r#"{{"schema":"dvandva.baton.v2","run_id":"{run_id}","status":"{status}","assignee":"{assignee}","active_roles":{active_roles},"mode":"development","profile":"standard","updated_at":"{updated_at}"}}"#
+        ),
+    )
+    .unwrap();
+}
+
+/// A schema-v1 baton, for the S2-T3 legacy-skip case.
+fn write_baton_v1(path: &Path, run_id: &str, status: &str, assignee: &str, updated_at: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        path,
+        format!(
+            r#"{{"schema":"dvandva.baton.v1","run_id":"{run_id}","status":"{status}","assignee":"{assignee}","updated_at":"{updated_at}"}}"#
+        ),
+    )
+    .unwrap();
+}
+
 /// Run `dvandva preflight <extra...>` with cwd set to `repo`.
 fn preflight(repo: &Path, role: Option<&str>, extra: &[&str]) -> Output {
     let mut cmd = base_cmd(bin());
@@ -398,6 +430,137 @@ fn role_matches_absent_env_role_proceeds() {
         "stdout: {}",
         stdout(&out)
     );
+}
+
+// ===========================================================================
+// S2-T3: preflight sanity check on a RESOLVED baton, before the hook stage.
+// ===========================================================================
+
+// (a) A v2 baton whose assignee does not match the engine's expected owner
+// for its status is rejected before the hook stage ever runs.
+#[test]
+fn sanity_check_owner_mismatch_is_invalid_baton() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    write_baton_v2(
+        &repo.join(".dvandva/runs/accuracy/baton.json"),
+        "accuracy",
+        "implementing",
+        "prativadi",
+        "[]",
+        "2026-06-29T00:00:00Z",
+    );
+
+    let out = preflight(repo, Some("prativadi"), &["--role", "prativadi"]);
+    assert_eq!(code(&out), 1, "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("result=error"), "stdout: {text}");
+    assert!(text.contains("reason=invalid_baton"), "stdout: {text}");
+    assert!(text.contains("detail="), "stdout: {text}");
+    assert!(
+        !repo.join(".dvandva/githooks").exists(),
+        "invalid_baton must not run the hook stage"
+    );
+}
+
+// (b) A team-owned v2 status with empty active_roles is rejected.
+#[test]
+fn sanity_check_team_status_with_empty_active_roles_is_invalid_baton() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    write_baton_v2(
+        &repo.join(".dvandva/runs/accuracy/baton.json"),
+        "accuracy",
+        "cross_review",
+        "team",
+        "[]",
+        "2026-06-29T00:00:00Z",
+    );
+
+    let out = preflight(repo, Some("vadi"), &["--role", "vadi"]);
+    assert_eq!(code(&out), 1, "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("result=error"), "stdout: {text}");
+    assert!(text.contains("reason=invalid_baton"), "stdout: {text}");
+    assert!(text.contains("detail="), "stdout: {text}");
+    assert!(
+        !repo.join(".dvandva/githooks").exists(),
+        "invalid_baton must not run the hook stage"
+    );
+}
+
+// A healthy v2 baton (owner matches, team status carries active_roles)
+// proceeds through the hook stage exactly like before this check existed.
+#[test]
+fn sanity_check_healthy_v2_baton_proceeds_as_today() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    write_baton_v2(
+        &repo.join(".dvandva/runs/accuracy/baton.json"),
+        "accuracy",
+        "implementing",
+        "vadi",
+        "[]",
+        "2026-06-29T00:00:00Z",
+    );
+
+    let out = preflight(repo, Some("vadi"), &["--role", "vadi"]);
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("result=resolved"), "stdout: {text}");
+    assert!(text.contains("DVANDVA_HOOK_PREFLIGHT"), "stdout: {text}");
+    assert!(text.contains("result=ok"), "stdout: {text}");
+}
+
+// A team-owned status WITH populated active_roles passes the sanity check.
+#[test]
+fn sanity_check_team_status_with_active_roles_proceeds() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    write_baton_v2(
+        &repo.join(".dvandva/runs/accuracy/baton.json"),
+        "accuracy",
+        "cross_review",
+        "team",
+        r#"["vadi","prativadi"]"#,
+        "2026-06-29T00:00:00Z",
+    );
+
+    let out = preflight(repo, Some("vadi"), &["--role", "vadi"]);
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("result=resolved"),
+        "stdout: {}",
+        stdout(&out)
+    );
+}
+
+// (v1 legacy) A v1-schema baton skips the sanity check entirely and notes the
+// skip on the result=resolved line.
+#[test]
+fn sanity_check_v1_schema_baton_skips_with_note() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    write_baton_v1(
+        &repo.join(".dvandva/runs/accuracy/baton.json"),
+        "accuracy",
+        "implementing",
+        "prativadi", // deliberately "wrong" for v2 rules — must not matter for v1
+        "2026-06-29T00:00:00Z",
+    );
+
+    let out = preflight(repo, Some("prativadi"), &["--role", "prativadi"]);
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("result=resolved"), "stdout: {text}");
+    assert!(text.contains("note=v1_skipped"), "stdout: {text}");
+    assert!(text.contains("DVANDVA_HOOK_PREFLIGHT"), "stdout: {text}");
+    assert!(text.contains("result=ok"), "stdout: {text}");
 }
 
 // ===========================================================================

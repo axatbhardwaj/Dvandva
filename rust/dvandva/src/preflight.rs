@@ -10,10 +10,122 @@
 
 use std::path::{Path, PathBuf};
 
+use serde_json::Value;
+
 use crate::emit;
 use crate::hook_preflight::{run_hook_preflight, HookMode};
 use crate::resolve::{resolve_active_run, ResolveEnv, ResolveError, ResolveOutcome};
+use crate::util::{coalesce, read_json_lenient};
+use crate::write::expected_owner;
 use crate::Role;
+
+/// The v2 status catalog, mirrored locally (S2-T3 read-only sanity check):
+/// a status token outside this set is `invalid_baton`. A local literal list
+/// rather than a `write.rs` coupling — matches `crate::baton::Status`'s
+/// current 21-token catalog. Future status additions (e.g. `abandoned`) need
+/// a matching update here; the S6-T1 schema-parity lint is the intended
+/// long-term guard against that drift.
+const V2_STATUS_TOKENS: &[&str] = &[
+    "research_drafting",
+    "research_review",
+    "research_revision",
+    "spec_drafting",
+    "spec_review",
+    "spec_revision",
+    "implementing",
+    "parallel_implementing",
+    "test_creation",
+    "cross_review",
+    "cross_fixing",
+    "deep_review",
+    "review_of_review",
+    "counter_review",
+    "deslop",
+    "termination_review",
+    "phase_review",
+    "phase_fixing",
+    "human_question",
+    "human_decision",
+    "done",
+];
+
+/// Outcome of the read-only baton sanity check run on a RESOLVED baton,
+/// before the hook stage.
+enum SanityCheck {
+    /// Schema/owner/active_roles all check out (or the status carries no
+    /// owner expectation, e.g. a terminal status) — proceed as today.
+    Ok,
+    /// Not a v2-schema baton: legacy read-only tolerance, skip entirely.
+    V1Skipped,
+    /// The baton file could not be read or parsed; defer to the hook stage's
+    /// own handling rather than duplicating that failure mode here.
+    Unreadable,
+    /// A v2 baton failed one of the sanity checks; `detail` is the
+    /// human-readable violation to surface on the `DVANDVA_PREFLIGHT` line.
+    Invalid(String),
+}
+
+/// Read-only sanity check (S2-T3) on a RESOLVED baton: does its assignee
+/// match the v2 engine's expected owner for its status, does a team-owned
+/// status carry non-empty `active_roles`, and is its status token part of
+/// the v2 enum. Never mutates the baton file.
+fn sanity_check(baton_path: &Path) -> SanityCheck {
+    let Ok(value) = read_json_lenient(baton_path) else {
+        return SanityCheck::Unreadable;
+    };
+
+    let schema = str_field(&value, "schema");
+    if schema != "dvandva.baton.v2" {
+        return SanityCheck::V1Skipped;
+    }
+
+    let status = str_field(&value, "status");
+    if !V2_STATUS_TOKENS.contains(&status.as_str()) {
+        return SanityCheck::Invalid(format!("unknown_status status={status}"));
+    }
+
+    let mode = str_field(&value, "mode");
+    let profile = str_field(&value, "profile");
+    let (expected_assignee, expected_active_roles) =
+        expected_owner(&schema, &mode, &profile, &status);
+
+    let assignee = str_field(&value, "assignee");
+    if !expected_assignee.is_empty() && assignee != expected_assignee {
+        return SanityCheck::Invalid(format!(
+            "owner_mismatch status={status} expected={expected_assignee} actual={assignee}"
+        ));
+    }
+
+    if !expected_active_roles.is_empty() && active_roles_of(&value).is_empty() {
+        return SanityCheck::Invalid(format!("team_status_missing_active_roles status={status}"));
+    }
+
+    SanityCheck::Ok
+}
+
+/// jq `//`-style string read: `null`/`false`/absent coalesce to `""`.
+fn str_field(value: &Value, key: &str) -> String {
+    match coalesce(value.get(key)) {
+        Some(Value::String(s)) => s.clone(),
+        Some(other) => other.to_string(),
+        None => String::new(),
+    }
+}
+
+/// The baton's `active_roles` array as owned strings (empty when absent,
+/// null, or not an array of strings).
+fn active_roles_of(value: &Value) -> Vec<String> {
+    match coalesce(value.get("active_roles")) {
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(|item| match item {
+                Value::String(s) => Some(s.clone()),
+                _ => None,
+            })
+            .collect(),
+        _ => Vec::new(),
+    }
+}
 
 /// Run the unified turn preflight for `role` at `mode`. Resolves the active
 /// run under the derived work root (`git rev-parse --show-toplevel`, else
@@ -64,11 +176,24 @@ pub fn run_preflight(role: Role, mode: HookMode) -> i32 {
         Ok(ResolveOutcome::Resolved(rel_path)) => {
             let baton = canonical_path(&root, &rel_path);
             let run_id = run_id_for_path(&baton);
+
+            let note = match sanity_check(&baton) {
+                SanityCheck::Invalid(detail) => {
+                    println!(
+                        "DVANDVA_PREFLIGHT baton={} result=error reason=invalid_baton detail={detail}",
+                        baton.display()
+                    );
+                    return 1;
+                }
+                SanityCheck::V1Skipped => " note=v1_skipped",
+                SanityCheck::Ok | SanityCheck::Unreadable => "",
+            };
+
             std::env::set_var("DVANDVA_BATON_FILE", &baton);
             std::env::set_var("DVANDVA_RUN_ID", &run_id);
             std::env::set_var("DVANDVA_SELECTED_BY", chosen_by);
             println!(
-                "DVANDVA_PREFLIGHT role={role_str} result=resolved baton={} run_id={run_id} selected_by={chosen_by}",
+                "DVANDVA_PREFLIGHT role={role_str} result=resolved baton={} run_id={run_id} selected_by={chosen_by}{note}",
                 baton.display()
             );
             run_hook_preflight(role, Some(&root), mode)
