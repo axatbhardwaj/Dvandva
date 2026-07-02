@@ -29,9 +29,9 @@ use serde_json::Value;
 
 use crate::lint;
 
-/// Expected published Dvandva plugin version (bumped from `1.1.0` during the
-/// Rust port).
-pub const EXPECTED_DVANDVA_VERSION: &str = "1.2.0";
+/// Expected published Dvandva plugin version (bumped to `1.3.0` for the flow
+/// patches; was `1.2.0` for the Rust port).
+pub const EXPECTED_DVANDVA_VERSION: &str = "1.3.0";
 
 /// The exact 15-agent seed roster, mirroring the shell script's array (and
 /// its already-alphabetical order).

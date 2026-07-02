@@ -8,10 +8,14 @@
 //! `$HOME`/`$CODEX_HOME` are never touched.
 //!
 //! Version re-key: the shell suite pins `DVANDVA_EXPECTED_VERSION=1.1.0`
-//! throughout. This port bumps the compiled default
-//! (`dvandva::retire::DEFAULT_EXPECTED_VERSION`) to `1.2.0`, so every fixture
-//! cache directory and every explicit env override below uses `1.2.0`
-//! instead (see `EXPECTED_VER`).
+//! throughout. The Rust port moved the compiled default
+//! (`dvandva::retire::DEFAULT_EXPECTED_VERSION`) to `1.2.0`, and the flow
+//! patches move it again to `1.3.0`. The fixture-based tests below set an
+//! explicit `DVANDVA_EXPECTED_VERSION` override (see `EXPECTED_VER`, `1.2.0`)
+//! and build their cache directories at that same explicit version, so they
+//! are decoupled from the compiled default; only
+//! `default_expected_version_is_1_3_0_when_env_unset` exercises the bare
+//! default.
 
 use std::fs;
 use std::os::unix::fs::symlink;
@@ -737,14 +741,14 @@ fn restore_rejects_backup_path_that_is_not_a_symlink() {
 }
 
 // ---------------------------------------------------------------------------
-// Contract point: DVANDVA_EXPECTED_VERSION default changes to 1.2.0 in this
-// port (the shell suite pinned 1.1.0).
+// Contract point: DVANDVA_EXPECTED_VERSION default changes to 1.3.0 in the flow
+// patches (the Rust port pinned 1.2.0; the shell suite pinned 1.1.0).
 // ---------------------------------------------------------------------------
 #[test]
-fn default_expected_version_is_1_2_0_when_env_unset() {
+fn default_expected_version_is_1_3_0_when_env_unset() {
     let fixture = Fixture::new();
     let fake_home = fixture.build_fake_home("home-default-version", false, CacheCompleteness::Full);
-    let cache_agents = fake_home.join(".claude/plugins/cache/dvandva/dvandva/1.2.0/agents");
+    let cache_agents = fake_home.join(".claude/plugins/cache/dvandva/dvandva/1.3.0/agents");
     fs::create_dir_all(&cache_agents).unwrap();
     for agent in DVANDVA_AGENTS {
         fs::write(
@@ -770,7 +774,7 @@ fn default_expected_version_is_1_2_0_when_env_unset() {
         String::from_utf8_lossy(&output.stderr)
     );
     let text = combined(&output);
-    assert!(text.contains("1.2.0"), "{text}");
+    assert!(text.contains("1.3.0"), "{text}");
 }
 
 // ---------------------------------------------------------------------------

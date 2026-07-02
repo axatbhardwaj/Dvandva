@@ -41,6 +41,20 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
 - `agent_instances`: first-class registry for generated run-scoped agent instances, including provenance, model/permission class, read/write paths, work item IDs, base checkpoint, output refs, evidence refs, lifecycle status, and closure result. Generated instance IDs must not collide with coordinator owners (`vadi`, `prativadi`, `team`, `human`), seed-roster owners such as `dvandva-implementer`, or legacy standalone owner names such as `adversarial-analyst`. `spawned_by` is executable provenance; `seed_agent` is advisory metadata for humans and brief generation. Dynamic write-path disjointness is checked among generated instances sharing the same `base_checkpoint` and among any two live (`planned`/`running`) instances regardless of base_checkpoint; closed historical instances from earlier base checkpoints do not block later sequential path reuse.
 - `subagent_tracks`: actual conditional parallelism record. Parallelize only genuinely disjoint tracks; record what was not parallelized and why when direct execution is safer or when subagent tooling is unavailable.
 - `verification_matrix`: planned evidence map from claims and risks to checks, owners, expected results, command or inspection, result, evidence refs, and the 100% test coverage target for new behavior.
+- `amendment_from_phase` (F7): additive nullable number. When non-null it records
+  the numeric phase an in-progress plan-amendment loop returns to. It may become
+  non-null only on an amendment entry edge (full `deslop -> spec_revision`,
+  standard `phase_review -> spec_revision`), is unchangeable mid-loop, and MUST be
+  nulled on exit (`dvandva write` reason `bad_amendment`; the `total_phases` freeze
+  uses `bad_amendment total_phases_frozen`). While non-null the spec loop is legal
+  post-lock and `total_phases`/`phase_profiles` may change. Absent = null; not a
+  required key.
+- `phase_profiles` (F9): additive nullable object `{"<numeric phase>": "standard" |
+  "full"}`. Effective profile of numeric phase N = `phase_profiles[N]` // run
+  profile; non-numeric phases and terminal-gate selection follow the run profile.
+  Set or changed only in spec states (`spec_drafting`/`spec_revision`, including the
+  F7 amendment loop) and never below the per-phase hard-path floor (`dvandva write`
+  reason `bad_phase_profiles`). Absent = null; not a required key.
 - `turn_cap`: default `60`; passive shell wait heartbeats do not count as
   active model-work turns.
 - `termination_review`: v2's multipart termination state. It is team-owned
@@ -194,7 +208,8 @@ early. Scalar-owner states still reject same-status rewrites.
   "profile_history": "append-only array of profile change records: from, to, floor, checkpoint, actor_role, reason, evidence_refs",
   "run_mode": "walkaway | supervised",
   "phase": "research | spec | review | 1 | 2 | ... | done",
-  "total_phases": "integer, set during spec phase, immutable thereafter unless human edits",
+  "total_phases": "integer, set during spec phase; engine-frozen once master_plan_locked is true (write reason bad_amendment total_phases_frozen), changeable only inside an F7 amendment loop (amendment_from_phase non-null) or on a write into human_decision",
+  "phase_profiles": "F9 additive nullable object {\"<numeric phase>\": \"standard\" | \"full\"}; effective profile of numeric phase N = phase_profiles[N] // run profile; set/changed only in spec states and never below the per-phase hard-path floor (write reason bad_phase_profiles); absent = null",
   "status": "spec_drafting | spec_review | spec_revision | human_question | implementing | parallel_implementing | test_creation | cross_review | cross_fixing | deep_review | deslop | termination_review | phase_review | phase_fixing | review_of_review | counter_review | human_decision | done",
   "assignee": "non-empty string; v1 conventions are vadi | prativadi | human; v2 status-owner pairs include team for concurrent states",
   "active_roles": "v2 concurrent roles array, usually [] or [\"vadi\", \"prativadi\"]",
@@ -212,6 +227,7 @@ early. Scalar-owner states still reject same-status rewrites.
   "subagent_tracks": "v2 array recording actual conditional parallelism tracks, owner, evidence refs, fallback rationale, and result",
   "verification_matrix": "v2 array/object mapping claims and risks to planned checks, owners, expected evidence, result, and evidence_ref",
   "master_plan_locked": "boolean; false during planning, true once prativadi advances to phase 1",
+  "amendment_from_phase": "F7 additive nullable number; numeric phase an in-progress plan-amendment loop returns to. May become non-null only on an amendment entry edge, is unchangeable mid-loop, and MUST be nulled on exit (write reason bad_amendment); absent = null",
   "question": "string | null; one concrete user question when status is human_question",
   "resume_assignee": "vadi | prativadi | null; role to resume after a human_question answer",
   "resume_status": "spec_drafting | spec_review | spec_revision | null; status to restore after a human_question answer",
@@ -247,7 +263,7 @@ early. Scalar-owner states still reject same-status rewrites.
 Development mode chooses one of three lifecycle profiles through `profile`.
 This selector is independent from `mode`.
 
-### Development Full Profile (v2, 26 edges)
+### Development Full Profile (v2, 28 edges)
 
 This is the exhaustive v2 development table. Every route into
 `termination_review` is explicit; there is no wildcard `* -> termination_review`.
@@ -268,18 +284,20 @@ This is the exhaustive v2 development table. Every route into
 | `cross_fixing` | `test_creation` | Cross-review findings were fixed and tests/evidence must be refreshed. |
 | `cross_review` | `deep_review` | Both roles recorded completed cross-review tracks for peer-owned chunks. |
 | `deep_review` | `phase_fixing` | Prativadi finds bugs, missing tests, verification gaps, or substantive review issues. |
-| `deep_review` | `review_of_review, review_target: prativadi_fixups` | Prativadi applied narrow fixups after the required review angles; vadi must inspect the fixup diff before cleanup continues. |
-| `deep_review` | `deslop` | Prativadi accepts behavior and tests after the required review angles are complete. |
+| `deep_review` | `review_of_review, review_target: prativadi_fixups` | Prativadi applied narrow fixups after the required review angles; vadi must inspect the fixup diff before cleanup continues. F6: a full-effective-profile phase also needs a completed `security` angle (`dvandva-security-auditor`) when changed_paths ∪ current-phase work_split paths hit the `.env*`/secret/credential or api/client submatchers, and an `integration` angle (`dvandva-integration-checker`) when ≥2 distinct-owner write-capable chunks share a cross-owner `depends_on` or `conflict_group` (write reason `bad_deep_review_angles`). |
+| `deep_review` | `deslop` | Prativadi accepts behavior and tests after the required review angles are complete, including the F6 `security`/`integration` angles when their triggers fire (write reason `bad_deep_review_angles`). |
 | `review_of_review (prativadi_fixups)` | `counter_review, review_target: vadi_counter` | Vadi disapproves prativadi fixups and writes a counter-change. |
 | `review_of_review (prativadi_fixups)` | `deslop` | Vadi approves prativadi fixups; v2 returns to cleanup rather than advancing or terminating directly. |
 | `counter_review (vadi_counter)` | `review_of_review, review_target: prativadi_fixups` | Prativadi disapproves the counter and applies a different narrow fixup. |
 | `counter_review (vadi_counter)` | `deslop` | Prativadi approves the counter; v2 returns to cleanup rather than advancing or terminating directly. |
 | `phase_fixing` | `test_creation` | Vadi fixed behavior, tests, or verification gaps and must refresh test evidence. |
 | `deslop` | `phase_fixing` | Cleanup finds behavior, test, or review blockers. |
-| `deslop` | `phase: N+1, status: "parallel_implementing"` | A non-final phase is clean and the next development phase begins. |
-| `deslop` | `termination_review` | The final development phase is clean; the run enters the shared stop-review gate. |
+| `deslop` | `phase: N+1, status: "parallel_implementing"` | A non-final phase is clean and the next development phase (effective profile full) begins. |
+| `deslop` | `phase: N+1, status: "implementing"` | F9 cross-profile advance: a clean full phase advances into a next phase whose effective profile is `standard` (entry state chosen by the target phase's effective profile). |
+| `deslop` | `phase: "spec", status: "spec_revision"` | F7 amendment entry: the vadi opens a capped plan-amendment episode for a post-lock scope change — sets `amendment_from_phase` to the current numeric phase, lands `phase: "spec"`, assignee `vadi`, and increments loop key `plan_amendment:<from-phase>` (cap = `disagreement_cap`; at cap only `human_decision` is legal; exit nulls the field, resets `loop_counts`, and re-enters at a numeric phase ≥ `amendment_from_phase`). |
+| `deslop` | `termination_review` | The final development phase is clean; the run enters the shared stop-review gate (selected by the final phase's effective profile). |
 | `termination_review` | `phase_fixing` | One role rejects final stop because behavior, tests, docs, or run artifacts still need work. |
-| `termination_review` | final `done` | Both roles explicitly decide to stop, both approval bits are true, `run_explainer_ref` is set, and `run_explainer_reviews` contains completed approved entries from both roles for that exact artifact. |
+| `termination_review` | final `done` | Both roles explicitly decide to stop, both approval bits are true, `run_explainer_ref` is set, `run_explainer_reviews` contains completed approved entries from both roles for that exact artifact, and (F10) a completed current-cycle `explainer-verification` track owned by `dvandva-doc-verifier` exists (write reason `bad_explainer_verification`). |
 
 ### Development Standard Profile (v2 compact edges)
 
@@ -300,10 +318,12 @@ implementation and review path.
 | `implementing` | `phase_review` | Vadi records implementation and verification evidence, including a profile-floor recheck. |
 | `phase_review` | `phase_fixing` | Prativadi finds substantive issues. |
 | `phase_review` | `implementing` | Prativadi requests additional implementation or verification without leaving compact profile. |
+| `phase_review` | `phase: N+1, status: "parallel_implementing"` | F9 cross-profile advance: a clean standard phase advances into a next phase whose effective profile is `full` (entry state chosen by the target phase's effective profile). |
+| `phase_review` | `phase: "spec", status: "spec_revision"` | F7 amendment entry (standard equivalent): opens a capped plan-amendment episode for a post-lock scope change — sets `amendment_from_phase` to the current numeric phase, lands `phase: "spec"`, assignee `vadi`, increments loop key `plan_amendment:<from-phase>` (cap = `disagreement_cap`); exit via `spec_review -> implementing` nulls the field, resets `loop_counts`, and re-enters at a numeric phase ≥ `amendment_from_phase`. |
 | `phase_fixing` | `phase_review` | Vadi fixes and refreshes evidence. |
 | `phase_review` | `termination_review` | Prativadi approves compact implementation/review evidence. |
 | `termination_review` | `phase_fixing` | Either role rejects final stop. |
-| `termination_review` | final `done` | Both approvals are true, `profile_decision` is valid, final verification is passing, `verification_matrix` evidence is complete, and a completed approved prativadi `phase-review` subagent track exists. No run explainer is required for standard. |
+| `termination_review` | final `done` | Both approvals are true, `profile_decision` is valid, final verification is passing, `verification_matrix` evidence is complete, and a completed approved prativadi `phase-review` subagent track exists. No run explainer or F10 explainer-verification track is required for standard. |
 
 ### Development Fast Profile (v2 allowlist edges)
 

@@ -1,6 +1,6 @@
 //! `lint run4-standalone-agents` — standalone-agent retirement contract.
 //!
-//! RE-KEYED: manifest versions bump to `1.2.0`; the retire helper
+//! RE-KEYED: manifest versions bump to `1.3.0` (flow patches; was `1.2.0`); the retire helper
 //! (`scripts/retire-standalone-agents.sh`) becomes `dvandva retire-agents`
 //! (`rust/dvandva/src/retire.rs`); its test suite, the smoke script, and the
 //! install test scripts become the Rust ports (`retire.rs` `#[cfg(test)]`,
@@ -16,7 +16,7 @@ use crate::lint::{
     resolve_root, union_slurp_matches_ci, Report,
 };
 
-const EXPECTED_VERSION: &str = "1.2.0";
+const EXPECTED_VERSION: &str = "1.3.0";
 
 const EXPECTED_AGENTS: [&str; 15] = [
     "adversarial-analyst",

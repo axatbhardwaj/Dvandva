@@ -21,13 +21,13 @@ use std::process::ExitCode;
 
 use dvandva::hooks::GIT_HOOK_NAMES;
 
-const VERSION_LINE: &str = "dvandva 2.0.0-alpha.2";
+const VERSION_LINE: &str = "dvandva 2.0.0-alpha.3";
 
 const USAGE: &str = "\
 Usage: dvandva <subcommand> [args...]
        dvandva --version
 
- resolve | resolve | write | wait | snapshot
+Core:      state | resolve | write | wait | snapshot | next | brief
 Preflight: preflight | hook-preflight
 Git gate:  commit-gate | drift-lint | install-hooks | git-hook <name> | baton-guard
 Install:   install | install-codex | smoke-install | retire-agents

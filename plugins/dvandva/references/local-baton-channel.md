@@ -91,6 +91,18 @@ propagates that sibling human-intervention state to the selected waiter unless
 and ignored, and a sibling `human_question` must surface `question`,
 `resume_assignee`, and `resume_status` so the human can resume the correct run.
 
+Human-intervention surfacing (F5): The Claude Code-hosted session owns surfacing human_question and human_decision to the human.
+Whichever role the Claude Code
+session hosts — on writing a pause state, or on a wait exit 11/12 (including
+sibling propagation) — asks the human directly in-session (question, options,
+resume fields) and stays available for the answer, using Claude Code's
+mobile/remote surface to reach the user away from the PC. The Codex-hosted role
+writes or observes the pause and stops silently and must not compete to consume
+the human answer. If no Claude Code session is part of the run, the writer of the
+pause surfaces it; `current_engine` still records the writer for traceability.
+Recommended pairing: run waits with `dvandva wait --notify <url>` (or
+`DVANDVA_NOTIFY_URL`) so a pause also pings your phone.
+
 Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`,
 `termination_review`) may write same-status sync checkpoints when both roles
 remain active. Use them to record partial completion, task distribution, peer
@@ -279,7 +291,7 @@ Model classes are vendor-neutral: `opus-class|gpt-5.5` for architecture/planning
 Development mode selects one profile through `profile`. This is independent
 from `mode`; `fast`, `standard`, and `full` are not accepted mode values.
 
-#### Full profile (v2, 26 edges)
+#### Full profile (v2, 28 edges)
 
 - v2: `deslop` → `phase: N+1, parallel_implementing` is the non-final
   phase-advance edge. Final phases route to `termination_review` instead.
@@ -306,9 +318,26 @@ from `mode`; `fast`, `standard`, and `full` are not accepted mode values.
 - `phase_fixing` -> `test_creation`
 - `deslop` -> `phase_fixing`
 - `deslop` -> `parallel_implementing`
+- `deslop` -> `implementing` (F9 cross-profile advance: full phase into a standard next phase)
+- `deslop` -> `spec_revision` (F7 amendment entry: capped `plan_amendment:<from>`, sets `amendment_from_phase`)
 - `deslop` -> `termination_review`
 - `termination_review` -> `phase_fixing`
 - `termination_review` -> `done`
+
+F6 tightens `deep_review -> {deslop, review_of_review}` for a full-effective
+phase: a `security` angle (`dvandva-security-auditor`) is required when
+changed_paths ∪ current-phase work_split paths hit the `.env*`/secret/credential
+or api/client submatchers, and an `integration` angle
+(`dvandva-integration-checker`) when ≥2 distinct-owner write-capable chunks share
+a cross-owner `depends_on` or `conflict_group` (write reason
+`bad_deep_review_angles`). F10 tightens `termination_review -> done`: full profile
+additionally requires a completed current-cycle `explainer-verification` track
+owned by `dvandva-doc-verifier` (write reason `bad_explainer_verification`). The
+F7 amendment loop reuses the existing `spec_revision` ⇄ `spec_review` edges
+post-lock while `amendment_from_phase` is non-null (`total_phases`/`phase_profiles`
+may change there); it exits via `spec_review -> parallel_implementing`, which nulls
+`amendment_from_phase`, resets `loop_counts`, and re-enters at a numeric phase ≥
+`amendment_from_phase`.
 
 #### Standard profile (v2 compact edges)
 
@@ -326,6 +355,8 @@ forces `full`.
 - `implementing` -> `phase_review`
 - `phase_review` -> `phase_fixing`
 - `phase_review` -> `implementing`
+- `phase_review` -> `parallel_implementing` (F9 cross-profile advance: standard phase into a full next phase)
+- `phase_review` -> `spec_revision` (F7 amendment entry, standard equivalent; exit via `spec_review -> implementing`)
 - `phase_fixing` -> `phase_review`
 - `phase_review` -> `termination_review`
 - `termination_review` -> `phase_fixing`
@@ -470,7 +501,8 @@ This is the core anti-token-polling rule:
 - Claude Code has a Bash-tool wall-clock cap around 600 seconds, so Claude-hosted sessions must relaunch the wait if a harness cap stops the shell before a terminal baton state. Codex-hosted sessions may use unbounded default continuous polling or pass `--persist` for older snippets.
 - In supervised mode, the assigned-away agent exits and the human invokes the next role manually.
 - When the helper exits 0 (`ready` or `checkpoint_advanced`), the agent re-reads the baton and resumes.
-- When the helper exits 10, the agent surfaces post-handshake `done` and stops. When it exits 11 or 12, the agent surfaces the human-intervention `human_decision` or `human_question` state and pauses for the human. For `human_question`, the helper also prints `question`, `resume_assignee`, and `resume_status`.
+- When the helper exits 10, the agent surfaces post-handshake `done` and stops. When it exits 11 or 12, the agent surfaces the human-intervention `human_decision` or `human_question` state and pauses for the human. For `human_question`, the helper also prints `question`, `resume_assignee`, and `resume_status`. Per F5, the Claude Code-hosted session owns surfacing these to the human in-session.
+- With `--notify <url>` (or the `DVANDVA_NOTIFY_URL` env var; the flag wins), the wait sends a best-effort ntfy-style POST on `human_question`, `human_decision`, `done`, `split_brain`, and `stalled` (3s timeout, `Title: Dvandva <run_id>: <event>` header, never changes exit codes or timing) so a Claude-hosted session's pause reaches the human's phone. Failures log `DVANDVA_WAIT notify_failed url=… err=…` on stderr only.
 
 ## Goal Conditions
 

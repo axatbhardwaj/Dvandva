@@ -186,6 +186,8 @@ Codex-hosted sessions may use `--persist`.
 Exit 23 signals the persistent cap.
 Continuous polling is the hard rule.
 Phase convention: implementation-chunk N of M.
+The Claude Code-hosted session owns surfacing human_question and human_decision to the human.
+Scaffold candidates with dvandva next before dvandva write.
 "#
     .to_string()
 }
@@ -1045,12 +1047,12 @@ fn pathgate_rejects_missing_required_rust_source() {
 }
 
 // ---------------------------------------------------------------------------
-// run4-standalone-agents (re-keyed: version 1.2.0, retire-agents, Rust ports)
+// run4-standalone-agents (re-keyed: version 1.3.0, retire-agents, Rust ports)
 // ---------------------------------------------------------------------------
 
 fn standalone_fixture(root: &Path) {
     let mut readme = String::new();
-    readme.push_str("Dvandva 1.2.0 ships the canonical Dvandva roster. Run 4 makes Dvandva-only ");
+    readme.push_str("Dvandva 1.3.0 ships the canonical Dvandva roster. Run 4 makes Dvandva-only ");
     readme.push_str("retirement available only for Dvandva-covered workflows. The retired Claude ");
     readme.push_str(
         "symlink allowlist is adversarial-analyst, architect, developer, quality-reviewer, ",
@@ -1069,7 +1071,7 @@ fn standalone_fixture(root: &Path) {
     w(
         root,
         "product.md",
-        "Run 4 retires only Dvandva-covered standalone agents after version 1.2.0 cache parity and functional parity via Runs 1-4 usage. The Claude allowlist is adversarial-analyst, architect, developer, quality-reviewer, and sandbox-executor. Codex agent-axis cleanup is explicitly no-op. Skills are out of scope. Restore uses the backup manifest.\n",
+        "Run 4 retires only Dvandva-covered standalone agents after version 1.3.0 cache parity and functional parity via Runs 1-4 usage. The Claude allowlist is adversarial-analyst, architect, developer, quality-reviewer, and sandbox-executor. Codex agent-axis cleanup is explicitly no-op. Skills are out of scope. Restore uses the backup manifest.\n",
     );
     w(
         root,
@@ -1079,7 +1081,7 @@ fn standalone_fixture(root: &Path) {
     w(
         root,
         "plugins/dvandva/references/state-transition-table.md",
-        "Run 4 records the 1.2.0 Dvandva roster parity, Dvandva-only retirement, Codex agent-axis no-op, and functional parity via Runs 1-4 usage.\n",
+        "Run 4 records the 1.3.0 Dvandva roster parity, Dvandva-only retirement, Codex agent-axis no-op, and functional parity via Runs 1-4 usage.\n",
     );
     w(
         root,
@@ -1102,24 +1104,24 @@ fn standalone_fixture(root: &Path) {
     w(
         root,
         "rust/dvandva/src/installers.rs",
-        "// dvandva install and dvandva install-codex ports; 1.2.0 canonical 15-agent roster.\n",
+        "// dvandva install and dvandva install-codex ports; 1.3.0 canonical 15-agent roster.\n",
     );
 
-    // manifests at 1.2.0.
+    // manifests at 1.3.0.
     w(
         root,
         ".claude-plugin/marketplace.json",
-        "{\n  \"plugins\": [\n    { \"name\": \"dvandva\", \"source\": \"./plugins/dvandva\", \"version\": \"1.2.0\" }\n  ]\n}\n",
+        "{\n  \"plugins\": [\n    { \"name\": \"dvandva\", \"source\": \"./plugins/dvandva\", \"version\": \"1.3.0\" }\n  ]\n}\n",
     );
     w(
         root,
         "plugins/dvandva/.claude-plugin/plugin.json",
-        "{ \"name\": \"dvandva\", \"version\": \"1.2.0\" }\n",
+        "{ \"name\": \"dvandva\", \"version\": \"1.3.0\" }\n",
     );
     w(
         root,
         "plugins/dvandva/.codex-plugin/plugin.json",
-        "{ \"name\": \"dvandva\", \"version\": \"1.2.0\" }\n",
+        "{ \"name\": \"dvandva\", \"version\": \"1.3.0\" }\n",
     );
 
     // 15 canonical agents.
@@ -1177,7 +1179,7 @@ fn standalone_rejects_version_mismatch() {
         "{ \"name\": \"dvandva\", \"version\": \"0.3.0\" }\n",
     );
     let r = run4_standalone_agents::report(d.path());
-    assert!(r.fails_with("Dvandva manifest versions must all equal 1.2.0"));
+    assert!(r.fails_with("Dvandva manifest versions must all equal 1.3.0"));
 }
 
 #[test]

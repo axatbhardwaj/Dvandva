@@ -1,6 +1,6 @@
 [package]
 name = "dvandva"
-version = "2.0.0-alpha.2"
+version = "2.0.0-alpha.3"
 edition = "2021"
 description = "Dvandva: a two-role (vadi/prativadi) multi-agent coordination engine. Multicall binary implementing the read path (state + resolve) over a JSON baton."
 license = "MIT OR Apache-2.0"

@@ -22,6 +22,7 @@
   "original_ask": "",
   "phase": "research",
   "total_phases": 0,
+  "phase_profiles": null,
   "status": "research_drafting",
   "status_catalog": [
     "research_drafting",
@@ -249,6 +250,7 @@
     }
   ],
   "master_plan_locked": false,
+  "amendment_from_phase": null,
   "question": null,
   "resume_assignee": null,
   "resume_status": null,

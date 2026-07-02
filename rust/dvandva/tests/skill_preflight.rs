@@ -1051,3 +1051,70 @@ mod final_triplet_contract {
         }
     });
 }
+
+/// F5 human-intervention surfacing contract: the Claude Code-hosted session
+/// owns surfacing `human_question`/`human_decision` to the human. The canonical
+/// rule sentence is pinned verbatim (no backticks on the two status tokens) so a
+/// single substring survives newline flattening in every enforced file — the
+/// same needle the `skill-phase3` lint requires in each role skill.
+mod f5_human_surfacing_contract {
+    use super::*;
+
+    const F5_NEEDLE: &str = r"The Claude Code-hosted session owns surfacing human_question and human_decision to the human";
+
+    live_tree_test!(role_skills_carry_the_f5_needle, {
+        for (path, role) in role_skills() {
+            require_match(
+                &path,
+                F5_NEEDLE,
+                &format!("{role} skill carries the canonical F5 human-intervention needle"),
+            );
+        }
+    });
+
+    live_tree_test!(command_files_carry_the_f5_needle, {
+        for (path, label) in command_files() {
+            require_match(
+                &path,
+                F5_NEEDLE,
+                &format!("{label} carries the canonical F5 human-intervention needle"),
+            );
+        }
+    });
+
+    live_tree_test!(readme_documents_the_f5_rule, {
+        require_match(
+            &readme(),
+            F5_NEEDLE,
+            "README documents the F5 human-intervention surfacing rule",
+        );
+    });
+
+    live_tree_test!(product_md_documents_the_f5_rule, {
+        require_match(
+            &product_md(),
+            F5_NEEDLE,
+            "product.md documents the F5 human-intervention surfacing rule",
+        );
+    });
+
+    live_tree_test!(local_baton_channel_documents_the_f5_rule, {
+        for (path, label) in local_baton_channel_files() {
+            require_match(
+                &path,
+                F5_NEEDLE,
+                &format!("{label} documents the F5 human-intervention surfacing rule"),
+            );
+        }
+    });
+
+    live_tree_test!(role_skills_recommend_notify_pairing, {
+        for (path, role) in role_skills() {
+            require_match(
+                &path,
+                r"--notify",
+                &format!("{role} skill recommends pairing waits with dvandva wait --notify"),
+            );
+        }
+    });
+}

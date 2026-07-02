@@ -27,8 +27,8 @@ Dvandva ships as an installable plugin for both engines. The repo lives at https
 
 The `dvandva` binary IS the Dvandva runtime: read path, write path, waiting,
 preflight, git work-gating, installers, and lints. It is published on
-crates.io as `dvandva 2.0.0-alpha.2`. Install it with `cargo install dvandva
---version 2.0.0-alpha.2` (or `cargo install --path rust/dvandva` from a
+crates.io as `dvandva 2.0.0-alpha.3`. Install it with `cargo install dvandva
+--version 2.0.0-alpha.3` (or `cargo install --path rust/dvandva` from a
 checkout) before installing the plugin; the plugin no longer bundles
 executables.
 
@@ -37,7 +37,7 @@ executables.
 Install the `dvandva` binary, then the marketplace in both Claude Code and Codex:
 
 ```bash
-cargo install dvandva --version 2.0.0-alpha.2
+cargo install dvandva --version 2.0.0-alpha.3
 # or, from a checkout: cargo install --path rust/dvandva
 dvandva install
 ```
@@ -58,7 +58,7 @@ app-server RPC path.
 
 `dvandva install` is separate from installing the binary itself. `dvandva install`
 adds the Dvandva skills, commands, agents, and references to Claude Code and/or
-Codex; `cargo install dvandva --version 2.0.0-alpha.2` (or `cargo install
+Codex; `cargo install dvandva --version 2.0.0-alpha.3` (or `cargo install
 --path rust/dvandva` from a checkout) installs only the `dvandva` binary. The binary
 must be on `PATH` for the installed skills to run — the plugin no longer
 bundles executables.
@@ -117,7 +117,7 @@ waiting, preflight, git work-gating, and the installers, all in one multicall
 binary. Install it from crates.io:
 
 ```bash
-cargo install dvandva --version 2.0.0-alpha.2
+cargo install dvandva --version 2.0.0-alpha.3
 # or, from a checkout: cargo install --path rust/dvandva
 ```
 
@@ -128,13 +128,41 @@ plugins. Common subcommands:
 ```bash
 dvandva state --compact --file <baton> --role <vadi|prativadi|team|human>
 dvandva resolve --role <vadi|prativadi> --cwd <repo>
+dvandva next --file <baton> [--role <r>]              # list legal transitions
+dvandva next --file <baton> --to <status> --summary <t> --next-action <t> [--out <f>]  # scaffold a validated candidate
+dvandva brief --role <vadi|prativadi> --file <baton>  # fresh-context pack (markdown)
 dvandva write "$BATON_FILE" "$BATON_NEXT_FILE"
-dvandva wait --role <vadi|prativadi> --until-actionable
+dvandva wait --role <vadi|prativadi> --until-actionable [--notify <url>]
+dvandva baton-guard                                   # PreToolUse hook; reads a JSON payload on stdin
 ```
+
+New subcommands (flow patches):
+
+- `dvandva next` lists the legal transitions from the current baton and, in
+  generate mode, scaffolds a `baton.next.json` candidate that it validates
+  through the full write pipeline before emitting (it never writes the baton
+  itself) — run it before `dvandva write` instead of hand-building ~44-key
+  candidates.
+- `dvandva brief --role <r>` prints a baton-native fresh-context pack (run
+  header + effective profile, artifact refs, this role's current-phase work,
+  open findings, verification matrix, last five history entries, `next_action`)
+  for late phases running on degraded context.
+- `dvandva baton-guard` is a Claude Code PreToolUse hook: the plugin ships
+  `plugins/dvandva/hooks/hooks.json` registering it against
+  `Write|Edit|MultiEdit|NotebookEdit`, and it blocks direct edits of
+  `baton.json` under `.dvandva/` or anything under `.dvandva/**/history/` (exit
+  2), failing open (exit 0) on unparseable stdin so a guard bug never bricks
+  unrelated tools. The plugin ships the hook; the `dvandva` binary must be on
+  `PATH`. Codex has no hook surface, so this is Claude-side enforcement only.
+- `dvandva wait --notify <url>` (or the `DVANDVA_NOTIFY_URL` env var; the flag
+  wins) sends a best-effort ntfy-style POST on
+  `human_question`/`human_decision`/`done`/`split_brain`/`stalled` (3s timeout,
+  never changes exit codes or timing), e.g.
+  `dvandva wait --role vadi --until-actionable --notify https://ntfy.sh/my-dvandva-runs`.
 
 Invoked through a git-hook symlink (`pre-commit`, `prepare-commit-msg`, ...) the
 binary takes the hook name from `argv[0]`. `dvandva --version` prints the
-version line (`dvandva 2.0.0-alpha.2`).
+version line (`dvandva 2.0.0-alpha.3`).
 
 ## Current State
 
@@ -162,7 +190,7 @@ The default `run_mode` is `walkaway`: start both sessions once, then let the bat
 
 | Prerequisite | Verify |
 |---|---|
-| `dvandva` binary on `PATH`, hard runtime dependency | `dvandva --version` (install with `cargo install dvandva --version 2.0.0-alpha.2`, or `cargo install --path rust/dvandva` from a checkout) |
+| `dvandva` binary on `PATH`, hard runtime dependency | `dvandva --version` (install with `cargo install dvandva --version 2.0.0-alpha.3`, or `cargo install --path rust/dvandva` from a checkout) |
 | Claude Code, if using Claude | `claude --version` |
 | Codex CLI, if using Codex | `codex --version` |
 | Superpowers plugin on every engine running a Dvandva role, hard runtime dependency | `/skills` lists `superpowers:using-superpowers`, `superpowers:brainstorming`, `superpowers:test-driven-development`, and `superpowers:verification-before-completion` |
@@ -179,7 +207,9 @@ dvandva wait --role <vadi|prativadi> --file "$BATON_FILE" --interval 60 --max-wa
 
 The active baton is selected in this order: `DVANDVA_BATON_FILE`, then `DVANDVA_RUN_DIR/baton.json`, then safe `DVANDVA_RUN_ID` mapped to `.dvandva/runs/<run_id>/baton.json`, then Existing baton discovery over `.dvandva/runs/*/baton.json` and legacy `.dvandva/baton.json`. If an active baton exists and the prompt does not choose one, the vadi asks whether to continue or start a new named run. If only terminal batons exist, the vadi auto-creates a new named run instead of overwriting old state. Set the same safe `DVANDVA_RUN_ID` in both sessions to run more than one Dvandva loop in one worktree.
 
-That is foreground waiting, not model polling. The agent resumes when the baton assigns its role again, or stops for completion only when the baton reaches post-handshake `done`. `human_question` and `human_decision` are human-intervention pauses, not completion.
+That is foreground waiting, not model polling. The agent resumes when the baton assigns its role again, or stops for completion only when the baton reaches post-handshake `done`. `human_question` and `human_decision` are human-intervention pauses, not completion. The Claude Code-hosted session owns surfacing human_question and human_decision to the human: whichever role Claude Code hosts asks the human in-session (mobile-reachable) on writing a pause or on a wait exit 11/12, while the Codex-hosted role stops silently unless it is the only session; if no Claude session is in the run, the writer surfaces. Pair the wait with `--notify <url>` (or `DVANDVA_NOTIFY_URL`) so a pause also pings your phone.
+
+The primary dispute mechanism is the findings→fixing loops (`deep_review->phase_fixing`, `cross_review->cross_fixing`, `phase_review->phase_fixing`) bounded by `loop_counts` caps at `disagreement_cap`. The `review_of_review`/`counter_review` vadi-counter loop is a retained but rarely-exercised safety valve — it has never fired across the ~24 recorded runs.
 
 Continuous polling is the default hard rule: `--max-wait` is a heartbeat interval, not permission to stop. The helper keeps polling until the baton assigns the role, reaches post-handshake `done`, enters `human_question` / `human_decision`, or the user interrupts. Use `--until-actionable` for normal walkaway waits so team-owned `active_roles` states do not wake a role until that role has dependency-unblocked actionable work; after a handoff write, combine it with `--since-checkpoint <written_checkpoint>`. `termination_review` is the shared multipart termination state: it keeps both roles active so they either keep polling or stop together after both approve. Final approval and development explainer-review ownership are helper-enforced: `DVANDVA_ROLE=vadi` may raise only `vadi_final_approval` and may add/change only `run_explainer_reviews` entries with `role: "vadi"`; `DVANDVA_ROLE=prativadi` may raise only `prativadi_final_approval` and may add/change only entries with `role: "prativadi"`. `--persist` is accepted for older call sites and is now redundant. `--persist-max <seconds>` adds a total wall-clock cap and exits 23 when reached; in walkaway mode that cap is a shell-budget heartbeat, so the role must immediately re-enter the wait unless the user interrupts. `--finite` is compatibility-only and is not valid for normal walkaway loops. The helper's built-in directory watcher wakes it the moment the baton changes instead of sleeping the full interval; if the watcher cannot start, it falls back to interval polling.
 

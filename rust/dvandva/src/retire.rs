@@ -60,9 +60,9 @@ pub const REQUIRED_AGENTS: [&str; 15] = [
 /// Default `DVANDVA_EXPECTED_VERSION` when the env var is unset or empty.
 ///
 /// The shell source (`scripts/retire-standalone-agents.sh`) pinned `1.1.0`;
-/// this port bumps the default to `1.2.0` to track the plugin version being
-/// shipped alongside the Rust port.
-pub const DEFAULT_EXPECTED_VERSION: &str = "1.2.0";
+/// the Rust port moved to `1.2.0`, and the flow patches bump the default to
+/// `1.3.0` to track the plugin version being shipped alongside them.
+pub const DEFAULT_EXPECTED_VERSION: &str = "1.3.0";
 
 /// Is `candidate` (a bare filename, e.g. `"architect.md"`) one of the 5
 /// standalone agents eligible for retirement?
@@ -609,7 +609,7 @@ mod tests {
         );
         assert_eq!(paths.codex_home, "/home/fake/.codex");
         assert_eq!(paths.expected_version, DEFAULT_EXPECTED_VERSION);
-        assert_eq!(paths.expected_version, "1.2.0");
+        assert_eq!(paths.expected_version, "1.3.0");
     }
 
     #[test]
@@ -620,7 +620,7 @@ mod tests {
 
         let paths_empty = RetirePaths::from_env("/home/fake", Some(""), Some(""));
         assert_eq!(paths_empty.codex_home, "/home/fake/.codex");
-        assert_eq!(paths_empty.expected_version, "1.2.0");
+        assert_eq!(paths_empty.expected_version, "1.3.0");
     }
 
     fn build_complete_cache(base: &std::path::Path, version: &str) {

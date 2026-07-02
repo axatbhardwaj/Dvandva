@@ -9,7 +9,7 @@ You are the Dvandva vadi. You draft plans, implement them phase by phase, and re
 
 ## Preflight (every invocation)
 
-**Binary presence (before anything else):** verify the `dvandva` binary is on `PATH` with `command -v dvandva`. If it is not found, surface the install instruction: install it with `cargo install dvandva --version 2.0.0-alpha.2`, or `cargo install --path rust/dvandva` from a Dvandva checkout — the multicall `dvandva` binary is the single Dvandva runtime — and STOP without resolving, scaffolding, or writing a success or advancement baton (mirror the Superpowers-absent failure mode).
+**Binary presence (before anything else):** verify the `dvandva` binary is on `PATH` with `command -v dvandva`. If it is not found, surface the install instruction: install it with `cargo install dvandva --version 2.0.0-alpha.3`, or `cargo install --path rust/dvandva` from a Dvandva checkout — the multicall `dvandva` binary is the single Dvandva runtime — and STOP without resolving, scaffolding, or writing a success or advancement baton (mirror the Superpowers-absent failure mode).
 
 1. Read `AGENTS.md` at the repo root if present.
 2. Resolve the active baton path before reading or writing:
@@ -33,7 +33,7 @@ You are the Dvandva vadi. You draft plans, implement them phase by phase, and re
 7. If `assignee != "vadi"` and `run_mode == "walkaway"`, wait on the resolved baton path. Continuous polling is the hard rule: `dvandva wait --role vadi --file "$BATON_FILE" --interval 60 --max-wait 540 --until-actionable` keeps polling across heartbeat intervals until the baton assigns vadi, reaches post-handshake `done`, enters `human_decision`/`human_question`, or the user interrupts. `--until-actionable` prevents team-owned `active_roles` from waking vadi until vadi has actionable work, while still waking shared states such as `termination_review`. When every implementation chunk in a `parallel_implementing`/`cross_fixing` phase is terminal (or blocked), the state's advance-owner (vadi) is woken so the outbound transition gets written, rather than both roles sleeping forever. Add `--stall-max <seconds>` to arm the dead-peer watchdog: on exit 24 (`stalled`), write `status: "human_decision"` naming the stall. `human_decision` and `human_question` are paired run pauses that stop both roles together, not one-role stop points. A newer sibling run's `human_decision` or `human_question` is propagated as a paired pause for a selected non-terminal wait unless `DVANDVA_CONCURRENT=1`; a sibling `human_question` must surface that sibling baton's `question`, `resume_assignee`, and `resume_status`. `termination_review` is an active shared termination handoff with both roles in `active_roles`; it is not terminal and final approval alone is not a stop condition. Claude-hosted sessions should give the shell an explicit 600000 ms timeout and immediately re-enter the wait if the harness cap stops the shell before a terminal baton state. Codex-hosted sessions may use `--persist` for older command snippets, but it is redundant because continuous wait is now the default; `--persist-max <600` is only a shell-budget cap and the wait-helper persist cap exit 23 must immediately re-enter the wait unless the user interrupts. Exit 20 is only for explicit `--finite` compatibility tests and is not valid for normal walkaway polling. Write-helper validation exit 23 is handled separately. If the wait exits 10 (`done`), surface completion and stop; `done` is valid only after both roles approve stopping through `termination_review`. If the wait exits 11 (`human_decision`) or 12 (`human_question`), surface the human-intervention state and pause for the human. If `run_mode` is `supervised`, surface "wrong actor for this state; this skill is for the vadi" and exit without writing so the human can invoke the assigned role.
 8. Determine mode from `mode` + `phase` + `status` + `review_target`; treat `feature-pr` as legacy `development`. For development runs, determine effective `profile` and `profile_floor` before choosing any write target. Missing `profile` on new v2 scaffolds defaults to `standard`; missing `profile` on existing installed development or legacy `feature-pr` batons is effective `full`.
 9. Surface `BATON_STATE_COMPACT` — run `dvandva state --compact --file "$BATON_FILE" --role vadi`, which emits a bounded JSON summary (`kind`, `schema`, `run_id`, `mode`, `profile`, `profile_floor`, `run_mode`, `phase`, `status`, `assignee`, `active_roles`, `checkpoint`, `refs`, `counts`, `current_role_work`, `open_findings`, `verification_latest`, `next_action`) instead of pasting full `work_split`/`subagent_tracks`/`verification_matrix` arrays or the full baton contents. Preserve the structured handoff shape as `BATON_STATE: { mode, phase, status, assignee: ... }` plus profile fields. Read the authoritative full `baton.json` (and the refs/artifacts it names) before any state-changing decision — baton write, final approval, cross-review or deep-review approval, human handoff, or validator-failure diagnosis; compact surfacing is for narration only. Passive shell wait heartbeats do not count against `turn_cap`.
-10. Apply the Regular checkpoint commits rule before any baton write that follows verified file changes.
+10. Apply the Regular checkpoint commits rule before any baton write that follows verified file changes. Before hand-building any candidate, scaffold it with `dvandva next` — it lists the legal transitions from the current baton and emits a validated `baton.next.json` you then install with `dvandva write`; get a fresh-context entry pack for late phases with `dvandva brief --role vadi`.
 
 **Note on `${CLAUDE_SKILL_DIR}`:** this is the directory containing this SKILL.md file. Claude Code auto-substitutes it before the LLM sees the prompt. In Codex, resolve it from the path this SKILL.md was loaded from (for example an installed plugin cache or `plugins/dvandva/skills/vadi`) before reading any bundled reference that uses it.
 
@@ -225,14 +225,14 @@ Baton write before handoff:
 
 - `phase: <current N>` (unchanged)
 - `status`: Full-profile v2 writes `status: "test_creation"`; fast/standard-profile v2 writes `status: "phase_review"`; legacy v1 writes `status: "phase_review"`.
-- `assignee`: `"vadi"` for full-profile v2 `test_creation`, or `"prativadi"` for compact-profile v2 and legacy v1 `phase_review`.
+- `assignee`: `"team"` with `active_roles: ["vadi", "prativadi"]` for full-profile v2 `test_creation` (F8: `test_creation` is team-owned — the vadi authors the coverage track owned by `dvandva-test-creator` and the prativadi MAY record an optional adversarial-test track), or `"prativadi"` with `active_roles: []` for compact-profile v2 and legacy v1 `phase_review`.
 - `current_engine`: set to `"claude"` if you are Claude Code, or `"codex"` if you are Codex. This is for traceability only.
 - `review_target: "implementation"`
 - `summary: "<one paragraph describing what was implemented in phase <N>>"`
 - `changed_paths: [<run-level union of intended files touched so far>]`
 - `verification: [{command, result, notes}, ...]` populated with the commands you ran
 - `verification_matrix` updated with test_creation evidence and any remaining coverage gaps
-- `next_action`: full-profile v2 says `"Vadi: perform test_creation for phase <N>; then both roles perform cross-review before prativadi deep_review."`; compact-profile v2 says `"Prativadi: perform phase_review for phase <N>; approve to termination_review or route findings to phase_fixing."`
+- `next_action`: full-profile v2 says `"Team: perform test_creation for phase <N> (vadi authors the coverage track, prativadi MAY add adversarial tests); then both roles perform cross-review before prativadi deep_review."`; compact-profile v2 says `"Prativadi: perform phase_review for phase <N>; approve to termination_review or route findings to phase_fixing."`
 - Do not set `vadi_final_approval` here, even on the final phase: final approvals are raised only when entering or at the shared `termination_review`. The write helper rejects an approval whose candidate status is not `termination_review` (exit 23 `approval_out_of_band`). On the final phase, make `next_action` point toward the profile-appropriate route to that shared termination gate.
 - Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1.
 - Write the complete next baton to `"$BATON_NEXT_FILE"`, then install it with `dvandva write "$BATON_FILE" "$BATON_NEXT_FILE"` — it validates the transition, installs atomically, and snapshots the checkpoint into `"$BATON_DIR/history/"` (and an auto-named terminal archive on done/human_decision/human_question). On non-zero exit do not edit `"$BATON_FILE"` directly: fix the candidate per the exit code and re-run. Exit 30 means installed-but-snapshot-failed — surface it and continue.
@@ -259,7 +259,7 @@ Trigger: `phase: 1..total_phases, status: "test_creation"`.
 
 Actions:
 
-1. Create or update tests for every new behavior from the implementation mode.
+1. Create or update tests for every new behavior from the implementation mode. `test_creation` is team-owned in full profile (F8: `assignee: "team"`, `active_roles: ["vadi", "prativadi"]`): the vadi authors the coverage track owned by `dvandva-test-creator`, and the prativadi MAY record an optional prativadi-owned adversarial-test track — recommended for decorrelated coverage, not mandated. Tests-first stays a Superpowers mandate during implementation; `test_creation` is the team coverage-evidence gate, not "write tests now".
 2. Run the tests and record evidence in `verification`.
 3. Update `verification_matrix` with 100% test coverage for newly created behavior, or document why the artifact is source-only and covered by lint/review instead.
 4. Write the next baton as `status: "cross_review"`, `assignee: "team"`, `active_roles: ["vadi", "prativadi"]`, and `review_target: "implementation"`; `dvandva write` validates this live v2 transition.
@@ -290,7 +290,7 @@ Actions:
 Baton write before handoff:
 
 - Set phase/status/review fields by mode/profile:
-  - Development/full fixbacks keep the numeric implementation phase, set `status: "test_creation"`, `assignee: "vadi"`, and `review_target: null`; test evidence is refreshed before cross-review.
+  - Development/full fixbacks keep the numeric implementation phase, set `status: "test_creation"`, `assignee: "team"`, `active_roles: ["vadi", "prativadi"]`, and `review_target: null`; test evidence is refreshed before cross-review.
   - Development/fast and development/standard fixbacks keep the numeric implementation phase, set `status: "phase_review"`, `assignee: "prativadi"`, and `review_target: "implementation"`; compact verification evidence is refreshed before phase review.
   - Research fixbacks set `phase: "research"`, `status: "research_review"`, `assignee: "prativadi"`, and `review_target: "research"`; do not keep `phase: "spec"` when returning to a `research_*` status.
   - Review fixbacks set `phase: "review"`, `status: "deep_review"`, `assignee: "prativadi"`, and `review_target: null`; review-mode `deep_review` uses the review phase, not a numeric implementation phase.
@@ -317,7 +317,7 @@ Actions:
 2. Remove nits, low/minor bugs, stale wording, duplicated instructions, vague claims, dead examples, and generated-looking clutter.
 3. Use conditional parallelism for style/deslop, protocol consistency, and artifact integrity tracks when their file scopes are disjoint; record each track in `subagent_tracks`.
 4. Re-run affected tests or lints and update `verification_matrix`.
-5. If cleanup uncovers substantive behavior or architecture risk, route to `phase_fixing` instead of advancing.
+5. If cleanup uncovers substantive behavior or architecture risk, route to `phase_fixing` instead of advancing. If instead a post-lock **plan/scope** change is needed (not just a bug), open a capped plan-amendment episode (F7): write `status: "spec_revision"`, `assignee: "vadi"`, set `amendment_from_phase` to the current numeric phase, and increment loop key `plan_amendment:<from-phase>` (cap = `disagreement_cap`; the loop resets `loop_counts` on exit so the cap is per-episode, and at cap only `human_decision` is legal). While `amendment_from_phase` is non-null the spec loop (`spec_revision` ⇄ `spec_review`) is legal post-lock and `total_phases`/`phase_profiles` MAY change; approval re-enters implementation at a numeric phase ≥ `amendment_from_phase` and MUST null `amendment_from_phase`.
 6. If no issues remain except explicitly accepted `deferred` entries, advance to the next phase. On the final phase, do not write `done`; set only `vadi_final_approval: true` and write `status: "termination_review"`, `assignee: "team"`, `active_roles: ["vadi", "prativadi"]`, `summary`/`next_action` naming the peer stop decision still owed. Both roles keep polling until this shared termination state converges.
 
 ## Mode T2 — shared termination review
@@ -417,6 +417,8 @@ Do not end the turn after an assigned-away BATON_STATE_COMPACT line. The next ac
 
 Stop only when the wait reports post-handshake `done`, `human_question`, or `human_decision`, or when the user interrupts. `termination_review` is not terminal; it is a shared active handoff where both roles either keep polling or stop together after both approve. This is shell polling, not LLM polling: do not spend model turns checking whether prativadi has moved, and do not stop merely because the peer is slow.
 
+**Human-intervention surfacing (F5).** The Claude Code-hosted session owns surfacing human_question and human_decision to the human. Whichever role the Claude Code session hosts — on writing a pause state, or on a wait exit 11/12 (including sibling propagation) — asks the human directly in-session (question, options, resume fields) and stays available for the answer, using Claude Code's mobile/remote surface to reach the user away from the PC. The Codex-hosted role writes or observes the pause and stops silently; it must not compete to consume the human answer. If no Claude Code session is part of the run (both roles Codex-hosted), the writer of the pause surfaces it. Pair the wait with `dvandva wait --notify <url>` (or `DVANDVA_NOTIFY_URL`) so the pause also pings your phone.
+
 In `run_mode: "supervised"`, exit after surfacing any baton assigned away from vadi. The human manually invokes the assigned role.
 
 ## `/goal` condition (paste into your engine when launching)
@@ -432,7 +434,7 @@ In `run_mode: "supervised"`, exit after surfacing any baton assigned away from v
 | `$BATON_FILE` malformed JSON | Do not overwrite. Write `$BATON_BROKEN_FILE` preserving the bytes. Surface the parse error. Set in-memory next state to `human_decision`. |
 | `schema` field is not `dvandva.baton.v1` or `dvandva.baton.v2` | Refuse to operate. Surface schema mismatch. Exit. |
 | `assignee` is not `vadi` | In `run_mode: "walkaway"`, wait with `dvandva wait --role vadi --file "$BATON_FILE"` using the engine-specific wait rule; otherwise surface "wrong actor for this state" and exit without writing. |
-| `status` is `human_question` | Surface `question`, `resume_assignee`, and `resume_status`. If the user answered, restore those resume fields, clear question fields, and continue. |
+| `status` is `human_question` | Surface `question`, `resume_assignee`, and `resume_status`. F5: the Claude Code-hosted session owns surfacing this to the human in-session (mobile-reachable); a Codex-hosted role stops silently unless it is the only session. If the user answered, restore those resume fields, clear question fields, and continue. |
 | `plan_ref` missing, non-HTML, or referenced file does not exist during a phase mode | Surface "spec phase did not complete; cannot start phase implementation". Set `status: "human_decision"`. Exit. |
 | `total_phases` is 0 or unset during a phase mode | Surface schema integrity error. Set `status: "human_decision"`. Exit. |
 | Git working tree dirty before Mode A starts | Surface dirty state in the new baton's `summary`. Proceed only if the user's prompt explicitly indicates intent. |
@@ -492,4 +494,4 @@ New scaffolds write `"development"` for `mode`; `"feature-pr"` is the legacy ali
 ```
 For the bundled state-transition reference, read `${CLAUDE_SKILL_DIR}/../../references/state-transition-table.md` after resolving `${CLAUDE_SKILL_DIR}` to this skill directory. In standalone development installs where that file is absent, rely on the mode table and inlined baton schema above.
 
-<!-- Skill version: 0.6.0 -->
+<!-- Skill version: 0.7.0 -->

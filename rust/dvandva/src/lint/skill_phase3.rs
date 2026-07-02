@@ -63,6 +63,18 @@ pub fn report(root: &Path) -> Report {
             "Phase convention: implementation-chunk",
             "skill documents subagent track phase convention",
         );
+        // F5: the canonical human-intervention surfacing needle (verbatim, no
+        // backticks on the two status tokens so the substring match holds).
+        req(
+            "The Claude Code-hosted session owns surfacing human_question and human_decision to the human",
+            "skill carries the F5 human-intervention surfacing needle",
+        );
+        // Flow patches: skills must point agents at `dvandva next` for
+        // candidate scaffolding before `dvandva write`.
+        req(
+            "dvandva next",
+            "skill documents dvandva next candidate scaffolding",
+        );
     }
 
     let vadi = "plugins/dvandva/skills/vadi/SKILL.md";
