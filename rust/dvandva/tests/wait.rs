@@ -2579,8 +2579,11 @@ fn returns_13_and_abandoned_line_grammar_when_run_is_abandoned() {
         BUDGET_FAST,
     );
     assert_eq!(o.code, Some(13), "{}", o.out);
-    assert!(o.contains("DVANDVA_WAIT abandoned run_id="), "{}", o.out);
-    assert!(o.contains("checkpoint=7"), "{}", o.out);
+    assert!(
+        o.contains("DVANDVA_WAIT abandoned phase=1 checkpoint=7 assignee=human"),
+        "{}",
+        o.out
+    );
 }
 
 #[test]
@@ -2773,6 +2776,66 @@ fn three_sibling_scan_selects_max_updated_at_not_first_in_listing_order() {
         BUDGET_FAST,
     );
     assert_eq!(o.code, Some(11), "{}", o.out);
+    assert!(o.contains("sibling_run_id=delta"), "{}", o.out);
+    assert!(!o.contains("sibling_run_id=beta"), "{}", o.out);
+    assert!(!o.contains("sibling_run_id=gamma"), "{}", o.out);
+}
+
+#[test]
+fn three_sibling_split_brain_selects_max_updated_at_not_first_in_listing_order() {
+    let d = tmp();
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "prativadi",
+        "phase_review",
+        "2026-06-29T10:00:00Z",
+        "codex",
+    );
+    // File-listing order is beta, delta, gamma (sorted). All three name my role
+    // (vadi) as assignee, so all three qualify as split-brain candidates.
+    // "delta" — the middle entry — carries the newest `updated_at` and must win
+    // over the earlier-sorted "beta", proving selection is by max timestamp,
+    // not by first match in directory order.
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/beta/baton.json"),
+        "beta",
+        "vadi",
+        "implementing",
+        "2026-06-29T11:00:00Z",
+        "claude",
+    );
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/delta/baton.json"),
+        "delta",
+        "vadi",
+        "implementing",
+        "2026-06-29T13:00:00Z",
+        "claude",
+    );
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/gamma/baton.json"),
+        "gamma",
+        "vadi",
+        "implementing",
+        "2026-06-29T12:00:00Z",
+        "claude",
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "vadi",
+            "--persist",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(29), "{}", o.out);
     assert!(o.contains("sibling_run_id=delta"), "{}", o.out);
     assert!(!o.contains("sibling_run_id=beta"), "{}", o.out);
     assert!(!o.contains("sibling_run_id=gamma"), "{}", o.out);

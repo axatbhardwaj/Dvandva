@@ -197,7 +197,9 @@ pub fn run(cfg: &WaitConfig) -> i32 {
                 return 12;
             }
             "abandoned" => {
-                println!("DVANDVA_WAIT abandoned run_id={selected_run_id} checkpoint={checkpoint}");
+                println!(
+                    "DVANDVA_WAIT abandoned phase={phase} checkpoint={checkpoint} assignee={assignee}"
+                );
                 notify_plain(cfg, "abandoned", &selected_run_id, &next_action);
                 return 13;
             }
