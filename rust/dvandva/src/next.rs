@@ -233,11 +233,16 @@ fn run_generate(baton_file: &Path, baton: &Value, args: &Args) -> i32 {
                 return 2;
             }
         },
-        PhaseMove::Spec => {
-            // Consume the engine-owned phase producer: the planning-phase value is
-            // MODE-AWARE (development/research resolve research_*/spec_* to
-            // "research"/"spec"; review mode pins every status to "review"), so the
-            // candidate's phase can never desync from what phase_status_ok demands.
+        PhaseMove::Spec | PhaseMove::Same => {
+            // Consume the engine-owned phase producer regardless of move class: the
+            // planning-phase value is MODE-AWARE (development/research resolve
+            // research_*/spec_* to "research"/"spec"; review mode pins every status
+            // to "review"), so the candidate's phase can never desync from what
+            // phase_status_ok demands. Its fallback arm already preserves
+            // current_phase for numeric/human statuses, which covers every
+            // PhaseMove::Same edge that isn't a mode-pinned planning status (e.g.
+            // research_review->termination_review under research mode, which the
+            // engine pins to phase "spec" even though the edge stays PhaseMove::Same).
             let mode = baton
                 .get("mode")
                 .and_then(Value::as_str)
@@ -245,7 +250,6 @@ fn run_generate(baton_file: &Path, baton: &Value, args: &Args) -> i32 {
             let current_phase = baton.get("phase").cloned().unwrap_or(Value::Null);
             expected_phase_for(mode, to, &current_phase)
         }
-        PhaseMove::Same => baton.get("phase").cloned().unwrap_or(Value::Null),
     };
 
     // ---- build the candidate (deep copy, then apply the edge) --------------

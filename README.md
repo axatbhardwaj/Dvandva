@@ -26,19 +26,19 @@ Dvandva model classes are vendor-neutral. Agent frontmatter uses `model: opus` a
 Dvandva ships as an installable plugin for both engines. The repo lives at https://github.com/axatbhardwaj/Dvandva.
 
 The `dvandva` binary IS the Dvandva runtime: read path, write path, waiting,
-preflight, git work-gating, installers, and lints. It is published on
-crates.io as `dvandva 2.0.0-alpha.3`. Install it with `cargo install dvandva
---version 2.0.0-alpha.3` (or `cargo install --path rust/dvandva` from a
-checkout) before installing the plugin; the plugin no longer bundles
-executables.
+preflight, git work-gating, installers, and lints. This branch targets crate
+`2.0.0-alpha.3`; the latest crates.io release is `2.0.0-alpha.2`. Install it
+with `cargo install --path rust/dvandva` from a checkout (or, once alpha.3 is
+published, `cargo install dvandva --version 2.0.0-alpha.3`) before installing
+the plugin; the plugin no longer bundles executables.
 
 ## Quickstart
 
 Install the `dvandva` binary, then the marketplace in both Claude Code and Codex:
 
 ```bash
-cargo install dvandva --version 2.0.0-alpha.3
-# or, from a checkout: cargo install --path rust/dvandva
+cargo install --path rust/dvandva
+# or, once 2.0.0-alpha.3 is published: cargo install dvandva --version 2.0.0-alpha.3
 dvandva install
 ```
 
@@ -58,8 +58,8 @@ app-server RPC path.
 
 `dvandva install` is separate from installing the binary itself. `dvandva install`
 adds the Dvandva skills, commands, agents, and references to Claude Code and/or
-Codex; `cargo install dvandva --version 2.0.0-alpha.3` (or `cargo install
---path rust/dvandva` from a checkout) installs only the `dvandva` binary. The binary
+Codex; `cargo install --path rust/dvandva` (or, once published, `cargo install
+dvandva --version 2.0.0-alpha.3`) installs only the `dvandva` binary. The binary
 must be on `PATH` for the installed skills to run — the plugin no longer
 bundles executables.
 
@@ -114,11 +114,12 @@ $prativadi
 
 The `dvandva` binary IS the Dvandva runtime — the read path, the write path,
 waiting, preflight, git work-gating, and the installers, all in one multicall
-binary. Install it from crates.io:
+binary. Install it from a checkout (the latest crates.io release is the older
+`2.0.0-alpha.2`):
 
 ```bash
-cargo install dvandva --version 2.0.0-alpha.3
-# or, from a checkout: cargo install --path rust/dvandva
+cargo install --path rust/dvandva
+# or, once 2.0.0-alpha.3 is published: cargo install dvandva --version 2.0.0-alpha.3
 ```
 
 The binary must be on `PATH` for the Dvandva skills to run. `cargo install`
@@ -190,7 +191,7 @@ The default `run_mode` is `walkaway`: start both sessions once, then let the bat
 
 | Prerequisite | Verify |
 |---|---|
-| `dvandva` binary on `PATH`, hard runtime dependency | `dvandva --version` (install with `cargo install dvandva --version 2.0.0-alpha.3`, or `cargo install --path rust/dvandva` from a checkout) |
+| `dvandva` binary on `PATH`, hard runtime dependency | `dvandva --version` (install with `cargo install --path rust/dvandva`, or `cargo install dvandva --version 2.0.0-alpha.3` once published) |
 | Claude Code, if using Claude | `claude --version` |
 | Codex CLI, if using Codex | `codex --version` |
 | Superpowers plugin on every engine running a Dvandva role, hard runtime dependency | `/skills` lists `superpowers:using-superpowers`, `superpowers:brainstorming`, `superpowers:test-driven-development`, and `superpowers:verification-before-completion` |

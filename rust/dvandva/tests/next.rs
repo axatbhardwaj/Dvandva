@@ -227,6 +227,66 @@ fn research_mode_generate_keeps_research_phase() {
 }
 
 #[test]
+fn research_mode_termination_review_roundtrip() {
+    // H1' regression pin: research_review->termination_review is a PhaseMove::Same
+    // edge (classify_phase_move only special-cases the research_*/spec_* planning
+    // statuses and the implementing/parallel_implementing entry), but under
+    // research mode phase_status_ok demands phase "spec" for termination_review
+    // regardless of move class. Before the fix, GENERATE only consulted
+    // expected_phase_for in the PhaseMove::Spec arm and PhaseMove::Same preserved
+    // the current phase ("research"), so `dvandva write` rejected the candidate
+    // with exit 23 bad_phase_status.
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    let candidate = dir.path().join("baton.next.json");
+    make_baton_v2(&baton, "research_review", "prativadi", 0, |b| {
+        b["mode"] = Value::from("research");
+        b["phase"] = Value::from("research");
+    });
+
+    // LIST shows termination_review is legal from a research-mode research_review.
+    let (list_code, list_out, list_err) = run_next(&["--file", baton.to_str().unwrap()]);
+    assert_eq!(list_code, 0, "list exits 0\nstderr:\n{list_err}");
+    assert!(
+        list_out.contains("DVANDVA_NEXT termination_review owner=team"),
+        "research-mode list shows termination_review\n{list_out}"
+    );
+
+    // GENERATE the termination_review candidate.
+    let (code, stdout, stderr) = run_next(&[
+        "--file",
+        baton.to_str().unwrap(),
+        "--to",
+        "termination_review",
+        "--summary",
+        "Research approved; entering termination review.",
+        "--next-action",
+        "team: run termination_review against the research artifact.",
+    ]);
+    assert_eq!(code, 0, "research-mode generate exits 0\nstderr:\n{stderr}");
+    assert!(
+        stdout.contains("to=termination_review checkpoint=1"),
+        "ok line names the target + checkpoint\n{stdout}"
+    );
+
+    let cand = read_json(&candidate);
+    assert_eq!(cand["status"], "termination_review");
+    // The crux: research mode pins the candidate phase to "spec" for
+    // termination_review, NOT the preserved "research".
+    assert_eq!(
+        cand["phase"], "spec",
+        "research-mode candidate carries phase=spec, matching phase_status_ok"
+    );
+
+    // Strongest property: the SAME binary's `write` accepts the generated file.
+    run(&baton, &candidate).assert(
+        "write accepts the research-mode termination_review candidate",
+        0,
+    );
+    assert_eq!(read_json(&baton)["checkpoint"], 1);
+}
+
+#[test]
 fn generate_loop_edge_increments_loop_counts() {
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
