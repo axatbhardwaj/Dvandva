@@ -1,0 +1,16 @@
+{
+  "description": "Blocks direct Write/Edit/MultiEdit/NotebookEdit tool calls against the Dvandva baton or its history; agents must scaffold a candidate with `dvandva next` and install it with `dvandva write`.",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "dvandva baton-guard"
+          }
+        ]
+      }
+    ]
+  }
+}
