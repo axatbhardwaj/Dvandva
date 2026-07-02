@@ -165,6 +165,64 @@ fn case3_no_clobber_on_collision() {
     assert!(dup_count >= 1, "expected a dup file to be written");
 }
 
+// Case 3b: repeated snapshot on an unchanged baton is a true no-op —
+// write_with_no_clobber's identical-bytes early return produces neither a
+// dup file nor a no_clobber diagnostic, and leaves the target untouched.
+#[test]
+fn case3b_repeated_snapshot_unchanged_baton_is_noop() {
+    let dir = tempfile::tempdir().unwrap();
+    let dvandva_dir = dir.path().join("case3b/.dvandva");
+    let baton = dvandva_dir.join("baton.json");
+    write_baton(&baton, "vadi", "implementing", 6, "main");
+
+    let out1 = dvandva_snapshot(&baton);
+    assert_eq!(out1.status.code(), Some(0));
+
+    let history_target = dvandva_dir.join("history/6-implementing-vadi.json");
+    let bytes_after_first = fs::read(&history_target).unwrap();
+
+    let out2 = dvandva_snapshot(&baton);
+    assert_eq!(
+        out2.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out2.stderr)
+    );
+
+    let history_entries: Vec<_> = fs::read_dir(dvandva_dir.join("history"))
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .collect();
+    assert_eq!(
+        history_entries.len(),
+        1,
+        "expected exactly one history file, found: {:?}",
+        history_entries
+            .iter()
+            .map(|e| e.file_name())
+            .collect::<Vec<_>>()
+    );
+    assert!(
+        !history_entries[0]
+            .file_name()
+            .to_string_lossy()
+            .contains(".dup-"),
+        "unchanged baton must not produce a dup file"
+    );
+
+    let bytes_after_second = fs::read(&history_target).unwrap();
+    assert_eq!(
+        bytes_after_first, bytes_after_second,
+        "target bytes must be unchanged on repeated no-op snapshot"
+    );
+
+    let stderr2 = String::from_utf8_lossy(&out2.stderr);
+    assert!(
+        !stderr2.contains("no_clobber"),
+        "unchanged baton must not emit a no_clobber diagnostic, got: {stderr2}"
+    );
+}
+
 // Case 4: snapshot write failure exits 23
 #[test]
 fn case4_snapshot_write_failure_exits_23() {

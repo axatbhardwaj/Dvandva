@@ -54,3 +54,9 @@ bash scripts/install.sh
   stringifies it. Real batons always carry these fields as strings, so this is
   an unreachable, synthetic residual (preserving the number type would change
   the `ASK` sort ordering, which must stay identical to the shell).
+- **Array/object `status`/`assignee`/`branch` in `snapshot`.** `field_or`/
+  `jq_tostring` render non-scalar values (arrays/objects) as their compact
+  JSON text, whereas the shell's `@tsv` step fails the jq pipeline (exit 22)
+  when a field isn't a scalar. Real Dvandva batons always carry `status`/
+  `assignee`/`branch` as strings, so this is an unreachable, synthetic-only
+  divergence.
