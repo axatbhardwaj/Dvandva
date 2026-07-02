@@ -1002,8 +1002,10 @@ fn phase_wait_probe(plugin_dir: &Path, tmp_dir: &Path) -> Result<(), SmokeError>
 }
 
 /// Re-keyed from the bundled `dvandva-write.sh` invocations: drives this
-/// same binary's `write` subcommand instead. Exercises both the v1 and v2
-/// seed scaffolds plus one legal transition.
+/// same binary's `write` subcommand instead. S5-T2 retired v1 from the write
+/// path, so this now probes that a v1 scaffold candidate is REJECTED with
+/// `schema_retired`, then exercises the live v2 research seed scaffold + one
+/// legal transition.
 fn phase_write_probe(plugin_dir: &Path, tmp_dir: &Path) -> Result<(), SmokeError> {
     let write_box = tmp_dir.join("write-helper");
     fs::create_dir_all(&write_box)
@@ -1011,8 +1013,10 @@ fn phase_write_probe(plugin_dir: &Path, tmp_dir: &Path) -> Result<(), SmokeError
     let baton_path = write_box.join("baton.json");
     let baton_next_path = write_box.join("baton.next.json");
 
+    // S5-T2: a v1 seed candidate can no longer be written — expect exit 23
+    // `schema_retired` and no installed baton.
     let baton_schema = read_json(&plugin_dir.join("references/baton-schema.json"))?;
-    let scaffold = with_fields(
+    let v1_scaffold = with_fields(
         baton_schema,
         &[
             ("status", Value::String("spec_drafting".to_string())),
@@ -1024,29 +1028,16 @@ fn phase_write_probe(plugin_dir: &Path, tmp_dir: &Path) -> Result<(), SmokeError
             ("resume_status", Value::Null),
         ],
     );
-    write_json(&baton_next_path, &scaffold)?;
-    run_write(&baton_path, &baton_next_path, "scaffold")?;
-
-    let baton_after_scaffold = read_json(&baton_path)?;
-    let checkpoint_1 = with_fields(
-        baton_after_scaffold,
-        &[
-            ("status", Value::String("spec_review".to_string())),
-            ("assignee", Value::String("prativadi".to_string())),
-            ("review_target", Value::String("spec".to_string())),
-            ("checkpoint", Value::from(1)),
-        ],
-    );
-    write_json(&baton_next_path, &checkpoint_1)?;
-    run_write(&baton_path, &baton_next_path, "checkpoint 1")?;
-
-    let history_0 = write_box.join("history/0-spec_drafting-vadi.json");
-    if !history_0.is_file() {
-        return Err(fail("write helper did not snapshot checkpoint 0"));
-    }
-    let history_1 = write_box.join("history/1-spec_review-prativadi.json");
-    if !history_1.is_file() {
-        return Err(fail("write helper did not snapshot checkpoint 1"));
+    write_json(&baton_next_path, &v1_scaffold)?;
+    run_write_expect_reject(
+        &baton_path,
+        &baton_next_path,
+        23,
+        "schema_retired",
+        "v1 scaffold retired",
+    )?;
+    if baton_path.is_file() {
+        return Err(fail("v1 schema_retired probe must not install a baton"));
     }
 
     let v2_write_box = tmp_dir.join("write-helper-v2/.dvandva/runs/smoke");
@@ -1087,6 +1078,40 @@ fn phase_write_probe(plugin_dir: &Path, tmp_dir: &Path) -> Result<(), SmokeError
         return Err(fail("v2 write helper did not snapshot research scaffold"));
     }
 
+    Ok(())
+}
+
+/// Drive `dvandva write` expecting a specific non-zero rejection: the exit code
+/// must match and stderr must contain `needle`. Used by the S5-T2 v1
+/// `schema_retired` probe.
+fn run_write_expect_reject(
+    baton_path: &Path,
+    baton_next_path: &Path,
+    expected_code: i32,
+    needle: &str,
+    step: &str,
+) -> Result<(), SmokeError> {
+    let baton_arg = baton_path
+        .to_str()
+        .ok_or_else(|| fail("baton path is not valid UTF-8"))?;
+    let baton_next_arg = baton_next_path
+        .to_str()
+        .ok_or_else(|| fail("baton.next path is not valid UTF-8"))?;
+    let description = format!("dvandva write {baton_arg} {baton_next_arg} ({step})");
+    println!("SMOKE: {description}");
+    let exe = std::env::current_exe()
+        .map_err(|error| fail(format!("cannot resolve current_exe(): {error}")))?;
+    let output = Command::new(exe)
+        .args(["write", baton_arg, baton_next_arg])
+        .output()
+        .map_err(|error| fail(format!("failed to run {description}: {error}")))?;
+    let code = output.status.code();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    if code != Some(expected_code) || !stderr.contains(needle) {
+        return Err(fail(format!(
+            "{description} expected exit {expected_code} with '{needle}', got exit {code:?}: {stderr}"
+        )));
+    }
     Ok(())
 }
 

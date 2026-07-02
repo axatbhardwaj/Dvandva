@@ -4,22 +4,16 @@
 //! `description` fields, a description length cap, and a body length cap.
 //! For `vadi`/`prativadi` role skills only, it additionally rejects
 //! out-of-band final-approval instructions and requires a fenced ```json
-//! block whose keys exactly match the top-level keys of
-//! `plugins/dvandva/references/baton-schema.json` (schema
-//! `dvandva.baton.v1`).
+//! block whose top-level keys exactly match the engine's `dvandva.baton.v2`
+//! required-key list (schema `dvandva.baton.v2`).
 //!
-//! Divergence from the shell: the shell resolved the v1 schema reference
-//! relative to its own fixed script location
-//! (`plugins/dvandva/references/baton-schema.json` next to the repo the
-//! script lived in). This port instead walks up from the SKILL.md's
-//! directory looking for a sibling `references/baton-schema.json` (i.e. the
-//! enclosing plugin root), falling back to
-//! `<repo-root>/plugins/dvandva/references/baton-schema.json` (repo root via
-//! [`crate::gitcfg::repo_toplevel`] from the current working directory)
-//! when no such ancestor is found — e.g. for standalone fixture files that
-//! live outside any plugin tree.
+//! S5-T2 (D5) re-key: the check compares the inline block against
+//! [`crate::write::v2_required_keys`] — the engine's OWN required-key list, the
+//! single source of truth — rather than the retired
+//! `plugins/dvandva/references/baton-schema.json` v1 file. This keeps the skills'
+//! seed shape and the write engine's contract from ever drifting.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use serde_json::Value;
 
@@ -121,9 +115,9 @@ pub fn run(args: &[String]) -> i32 {
         .as_ref()
         .and_then(|v| v.get("schema"))
         .and_then(Value::as_str)
-        == Some("dvandva.baton.v1");
+        == Some("dvandva.baton.v2");
     if !schema_ok {
-        eprintln!("FAIL: inlined JSON block does not have schema=dvandva.baton.v1 in {file_arg}");
+        eprintln!("FAIL: inlined JSON block does not have schema=dvandva.baton.v2 in {file_arg}");
         return 1;
     }
     let inline_obj = parsed
@@ -132,27 +126,13 @@ pub fn run(args: &[String]) -> i32 {
         .cloned()
         .unwrap_or_default();
 
-    let v1_schema_path = resolve_v1_schema_path(file);
-    let Ok(schema_bytes) = std::fs::read(&v1_schema_path) else {
-        eprintln!(
-            "FAIL: v1 baton schema reference not found: {}",
-            v1_schema_path.display()
-        );
-        return 1;
-    };
-    let Ok(schema_value) = serde_json::from_slice::<Value>(&schema_bytes) else {
-        eprintln!(
-            "FAIL: v1 baton schema reference not found: {}",
-            v1_schema_path.display()
-        );
-        return 1;
-    };
-    let schema_obj = schema_value.as_object().cloned().unwrap_or_default();
-
-    let mut required_keys: Vec<&String> = schema_obj.keys().collect();
-    required_keys.sort();
-    for key in &required_keys {
-        if !inline_obj.contains_key(key.as_str()) {
+    // S5-T2: the exact-key check compares against the engine's own v2
+    // required-key list (one source of truth), not a bundled schema file.
+    let required_keys = crate::write::v2_required_keys();
+    let mut sorted = required_keys.clone();
+    sorted.sort_unstable();
+    for key in &sorted {
+        if !inline_obj.contains_key(*key) {
             eprintln!("FAIL: inlined JSON block missing required key '{key}' in {file_arg}");
             return 1;
         }
@@ -160,7 +140,7 @@ pub fn run(args: &[String]) -> i32 {
 
     let mut unexpected: Vec<&String> = inline_obj
         .keys()
-        .filter(|k| !schema_obj.contains_key(k.as_str()))
+        .filter(|k| !required_keys.contains(&k.as_str()))
         .collect();
     unexpected.sort();
     if !unexpected.is_empty() {
@@ -230,28 +210,4 @@ fn extract_fenced_json_block(content: &str) -> String {
         }
     }
     collected.join("\n")
-}
-
-/// Resolve the v1 baton schema reference file for `skill_file`: walk up
-/// from its directory looking for a sibling `references/baton-schema.json`
-/// (the plugin root), falling back to
-/// `<repo-root>/plugins/dvandva/references/baton-schema.json`.
-fn resolve_v1_schema_path(skill_file: &Path) -> PathBuf {
-    let abs = std::fs::canonicalize(skill_file).unwrap_or_else(|_| skill_file.to_path_buf());
-    let mut dir = abs.parent().map(Path::to_path_buf);
-    while let Some(d) = dir {
-        let candidate = d.join("references").join("baton-schema.json");
-        if candidate.is_file() {
-            return candidate;
-        }
-        dir = d.parent().map(Path::to_path_buf);
-    }
-
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    let repo_root = crate::gitcfg::repo_toplevel(&cwd).unwrap_or(cwd);
-    repo_root
-        .join("plugins")
-        .join("dvandva")
-        .join("references")
-        .join("baton-schema.json")
 }

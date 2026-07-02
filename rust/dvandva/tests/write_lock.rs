@@ -64,11 +64,14 @@ fn create_live_foreign_lock(box_dir: &Path) {
 
 #[test]
 fn broken_current_baton_never_clobbered() {
+    // S5-T2: CONVERTED to a v2 candidate so the write reaches the current-baton
+    // read (a v1 candidate would short-circuit to `schema_retired`). The current
+    // is truncated JSON -> unparseable -> exit 25, bytes preserved.
     let d = tmp();
     let (b, n) = paths(&d);
-    let raw: &[u8] = b"{\"schema\": \"dvandva.baton.v1\", \"assignee\": ";
+    let raw: &[u8] = b"{\"schema\": \"dvandva.baton.v2\", \"assignee\": ";
     std::fs::write(&b, raw).unwrap();
-    make_baton(&n, "spec_review", "prativadi", 5, |_| {});
+    make_baton_v2(&n, "research_review", "prativadi", 5, |_| {});
     run(&b, &n).assert("unparseable current baton exits 25", 25);
     let bytes = std::fs::read(&b).unwrap();
     assert_eq!(
@@ -81,10 +84,12 @@ fn broken_current_baton_never_clobbered() {
 
 #[test]
 fn install_fail_on_read_only_dir() {
+    // S5-T2: CONVERTED to a v2 research scaffold (a v1 scaffold is now
+    // `schema_retired`); the read-only install failure path is engine-wide.
     use std::os::unix::fs::PermissionsExt;
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton(&n, "spec_drafting", "vadi", 0, |_| {});
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |_| {});
     std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
     let result = run(&b, &n);
     std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -100,14 +105,16 @@ fn snapshot_failure_via_history_file_collision_exits_30() {
     // mechanism does not exist. Instead we force the snapshot's
     // `create_dir_all(<dir>/history)` to fail natively by pre-creating
     // `history` as a regular file in the baton dir.
+    // S5-T2: CONVERTED to a v2 research scaffold (a v1 scaffold is now
+    // `schema_retired`); the snapshot-collision path is engine-wide.
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton(&n, "spec_drafting", "vadi", 0, |_| {});
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |_| {});
     std::fs::write(d.path().join("history"), b"x").unwrap();
     run(&b, &n).assert("snapshot failure via history collision exits 30", 30);
     let installed: Value = serde_json::from_slice(&std::fs::read(&b).unwrap()).unwrap();
     assert_eq!(
-        installed["status"], "spec_drafting",
+        installed["status"], "research_drafting",
         "baton must be installed despite the snapshot failure"
     );
 }
@@ -116,11 +123,14 @@ fn snapshot_failure_via_history_file_collision_exits_30() {
 
 #[test]
 fn dvandva_lock_timeout_rejects_bad_values() {
+    // S5-T2: CONVERTED to v2 batons — the DVANDVA_LOCK_TIMEOUT gate is
+    // engine-wide, but a v1 candidate would now short-circuit to `schema_retired`
+    // before the timeout check.
     for bad in ["abc", "-5", "08", "09", "07", "0", "00"] {
         let d = tmp();
         let (b, n) = paths(&d);
-        make_baton(&b, "implementing", "vadi", 4, |_| {});
-        make_baton(&n, "phase_review", "prativadi", 5, |_| {});
+        make_baton_v2(&b, "implementing", "vadi", 4, |_| {});
+        make_baton_v2(&n, "phase_review", "prativadi", 5, |_| {});
         create_live_foreign_lock(d.path());
         run_env(&b, &n, &[("DVANDVA_LOCK_TIMEOUT", bad)]).assert_contains(
             &format!("DVANDVA_LOCK_TIMEOUT={bad} rejected"),
@@ -139,10 +149,12 @@ fn dvandva_lock_timeout_rejects_bad_values() {
 
 #[test]
 fn dvandva_lock_timeout_valid_value_accepted() {
+    // S5-T2: CONVERTED to a v2 standard-profile implementing->phase_review edge
+    // (the legal v2 analogue of the retired v1 edge).
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton(&b, "implementing", "vadi", 4, |_| {});
-    make_baton(&n, "phase_review", "prativadi", 5, |_| {});
+    make_baton_v2(&b, "implementing", "vadi", 4, standard_profile);
+    make_baton_v2(&n, "phase_review", "prativadi", 5, standard_profile);
     run_env(&b, &n, &[("DVANDVA_LOCK_TIMEOUT", "5")]).assert("valid DVANDVA_LOCK_TIMEOUT=5", 0);
 }
 

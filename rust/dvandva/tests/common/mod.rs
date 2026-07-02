@@ -905,6 +905,84 @@ pub fn seed_done_artifacts(baton_dir: &Path) {
     }
 }
 
+// ---------------------------------------------------------------------------
+// S5-T3 chunk-floor waiver fixtures (WE3).
+// ---------------------------------------------------------------------------
+
+/// S5-T3: `vadi_n` vadi-owned + `prativadi_n` prativadi-owned two-team
+/// implementation chunks (phase "1"). Total = `vadi_n + prativadi_n`, so a caller
+/// can build a sub-5 split to exercise the chunk-floor waiver.
+pub fn parallel_chunks_split(b: &mut Value, vadi_n: usize, prativadi_n: usize) {
+    b["active_roles"] = json!(["vadi", "prativadi"]);
+    b["work_split"] = json!([]);
+    let mut idx = 0;
+    for (role, count) in [("vadi", vadi_n), ("prativadi", prativadi_n)] {
+        let reviewer = if role == "vadi" { "prativadi" } else { "vadi" };
+        for _ in 0..count {
+            push(
+                b,
+                "work_split",
+                json!({
+                    "id": format!("impl-chunk-{idx}"),
+                    "phase": "1",
+                    "chunk_type": "implementation",
+                    "owner": role,
+                    "owner_role": role,
+                    "suggested_agent": "dvandva-implementer",
+                    "scope": "Two-team implementation chunk.",
+                    "paths": [format!("src/chunk-{idx}.ts")],
+                    "cross_review_by": reviewer,
+                    "can_parallelize": true,
+                    "parallel_rationale": "Independent file.",
+                    "depends_on": [],
+                    "status": "planned",
+                    "artifact_refs": []
+                }),
+            );
+            idx += 1;
+        }
+    }
+}
+
+/// S5-T3: `vadi_n` + `prativadi_n` completed implementation-chunk subagent_tracks
+/// (phase 1), for the parallel_implementing->test_creation floor.
+pub fn implementation_tracks_split(b: &mut Value, vadi_n: usize, prativadi_n: usize) {
+    let mut idx = 0;
+    for (role, count) in [("vadi", vadi_n), ("prativadi", prativadi_n)] {
+        for _ in 0..count {
+            push(
+                b,
+                "subagent_tracks",
+                json!({
+                    "id": format!("impl-track-{idx}"),
+                    "phase": 1,
+                    "status": "completed",
+                    "track": "implementation-chunk",
+                    "owner": "dvandva-implementer",
+                    "owner_role": role,
+                    "parallelized": true,
+                    "rationale": "Implementation chunk completed in parallel.",
+                    "inputs": [format!("implementation-chunk-{idx}")],
+                    "outputs": [format!("Chunk {idx} implemented.")],
+                    "evidence_refs": [format!("subagent:impl-track-{idx}")],
+                    "result": "passed"
+                }),
+            );
+            idx += 1;
+        }
+    }
+}
+
+/// S5-T3: a well-formed `work_split_waiver` — prativadi-approved, nonblank
+/// reason, numeric checkpoint.
+pub fn work_split_waiver(b: &mut Value) {
+    b["work_split_waiver"] = json!({
+        "reason": "Two-file phase; a further split would fabricate chunks.",
+        "approved_by": "prativadi",
+        "checkpoint": 5
+    });
+}
+
 /// S4-T6: mark every `verification_matrix` row complete (result passed) and
 /// fresh (numeric `evidence_checkpoint` = the candidate's checkpoint, which is
 /// at/after the freshness anchor in these no-impl-history fixtures) so a

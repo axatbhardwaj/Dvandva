@@ -207,6 +207,19 @@ fn validate_candidate_shape(
     }
     let is_v2 = schema == "dvandva.baton.v2";
 
+    // ---- S5-T2 (D5): v1 is retired from the WRITE path ---------------------
+    // A `dvandva.baton.v1` candidate can no longer be written (scaffold OR
+    // transition); the migration hint points at v2. The READ path
+    // (state/resolve/wait/brief) stays lenient, so old batons remain observable.
+    if schema == "dvandva.baton.v1" {
+        return Err((
+            23,
+            format!(
+                "DVANDVA_WRITE schema_retired candidate={cf} schema=dvandva.baton.v1 hint=migrate to dvandva.baton.v2"
+            ),
+        ));
+    }
+
     // ---- run-dir / run_id consistency (bad_run_id_dir) ---------------------
     if let Some(named) = named_run_dir_id(baton_file) {
         let cand_named = if matches!(field(cand, "run_id"), Some(Value::String(_))) {
@@ -496,7 +509,7 @@ fn validate_candidate_shape(
     let new_prativadi_approval = bool_field(cand, "prativadi_final_approval");
 
     // ---- status enum -------------------------------------------------------
-    if !status_enum_ok(is_v2, &new_status) {
+    if !status_enum_ok(&new_status) {
         return Err((
             23,
             format!("DVANDVA_WRITE bad_status status={new_status} candidate={cf}"),
@@ -713,6 +726,14 @@ pub(crate) fn expected_owner(
 ///   phase there, and the moves that reach them are either same-phase (preserve)
 ///   or a numeric advancement whose target number is the caller's `--phase N`,
 ///   which this producer does not synthesise.
+///
+/// S5-T5 research-mode terminals (`termination_review`/`phase_fixing`/`done`)
+/// label by the run's seed path: the current phase is the proxy `next` has in
+/// hand — a run that drafted a spec is already at a `"spec"`-labeled state, so
+/// its terminals keep `"spec"`; an exploratory run is at `"research"` and its
+/// terminals use `"research"`. This matches [`phase_status_ok`], whose canonical
+/// seed markers (`research_outcome`/`plan_ref`) `next` copies into the candidate
+/// verbatim and which agree with the current phase on every reachable run.
 #[allow(dead_code)]
 pub(crate) fn expected_phase_for(mode: &str, status: &str, current_phase: &Value) -> Value {
     let effective = canonical_mode(mode);
@@ -726,6 +747,13 @@ pub(crate) fn expected_phase_for(mode: &str, status: &str, current_phase: &Value
         }
         (Some("research"), "research_drafting" | "research_review" | "research_revision") => {
             Value::from("research")
+        }
+        (Some("research"), "termination_review" | "phase_fixing" | "done") => {
+            if current_phase == &Value::from("spec") {
+                Value::from("spec")
+            } else {
+                Value::from("research")
+            }
         }
         (Some("research"), _) => Value::from("spec"),
         (Some("review"), _) => Value::from("review"),
@@ -1424,18 +1452,17 @@ fn decide_transition(
 
     let cur_doc = match cur_doc_opt {
         None => {
-            // Scaffold: only the vadi may create the very first baton.
-            let legal = (cx.schema == "dvandva.baton.v1"
-                && cx.new_status == "spec_drafting"
+            // Scaffold: only the vadi may create the very first baton. S5-T2
+            // retired the v1 scaffold branch — a v1 candidate never reaches here
+            // (rejected upstream with `schema_retired`), so only the v2 seed is
+            // legal.
+            let legal = cx.schema == "dvandva.baton.v2"
+                && cx.new_status == "research_drafting"
                 && cx.new_assignee == "vadi"
-                && cx.new_checkpoint == 0)
-                || (cx.schema == "dvandva.baton.v2"
-                    && cx.new_status == "research_drafting"
-                    && cx.new_assignee == "vadi"
-                    && cx.new_checkpoint == 0);
+                && cx.new_checkpoint == 0;
             if !legal {
                 return Err((24, format!(
-                    "DVANDVA_WRITE illegal_transition scaffold requires v1 status=spec_drafting or v2 status=research_drafting with assignee=vadi checkpoint=0, got schema={} status={} assignee={} checkpoint={}",
+                    "DVANDVA_WRITE illegal_transition scaffold requires v2 status=research_drafting with assignee=vadi checkpoint=0, got schema={} status={} assignee={} checkpoint={}",
                     cx.schema, cx.new_status, cx.new_assignee, cx.new_checkpoint
                 )));
             }
@@ -1478,7 +1505,19 @@ fn decide_transition(
     let cur_prativadi_approval = bool_field(cur_doc, "prativadi_final_approval");
     let cur_mode = str_field(cur_doc, "mode");
 
-    if cur_schema != "dvandva.baton.v1" && cur_schema != "dvandva.baton.v2" {
+    // S5-T2 (D5): a v1 CURRENT baton has no legal write forward — the whole
+    // engine graph is v2. Reject with the same `schema_retired` migration hint a
+    // v1 candidate gets, rather than the generic unparseable code, so the caller
+    // is told to migrate. The READ path still surfaces v1 batons untouched.
+    if cur_schema == "dvandva.baton.v1" {
+        return Err((
+            23,
+            format!(
+                "DVANDVA_WRITE schema_retired file={bf} schema=dvandva.baton.v1 hint=migrate to dvandva.baton.v2"
+            ),
+        ));
+    }
+    if cur_schema != "dvandva.baton.v2" {
         return Err((
             25,
             format!("DVANDVA_WRITE current_baton_unparseable file={bf} bad_schema={cur_schema}"),
@@ -1646,7 +1685,10 @@ fn decide_transition(
             // numeric phase advance).
             let amendment_edge = format!("plan_amendment:{cur_phase}");
             loop_reason = loop_edge_reason(cur_doc, cand, &amendment_edge);
-        } else if cx.new_phase != cur_phase && loop_counts_nonempty(cand) {
+        } else if cx.new_phase != cur_phase
+            && loop_counts_nonempty(cand)
+            && !research_planning_relabel(&cur_effective_mode, &cur_phase, cx.new_phase)
+        {
             loop_reason = format!(
                 "bad_loop_counts phase_advanced current={cur_phase} candidate={} must_reset=true",
                 cx.new_phase
@@ -1800,7 +1842,9 @@ fn decide_transition(
     } else if cx.new_status == cur_status {
         if cx.is_v2 {
             if is_team_sync_status(cx.new_status) {
-                if cx.new_phase != cur_phase {
+                if cx.new_phase != cur_phase
+                    && !research_planning_relabel(&cur_effective_mode, &cur_phase, cx.new_phase)
+                {
                     reason = format!(
                         "same-status team sync cannot change phase current={cur_phase} candidate={}",
                         cx.new_phase
@@ -1956,24 +2000,41 @@ fn decide_transition(
             format!("DVANDVA_WRITE bad_master_plan_locked candidate={cf}"),
         ));
     }
-    if legal
-        && cx.is_v2
-        && cx.new_status == "parallel_implementing"
-        && !parallel_work_split_ok(cand)
-    {
-        return Err((
-            23,
-            format!("DVANDVA_WRITE bad_parallel_work_split candidate={cf}"),
-        ));
+    if legal && cx.is_v2 && cx.new_status == "parallel_implementing" {
+        // S5-T3: a present-but-invalid waiver is a hard error at this gate; an
+        // absent one leaves the ≥5 floor in force; a valid one waives it (the
+        // per-role ≥2 floor still holds).
+        let waiver = work_split_waiver_state(cand);
+        if waiver == WaiverState::Malformed {
+            return Err((
+                23,
+                format!("DVANDVA_WRITE bad_work_split_waiver candidate={cf}"),
+            ));
+        }
+        if !parallel_work_split_ok(cand, waiver == WaiverState::Valid) {
+            return Err((
+                23,
+                format!("DVANDVA_WRITE bad_parallel_work_split candidate={cf}"),
+            ));
+        }
     }
     if legal
         && cx.is_v2
         && cur_status == "parallel_implementing"
         && cx.new_status == "test_creation"
-        && !parallel_to_test_creation_ok(cand)
     {
-        legal = false;
-        reason = "parallel_implementing->test_creation requires completed implementation-chunk subagent_tracks for both roles".to_string();
+        // S5-T3: same waiver rule as the parallel_implementing entry.
+        let waiver = work_split_waiver_state(cand);
+        if waiver == WaiverState::Malformed {
+            return Err((
+                23,
+                format!("DVANDVA_WRITE bad_work_split_waiver candidate={cf}"),
+            ));
+        }
+        if !parallel_to_test_creation_ok(cand, waiver == WaiverState::Valid) {
+            legal = false;
+            reason = "parallel_implementing->test_creation requires completed implementation-chunk subagent_tracks for both roles".to_string();
+        }
     }
     if legal
         && cx.is_v2
@@ -2392,6 +2453,14 @@ fn required_keys(is_v2: bool) -> Vec<&'static str> {
     keys
 }
 
+/// The exact top-level key set a `dvandva.baton.v2` candidate must carry (base +
+/// v2 additions). Exposed as the single source of truth for `lint skills`'
+/// inline-contract-block key check (S5-T2 re-key), so the engine's required-key
+/// list and the skills' seed shape can never drift.
+pub(crate) fn v2_required_keys() -> Vec<&'static str> {
+    required_keys(true)
+}
+
 fn review_target_ok(cand: &Value) -> bool {
     match field(cand, "review_target") {
         None | Some(Value::Null) => true,
@@ -2499,49 +2568,34 @@ fn is_amendment_exit_edge(profile: &str, cur_status: &str, new_status: &str) -> 
             || (profile == "standard" && new_status == "implementing"))
 }
 
-fn status_enum_ok(is_v2: bool, status: &str) -> bool {
-    if is_v2 {
-        matches!(
-            status,
-            "research_drafting"
-                | "research_review"
-                | "research_revision"
-                | "spec_drafting"
-                | "spec_review"
-                | "spec_revision"
-                | "human_question"
-                | "implementing"
-                | "parallel_implementing"
-                | "test_creation"
-                | "cross_review"
-                | "cross_fixing"
-                | "deep_review"
-                | "deslop"
-                | "termination_review"
-                | "phase_review"
-                | "phase_fixing"
-                | "review_of_review"
-                | "counter_review"
-                | "human_decision"
-                | "done"
-                | "abandoned"
-        )
-    } else {
-        matches!(
-            status,
-            "spec_drafting"
-                | "spec_review"
-                | "spec_revision"
-                | "human_question"
-                | "implementing"
-                | "phase_review"
-                | "phase_fixing"
-                | "review_of_review"
-                | "counter_review"
-                | "human_decision"
-                | "done"
-        )
-    }
+/// The v2 status vocabulary. The v1 arm was removed with S5-T2 (v1 candidates
+/// are rejected upstream with `schema_retired`), so only v2 statuses remain.
+fn status_enum_ok(status: &str) -> bool {
+    matches!(
+        status,
+        "research_drafting"
+            | "research_review"
+            | "research_revision"
+            | "spec_drafting"
+            | "spec_review"
+            | "spec_revision"
+            | "human_question"
+            | "implementing"
+            | "parallel_implementing"
+            | "test_creation"
+            | "cross_review"
+            | "cross_fixing"
+            | "deep_review"
+            | "deslop"
+            | "termination_review"
+            | "phase_review"
+            | "phase_fixing"
+            | "review_of_review"
+            | "counter_review"
+            | "human_decision"
+            | "done"
+            | "abandoned"
+    )
 }
 
 fn named_run_dir_id(baton_file: &Path) -> Option<String> {
@@ -2566,6 +2620,27 @@ fn canonical_positive_decimal(value: &str) -> bool {
 // ===========================================================================
 // v2 phase↔status pairing
 // ===========================================================================
+/// S5-T5: did a research-mode run take the SEED path (research that produced a
+/// development spec)? On the seed path a spec was drafted, so `plan_ref` is set
+/// and/or `research_outcome == "seed_development"`; that path keeps the "spec"
+/// phase label on its terminal statuses. The exploratory path (research only,
+/// no spec) uses "research". Candidate-checkable — the fields the seed markers
+/// live on are inherited across every transition of the run.
+fn research_seed(cand: &Value) -> bool {
+    matches!(field(cand, "research_outcome"), Some(Value::String(s)) if s == "seed_development")
+        || matches!(field(cand, "plan_ref"), Some(Value::String(s)) if !s.trim().is_empty())
+}
+
+/// S5-T5 current-side leniency: an already-installed research-mode baton may
+/// carry the OLD `"spec"` label on a terminal status where the run should now be
+/// `"research"` (or vice-versa). A transition off such a baton must not be read
+/// as a phase advancement / a forbidden same-status phase change merely because
+/// the two ends disagree on the interchangeable research-planning label. Guards
+/// the CURRENT side only — candidates are still held strict by `phase_status_ok`.
+fn research_planning_relabel(mode: &str, a: &str, b: &str) -> bool {
+    mode == "research" && matches!(a, "spec" | "research") && matches!(b, "spec" | "research")
+}
+
 fn phase_status_ok(mode: &str, status: &str, cand: &Value) -> bool {
     let phase = field(cand, "phase");
     let is_str = |want: &str| matches!(phase, Some(Value::String(s)) if s == want);
@@ -2597,6 +2672,17 @@ fn phase_status_ok(mode: &str, status: &str, cand: &Value) -> bool {
         ("research", "research_drafting" | "research_review" | "research_revision") => {
             is_str("research")
         }
+        // S5-T5: research-mode terminals label by run outcome — "research" on the
+        // exploratory path, "spec" only when the run seeded a development spec.
+        ("research", "termination_review" | "phase_fixing" | "done") => {
+            if research_seed(cand) {
+                is_str("spec")
+            } else {
+                is_str("research")
+            }
+        }
+        // The spec_* planning statuses (spec_drafting/spec_review/spec_revision)
+        // are always "spec".
         ("research", _) => is_str("spec"),
         ("review", _) => is_str("review"),
         _ => true,
@@ -3689,26 +3775,10 @@ fn edge_whitelist(
     reason: &mut String,
 ) -> bool {
     let edge = format!("{cur_status}:{new_status}");
+    // S5-T2 (D5): v1 is retired from the WRITE path; only the v2 arm survives.
+    // v1 candidates/current batons are rejected upstream with `schema_retired`,
+    // so this whitelist is never consulted for a v1 baton.
     let legal = match schema {
-        "dvandva.baton.v1" => matches!(
-            edge.as_str(),
-            "spec_drafting:spec_review"
-                | "spec_review:spec_revision"
-                | "spec_review:implementing"
-                | "spec_revision:spec_review"
-                | "implementing:phase_review"
-                | "phase_review:phase_fixing"
-                | "phase_review:review_of_review"
-                | "phase_review:implementing"
-                | "phase_review:done"
-                | "phase_fixing:phase_review"
-                | "review_of_review:implementing"
-                | "review_of_review:done"
-                | "review_of_review:counter_review"
-                | "counter_review:implementing"
-                | "counter_review:done"
-                | "counter_review:review_of_review"
-        ),
         "dvandva.baton.v2" => match cur_mode {
             "development" => match new_profile {
                 "fast" => matches!(
@@ -3744,6 +3814,16 @@ fn edge_whitelist(
                         | "termination_review:done"
                         // F9: standard phase advancing into a full next phase.
                         | "phase_review:parallel_implementing"
+                        // S5-T1 (D4): the capped mutual-review safety valve, the
+                        // same one full already offers. Entry requires narrow_fixups
+                        // (enforced profile-agnostically post-legality); the
+                        // review_of_review<->counter_review loop is loop-capped; both
+                        // exit back to phase_review (standard's review state).
+                        | "phase_review:review_of_review"
+                        | "review_of_review:counter_review"
+                        | "review_of_review:phase_review"
+                        | "counter_review:review_of_review"
+                        | "counter_review:phase_review"
                 ),
                 "full" => matches!(
                     edge.as_str(),
@@ -3822,7 +3902,39 @@ fn edge_whitelist(
 // ===========================================================================
 // post-legality edge gates
 // ===========================================================================
-fn parallel_work_split_ok(cand: &Value) -> bool {
+/// S5-T3 (D5): the `work_split_waiver` object is additive/nullable. Absent/null
+/// = no waiver; a well-formed `{reason: nonblank string, approved_by:
+/// "prativadi", checkpoint: number}` = a valid waiver; anything else present is
+/// malformed. Consulted only at the two chunk-floor gates; ignored elsewhere.
+#[derive(PartialEq)]
+enum WaiverState {
+    Absent,
+    Valid,
+    Malformed,
+}
+
+fn work_split_waiver_state(cand: &Value) -> WaiverState {
+    match field(cand, "work_split_waiver") {
+        None | Some(Value::Null) => WaiverState::Absent,
+        Some(Value::Object(m)) => {
+            let reason_ok = matches!(m.get("reason"), Some(Value::String(s)) if s.chars().any(|c| !c.is_whitespace()));
+            let approved_ok =
+                matches!(m.get("approved_by"), Some(Value::String(s)) if s == "prativadi");
+            let checkpoint_ok = matches!(m.get("checkpoint"), Some(Value::Number(_)));
+            if reason_ok && approved_ok && checkpoint_ok {
+                WaiverState::Valid
+            } else {
+                WaiverState::Malformed
+            }
+        }
+        _ => WaiverState::Malformed,
+    }
+}
+
+/// S5-T3: the parallel-work-split floor is ≥2 write-capable implementation
+/// chunks PER ROLE, AND (≥5 chunks total OR a valid `work_split_waiver`). The
+/// per-role floor is never waived — only the ≥5 total is.
+fn parallel_work_split_ok(cand: &Value, waived: bool) -> bool {
     let root_phase = jq_render(field(cand, "phase"));
     let chunks: Vec<&Value> = arr(field(cand, "work_split"))
         .iter()
@@ -3849,9 +3961,15 @@ fn parallel_work_split_ok(cand: &Value) -> bool {
                 && matches!(field(item, "paths"), Some(Value::Array(a)) if !a.is_empty())
         })
         .collect();
-    chunks.len() >= 5
-        && chunks.iter().any(|c| owner_role_or_owner(c) == "vadi")
-        && chunks.iter().any(|c| owner_role_or_owner(c) == "prativadi")
+    let vadi = chunks
+        .iter()
+        .filter(|c| owner_role_or_owner(c) == "vadi")
+        .count();
+    let prativadi = chunks
+        .iter()
+        .filter(|c| owner_role_or_owner(c) == "prativadi")
+        .count();
+    vadi >= 2 && prativadi >= 2 && (chunks.len() >= 5 || waived)
 }
 
 fn track_owner_role_or_role(t: &Value) -> String {
@@ -3862,7 +3980,11 @@ fn track_owner_role_or_role(t: &Value) -> String {
     str_field(t, "role")
 }
 
-fn parallel_to_test_creation_ok(cand: &Value) -> bool {
+/// S5-T3: the same chunk-floor waiver rule applies to the
+/// parallel_implementing->test_creation evidence floor — ≥2 completed
+/// implementation-chunk tracks PER ROLE, AND (≥5 tracks total OR a valid
+/// `work_split_waiver`).
+fn parallel_to_test_creation_ok(cand: &Value, waived: bool) -> bool {
     let root_phase = jq_render(field(cand, "phase"));
     let tracks: Vec<&Value> = arr(field(cand, "subagent_tracks"))
         .iter()
@@ -3876,11 +3998,15 @@ fn parallel_to_test_creation_ok(cand: &Value) -> bool {
                 && count_len(field(t, "evidence_refs")) > 0
         })
         .collect();
-    tracks.len() >= 5
-        && tracks.iter().any(|t| track_owner_role_or_role(t) == "vadi")
-        && tracks
-            .iter()
-            .any(|t| track_owner_role_or_role(t) == "prativadi")
+    let vadi = tracks
+        .iter()
+        .filter(|t| track_owner_role_or_role(t) == "vadi")
+        .count();
+    let prativadi = tracks
+        .iter()
+        .filter(|t| track_owner_role_or_role(t) == "prativadi")
+        .count();
+    vadi >= 2 && prativadi >= 2 && (tracks.len() >= 5 || waived)
 }
 
 fn test_creation_to_cross_review_ok(cand: &Value) -> bool {

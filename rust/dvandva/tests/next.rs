@@ -230,12 +230,10 @@ fn research_mode_generate_keeps_research_phase() {
 fn research_mode_termination_review_roundtrip() {
     // H1' regression pin: research_review->termination_review is a PhaseMove::Same
     // edge (classify_phase_move only special-cases the research_*/spec_* planning
-    // statuses and the implementing/parallel_implementing entry), but under
-    // research mode phase_status_ok demands phase "spec" for termination_review
-    // regardless of move class. Before the fix, GENERATE only consulted
-    // expected_phase_for in the PhaseMove::Spec arm and PhaseMove::Same preserved
-    // the current phase ("research"), so `dvandva write` rejected the candidate
-    // with exit 23 bad_phase_status.
+    // statuses and the implementing/parallel_implementing entry). GENERATE
+    // consults expected_phase_for for PhaseMove::Same edges too, so the candidate
+    // phase can never desync from phase_status_ok. S5-T5: on the EXPLORATORY
+    // research path (no seed markers) the terminal carries phase "research".
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
     let candidate = dir.path().join("baton.next.json");
@@ -271,11 +269,11 @@ fn research_mode_termination_review_roundtrip() {
 
     let cand = read_json(&candidate);
     assert_eq!(cand["status"], "termination_review");
-    // The crux: research mode pins the candidate phase to "spec" for
-    // termination_review, NOT the preserved "research".
+    // The crux: S5-T5 labels the exploratory research terminal "research" (the
+    // current phase), matching phase_status_ok's exploratory-path expectation.
     assert_eq!(
-        cand["phase"], "spec",
-        "research-mode candidate carries phase=spec, matching phase_status_ok"
+        cand["phase"], "research",
+        "research-mode exploratory candidate carries phase=research, matching phase_status_ok"
     );
 
     // Strongest property: the SAME binary's `write` accepts the generated file.

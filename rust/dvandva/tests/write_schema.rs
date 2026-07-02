@@ -25,17 +25,9 @@ fn paths(dir: &tempfile::TempDir) -> (PathBuf, PathBuf) {
 }
 
 // ===================== scaffold =====================
-
-#[test]
-fn scaffold_installs_and_snapshots() {
-    let d = tmp();
-    let (b, n) = paths(&d);
-    make_baton(&n, "spec_drafting", "vadi", 0, |_| {});
-    run(&b, &n).assert("scaffold installs and snapshots", 0);
-    assert!(b.is_file());
-    assert!(d.path().join("history/0-spec_drafting-vadi.json").is_file());
-    assert!(n.is_file());
-}
+// S5-T2 (D5): `scaffold_installs_and_snapshots` (v1 happy-path scaffold) was
+// REMOVED — v1 is retired from the write path. The v2 scaffold happy path is
+// `v2_scaffold_research_drafting_installs`; retirement is probed by `s5t2_*`.
 
 #[test]
 fn run_isolation_two_named_runs() {
@@ -72,22 +64,13 @@ fn run_isolation_two_named_runs() {
     assert!(!d.path().join(".dvandva/history").exists());
 }
 
-#[test]
-fn legacy_dot_dvandva_v1_scaffold_allowed() {
-    let d = tmp();
-    let dv = d.path().join(".dvandva");
-    make_baton(
-        &dv.join("baton.next.json"),
-        "spec_drafting",
-        "vadi",
-        0,
-        |_| {},
-    );
-    run(&dv.join("baton.json"), &dv.join("baton.next.json")).assert("legacy .dvandva scaffold", 0);
-}
+// S5-T2 (D5): `legacy_dot_dvandva_v1_scaffold_allowed` was REMOVED — the legacy
+// v1 `.dvandva/baton.json` scaffold is retired from the write path.
 
 #[test]
-fn named_run_v1_scaffold_exits_23() {
+fn named_run_v1_scaffold_now_schema_retired() {
+    // S5-T2: a v1 scaffold under a named run dir is now retired with the
+    // migration hint (the `schema_retired` gate fires ahead of `bad_run_id_dir`).
     let d = tmp();
     let rd = d.path().join(".dvandva/runs/alpha");
     make_baton(
@@ -98,9 +81,9 @@ fn named_run_v1_scaffold_exits_23() {
         |_| {},
     );
     run(&rd.join("baton.json"), &rd.join("baton.next.json")).assert_contains(
-        "named run v1 scaffold",
+        "named run v1 scaffold is retired",
         23,
-        "DVANDVA_WRITE bad_run_id_dir",
+        "DVANDVA_WRITE schema_retired",
     );
 }
 
@@ -184,14 +167,9 @@ fn named_run_v2_run_id_empty_exits_23() {
     );
 }
 
-#[test]
-fn scaffold_wrong_initial_status_exits_24() {
-    let d = tmp();
-    let (b, n) = paths(&d);
-    make_baton(&n, "implementing", "vadi", 0, |_| {});
-    run(&b, &n).assert("scaffold wrong status", 24);
-    assert!(!b.is_file());
-}
+// S5-T2 (D5): `scaffold_wrong_initial_status_exits_24` was REMOVED — it probed
+// the v1 scaffold-status gate, which is unreachable now that v1 candidates are
+// rejected upstream with `schema_retired` (see `s5t2_*`).
 
 // ===================== candidate-level validation =====================
 
@@ -220,11 +198,17 @@ fn wrong_schema_string_exits_23() {
     run(&b, &n).assert_contains("wrong schema", 23, "DVANDVA_WRITE schema_mismatch");
 }
 
+// S5-T2 (D5): the generic shape tests below were CONVERTED from v1 to v2
+// (make_baton -> make_baton_v2). The checks they exercise (missing key, status
+// enum, empty assignee, checkpoint type) are engine-wide and were only vehicled
+// on v1 before; a v1 baton now short-circuits to `schema_retired`, so these
+// carry the coverage forward on a v2 baton.
+
 #[test]
 fn missing_required_key_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton(&n, "spec_drafting", "vadi", 0, |b| {
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
         b.as_object_mut().unwrap().remove("branch");
     });
     run(&b, &n).assert_contains("missing key", 23, "DVANDVA_WRITE missing_key");
@@ -234,7 +218,7 @@ fn missing_required_key_exits_23() {
 fn unknown_status_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton(&n, "spec_drafting", "vadi", 0, |b| {
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
         b["status"] = json!("doing_stuff");
     });
     run(&b, &n).assert("unknown status", 23);
@@ -244,7 +228,7 @@ fn unknown_status_exits_23() {
 fn empty_assignee_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton(&n, "spec_drafting", "vadi", 0, |b| {
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
         b["assignee"] = json!("");
     });
     run(&b, &n).assert("empty assignee", 23);
@@ -254,7 +238,7 @@ fn empty_assignee_exits_23() {
 fn string_checkpoint_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton(&n, "spec_drafting", "vadi", 0, |b| {
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
         b["checkpoint"] = json!("5");
     });
     run(&b, &n).assert("string checkpoint", 23);
@@ -264,8 +248,8 @@ fn string_checkpoint_exits_23() {
 fn octal_string_checkpoint_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton(&b, "spec_drafting", "vadi", 7, |_| {});
-    make_baton(&n, "spec_review", "prativadi", 8, |b| {
+    make_baton_v2(&b, "research_drafting", "vadi", 7, |_| {});
+    make_baton_v2(&n, "research_review", "prativadi", 8, |b| {
         b["checkpoint"] = json!("08");
     });
     run(&b, &n).assert("octal string checkpoint", 23);
@@ -275,10 +259,10 @@ fn octal_string_checkpoint_exits_23() {
 fn string_checkpoint_in_current_baton_exits_25() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton(&b, "spec_drafting", "vadi", 7, |b| {
+    make_baton_v2(&b, "research_drafting", "vadi", 7, |b| {
         b["checkpoint"] = json!("7");
     });
-    make_baton(&n, "spec_review", "prativadi", 8, |_| {});
+    make_baton_v2(&n, "research_review", "prativadi", 8, |_| {});
     run(&b, &n).assert("string checkpoint current", 25);
 }
 
@@ -1361,7 +1345,8 @@ fn research_done_exploratory_needs_only_research_ref() {
     });
     make_baton_v2(&n, "done", "human", 5, |b| {
         b["mode"] = json!("research");
-        b["phase"] = json!("spec");
+        // S5-T5: exploratory done carries phase "research".
+        b["phase"] = json!("research");
         b["research_outcome"] = json!("exploratory");
         b["vadi_final_approval"] = json!(true);
         b["prativadi_final_approval"] = json!(true);
@@ -1473,44 +1458,12 @@ fn review_done_missing_review_ref_exits_23() {
 }
 
 // ---- v1 done ----
-
-#[test]
-fn v1_done_accepts_coordinator_assignees() {
-    for owner in ["human", "team", "vadi", "prativadi"] {
-        let d = tmp();
-        let (b, n) = paths(&d);
-        make_baton(&b, "phase_review", "prativadi", 4, |_| {});
-        make_baton(&n, "done", owner, 5, |b| {
-            b["vadi_final_approval"] = json!(true);
-            b["prativadi_final_approval"] = json!(true);
-        });
-        run(&b, &n).assert(&format!("v1 done owner {owner}"), 0);
-    }
-}
-
-#[test]
-fn v1_done_requires_both_final_approvals() {
-    let d = tmp();
-    let (b, n) = paths(&d);
-    make_baton(&b, "phase_review", "prativadi", 4, |_| {});
-    make_baton(&n, "done", "team", 5, |b| {
-        b["vadi_final_approval"] = json!(true);
-        b["prativadi_final_approval"] = json!(false);
-    });
-    run(&b, &n).assert_contains("v1 done approvals", 23, "DVANDVA_WRITE bad_done_state");
-}
-
-#[test]
-fn v1_done_rejects_generated_assignee() {
-    let d = tmp();
-    let (b, n) = paths(&d);
-    make_baton(&b, "phase_review", "prativadi", 4, |_| {});
-    make_baton(&n, "done", "generated-owner", 5, |b| {
-        b["vadi_final_approval"] = json!(true);
-        b["prativadi_final_approval"] = json!(true);
-    });
-    run(&b, &n).assert_contains("v1 done generated", 23, "DVANDVA_WRITE bad_done_state");
-}
+// S5-T2 (D5): the v1 done tests (`v1_done_accepts_coordinator_assignees`,
+// `v1_done_requires_both_final_approvals`, `v1_done_rejects_generated_assignee`)
+// were REMOVED — v1 is retired from the write path, and their behaviour is
+// covered by the v2 equivalents `v2_done_accepts_coordinator_assignees`,
+// `v2_done_rejects_missing_final_approval`, and `v2_done_rejects_generated_assignee`.
+// Retirement itself is probed by `s5t2_*` in write_transitions.rs.
 
 // ===================== schema backcompat =====================
 
