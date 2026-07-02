@@ -59,10 +59,77 @@ pub fn run_write(baton_file: &Path, candidate_file: &Path) -> i32 {
         }
     };
 
-    match validate_candidate_and_transition(baton_file, candidate_file, &cand) {
-        Ok(plan) => install_and_snapshot(baton_file, candidate_file, &cand, plan),
-        Err(code) => code,
+    let cf = candidate_file.display().to_string();
+
+    // ---- candidate-only validation (schema / keys / shape / owner) ---------
+    let shape = match validate_candidate_shape(baton_file, &cf, baton_file.is_file(), &cand) {
+        Ok(shape) => shape,
+        Err((code, msg)) => {
+            eprintln!("{msg}");
+            return code;
+        }
+    };
+
+    // ---- lock timeout + baton directory ------------------------------------
+    let baton_dir = baton_file
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    let _ = std::fs::create_dir_all(&baton_dir);
+
+    let lock_timeout_raw =
+        std::env::var("DVANDVA_LOCK_TIMEOUT").unwrap_or_else(|_| "30".to_string());
+    if !canonical_positive_decimal(&lock_timeout_raw) {
+        eprintln!("DVANDVA_WRITE bad_lock_timeout value={lock_timeout_raw}");
+        return 2;
     }
+    let lock_timeout: u64 = lock_timeout_raw.parse().unwrap_or(30);
+
+    // ---- acquire lock ------------------------------------------------------
+    let guard = match lock::acquire(&baton_dir, lock_timeout) {
+        Acquire::Held(token) => LockGuard::held(baton_dir.clone(), token),
+        Acquire::NoDir => LockGuard::unlocked(),
+        Acquire::SquattedNonDir => {
+            eprintln!(
+                "DVANDVA_WRITE lock_unavailable path={} reason=non_directory_at_lock_path",
+                baton_dir.join(lock::LOCK_DIR_NAME).display()
+            );
+            return 28;
+        }
+    };
+
+    // ---- read the current baton (strict: unparseable-on-disk -> 25) --------
+    let cur_doc = if baton_file.is_file() {
+        match util::read_json_lenient(baton_file) {
+            Ok(value) => Some(value),
+            Err(_) => {
+                eprintln!(
+                    "DVANDVA_WRITE current_baton_unparseable file={} refusing_to_overwrite=true",
+                    baton_file.display()
+                );
+                return 25;
+            }
+        }
+    } else {
+        None
+    };
+
+    // ---- transition legality (inside the lock) -----------------------------
+    let cx = shape.ctx(&cf);
+    if let Err((code, msg)) = decide_transition(&baton_dir, cur_doc.as_ref(), &cand, &cx) {
+        eprintln!("{msg}");
+        return code;
+    }
+
+    let plan = InstallPlan {
+        status: shape.new_status.clone(),
+        assignee: shape.new_assignee.clone(),
+        phase: shape.new_phase.clone(),
+        checkpoint: shape.new_checkpoint_str.clone(),
+        lock: guard,
+    };
+    install_and_snapshot(baton_file, candidate_file, &cand, plan)
 }
 
 /// A validated candidate ready for the critical section: the fields needed to
@@ -121,20 +188,21 @@ impl Drop for LockGuard {
 // Stage 1: pure candidate validation (outside the lock) + transition legality
 // (inside the lock). Returns the InstallPlan on success, or the exit code.
 // ===========================================================================
-fn validate_candidate_and_transition(
+fn validate_candidate_shape(
     baton_file: &Path,
-    candidate_file: &Path,
+    cf: &str,
+    baton_exists: bool,
     cand: &Value,
-) -> Result<InstallPlan, i32> {
-    let cf = candidate_file.display();
-
+) -> Result<CandidateShape, (i32, String)> {
     // ---- schema ∈ {v1, v2} -------------------------------------------------
     let schema = str_field(cand, "schema");
     if schema != "dvandva.baton.v1" && schema != "dvandva.baton.v2" {
-        eprintln!(
-            "DVANDVA_WRITE schema_mismatch candidate={cf} want=dvandva.baton.v1|dvandva.baton.v2"
-        );
-        return Err(23);
+        return Err((
+            23,
+            format!(
+                "DVANDVA_WRITE schema_mismatch candidate={cf} want=dvandva.baton.v1|dvandva.baton.v2"
+            ),
+        ));
     }
     let is_v2 = schema == "dvandva.baton.v2";
 
@@ -146,26 +214,32 @@ fn validate_candidate_and_transition(
             String::new()
         };
         if !is_v2 || cand_named != named {
-            eprintln!(
-                "DVANDVA_WRITE bad_run_id_dir baton={} candidate_run_id={cand_named} expected_run_id={named} schema={schema}",
-                baton_file.display()
-            );
-            return Err(23);
+            return Err((
+                23,
+                format!(
+                    "DVANDVA_WRITE bad_run_id_dir baton={} candidate_run_id={cand_named} expected_run_id={named} schema={schema}",
+                    baton_file.display()
+                ),
+            ));
         }
     }
 
     // ---- required keys -----------------------------------------------------
     for key in required_keys(is_v2) {
         if field(cand, key).is_none() {
-            eprintln!("DVANDVA_WRITE missing_key key={key} candidate={cf}");
-            return Err(23);
+            return Err((
+                23,
+                format!("DVANDVA_WRITE missing_key key={key} candidate={cf}"),
+            ));
         }
     }
 
     // ---- review_target enum ------------------------------------------------
     if !review_target_ok(cand) {
-        eprintln!("DVANDVA_WRITE bad_review_target candidate={cf}");
-        return Err(23);
+        return Err((
+            23,
+            format!("DVANDVA_WRITE bad_review_target candidate={cf}"),
+        ));
     }
 
     let new_status = str_field(cand, "status");
@@ -181,8 +255,10 @@ fn validate_candidate_and_transition(
         new_effective_mode = match canonical_mode(&new_mode) {
             Some(mode) => mode,
             None => {
-                eprintln!("DVANDVA_WRITE bad_mode mode={new_mode} candidate={cf}");
-                return Err(23);
+                return Err((
+                    23,
+                    format!("DVANDVA_WRITE bad_mode mode={new_mode} candidate={cf}"),
+                ));
             }
         };
 
@@ -190,35 +266,37 @@ fn validate_candidate_and_transition(
         if !(matches!(field(cand, "run_id"), Some(Value::String(s)) if !s.is_empty())
             && util::is_safe_run_id(&new_run_id))
         {
-            eprintln!("DVANDVA_WRITE bad_run_id candidate={cf}");
-            return Err(23);
+            return Err((23, format!("DVANDVA_WRITE bad_run_id candidate={cf}")));
         }
         if !matches!(field(cand, "original_ask"), Some(Value::String(s)) if !s.is_empty()) {
-            eprintln!("DVANDVA_WRITE bad_original_ask candidate={cf}");
-            return Err(23);
+            return Err((23, format!("DVANDVA_WRITE bad_original_ask candidate={cf}")));
         }
         // F7: amendment_from_phase is additive and nullable (number | null;
         // absent == null). Only its shape is checked here; transition legality is
         // enforced in decide_transition.
         if !amendment_from_phase_shape_ok(cand) {
-            eprintln!("DVANDVA_WRITE bad_amendment candidate={cf}");
-            return Err(23);
+            return Err((23, format!("DVANDVA_WRITE bad_amendment candidate={cf}")));
         }
-
-        let baton_exists = baton_file.is_file();
+        // F9: phase_profiles is additive/nullable — a stringified-numeric-keyed
+        // object mapping to "standard"|"full". Shape only here; spec-state-only
+        // mutation and the per-phase floor are enforced below / in decide.
+        if !phase_profiles_shape_ok(cand) {
+            return Err((
+                23,
+                format!("DVANDVA_WRITE bad_phase_profiles candidate={cf}"),
+            ));
+        }
 
         if new_effective_mode == "development" {
             // profile field/shape validation
             if !profile_block_ok(cand) {
-                eprintln!("DVANDVA_WRITE bad_profile candidate={cf}");
-                return Err(23);
+                return Err((23, format!("DVANDVA_WRITE bad_profile candidate={cf}")));
             }
             if !baton_exists
                 && new_status != "human_decision"
                 && !fresh_scaffold_profile_present(cand)
             {
-                eprintln!("DVANDVA_WRITE bad_profile candidate={cf}");
-                return Err(23);
+                return Err((23, format!("DVANDVA_WRITE bad_profile candidate={cf}")));
             }
             // effective profile + floor
             new_effective_profile = if present(field(cand, "profile")) {
@@ -239,16 +317,17 @@ fn validate_candidate_and_transition(
                 let sel = pd.and_then(|v| field(v, "selected_profile"));
                 let flr = pd.and_then(|v| field(v, "floor"));
                 if jq_render(sel) != new_effective_profile || jq_render(flr) != new_profile_floor {
-                    eprintln!("DVANDVA_WRITE bad_profile candidate={cf}");
-                    return Err(23);
+                    return Err((23, format!("DVANDVA_WRITE bad_profile candidate={cf}")));
                 }
             }
             // downgrade guard
             if profile_rank(&new_effective_profile) < profile_rank(&new_profile_floor)
                 && new_status != "human_decision"
             {
-                eprintln!("DVANDVA_WRITE bad_profile_downgrade candidate={cf}");
-                return Err(23);
+                return Err((
+                    23,
+                    format!("DVANDVA_WRITE bad_profile_downgrade candidate={cf}"),
+                ));
             }
             // hard-path floor gate
             if candidate_paths(cand).iter().any(|p| hard_path(p)) {
@@ -260,68 +339,85 @@ fn validate_candidate_and_transition(
                     || new_profile_floor != "full"
                     || !decision_floor_full
                 {
-                    eprintln!("DVANDVA_WRITE bad_profile_floor candidate={cf}");
-                    return Err(23);
+                    return Err((
+                        23,
+                        format!("DVANDVA_WRITE bad_profile_floor candidate={cf}"),
+                    ));
                 }
             }
             // fast-allowlist gate
             if new_effective_profile == "fast" && !fast_allowlist_ok(cand) {
-                eprintln!("DVANDVA_WRITE bad_profile_floor candidate={cf}");
-                return Err(23);
+                return Err((
+                    23,
+                    format!("DVANDVA_WRITE bad_profile_floor candidate={cf}"),
+                ));
+            }
+            // F9 per-phase floor: a phase declared "standard" may not carry a
+            // hard path in its own work_split chunks (message names phase + path).
+            if let Some((phase_n, path)) = phase_profile_floor_violation(cand) {
+                return Err((
+                    23,
+                    format!("DVANDVA_WRITE bad_phase_profiles phase={phase_n} path={path} candidate={cf}"),
+                ));
             }
         }
 
         if !active_roles_shape_ok(cand) {
-            eprintln!("DVANDVA_WRITE bad_active_roles candidate={cf}");
-            return Err(23);
+            return Err((23, format!("DVANDVA_WRITE bad_active_roles candidate={cf}")));
         }
         if !agent_instances_ok(cand) {
-            eprintln!("DVANDVA_WRITE bad_agent_instances candidate={cf}");
-            return Err(23);
+            return Err((
+                23,
+                format!("DVANDVA_WRITE bad_agent_instances candidate={cf}"),
+            ));
         }
         if !agent_instances_write_paths_ok(cand) {
-            eprintln!("DVANDVA_WRITE bad_agent_instances_write_paths candidate={cf}");
-            return Err(23);
+            return Err((
+                23,
+                format!("DVANDVA_WRITE bad_agent_instances_write_paths candidate={cf}"),
+            ));
         }
         if !work_split_nonempty(cand) {
-            eprintln!("DVANDVA_WRITE bad_work_split candidate={cf}");
-            return Err(23);
+            return Err((23, format!("DVANDVA_WRITE bad_work_split candidate={cf}")));
         }
         if !work_split_paths_ok(cand) {
-            eprintln!("DVANDVA_WRITE bad_work_split candidate={cf}");
-            return Err(23);
+            return Err((23, format!("DVANDVA_WRITE bad_work_split candidate={cf}")));
         }
         if !depends_on_ok(cand) {
-            eprintln!("DVANDVA_WRITE bad_depends_on candidate={cf}");
-            return Err(23);
+            return Err((23, format!("DVANDVA_WRITE bad_depends_on candidate={cf}")));
         }
         if !work_split_write_paths_ok(cand) {
-            eprintln!("DVANDVA_WRITE bad_work_split_write_paths candidate={cf}");
-            return Err(23);
+            return Err((
+                23,
+                format!("DVANDVA_WRITE bad_work_split_write_paths candidate={cf}"),
+            ));
         }
         if !verification_matrix_nonempty(cand) {
-            eprintln!("DVANDVA_WRITE bad_verification_matrix candidate={cf}");
-            return Err(23);
+            return Err((
+                23,
+                format!("DVANDVA_WRITE bad_verification_matrix candidate={cf}"),
+            ));
         }
         if !subagent_tracks_ok(cand) {
-            eprintln!("DVANDVA_WRITE bad_subagent_tracks candidate={cf}");
-            return Err(23);
+            return Err((
+                23,
+                format!("DVANDVA_WRITE bad_subagent_tracks candidate={cf}"),
+            ));
         }
         if !subagent_tracks_owner_ok(cand) {
-            if subagent_tracks_have_dynamic_owner(cand) {
-                eprintln!("DVANDVA_WRITE bad_agent_instances candidate={cf}");
+            let msg = if subagent_tracks_have_dynamic_owner(cand) {
+                format!("DVANDVA_WRITE bad_agent_instances candidate={cf}")
             } else {
-                eprintln!("DVANDVA_WRITE bad_subagent_tracks candidate={cf}");
-            }
-            return Err(23);
+                format!("DVANDVA_WRITE bad_subagent_tracks candidate={cf}")
+            };
+            return Err((23, msg));
         }
         if new_status != "research_drafting"
             && new_status != "human_question"
             && new_status != "human_decision"
             && !matches!(field(cand, "research_ref"), Some(Value::String(s)) if !s.is_empty())
         {
-            eprintln!("DVANDVA_WRITE bad_research_ref candidate={cf}");
-            return Err(23);
+            return Err((23, format!("DVANDVA_WRITE bad_research_ref candidate={cf}")));
         }
         if new_status == "done" {
             let new_run_id = str_field(cand, "run_id");
@@ -335,25 +431,32 @@ fn validate_candidate_and_transition(
                                 String::new()
                             };
                         if !run_explainer_ref_matches_run_id(&explainer, &new_run_id) {
-                            eprintln!("DVANDVA_WRITE bad_run_explainer_ref candidate={cf}");
-                            return Err(23);
+                            return Err((
+                                23,
+                                format!("DVANDVA_WRITE bad_run_explainer_ref candidate={cf}"),
+                            ));
                         }
                         if !run_explainer_reviews_ok(cand) {
-                            eprintln!("DVANDVA_WRITE bad_run_explainer_reviews candidate={cf}");
-                            return Err(23);
+                            return Err((
+                                23,
+                                format!("DVANDVA_WRITE bad_run_explainer_reviews candidate={cf}"),
+                            ));
                         }
                     } else if !compact_terminal_evidence_ok(cand) {
-                        eprintln!("DVANDVA_WRITE bad_compact_terminal_evidence candidate={cf}");
-                        return Err(23);
+                        return Err((
+                            23,
+                            format!("DVANDVA_WRITE bad_compact_terminal_evidence candidate={cf}"),
+                        ));
                     }
                 }
                 "research" if !research_done_ref_ok(cand) => {
-                    eprintln!("DVANDVA_WRITE bad_research_done_ref candidate={cf}");
-                    return Err(23);
+                    return Err((
+                        23,
+                        format!("DVANDVA_WRITE bad_research_done_ref candidate={cf}"),
+                    ));
                 }
                 "review" if !review_ref_ok(cand) => {
-                    eprintln!("DVANDVA_WRITE bad_review_ref candidate={cf}");
-                    return Err(23);
+                    return Err((23, format!("DVANDVA_WRITE bad_review_ref candidate={cf}")));
                 }
                 _ => {}
             }
@@ -362,24 +465,27 @@ fn validate_candidate_and_transition(
 
     // ---- done universal approvals -----------------------------------------
     if new_status == "done" && !done_state_ok(cand) {
-        eprintln!("DVANDVA_WRITE bad_done_state candidate={cf}");
-        return Err(23);
+        return Err((23, format!("DVANDVA_WRITE bad_done_state candidate={cf}")));
     }
 
     // ---- checkpoint type ---------------------------------------------------
     if !matches!(field(cand, "checkpoint"), Some(Value::Number(_))) {
-        eprintln!("DVANDVA_WRITE bad_checkpoint_type candidate={cf}");
-        return Err(23);
+        return Err((
+            23,
+            format!("DVANDVA_WRITE bad_checkpoint_type candidate={cf}"),
+        ));
     }
     let new_checkpoint_num = match field(cand, "checkpoint").and_then(|v| v.as_u64()) {
         Some(n) => n,
         None => {
             // number but not a non-negative integer -> ^[0-9]+$ fails below
-            eprintln!(
-                "DVANDVA_WRITE bad_checkpoint checkpoint={} candidate={cf}",
-                jq_render(field(cand, "checkpoint"))
-            );
-            return Err(23);
+            return Err((
+                23,
+                format!(
+                    "DVANDVA_WRITE bad_checkpoint checkpoint={} candidate={cf}",
+                    jq_render(field(cand, "checkpoint"))
+                ),
+            ));
         }
     };
     let new_checkpoint = new_checkpoint_num.to_string();
@@ -389,39 +495,48 @@ fn validate_candidate_and_transition(
 
     // ---- status enum -------------------------------------------------------
     if !status_enum_ok(is_v2, &new_status) {
-        eprintln!("DVANDVA_WRITE bad_status status={new_status} candidate={cf}");
-        return Err(23);
+        return Err((
+            23,
+            format!("DVANDVA_WRITE bad_status status={new_status} candidate={cf}"),
+        ));
     }
 
     // ---- v2 phase↔status pairing ------------------------------------------
     if is_v2 && !phase_status_ok(&new_effective_mode, &new_status, cand) {
-        eprintln!("DVANDVA_WRITE bad_phase_status status={new_status} candidate={cf}");
-        return Err(23);
+        return Err((
+            23,
+            format!("DVANDVA_WRITE bad_phase_status status={new_status} candidate={cf}"),
+        ));
     }
 
     // ---- assignee nonempty -------------------------------------------------
     if new_assignee.is_empty() || new_assignee == "null" {
-        eprintln!("DVANDVA_WRITE bad_assignee candidate={cf}");
-        return Err(23);
+        return Err((23, format!("DVANDVA_WRITE bad_assignee candidate={cf}")));
     }
 
     // ---- v2 status-owner + team active_roles ------------------------------
     if is_v2 {
         let expected = v2_expected_assignee(&new_status);
         if !expected.is_empty() && new_assignee != expected {
-            eprintln!(
-                "DVANDVA_WRITE bad_assignee_owner status={new_status} want={expected} got={new_assignee} candidate={cf}"
-            );
-            return Err(23);
+            return Err((
+                23,
+                format!(
+                    "DVANDVA_WRITE bad_assignee_owner status={new_status} want={expected} got={new_assignee} candidate={cf}"
+                ),
+            ));
         }
         if is_team_sync_status(&new_status) {
             if !(new_assignee == "team" && active_roles_sorted_both(cand)) {
-                eprintln!("DVANDVA_WRITE bad_active_roles status={new_status} candidate={cf}");
-                return Err(23);
+                return Err((
+                    23,
+                    format!("DVANDVA_WRITE bad_active_roles status={new_status} candidate={cf}"),
+                ));
             }
         } else if count_len(field(cand, "active_roles")) != 0 {
-            eprintln!("DVANDVA_WRITE bad_active_roles status={new_status} candidate={cf}");
-            return Err(23);
+            return Err((
+                23,
+                format!("DVANDVA_WRITE bad_active_roles status={new_status} candidate={cf}"),
+            ));
         }
     }
 
@@ -433,67 +548,69 @@ fn validate_candidate_and_transition(
     let cand_ra_null = is_null_field(cand, "resume_assignee");
     let cand_rs_null = is_null_field(cand, "resume_status");
 
-    // ---- lock timeout ------------------------------------------------------
-    let baton_dir = baton_file
-        .parent()
-        .filter(|p| !p.as_os_str().is_empty())
-        .map(Path::to_path_buf)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let _ = std::fs::create_dir_all(&baton_dir);
-
-    let lock_timeout_raw =
-        std::env::var("DVANDVA_LOCK_TIMEOUT").unwrap_or_else(|_| "30".to_string());
-    if !canonical_positive_decimal(&lock_timeout_raw) {
-        eprintln!("DVANDVA_WRITE bad_lock_timeout value={lock_timeout_raw}");
-        return Err(2);
-    }
-    let lock_timeout: u64 = lock_timeout_raw.parse().unwrap_or(30);
-
-    // ---- acquire lock ------------------------------------------------------
-    let mut guard = match lock::acquire(&baton_dir, lock_timeout) {
-        Acquire::Held(token) => LockGuard::held(baton_dir.clone(), token),
-        Acquire::NoDir => LockGuard::unlocked(),
-        Acquire::SquattedNonDir => {
-            eprintln!(
-                "DVANDVA_WRITE lock_unavailable path={} reason=non_directory_at_lock_path",
-                baton_dir.join(lock::LOCK_DIR_NAME).display()
-            );
-            return Err(28);
-        }
-    };
-
-    // ---- transition legality -----------------------------------------------
-    let cx = Ctx {
-        cf: candidate_file.display().to_string(),
-        schema: &schema,
+    Ok(CandidateShape {
+        schema,
         is_v2,
-        new_status: &new_status,
-        new_assignee: &new_assignee,
-        new_mode: &new_mode,
-        new_effective_mode: &new_effective_mode,
-        new_effective_profile: &new_effective_profile,
-        new_profile_floor: &new_profile_floor,
+        new_status,
+        new_assignee,
+        new_mode,
+        new_effective_mode,
+        new_effective_profile,
+        new_profile_floor,
         new_checkpoint: new_checkpoint_num,
-        new_phase: &new_phase,
+        new_checkpoint_str: new_checkpoint,
+        new_phase,
         new_vadi_approval,
         new_prativadi_approval,
         cand_q_null,
         cand_ra_null,
         cand_rs_null,
-    };
-
-    match decide_transition(baton_file, cand, &cx, &mut guard) {
-        TransitionOutcome::Legal => {}
-        TransitionOutcome::Exit(code) => return Err(code),
-    }
-
-    Ok(InstallPlan {
-        status: new_status,
-        assignee: new_assignee,
-        phase: new_phase,
-        checkpoint: new_checkpoint,
-        lock: guard,
     })
+}
+
+/// The candidate-only validation result: the fields needed to build [`Ctx`] and
+/// the [`InstallPlan`], all derived without the current baton or the lock.
+struct CandidateShape {
+    schema: String,
+    is_v2: bool,
+    new_status: String,
+    new_assignee: String,
+    new_mode: String,
+    new_effective_mode: String,
+    new_effective_profile: String,
+    new_profile_floor: String,
+    new_checkpoint: u64,
+    new_checkpoint_str: String,
+    new_phase: String,
+    new_vadi_approval: bool,
+    new_prativadi_approval: bool,
+    cand_q_null: bool,
+    cand_ra_null: bool,
+    cand_rs_null: bool,
+}
+
+impl CandidateShape {
+    /// Borrow the shape fields into a [`Ctx`] for [`decide_transition`].
+    fn ctx<'a>(&'a self, cf: &str) -> Ctx<'a> {
+        Ctx {
+            cf: cf.to_string(),
+            schema: &self.schema,
+            is_v2: self.is_v2,
+            new_status: &self.new_status,
+            new_assignee: &self.new_assignee,
+            new_mode: &self.new_mode,
+            new_effective_mode: &self.new_effective_mode,
+            new_effective_profile: &self.new_effective_profile,
+            new_profile_floor: &self.new_profile_floor,
+            new_checkpoint: self.new_checkpoint,
+            new_phase: &self.new_phase,
+            new_vadi_approval: self.new_vadi_approval,
+            new_prativadi_approval: self.new_prativadi_approval,
+            cand_q_null: self.cand_q_null,
+            cand_ra_null: self.cand_ra_null,
+            cand_rs_null: self.cand_rs_null,
+        }
+    }
 }
 
 /// Context passed into the transition decision, mirroring the shell locals.
@@ -516,88 +633,653 @@ struct Ctx<'a> {
     cand_rs_null: bool,
 }
 
-enum TransitionOutcome {
-    Legal,
-    Exit(i32),
+// ===========================================================================
+// pub(crate) transition surface (consumed by `dvandva next`).
+// ===========================================================================
+
+/// How a transition moves the baton `phase` relative to the current phase.
+// The surface below is consumed by the B1 `next` module (not yet wired up);
+// `allow(dead_code)` keeps the transitional lib build warning-free.
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum PhaseMove {
+    /// Stays in the current numeric phase (intra-phase loops, human, done).
+    Same,
+    /// Enters a numeric phase from spec, or advances to the next numeric phase.
+    Advance,
+    /// Lands in a non-numeric planning phase (`spec`/`research`).
+    Spec,
+}
+
+/// One legal next transition from a current baton, as the validator would judge
+/// it. Gates that depend on candidate *content* (evidence tracks, narrow_fixups,
+/// parallel work_split, done approvals, the per-phase floor, F6/F10 angles) are
+/// NOT reflected — those options may still be rejected by [`validate_candidate`]
+/// once the candidate is materialised. Loop caps and the amendment-loop shape
+/// ARE reflected (they depend only on the current baton).
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct TransitionOption {
+    pub(crate) to_status: String,
+    pub(crate) to_phase: PhaseMove,
+    pub(crate) assignee: String,
+    pub(crate) active_roles: Vec<String>,
+    pub(crate) review_target: Option<String>,
+    /// `(edge, next_count, cap)` for loop edges (and the amendment entry edge).
+    pub(crate) loop_key: Option<(String, u64, u64)>,
+    /// Set on the amendment entry edge to the current numeric phase.
+    pub(crate) sets_amendment_from_phase: Option<u64>,
+    /// True on the amendment exit edge while an amendment loop is active.
+    pub(crate) clears_amendment: bool,
+}
+
+/// The expected `(assignee, active_roles)` for a status under the v2 owner table
+/// (F8-aware: team states carry both roles). `mode`/`effective_profile` are part
+/// of the contract for `next` but do not currently alter the mapping, because
+/// the numeric-phase status vocabularies are profile-disjoint (a standard phase
+/// uses `implementing`/`phase_review` scalar owners; a full phase uses the team
+/// states) — the status alone determines the owner.
+#[allow(dead_code)]
+pub(crate) fn expected_owner(
+    schema: &str,
+    mode: &str,
+    effective_profile: &str,
+    status: &str,
+) -> (String, Vec<String>) {
+    let _ = (mode, effective_profile);
+    let assignee = v2_expected_assignee(status).to_string();
+    let active_roles = if schema == "dvandva.baton.v2" && is_team_sync_status(status) {
+        vec!["prativadi".to_string(), "vadi".to_string()]
+    } else {
+        Vec::new()
+    };
+    (assignee, active_roles)
+}
+
+/// Run the full write validation pipeline against an in-memory current baton,
+/// WITHOUT acquiring the lock, installing, or writing a snapshot.
+///
+/// `baton_dir` is the run directory (its `history/` is scanned for cycle
+/// checkpoints exactly as the binary does; `baton_dir/baton.json` is used only
+/// for the run-dir/run_id naming check). `current` is `None` for a scaffold
+/// (first) write. Returns `Ok(())` when the candidate would be accepted, or the
+/// `(exit_code, diagnostic)` the binary would have emitted.
+#[allow(dead_code)]
+pub(crate) fn validate_candidate(
+    baton_dir: &Path,
+    current: Option<&Value>,
+    candidate: &Value,
+) -> Result<(), (i32, String)> {
+    let baton_file = baton_dir.join("baton.json");
+    let cf = "<candidate>";
+    let shape = validate_candidate_shape(&baton_file, cf, current.is_some(), candidate)?;
+    let cx = shape.ctx(cf);
+    decide_transition(baton_dir, current, candidate, &cx)
+}
+
+/// The whitelist targets reachable from `cur_status` under `edge_profile`,
+/// enumerated by probing [`edge_whitelist`] over the full status universe.
+#[allow(dead_code)]
+fn whitelist_targets(
+    schema: &str,
+    cur_mode: &str,
+    edge_profile: &str,
+    cur_status: &str,
+) -> Vec<String> {
+    const V2: &[&str] = &[
+        "research_drafting",
+        "research_review",
+        "research_revision",
+        "spec_drafting",
+        "spec_review",
+        "spec_revision",
+        "implementing",
+        "parallel_implementing",
+        "test_creation",
+        "cross_review",
+        "cross_fixing",
+        "deep_review",
+        "deslop",
+        "termination_review",
+        "phase_review",
+        "phase_fixing",
+        "review_of_review",
+        "counter_review",
+        "done",
+    ];
+    const V1: &[&str] = &[
+        "spec_drafting",
+        "spec_review",
+        "spec_revision",
+        "implementing",
+        "phase_review",
+        "phase_fixing",
+        "review_of_review",
+        "counter_review",
+        "done",
+    ];
+    let universe = if schema == "dvandva.baton.v2" { V2 } else { V1 };
+    universe
+        .iter()
+        .filter(|new_status| {
+            let mut sink = String::new();
+            edge_whitelist(
+                schema,
+                cur_mode,
+                edge_profile,
+                cur_status,
+                new_status,
+                &mut sink,
+            )
+        })
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// The legal next transitions from `current`, derived from the same whitelists
+/// and precedence the validator uses. See [`TransitionOption`] for what is and
+/// is not reflected. For the spec→implementation entry boundary this uses the
+/// RUN profile (not a per-phase F9 override): a full run offers
+/// `parallel_implementing`, a standard run `implementing`; the caller refines
+/// the entry state when phase 1 carries an F9 override.
+#[allow(dead_code)]
+pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
+    let schema = str_field(current, "schema");
+    if schema != "dvandva.baton.v1" && schema != "dvandva.baton.v2" {
+        return Vec::new();
+    }
+    let is_v2 = schema == "dvandva.baton.v2";
+    let cur_status = str_field(current, "status");
+    let cur_mode = str_field(current, "mode");
+    let cur_eff_mode = canonical_mode(&cur_mode).unwrap_or_else(|| "development".to_string());
+    let run_profile = if is_v2 && cur_eff_mode == "development" {
+        if present(field(current, "profile")) {
+            str_field(current, "profile")
+        } else {
+            "full".to_string()
+        }
+    } else {
+        "full".to_string()
+    };
+    let cur_phase = jq_render(field(current, "phase"));
+    let cur_phase_num = cur_phase.parse::<i64>().ok();
+    let cur_amendment = amendment_value(current);
+    let cur_locked = bool_field(current, "master_plan_locked");
+
+    // Edge-selection profile mirrors decide_transition: numeric-source states
+    // use the current phase's effective profile; spec/research use the run one.
+    let edge_profile = if is_v2 && is_numeric_phase_status(&cur_status) {
+        effective_phase_profile(current, cur_phase_num, &run_profile)
+    } else {
+        run_profile.clone()
+    };
+
+    let mut out: Vec<TransitionOption> = Vec::new();
+
+    for new_status in whitelist_targets(&schema, &cur_eff_mode, &edge_profile, &cur_status) {
+        if new_status == cur_status {
+            continue;
+        }
+        // Amendment entry edge (F7): sets amendment_from_phase, loop-capped.
+        let is_enter = is_v2
+            && cur_eff_mode == "development"
+            && is_amendment_enter_edge(&edge_profile, &cur_status, &new_status);
+        let is_exit = is_v2
+            && cur_eff_mode == "development"
+            && cur_amendment.is_some()
+            && is_amendment_exit_edge(&edge_profile, &cur_status, &new_status);
+
+        let loop_edge = format!("{cur_status}:{new_status}");
+        let (loop_key, drop) = if is_enter {
+            let edge = format!("plan_amendment:{cur_phase}");
+            build_loop_key(current, &edge)
+        } else if is_loop_edge(&loop_edge) {
+            build_loop_key(current, &loop_edge)
+        } else {
+            (None, false)
+        };
+        if drop {
+            continue; // loop cap reached (or cap unset) -> edge not legal
+        }
+
+        let to_phase = classify_phase_move(&cur_status, &new_status, is_enter);
+        let (assignee, active_roles) = owner_for(&schema, &cur_mode, &edge_profile, &new_status);
+        out.push(TransitionOption {
+            to_status: new_status.clone(),
+            to_phase,
+            assignee,
+            active_roles,
+            review_target: review_target_for(&new_status),
+            loop_key,
+            sets_amendment_from_phase: if is_enter {
+                cur_phase_num.map(|n| n as u64)
+            } else {
+                None
+            },
+            clears_amendment: is_exit,
+        });
+    }
+
+    // Same-status team-sync checkpoint.
+    if is_v2 && is_team_sync_status(&cur_status) {
+        let (assignee, active_roles) = owner_for(&schema, &cur_mode, &edge_profile, &cur_status);
+        out.push(TransitionOption {
+            to_status: cur_status.clone(),
+            to_phase: PhaseMove::Same,
+            assignee,
+            active_roles,
+            review_target: None,
+            loop_key: None,
+            sets_amendment_from_phase: None,
+            clears_amendment: false,
+        });
+    }
+
+    // Universal escalation to human_decision (never from a terminal state).
+    if cur_status != "done" {
+        out.push(TransitionOption {
+            to_status: "human_decision".to_string(),
+            to_phase: PhaseMove::Same,
+            assignee: "human".to_string(),
+            active_roles: Vec::new(),
+            review_target: None,
+            loop_key: None,
+            sets_amendment_from_phase: None,
+            clears_amendment: false,
+        });
+    }
+
+    // human_question is only legal before the master plan is locked, from a
+    // spec/research state.
+    if !cur_locked
+        && matches!(
+            cur_status.as_str(),
+            "spec_drafting"
+                | "spec_review"
+                | "spec_revision"
+                | "research_drafting"
+                | "research_review"
+                | "research_revision"
+        )
+    {
+        out.push(TransitionOption {
+            to_status: "human_question".to_string(),
+            to_phase: PhaseMove::Same,
+            assignee: "human".to_string(),
+            active_roles: Vec::new(),
+            review_target: None,
+            loop_key: None,
+            sets_amendment_from_phase: None,
+            clears_amendment: false,
+        });
+    }
+
+    out
+}
+
+/// `(loop_key, drop)` for an edge: `drop` when the cap is unset/zero or already
+/// reached (the loop edge is not legal); otherwise the next-count/cap triple.
+#[allow(dead_code)]
+fn build_loop_key(current: &Value, edge: &str) -> (Option<(String, u64, u64)>, bool) {
+    let cur_count = loop_count(current, edge).unwrap_or(0);
+    let cap = loop_cap(current).unwrap_or(0);
+    if cap == 0 || cur_count >= cap {
+        (None, true)
+    } else {
+        (Some((edge.to_string(), cur_count + 1, cap)), false)
+    }
+}
+
+#[allow(dead_code)]
+fn is_loop_edge(edge: &str) -> bool {
+    matches!(
+        edge,
+        "deep_review:phase_fixing"
+            | "cross_review:cross_fixing"
+            | "termination_review:phase_fixing"
+            | "phase_review:phase_fixing"
+            | "review_of_review:counter_review"
+            | "counter_review:review_of_review"
+    )
+}
+
+#[allow(dead_code)]
+fn owner_for(
+    schema: &str,
+    mode: &str,
+    effective_profile: &str,
+    status: &str,
+) -> (String, Vec<String>) {
+    if status == "done" {
+        return ("team".to_string(), Vec::new());
+    }
+    expected_owner(schema, mode, effective_profile, status)
+}
+
+#[allow(dead_code)]
+fn classify_phase_move(cur_status: &str, new_status: &str, is_enter: bool) -> PhaseMove {
+    if is_enter {
+        return PhaseMove::Spec; // amendment entry lands in the spec phase
+    }
+    match new_status {
+        "spec_drafting" | "spec_review" | "spec_revision" | "research_drafting"
+        | "research_review" | "research_revision" => PhaseMove::Spec,
+        "implementing" | "parallel_implementing" => {
+            // Entry from spec, or advancement from a prior phase's exit state.
+            if matches!(cur_status, "spec_review" | "deslop" | "phase_review") {
+                PhaseMove::Advance
+            } else {
+                PhaseMove::Same
+            }
+        }
+        _ => PhaseMove::Same,
+    }
+}
+
+#[allow(dead_code)]
+fn review_target_for(status: &str) -> Option<String> {
+    match status {
+        "research_review" => Some("research"),
+        "spec_review" => Some("spec"),
+        "cross_review" | "deep_review" | "phase_review" => Some("implementation"),
+        "review_of_review" => Some("prativadi_fixups"),
+        "counter_review" => Some("vadi_counter"),
+        _ => None,
+    }
+    .map(String::from)
+}
+
+// ===========================================================================
+// F9 per-phase ceremony helpers.
+// ===========================================================================
+
+/// `phase_profiles`: absent/null OK; else an object with stringified-numeric
+/// keys mapping to `"standard"`|`"full"` (fast is run-level only).
+fn phase_profiles_shape_ok(cand: &Value) -> bool {
+    match field(cand, "phase_profiles") {
+        None | Some(Value::Null) => true,
+        Some(Value::Object(m)) => m.iter().all(|(k, v)| {
+            !k.is_empty()
+                && k.chars().all(|c| c.is_ascii_digit())
+                && matches!(v, Value::String(s) if s == "standard" || s == "full")
+        }),
+        _ => false,
+    }
+}
+
+/// The effective profile override declared for numeric `phase_num`, if any.
+fn phase_profile_override(doc: &Value, phase_num: Option<i64>) -> Option<String> {
+    let n = phase_num?;
+    let m = match field(doc, "phase_profiles") {
+        Some(Value::Object(m)) => m,
+        _ => return None,
+    };
+    match m.get(&n.to_string()) {
+        Some(Value::String(s)) if s == "standard" || s == "full" => Some(s.clone()),
+        _ => None,
+    }
+}
+
+/// Effective profile of numeric phase `phase_num` = `phase_profiles[N]` // fallback.
+fn effective_phase_profile(doc: &Value, phase_num: Option<i64>, fallback: &str) -> String {
+    phase_profile_override(doc, phase_num).unwrap_or_else(|| fallback.to_string())
+}
+
+/// The work_split chunk paths (paths/read_paths/write_paths) declared for the
+/// phase whose rendered number equals `phase_key`.
+fn phase_work_split_paths(cand: &Value, phase_key: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for item in iter_values(field(cand, "work_split")) {
+        if jq_render(field(item, "phase")) != phase_key {
+            continue;
+        }
+        for key in ["paths", "read_paths", "write_paths"] {
+            if let Some(Value::Array(items)) = field(item, key) {
+                for it in items {
+                    if let Value::String(s) = it {
+                        out.push(s.clone());
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+/// F9 per-phase floor: the first `(phase, path)` where a phase declared
+/// `"standard"` carries a hard path in its own work_split chunks. `None` = no
+/// violation (a phase with no chunks yet imposes no constraint).
+fn phase_profile_floor_violation(cand: &Value) -> Option<(String, String)> {
+    let m = match field(cand, "phase_profiles") {
+        Some(Value::Object(m)) => m,
+        _ => return None,
+    };
+    for (phase_key, val) in m {
+        if val.as_str() != Some("standard") {
+            continue;
+        }
+        for p in phase_work_split_paths(cand, phase_key) {
+            if hard_path(&p) {
+                return Some((phase_key.clone(), p));
+            }
+        }
+    }
+    None
+}
+
+/// The v2 numeric-phase status set (edges select by the phase's effective
+/// profile; spec/research states select by the run profile).
+fn is_numeric_phase_status(status: &str) -> bool {
+    matches!(
+        status,
+        "implementing"
+            | "parallel_implementing"
+            | "test_creation"
+            | "cross_review"
+            | "cross_fixing"
+            | "deep_review"
+            | "deslop"
+            | "termination_review"
+            | "phase_review"
+            | "phase_fixing"
+            | "review_of_review"
+            | "counter_review"
+            | "done"
+    )
+}
+
+// ===========================================================================
+// F6 risk-triggered deep-review angle helpers.
+// ===========================================================================
+
+fn is_role_token(s: &str) -> bool {
+    s == "vadi" || s == "prativadi"
+}
+
+/// F6 SECURITY trigger: changed_paths ∪ current-phase work_split paths/write_paths
+/// match the hard-path security submatchers.
+fn security_trigger_present(cand: &Value, phase_key: &str) -> bool {
+    if arr(field(cand, "changed_paths"))
+        .iter()
+        .any(|v| matches!(v, Value::String(s) if is_security_path(s)))
+    {
+        return true;
+    }
+    iter_values(field(cand, "work_split"))
+        .into_iter()
+        .any(|item| {
+            jq_render(field(item, "phase")) == phase_key
+                && ["paths", "write_paths"].iter().any(|key| {
+                    arr(field(item, key))
+                        .iter()
+                        .any(|v| matches!(v, Value::String(s) if is_security_path(s)))
+                })
+        })
+}
+
+/// F6 INTEGRATION trigger: the current phase has ≥2 write-capable chunks with
+/// different owner_role AND a real seam (cross-owner depends_on or shared
+/// conflict_group).
+fn integration_trigger_present(cand: &Value, phase_key: &str) -> bool {
+    let root_status = str_field(cand, "status");
+    let chunks: Vec<&Value> = iter_values(field(cand, "work_split"))
+        .into_iter()
+        .filter(|item| {
+            jq_render(field(item, "phase")) == phase_key
+                && !effective_write_paths(item, &root_status).is_empty()
+        })
+        .collect();
+    if chunks.len() < 2 {
+        return false;
+    }
+    let distinct_roles: std::collections::HashSet<String> =
+        chunks.iter().map(|c| owner_role_or_owner(c)).collect();
+    if distinct_roles.len() < 2 {
+        return false;
+    }
+    for a in &chunks {
+        for b in &chunks {
+            if owner_role_or_owner(a) == owner_role_or_owner(b) {
+                continue;
+            }
+            let b_id = str_field(b, "id");
+            let dep = !b_id.is_empty() && string_array(field(a, "depends_on")).contains(&b_id);
+            let cga = str_field(a, "conflict_group");
+            let cgb = str_field(b, "conflict_group");
+            let shared_cg = !cga.is_empty() && cga == cgb;
+            if dep || shared_cg {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// A completed current-cycle risk-review track whose name/track contains
+/// `name_needle`, owned by `specific_owner` or a role, carrying evidence.
+fn risk_angle_present(
+    cand: &Value,
+    required: i64,
+    name_needle: &str,
+    specific_owner: &str,
+) -> bool {
+    arr(field(cand, "subagent_tracks")).iter().any(|t| {
+        let name_ok = str_field(t, "track").contains(name_needle)
+            || str_field(t, "name").contains(name_needle);
+        let owner = str_field(t, "owner");
+        let owner_ok = owner == specific_owner
+            || is_role_token(&owner)
+            || is_role_token(&track_owner_role_or_role(t));
+        let cycle_ok = field(t, "review_checkpoint").and_then(json_int) == Some(required);
+        let evidence_ok =
+            count_len(field(t, "outputs")) > 0 || count_len(field(t, "evidence_refs")) > 0;
+        name_ok && owner_ok && str_field(t, "status") == "completed" && cycle_ok && evidence_ok
+    })
+}
+
+// ===========================================================================
+// F10 explainer-verification gate helper.
+// ===========================================================================
+
+/// A completed current-cycle `explainer-verification` track owned by
+/// `dvandva-doc-verifier`, approved/passed, with outputs AND evidence_refs.
+fn explainer_verification_ok(cand: &Value, required: i64) -> bool {
+    arr(field(cand, "subagent_tracks")).iter().any(|t| {
+        let name_ok = str_field(t, "track").contains("explainer-verification")
+            || str_field(t, "name").contains("explainer-verification");
+        let cycle_ok = jq_render(field(t, "phase")) == "termination_review"
+            || field(t, "review_checkpoint")
+                .and_then(json_int)
+                .map(|c| c >= required)
+                .unwrap_or(false);
+        name_ok
+            && str_field(t, "owner") == "dvandva-doc-verifier"
+            && str_field(t, "status") == "completed"
+            && good_result(field(t, "result"))
+            && count_len(field(t, "outputs")) > 0
+            && count_len(field(t, "evidence_refs")) > 0
+            && cycle_ok
+    })
 }
 
 // ===========================================================================
 // Stage 2: transition decision (inside the lock).
 // ===========================================================================
 fn decide_transition(
-    baton_file: &Path,
+    baton_dir: &Path,
+    cur_doc_opt: Option<&Value>,
     cand: &Value,
     cx: &Ctx,
-    _guard: &mut LockGuard,
-) -> TransitionOutcome {
+) -> Result<(), (i32, String)> {
     let cf = &cx.cf;
 
-    if !baton_file.is_file() {
-        // Scaffold: only the vadi may create the very first baton.
-        let legal = (cx.schema == "dvandva.baton.v1"
-            && cx.new_status == "spec_drafting"
-            && cx.new_assignee == "vadi"
-            && cx.new_checkpoint == 0)
-            || (cx.schema == "dvandva.baton.v2"
-                && cx.new_status == "research_drafting"
+    let cur_doc = match cur_doc_opt {
+        None => {
+            // Scaffold: only the vadi may create the very first baton.
+            let legal = (cx.schema == "dvandva.baton.v1"
+                && cx.new_status == "spec_drafting"
                 && cx.new_assignee == "vadi"
-                && cx.new_checkpoint == 0);
-        if !legal {
-            eprintln!(
-                "DVANDVA_WRITE illegal_transition scaffold requires v1 status=spec_drafting or v2 status=research_drafting with assignee=vadi checkpoint=0, got schema={} status={} assignee={} checkpoint={}",
-                cx.schema, cx.new_status, cx.new_assignee, cx.new_checkpoint
-            );
-            return TransitionOutcome::Exit(24);
+                && cx.new_checkpoint == 0)
+                || (cx.schema == "dvandva.baton.v2"
+                    && cx.new_status == "research_drafting"
+                    && cx.new_assignee == "vadi"
+                    && cx.new_checkpoint == 0);
+            if !legal {
+                return Err((24, format!(
+                    "DVANDVA_WRITE illegal_transition scaffold requires v1 status=spec_drafting or v2 status=research_drafting with assignee=vadi checkpoint=0, got schema={} status={} assignee={} checkpoint={}",
+                    cx.schema, cx.new_status, cx.new_assignee, cx.new_checkpoint
+                )));
+            }
+            return Ok(());
         }
-        return TransitionOutcome::Legal;
-    }
-
-    // ---- STRICT re-parse of the current baton (any anomaly -> 25) ----------
-    let cur_doc = match util::read_json_lenient(baton_file) {
-        Ok(value) => value,
-        _ => {
-            eprintln!(
-                "DVANDVA_WRITE current_baton_unparseable file={} refusing_to_overwrite=true",
-                baton_file.display()
-            );
-            return TransitionOutcome::Exit(25);
-        }
+        Some(cur_doc) => cur_doc,
     };
-    let bf = baton_file.display();
 
-    if !matches!(field(&cur_doc, "checkpoint"), Some(Value::Number(_))) {
-        eprintln!("DVANDVA_WRITE current_baton_unparseable file={bf} bad_checkpoint_type=true");
-        return TransitionOutcome::Exit(25);
+    // ---- STRICT checks on the current baton (any anomaly -> 25) -------------
+    let bf = baton_dir.join("baton.json");
+    let bf = bf.display();
+
+    if !matches!(field(cur_doc, "checkpoint"), Some(Value::Number(_))) {
+        return Err((
+            25,
+            format!("DVANDVA_WRITE current_baton_unparseable file={bf} bad_checkpoint_type=true"),
+        ));
     }
 
-    let cur_schema = str_field(&cur_doc, "schema");
-    let cur_status = str_field(&cur_doc, "status");
-    let cur_checkpoint_i64 = match field(&cur_doc, "checkpoint").and_then(json_int) {
+    let cur_schema = str_field(cur_doc, "schema");
+    let cur_status = str_field(cur_doc, "status");
+    let cur_checkpoint_i64 = match field(cur_doc, "checkpoint").and_then(json_int) {
         Some(n) => n,
         None => {
-            eprintln!(
-                "DVANDVA_WRITE current_baton_unparseable file={bf} bad_checkpoint={}",
-                jq_render(field(&cur_doc, "checkpoint"))
-            );
-            return TransitionOutcome::Exit(25);
+            return Err((
+                25,
+                format!(
+                    "DVANDVA_WRITE current_baton_unparseable file={bf} bad_checkpoint={}",
+                    jq_render(field(cur_doc, "checkpoint"))
+                ),
+            ));
         }
     };
-    let cur_locked = bool_field(&cur_doc, "master_plan_locked");
-    let cur_resume_assignee = str_field(&cur_doc, "resume_assignee");
-    let cur_resume_status = str_field(&cur_doc, "resume_status");
-    let cur_run_id = str_field(&cur_doc, "run_id");
-    let cur_phase = jq_render(field(&cur_doc, "phase"));
-    let cur_vadi_approval = bool_field(&cur_doc, "vadi_final_approval");
-    let cur_prativadi_approval = bool_field(&cur_doc, "prativadi_final_approval");
-    let cur_mode = str_field(&cur_doc, "mode");
+    let cur_locked = bool_field(cur_doc, "master_plan_locked");
+    let cur_resume_assignee = str_field(cur_doc, "resume_assignee");
+    let cur_resume_status = str_field(cur_doc, "resume_status");
+    let cur_run_id = str_field(cur_doc, "run_id");
+    let cur_phase = jq_render(field(cur_doc, "phase"));
+    let cur_vadi_approval = bool_field(cur_doc, "vadi_final_approval");
+    let cur_prativadi_approval = bool_field(cur_doc, "prativadi_final_approval");
+    let cur_mode = str_field(cur_doc, "mode");
 
     if cur_schema != "dvandva.baton.v1" && cur_schema != "dvandva.baton.v2" {
-        eprintln!("DVANDVA_WRITE current_baton_unparseable file={bf} bad_schema={cur_schema}");
-        return TransitionOutcome::Exit(25);
+        return Err((
+            25,
+            format!("DVANDVA_WRITE current_baton_unparseable file={bf} bad_schema={cur_schema}"),
+        ));
     }
     if cur_schema == "dvandva.baton.v2" && !util::is_safe_run_id(&cur_run_id) {
-        eprintln!("DVANDVA_WRITE current_baton_unparseable file={bf} bad_run_id={cur_run_id}");
-        return TransitionOutcome::Exit(25);
+        return Err((
+            25,
+            format!("DVANDVA_WRITE current_baton_unparseable file={bf} bad_run_id={cur_run_id}"),
+        ));
     }
 
     let mut cur_effective_mode = String::new();
@@ -607,29 +1289,59 @@ fn decide_transition(
         cur_effective_mode = match canonical_mode(&cur_mode) {
             Some(mode) => mode,
             None => {
-                eprintln!("DVANDVA_WRITE current_baton_unparseable file={bf} bad_mode={cur_mode}");
-                return TransitionOutcome::Exit(25);
+                return Err((
+                    25,
+                    format!(
+                        "DVANDVA_WRITE current_baton_unparseable file={bf} bad_mode={cur_mode}"
+                    ),
+                ));
             }
         };
         if cur_effective_mode == "development" {
-            cur_effective_profile = if present(field(&cur_doc, "profile")) {
-                str_field(&cur_doc, "profile")
+            cur_effective_profile = if present(field(cur_doc, "profile")) {
+                str_field(cur_doc, "profile")
             } else {
                 "full".to_string()
             };
-            cur_profile_floor = if present(field(&cur_doc, "profile_floor")) {
-                str_field(&cur_doc, "profile_floor")
+            cur_profile_floor = if present(field(cur_doc, "profile_floor")) {
+                str_field(cur_doc, "profile_floor")
             } else {
                 cur_effective_profile.clone()
             };
         }
     }
 
-    // ---- F7 amendment state -----------------------------------------------
-    let cur_amendment = amendment_value(&cur_doc);
+    // ---- F7 amendment state + F9 per-phase effective profiles --------------
+    let cur_amendment = amendment_value(cur_doc);
     let cand_amendment = amendment_value(cand);
     let cur_phase_num: Option<i64> = cur_phase.parse::<i64>().ok();
     let new_phase_num: Option<i64> = cx.new_phase.parse::<i64>().ok();
+    // F9: the current phase's effective profile drives edge selection for
+    // numeric-source states and the amendment-entry flavour; the target phase's
+    // effective profile drives spec→implementation entry and the amendment exit.
+    // Fallback = the run profile (== today's behaviour when phase_profiles is
+    // absent, keeping the whole existing suite byte-identical).
+    let cur_phase_eff = effective_phase_profile(cur_doc, cur_phase_num, cx.new_effective_profile);
+    let new_phase_eff = effective_phase_profile(cand, new_phase_num, cx.new_effective_profile);
+    // F9: phase_profiles may change only in a spec-state write (incl. the F7
+    // amendment loop). human_decision is a human-authority wildcard.
+    let cur_pp = field(cur_doc, "phase_profiles").filter(|v| !v.is_null());
+    let cand_pp = field(cand, "phase_profiles").filter(|v| !v.is_null());
+    if cx.is_v2
+        && cur_effective_mode == "development"
+        && cx.new_effective_mode == "development"
+        && cx.new_status != "human_decision"
+        && !matches!(
+            cx.new_status,
+            "spec_drafting" | "spec_review" | "spec_revision"
+        )
+        && cur_pp != cand_pp
+    {
+        return Err((
+            23,
+            format!("DVANDVA_WRITE bad_phase_profiles candidate={cf}"),
+        ));
+    }
 
     // ---- approval gate reason ----------------------------------------------
     let writer_role = std::env::var("DVANDVA_ROLE").unwrap_or_default();
@@ -680,27 +1392,27 @@ fn decide_transition(
         );
         let amendment_enter = cur_effective_mode == "development"
             && cx.new_effective_mode == "development"
-            && is_amendment_enter_edge(cx.new_effective_profile, &cur_status, cx.new_status);
+            && is_amendment_enter_edge(&cur_phase_eff, &cur_status, cx.new_status);
         if amendment_enter {
             // F7: the amendment entry edge is loop-capped on
             // plan_amendment:<from-phase> (from-phase = current numeric phase),
             // and is exempt from the phase-advance loop-reset (spec is not a
             // numeric phase advance).
             let amendment_edge = format!("plan_amendment:{cur_phase}");
-            loop_reason = loop_edge_reason(&cur_doc, cand, &amendment_edge);
+            loop_reason = loop_edge_reason(cur_doc, cand, &amendment_edge);
         } else if cx.new_phase != cur_phase && loop_counts_nonempty(cand) {
             loop_reason = format!(
                 "bad_loop_counts phase_advanced current={cur_phase} candidate={} must_reset=true",
                 cx.new_phase
             );
         } else if is_loop_edge {
-            loop_reason = loop_edge_reason(&cur_doc, cand, &edge);
+            loop_reason = loop_edge_reason(cur_doc, cand, &edge);
         }
     }
 
     // ---- review ownership reason -------------------------------------------
     let mut review_ownership_reason = String::new();
-    if cx.is_v2 && !run_explainer_reviews_ownership_ok(&cur_doc, cand, &writer_role) {
+    if cx.is_v2 && !run_explainer_reviews_ownership_ok(cur_doc, cand, &writer_role) {
         review_ownership_reason = "run explainer review ownership requires DVANDVA_ROLE=vadi/prativadi and only that role may change its own run_explainer_reviews entries".to_string();
     }
 
@@ -710,10 +1422,13 @@ fn decide_transition(
         && cx.new_status == "done"
         && cx.new_effective_profile != "full"
     {
-        let required = phase_review_cycle_checkpoint(baton_file, cur_checkpoint_i64, &cur_phase);
+        let required =
+            phase_review_cycle_checkpoint(baton_dir, cur_doc, cur_checkpoint_i64, &cur_phase);
         if !compact_done_phase_review_checkpoint_ok(cand, required) {
-            eprintln!("DVANDVA_WRITE bad_compact_terminal_evidence candidate={cf}");
-            return TransitionOutcome::Exit(23);
+            return Err((
+                23,
+                format!("DVANDVA_WRITE bad_compact_terminal_evidence candidate={cf}"),
+            ));
         }
     }
 
@@ -721,10 +1436,12 @@ fn decide_transition(
     if cx.is_v2
         && cur_effective_mode == "development"
         && cx.new_effective_mode == "development"
-        && !profile_history_superset(&cur_doc, cand)
+        && !profile_history_superset(cur_doc, cand)
     {
-        eprintln!("DVANDVA_WRITE bad_profile_history candidate={cf}");
-        return TransitionOutcome::Exit(23);
+        return Err((
+            23,
+            format!("DVANDVA_WRITE bad_profile_history candidate={cf}"),
+        ));
     }
 
     // ---- profile_history low-floor guard -----------------------------------
@@ -732,10 +1449,12 @@ fn decide_transition(
         && cur_effective_mode == "development"
         && cx.new_effective_mode == "development"
         && cx.new_status != "human_decision"
-        && !profile_history_low_floor_ok(&cur_doc, cand, &cur_profile_floor)
+        && !profile_history_low_floor_ok(cur_doc, cand, &cur_profile_floor)
     {
-        eprintln!("DVANDVA_WRITE bad_profile_downgrade candidate={cf}");
-        return TransitionOutcome::Exit(23);
+        return Err((
+            23,
+            format!("DVANDVA_WRITE bad_profile_downgrade candidate={cf}"),
+        ));
     }
 
     // ---- profile escalation history entry ----------------------------------
@@ -753,8 +1472,10 @@ fn decide_transition(
             cx.new_checkpoint,
         )
     {
-        eprintln!("DVANDVA_WRITE bad_profile_history candidate={cf}");
-        return TransitionOutcome::Exit(23);
+        return Err((
+            23,
+            format!("DVANDVA_WRITE bad_profile_history candidate={cf}"),
+        ));
     }
 
     // ---- precedence chain (order load-bearing) -----------------------------
@@ -780,14 +1501,18 @@ fn decide_transition(
     {
         // Two distinct downgrade guards (effective profile below floor; floor
         // itself lowered below the current floor) share one action.
-        eprintln!("DVANDVA_WRITE bad_profile_downgrade candidate={cf}");
-        return TransitionOutcome::Exit(23);
+        return Err((
+            23,
+            format!("DVANDVA_WRITE bad_profile_downgrade candidate={cf}"),
+        ));
     } else if (cx.new_checkpoint as i64) <= cur_checkpoint_i64 {
-        eprintln!(
-            "DVANDVA_WRITE stale_checkpoint current={cur_checkpoint_i64} candidate={}",
-            cx.new_checkpoint
-        );
-        return TransitionOutcome::Exit(27);
+        return Err((
+            27,
+            format!(
+                "DVANDVA_WRITE stale_checkpoint current={cur_checkpoint_i64} candidate={}",
+                cx.new_checkpoint
+            ),
+        ));
     } else if cx.new_checkpoint as i64 != cur_checkpoint_i64 + 1 {
         reason = format!(
             "checkpoint must be {}, got {}",
@@ -797,13 +1522,11 @@ fn decide_transition(
     } else if approval_reason.starts_with("approval_out_of_band")
         || approval_reason.starts_with("stale_approval")
     {
-        eprintln!("DVANDVA_WRITE {approval_reason}");
-        return TransitionOutcome::Exit(23);
+        return Err((23, format!("DVANDVA_WRITE {approval_reason}")));
     } else if !approval_reason.is_empty() {
         reason = approval_reason.clone();
     } else if !loop_reason.is_empty() {
-        eprintln!("DVANDVA_WRITE {loop_reason}");
-        return TransitionOutcome::Exit(23);
+        return Err((23, format!("DVANDVA_WRITE {loop_reason}")));
     } else if !review_ownership_reason.is_empty()
         && (cx.new_status != "done"
             || (cur_status == "termination_review" && cur_vadi_approval && cur_prativadi_approval))
@@ -880,10 +1603,24 @@ fn decide_transition(
             legal = true;
         }
     } else {
+        // F9 edge selection: numeric-source states select by the current phase's
+        // effective profile; the spec→implementation entry (and amendment exit)
+        // selects by the target phase's effective profile; everything else uses
+        // the run profile. When phase_profiles is absent every branch collapses
+        // to cx.new_effective_profile — the pre-F9 behaviour.
+        let edge_profile: String = if cur_status == "spec_review"
+            && matches!(cx.new_status, "implementing" | "parallel_implementing")
+        {
+            new_phase_eff.clone()
+        } else if is_numeric_phase_status(&cur_status) {
+            cur_phase_eff.clone()
+        } else {
+            cx.new_effective_profile.to_string()
+        };
         legal = edge_whitelist(
             cx.schema,
             &cur_effective_mode,
-            cx.new_effective_profile,
+            &edge_profile,
             &cur_status,
             cx.new_status,
             &mut reason,
@@ -896,8 +1633,10 @@ fn decide_transition(
         && cx.new_status == "parallel_implementing"
         && !parallel_work_split_ok(cand)
     {
-        eprintln!("DVANDVA_WRITE bad_parallel_work_split candidate={cf}");
-        return TransitionOutcome::Exit(23);
+        return Err((
+            23,
+            format!("DVANDVA_WRITE bad_parallel_work_split candidate={cf}"),
+        ));
     }
     if legal
         && cx.is_v2
@@ -918,14 +1657,14 @@ fn decide_transition(
         reason = "test_creation->cross_review requires completed test-creation subagent_track from dvandva-test-creator".to_string();
     }
     if legal && cx.is_v2 && cur_status == "cross_review" && cx.new_status == "cross_fixing" {
-        let required = cross_review_cycle_checkpoint(baton_file, cur_checkpoint_i64);
+        let required = cross_review_cycle_checkpoint(baton_dir, cur_doc, cur_checkpoint_i64);
         if !cross_review_to_cross_fixing_ok(cand, required) {
             legal = false;
             reason = "cross_review->cross_fixing requires current-cycle completed cross-review subagent_tracks with non-approval evidence".to_string();
         }
     }
     if legal && cx.is_v2 && cur_status == "cross_review" && cx.new_status == "deep_review" {
-        let required = cross_review_cycle_checkpoint(baton_file, cur_checkpoint_i64);
+        let required = cross_review_cycle_checkpoint(baton_dir, cur_doc, cur_checkpoint_i64);
         if !cross_review_to_deep_review_ok(cand, required) {
             legal = false;
             reason = "cross_review->deep_review requires current-cycle completed cross-review subagent_tracks for both roles with phase=\"cross_review\"".to_string();
@@ -940,10 +1679,29 @@ fn decide_transition(
         && cur_status == "deep_review"
         && (cx.new_status == "deslop" || cx.new_status == "review_of_review")
     {
-        let required = deep_review_cycle_checkpoint(baton_file, cur_checkpoint_i64);
+        let required = deep_review_cycle_checkpoint(baton_dir, cur_doc, cur_checkpoint_i64);
         if !deep_review_angles_ok(cand, required) {
             legal = false;
             reason = "deep_review->deslop requires current-cycle three completed review-angle subagent_tracks".to_string();
+        }
+        // F6: risk-triggered angles for full-profile phases. Only checked once
+        // the three base angles pass (legal still true); a missing angle is a
+        // hard 23, naming the missing angle and its trigger.
+        if legal && cur_phase_eff == "full" {
+            if security_trigger_present(cand, &cur_phase)
+                && !risk_angle_present(cand, required, "security", "dvandva-security-auditor")
+            {
+                return Err((23, format!(
+                    "DVANDVA_WRITE bad_deep_review_angles missing_angle=security trigger=security_path candidate={cf}"
+                )));
+            }
+            if integration_trigger_present(cand, &cur_phase)
+                && !risk_angle_present(cand, required, "integration", "dvandva-integration-checker")
+            {
+                return Err((23, format!(
+                    "DVANDVA_WRITE bad_deep_review_angles missing_angle=integration trigger=multi_owner_seam candidate={cf}"
+                )));
+            }
         }
     }
 
@@ -956,27 +1714,27 @@ fn decide_transition(
         && cur_amendment.is_none()
         && cand_amendment.is_none()
         && cx.new_status != "human_decision"
-        && jq_render(field(&cur_doc, "total_phases")) != jq_render(field(cand, "total_phases"))
+        && jq_render(field(cur_doc, "total_phases")) != jq_render(field(cand, "total_phases"))
     {
-        eprintln!("DVANDVA_WRITE bad_amendment total_phases_frozen candidate={cf}");
-        return TransitionOutcome::Exit(23);
+        return Err((
+            23,
+            format!("DVANDVA_WRITE bad_amendment total_phases_frozen candidate={cf}"),
+        ));
     }
 
-    let is_enter =
-        dev_dev && is_amendment_enter_edge(cx.new_effective_profile, &cur_status, cx.new_status);
-    let is_exit =
-        dev_dev && is_amendment_exit_edge(cx.new_effective_profile, &cur_status, cx.new_status);
+    // F9: the amendment entry flavour follows the CURRENT phase's effective
+    // profile; the exit re-enters the TARGET phase per its effective profile.
+    let is_enter = dev_dev && is_amendment_enter_edge(&cur_phase_eff, &cur_status, cx.new_status);
+    let is_exit = dev_dev && is_amendment_exit_edge(&new_phase_eff, &cur_status, cx.new_status);
 
     // The amendment entry edge MUST set amendment_from_phase == current phase.
     if legal && is_enter && (cand_amendment.is_none() || cand_amendment != cur_phase_num) {
-        eprintln!("DVANDVA_WRITE bad_amendment candidate={cf}");
-        return TransitionOutcome::Exit(23);
+        return Err((23, format!("DVANDVA_WRITE bad_amendment candidate={cf}")));
     }
 
     // amendment_from_phase may only BECOME non-null on an entry edge.
     if cx.is_v2 && cur_amendment.is_none() && cand_amendment.is_some() && !is_enter {
-        eprintln!("DVANDVA_WRITE bad_amendment candidate={cf}");
-        return TransitionOutcome::Exit(23);
+        return Err((23, format!("DVANDVA_WRITE bad_amendment candidate={cf}")));
     }
 
     // While the amendment loop is active (cur non-null, outside human states):
@@ -986,8 +1744,7 @@ fn decide_transition(
         if cx.is_v2 && cur_status != "human_decision" && cx.new_status != "human_decision" {
             if is_exit {
                 if cand_amendment.is_some() {
-                    eprintln!("DVANDVA_WRITE bad_amendment candidate={cf}");
-                    return TransitionOutcome::Exit(23);
+                    return Err((23, format!("DVANDVA_WRITE bad_amendment candidate={cf}")));
                 }
                 if new_phase_num.map(|p| p < from).unwrap_or(true) {
                     legal = false;
@@ -997,17 +1754,31 @@ fn decide_transition(
                     );
                 }
             } else if cand_amendment != Some(from) {
-                eprintln!("DVANDVA_WRITE bad_amendment candidate={cf}");
-                return TransitionOutcome::Exit(23);
+                return Err((23, format!("DVANDVA_WRITE bad_amendment candidate={cf}")));
             }
         }
     }
 
-    if !legal {
-        eprintln!("DVANDVA_WRITE illegal_transition {reason}");
-        return TransitionOutcome::Exit(24);
+    // ---- F10 explainer-verification gate (full-profile terminal done) ------
+    if legal
+        && cx.is_v2
+        && cx.new_effective_mode == "development"
+        && cx.new_status == "done"
+        && cx.new_effective_profile == "full"
+    {
+        let required = termination_review_cycle_checkpoint(baton_dir, cur_doc, cur_checkpoint_i64);
+        if !explainer_verification_ok(cand, required) {
+            return Err((
+                23,
+                format!("DVANDVA_WRITE bad_explainer_verification candidate={cf}"),
+            ));
+        }
     }
-    TransitionOutcome::Legal
+
+    if !legal {
+        return Err((24, format!("DVANDVA_WRITE illegal_transition {reason}")));
+    }
+    Ok(())
 }
 
 // ===========================================================================
@@ -1610,18 +2381,11 @@ fn candidate_paths(cand: &Value) -> Vec<String> {
 fn hard_path(p: &str) -> bool {
     static SKILL_MD: OnceLock<Regex> = OnceLock::new();
     static COMMANDS_MD: OnceLock<Regex> = OnceLock::new();
-    static ENV_RE: OnceLock<Regex> = OnceLock::new();
-    static SECRETS_RE: OnceLock<Regex> = OnceLock::new();
-    static API_RE: OnceLock<Regex> = OnceLock::new();
     static LOCKS_RE: OnceLock<Regex> = OnceLock::new();
     let skill_md =
         SKILL_MD.get_or_init(|| Regex::new(r"^plugins/dvandva/skills/[^/]+/SKILL\.md$").unwrap());
     let commands_md =
         COMMANDS_MD.get_or_init(|| Regex::new(r"^plugins/dvandva/commands/[^/]+\.md$").unwrap());
-    let env_re = ENV_RE.get_or_init(|| Regex::new(r"(^|/)\.env(\..*)?$").unwrap());
-    let secrets_re = SECRETS_RE
-        .get_or_init(|| Regex::new(r"(^|/)(secret|secrets|credential|credentials)(/|$)").unwrap());
-    let api_re = API_RE.get_or_init(|| Regex::new(r"(^|/)(api|apis|client|clients)(/|$)").unwrap());
     let locks_re = LOCKS_RE.get_or_init(|| {
         Regex::new(r"(^|/)(package-lock\.json|package\.json|pnpm-lock\.yaml|yarn\.lock|requirements\.txt|pyproject\.toml|Cargo\.toml|Cargo\.lock)$").unwrap()
     });
@@ -1642,10 +2406,23 @@ fn hard_path(p: &str) -> bool {
         || p.starts_with("rust/dvandva/src/")
         || p.starts_with("rust/dvandva/tests/")
         // ---------------------------------------------
-        || env_re.is_match(p)
-        || secrets_re.is_match(p)
-        || api_re.is_match(p)
+        // F6 reuses these three security submatchers (do not re-derive).
+        || is_security_path(p)
         || locks_re.is_match(p)
+}
+
+/// The security submatchers embedded in [`hard_path`]: `.env*`, secret/credential
+/// tokens, and api/client tokens. Extracted so the F6 deep-review SECURITY-angle
+/// trigger reuses the exact same matchers rather than re-deriving them.
+fn is_security_path(p: &str) -> bool {
+    static ENV_RE: OnceLock<Regex> = OnceLock::new();
+    static SECRETS_RE: OnceLock<Regex> = OnceLock::new();
+    static API_RE: OnceLock<Regex> = OnceLock::new();
+    let env_re = ENV_RE.get_or_init(|| Regex::new(r"(^|/)\.env(\..*)?$").unwrap());
+    let secrets_re = SECRETS_RE
+        .get_or_init(|| Regex::new(r"(^|/)(secret|secrets|credential|credentials)(/|$)").unwrap());
+    let api_re = API_RE.get_or_init(|| Regex::new(r"(^|/)(api|apis|client|clients)(/|$)").unwrap());
+    env_re.is_match(p) || secrets_re.is_match(p) || api_re.is_match(p)
 }
 
 fn fast_allowlist_ok(cand: &Value) -> bool {
@@ -2570,6 +3347,8 @@ fn edge_whitelist(
                         | "phase_review:termination_review"
                         | "termination_review:phase_fixing"
                         | "termination_review:done"
+                        // F9: standard phase advancing into a full next phase.
+                        | "phase_review:parallel_implementing"
                 ),
                 "full" => matches!(
                     edge.as_str(),
@@ -2596,6 +3375,8 @@ fn edge_whitelist(
                         | "phase_fixing:test_creation"
                         | "deslop:phase_fixing"
                         | "deslop:parallel_implementing"
+                        // F9: full phase advancing into a standard next phase.
+                        | "deslop:implementing"
                         | "deslop:spec_revision"
                         | "deslop:termination_review"
                         | "termination_review:phase_fixing"
@@ -2781,15 +3562,13 @@ struct CycleRow {
 }
 
 fn collect_cycle_rows(
-    baton_file: &Path,
+    baton_dir: &Path,
+    cur_doc: &Value,
     current_checkpoint: i64,
     want_phase: bool,
 ) -> Vec<CycleRow> {
     let mut rows = Vec::new();
-    let history_dir = baton_file
-        .parent()
-        .map(|p| p.join("history"))
-        .unwrap_or_else(|| PathBuf::from("history"));
+    let history_dir = baton_dir.join("history");
     if let Ok(entries) = std::fs::read_dir(&history_dir) {
         let mut files: Vec<PathBuf> = entries
             .flatten()
@@ -2807,10 +3586,8 @@ fn collect_cycle_rows(
             }
         }
     }
-    if let Ok(v) = util::read_json_lenient(baton_file) {
-        if let Some(row) = cycle_row(&v, want_phase) {
-            rows.push(row);
-        }
+    if let Some(row) = cycle_row(cur_doc, want_phase) {
+        rows.push(row);
     }
     rows
 }
@@ -2838,8 +3615,13 @@ fn cycle_row(v: &Value, want_phase: bool) -> Option<CycleRow> {
 
 /// Find the checkpoint of the most recent `target` status row (scanning from the
 /// highest checkpoint down, contiguous run), mirroring the shell awk logic.
-fn cross_or_deep_cycle(baton_file: &Path, current_checkpoint: i64, target: &str) -> i64 {
-    let mut rows = collect_cycle_rows(baton_file, current_checkpoint, false);
+fn cross_or_deep_cycle(
+    baton_dir: &Path,
+    cur_doc: &Value,
+    current_checkpoint: i64,
+    target: &str,
+) -> i64 {
+    let mut rows = collect_cycle_rows(baton_dir, cur_doc, current_checkpoint, false);
     if rows.is_empty() {
         return current_checkpoint;
     }
@@ -2858,20 +3640,36 @@ fn cross_or_deep_cycle(baton_file: &Path, current_checkpoint: i64, target: &str)
     cycle
 }
 
-fn cross_review_cycle_checkpoint(baton_file: &Path, current_checkpoint: i64) -> i64 {
-    cross_or_deep_cycle(baton_file, current_checkpoint, "cross_review")
+fn cross_review_cycle_checkpoint(
+    baton_dir: &Path,
+    cur_doc: &Value,
+    current_checkpoint: i64,
+) -> i64 {
+    cross_or_deep_cycle(baton_dir, cur_doc, current_checkpoint, "cross_review")
 }
 
-fn deep_review_cycle_checkpoint(baton_file: &Path, current_checkpoint: i64) -> i64 {
-    cross_or_deep_cycle(baton_file, current_checkpoint, "deep_review")
+fn deep_review_cycle_checkpoint(baton_dir: &Path, cur_doc: &Value, current_checkpoint: i64) -> i64 {
+    cross_or_deep_cycle(baton_dir, cur_doc, current_checkpoint, "deep_review")
+}
+
+/// F10: the checkpoint at which the run entered its current `termination_review`
+/// block — the floor for accepting an explainer-verification track as
+/// current-cycle. Reuses the same contiguous-run scan as the cross/deep helpers.
+fn termination_review_cycle_checkpoint(
+    baton_dir: &Path,
+    cur_doc: &Value,
+    current_checkpoint: i64,
+) -> i64 {
+    cross_or_deep_cycle(baton_dir, cur_doc, current_checkpoint, "termination_review")
 }
 
 fn phase_review_cycle_checkpoint(
-    baton_file: &Path,
+    baton_dir: &Path,
+    cur_doc: &Value,
     current_checkpoint: i64,
     current_phase: &str,
 ) -> i64 {
-    let mut rows = collect_cycle_rows(baton_file, current_checkpoint, true);
+    let mut rows = collect_cycle_rows(baton_dir, cur_doc, current_checkpoint, true);
     if rows.is_empty() {
         return current_checkpoint;
     }
@@ -2885,4 +3683,181 @@ fn phase_review_cycle_checkpoint(
         }
     }
     cycle
+}
+
+// ===========================================================================
+// Unit tests for the pub(crate) transition surface (in-crate: they exercise
+// pub(crate) items that integration tests cannot see).
+// ===========================================================================
+#[cfg(test)]
+mod surface_tests {
+    use super::*;
+    use serde_json::json;
+
+    const V2_SEED: &str = include_str!(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../../plugins/dvandva/references/baton-schema-v2.json"
+    ));
+
+    /// A valid full-profile v2 development baton, mirroring the integration
+    /// suite's `make_baton_v2` field set.
+    fn seed_v2(status: &str, assignee: &str, checkpoint: i64, phase: Value) -> Value {
+        let mut b: Value = serde_json::from_str(V2_SEED).expect("v2 seed parses");
+        b["updated_at"] = json!("2026-06-27T00:00:00Z");
+        b["status"] = json!(status);
+        b["assignee"] = json!(assignee);
+        b["checkpoint"] = json!(checkpoint);
+        b["phase"] = phase;
+        b["run_id"] = json!("run-a");
+        b["original_ask"] = json!("Original user ask for surface parity");
+        b["research_ref"] = json!("./superpowers/research/run-a.html");
+        b["profile"] = json!("full");
+        b["profile_floor"] = json!("full");
+        b["profile_decision"] = json!({
+            "selected_profile": "full",
+            "floor": "full",
+            "reason": "surface test default preserves the full v2 graph",
+            "decided_by": "test-suite",
+            "decided_at": "2026-07-01T00:00:00Z",
+            "risk_inputs": [],
+            "hard_triggers": [],
+            "allowlist_match": false,
+            "allowlist_refs": [],
+            "evidence_refs": ["test-helper"]
+        });
+        b["profile_history"] = json!([]);
+        b["current_engine"] = json!("codex");
+        b["branch"] = json!("test-branch");
+        b["master_plan_locked"] = json!(false);
+        b["question"] = Value::Null;
+        b["resume_assignee"] = Value::Null;
+        b["resume_status"] = Value::Null;
+        b
+    }
+
+    #[test]
+    fn legal_transitions_deep_review_full_option_set() {
+        let cur = json!({
+            "schema": "dvandva.baton.v2",
+            "status": "deep_review",
+            "mode": "development",
+            "profile": "full",
+            "phase": 1,
+            "master_plan_locked": true,
+            "loop_counts": {},
+            "disagreement_cap": 3
+        });
+        let mut opts = legal_transitions(&cur);
+        opts.sort_by(|a, b| a.to_status.cmp(&b.to_status));
+
+        let statuses: Vec<&str> = opts.iter().map(|o| o.to_status.as_str()).collect();
+        assert_eq!(
+            statuses,
+            vec![
+                "deslop",
+                "human_decision",
+                "phase_fixing",
+                "review_of_review"
+            ],
+            "deep_review (full) legal option set"
+        );
+
+        let by = |s: &str| opts.iter().find(|o| o.to_status == s).unwrap();
+        // Non-loop review targets stay in the same numeric phase.
+        assert_eq!(by("deslop").to_phase, PhaseMove::Same);
+        assert_eq!(by("deslop").assignee, "vadi");
+        assert!(by("deslop").loop_key.is_none());
+        // review_of_review carries the prativadi_fixups review target.
+        assert_eq!(
+            by("review_of_review").review_target.as_deref(),
+            Some("prativadi_fixups")
+        );
+        // The fixing loop edge carries loop_key = (edge, next=1, cap=3).
+        assert_eq!(
+            by("phase_fixing").loop_key,
+            Some(("deep_review:phase_fixing".to_string(), 1, 3))
+        );
+        // Universal escalation is always offered (never from a terminal state).
+        assert_eq!(by("human_decision").assignee, "human");
+    }
+
+    #[test]
+    fn legal_transitions_at_loop_cap_drops_the_loop_edge() {
+        let cur = json!({
+            "schema": "dvandva.baton.v2",
+            "status": "deep_review",
+            "mode": "development",
+            "profile": "full",
+            "phase": 1,
+            "master_plan_locked": true,
+            "loop_counts": {"deep_review:phase_fixing": 3},
+            "disagreement_cap": 3
+        });
+        let opts = legal_transitions(&cur);
+        assert!(
+            !opts.iter().any(|o| o.to_status == "phase_fixing"),
+            "the fixing loop edge is dropped at the disagreement cap"
+        );
+        // The non-loop review edges and human_decision remain.
+        assert!(opts.iter().any(|o| o.to_status == "deslop"));
+        assert!(opts.iter().any(|o| o.to_status == "human_decision"));
+    }
+
+    #[test]
+    fn validate_candidate_parity_accepts_and_binary_installs() {
+        let dir = tempfile::tempdir().unwrap();
+        let baton_dir = dir.path();
+        let baton_file = baton_dir.join("baton.json");
+        let cand_file = baton_dir.join("baton.next.json");
+
+        let cur = seed_v2("spec_drafting", "vadi", 4, json!("spec"));
+        let cand = seed_v2("spec_review", "prativadi", 5, json!("spec"));
+        std::fs::write(&baton_file, serde_json::to_string(&cur).unwrap()).unwrap();
+        std::fs::write(&cand_file, serde_json::to_string(&cand).unwrap()).unwrap();
+
+        // validate_candidate accepts it...
+        assert!(
+            validate_candidate(baton_dir, Some(&cur), &cand).is_ok(),
+            "validate_candidate should accept a legal spec_drafting->spec_review"
+        );
+        // ...and the binary write installs it (exit 0). Parity.
+        assert_eq!(run_write(&baton_file, &cand_file), 0);
+    }
+
+    #[test]
+    fn validate_candidate_parity_rejects_illegal_edge_same_code() {
+        let dir = tempfile::tempdir().unwrap();
+        let baton_dir = dir.path();
+        let baton_file = baton_dir.join("baton.json");
+        let cand_file = baton_dir.join("baton.next.json");
+
+        let cur = seed_v2("spec_drafting", "vadi", 4, json!("spec"));
+        // spec_drafting -> implementing is not a legal edge (24).
+        let cand = seed_v2("implementing", "vadi", 5, json!(1));
+        std::fs::write(&baton_file, serde_json::to_string(&cur).unwrap()).unwrap();
+        std::fs::write(&cand_file, serde_json::to_string(&cand).unwrap()).unwrap();
+
+        let vc = validate_candidate(baton_dir, Some(&cur), &cand);
+        assert!(
+            matches!(vc, Err((24, _))),
+            "expected illegal-transition 24, got {vc:?}"
+        );
+        // The binary emits the same exit code.
+        assert_eq!(run_write(&baton_file, &cand_file), 24);
+    }
+
+    #[test]
+    fn expected_owner_team_states_carry_both_roles() {
+        let (a, roles) = expected_owner("dvandva.baton.v2", "development", "full", "cross_review");
+        assert_eq!(a, "team");
+        assert_eq!(roles, vec!["prativadi".to_string(), "vadi".to_string()]);
+        let (a, roles) = expected_owner(
+            "dvandva.baton.v2",
+            "development",
+            "standard",
+            "implementing",
+        );
+        assert_eq!(a, "vadi");
+        assert!(roles.is_empty());
+    }
 }

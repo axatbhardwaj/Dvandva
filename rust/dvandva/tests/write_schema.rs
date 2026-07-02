@@ -1124,6 +1124,7 @@ fn v2_done_valid_run_explainer() {
         b["vadi_final_approval"] = json!(true);
         b["prativadi_final_approval"] = json!(true);
         run_explainer_reviews(b);
+        explainer_verification_track(b); // F10
     });
     run(&b, &n).assert("done valid explainer", 0);
 }
@@ -1148,6 +1149,7 @@ fn v2_done_accepts_date_prefixed_run_id_explainer() {
         b["vadi_final_approval"] = json!(true);
         b["prativadi_final_approval"] = json!(true);
         date_prefixed_run_explainer_reviews(b);
+        explainer_verification_track(b); // F10
     });
     run(&b, &n).assert("date-prefixed explainer", 0);
 }
@@ -1196,6 +1198,7 @@ fn v2_done_accepts_coordinator_assignees() {
             b["vadi_final_approval"] = json!(true);
             b["prativadi_final_approval"] = json!(true);
             run_explainer_reviews(b);
+            explainer_verification_track(b); // F10
         });
         run(&b, &n).assert(&format!("done owner {owner}"), 0);
     }
@@ -1577,4 +1580,58 @@ fn write_output(args: &[&str]) -> std::process::Output {
         cmd.arg(a);
     }
     cmd.output().unwrap()
+}
+
+// ===================== F9: phase_profiles shape =====================
+
+/// F9: phase_profiles values are restricted to "standard"|"full".
+#[test]
+fn f9_phase_profiles_bad_value_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_drafting", "vadi", 4, |_| {});
+    make_baton_v2(&n, "spec_review", "prativadi", 5, |v| {
+        v["phase_profiles"] = json!({"1": "fast"});
+    });
+    run(&b, &n).assert_contains("f9 phase_profiles bad value", 23, "bad_phase_profiles");
+}
+
+/// F9: a non-object phase_profiles is rejected.
+#[test]
+fn f9_phase_profiles_non_object_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_drafting", "vadi", 4, |_| {});
+    make_baton_v2(&n, "spec_review", "prativadi", 5, |v| {
+        v["phase_profiles"] = json!(["1"]);
+    });
+    run(&b, &n).assert_contains("f9 phase_profiles non-object", 23, "bad_phase_profiles");
+}
+
+/// F9: phase_profiles keys must be stringified numeric phases.
+#[test]
+fn f9_phase_profiles_non_numeric_key_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_drafting", "vadi", 4, |_| {});
+    make_baton_v2(&n, "spec_review", "prativadi", 5, |v| {
+        v["phase_profiles"] = json!({"one": "standard"});
+    });
+    run(&b, &n).assert_contains(
+        "f9 phase_profiles non-numeric key",
+        23,
+        "bad_phase_profiles",
+    );
+}
+
+/// F9: an absent/null phase_profiles is accepted (additive, old batons unchanged).
+#[test]
+fn f9_phase_profiles_absent_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_drafting", "vadi", 4, |_| {});
+    make_baton_v2(&n, "spec_review", "prativadi", 5, |v| {
+        v["phase_profiles"] = Value::Null;
+    });
+    run(&b, &n).assert("f9 phase_profiles null accepted", 0);
 }

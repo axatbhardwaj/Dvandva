@@ -277,6 +277,86 @@ pub fn parallel_chunks(b: &mut Value) {
     }
 }
 
+/// Like [`parallel_chunks`] but for an arbitrary numeric `phase` (F9 mixed
+/// profile: entering a full phase N > 1).
+pub fn parallel_chunks_phase(b: &mut Value, phase: &str) {
+    b["active_roles"] = json!(["vadi", "prativadi"]);
+    b["work_split"] = json!([]);
+    for (id, owner, path) in [
+        ("impl-chunk-a", "vadi", "src/pa.ts"),
+        ("impl-chunk-b", "vadi", "src/pb.ts"),
+        ("impl-chunk-c", "prativadi", "src/pc.ts"),
+        ("impl-chunk-d", "prativadi", "src/pd.ts"),
+        ("impl-chunk-e", "vadi", "src/pe.ts"),
+    ] {
+        let reviewer = if owner == "vadi" { "prativadi" } else { "vadi" };
+        push(
+            b,
+            "work_split",
+            json!({
+                "id": id,
+                "phase": phase,
+                "chunk_type": "implementation",
+                "owner": owner,
+                "owner_role": owner,
+                "suggested_agent": "dvandva-implementer",
+                "scope": "Two-team implementation chunk.",
+                "paths": [path],
+                "cross_review_by": reviewer,
+                "can_parallelize": true,
+                "parallel_rationale": "Independent file.",
+                "depends_on": [],
+                "status": "planned",
+                "artifact_refs": []
+            }),
+        );
+    }
+}
+
+/// F6: a completed current-cycle SECURITY-angle track (review_checkpoint 4).
+pub fn security_review_track(b: &mut Value) {
+    push(
+        b,
+        "subagent_tracks",
+        json!({
+            "id": "security-angle",
+            "phase": "deep_review",
+            "status": "completed",
+            "track": "security-audit",
+            "review_checkpoint": 4,
+            "owner": "dvandva-security-auditor",
+            "parallelized": true,
+            "rationale": "Security auditor reviewed the credential-touching diff.",
+            "inputs": ["candidate diff"],
+            "outputs": ["No secret leakage or injection vector found."],
+            "evidence_refs": ["subagent:security-angle"],
+            "result": "passed"
+        }),
+    );
+}
+
+/// F6: a completed current-cycle INTEGRATION-angle track (review_checkpoint 4).
+pub fn integration_review_track(b: &mut Value) {
+    push(
+        b,
+        "subagent_tracks",
+        json!({
+            "id": "integration-angle",
+            "phase": "deep_review",
+            "status": "completed",
+            "track": "integration-check",
+            "review_checkpoint": 4,
+            "owner": "dvandva-integration-checker",
+            "parallelized": true,
+            "rationale": "Integration checker verified cross-chunk wiring across owners.",
+            "inputs": ["candidate diff"],
+            "outputs": ["Cross-chunk seams wire end to end."],
+            "evidence_refs": ["subagent:integration-angle"],
+            "result": "passed"
+        }),
+    );
+}
+
 /// `v2_dynamic_agent_instances_filter` — one closed generated instance.
 pub fn dynamic_agent_instances(b: &mut Value) {
     b["agent_instances"] = json!([{
@@ -465,6 +545,29 @@ fn run_explainer_reviews_for(b: &mut Value, artifact: &str) {
             "evidence_refs": ["prativadi:run-explainer-review"]
         }
     ]);
+}
+
+/// F10: a completed current-cycle explainer-verification track owned by
+/// `dvandva-doc-verifier`, required on a full-profile terminal `done`.
+pub fn explainer_verification_track(b: &mut Value) {
+    push(
+        b,
+        "subagent_tracks",
+        json!({
+            "id": "explainer-verification-evidence",
+            "phase": "termination_review",
+            "status": "completed",
+            "track": "explainer-verification",
+            "owner": "dvandva-doc-verifier",
+            "review_checkpoint": 4,
+            "parallelized": false,
+            "rationale": "Doc-verifier checked the run explainer's claims against the code.",
+            "inputs": ["run explainer", "final diff"],
+            "outputs": ["Explainer claims verified against observable behavior."],
+            "evidence_refs": ["subagent:explainer-verification-evidence"],
+            "result": "approved"
+        }),
+    );
 }
 
 /// `v2_run_explainer_reviews_filter`.

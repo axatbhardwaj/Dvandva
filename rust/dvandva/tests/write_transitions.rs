@@ -172,6 +172,7 @@ fn v2_edges_legal() {
                 v["vadi_final_approval"] = json!(true);
                 v["prativadi_final_approval"] = json!(true);
                 run_explainer_reviews(v);
+                explainer_verification_track(v); // F10
             }
         });
         let name = format!("v2 edge {edge} is legal");
@@ -2362,4 +2363,363 @@ fn f8_test_creation_to_cross_review_accepts_adversarial_track() {
         "f8 test_creation->cross_review accepts adversarial track",
         0,
     );
+}
+
+// ===================== F9: per-phase ceremony (phase_profiles) =====================
+
+/// F9: a standard phase inside a full run is entered from spec via
+/// spec_review -> implementing (the target phase's effective profile).
+#[test]
+fn f9_standard_phase_entry_in_full_run() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_review", "prativadi", 4, |v| {
+        v["phase_profiles"] = json!({"1": "standard"});
+    });
+    make_baton_v2(&n, "implementing", "vadi", 5, |v| {
+        v["phase_profiles"] = json!({"1": "standard"});
+    });
+    run(&b, &n).assert("f9 standard phase entry in full run", 0);
+}
+
+/// F9: the implementing <-> phase_review loop of a standard phase is legal
+/// inside a full run (edge selection by the current phase's effective profile).
+#[test]
+fn f9_standard_phase_impl_review_loop() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "implementing", "vadi", 4, |v| {
+        v["phase_profiles"] = json!({"1": "standard"});
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(1);
+        v["phase"] = json!(1);
+    });
+    make_baton_v2(&n, "phase_review", "prativadi", 5, |v| {
+        v["phase_profiles"] = json!({"1": "standard"});
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(1);
+        v["phase"] = json!(1);
+    });
+    run(&b, &n).assert("f9 standard phase impl<->phase_review loop", 0);
+}
+
+/// F9 cross-profile advancement: a full phase (deslop) advances into a standard
+/// next phase (implementing) via the new deslop->implementing edge.
+#[test]
+fn f9_advance_full_phase_to_standard_next() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deslop", "vadi", 4, |v| {
+        v["phase_profiles"] = json!({"2": "standard"});
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+    });
+    make_baton_v2(&n, "implementing", "vadi", 5, |v| {
+        v["phase_profiles"] = json!({"2": "standard"});
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(2);
+    });
+    run(&b, &n).assert("f9 advance full->standard next phase", 0);
+}
+
+/// F9 cross-profile advancement: a standard phase (phase_review) advances into a
+/// full next phase (parallel_implementing) via the new edge.
+#[test]
+fn f9_advance_standard_phase_to_full_next() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "phase_review", "prativadi", 4, |v| {
+        v["phase_profiles"] = json!({"1": "standard", "2": "full"});
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+    });
+    make_baton_v2(&n, "parallel_implementing", "team", 5, |v| {
+        v["phase_profiles"] = json!({"1": "standard", "2": "full"});
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(2);
+        parallel_chunks_phase(v, "2");
+    });
+    run(&b, &n).assert("f9 advance standard->full next phase", 0);
+}
+
+/// F9 final-phase termination: a standard final phase reaches termination_review
+/// via phase_review->termination_review even in a full run.
+#[test]
+fn f9_standard_final_phase_termination() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "phase_review", "prativadi", 4, |v| {
+        v["phase_profiles"] = json!({"1": "standard"});
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(1);
+        v["phase"] = json!(1);
+    });
+    make_baton_v2(&n, "termination_review", "team", 5, |v| {
+        v["phase_profiles"] = json!({"1": "standard"});
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(1);
+        v["phase"] = json!(1);
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    run(&b, &n).assert("f9 standard final phase termination", 0);
+}
+
+/// F9 (vice versa): a full phase inside a standard run is entered from spec via
+/// spec_review -> parallel_implementing.
+#[test]
+fn f9_full_phase_entry_in_standard_run() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_review", "prativadi", 4, |v| {
+        standard_profile(v);
+        v["phase_profiles"] = json!({"1": "full"});
+    });
+    make_baton_v2(&n, "parallel_implementing", "team", 5, |v| {
+        standard_profile(v);
+        v["phase_profiles"] = json!({"1": "full"});
+        v["phase"] = json!(1);
+        parallel_chunks(v);
+    });
+    run(&b, &n).assert("f9 full phase entry in standard run", 0);
+}
+
+/// F9: phase_profiles may be SET during a spec-state write.
+#[test]
+fn f9_phase_profiles_spec_write_may_set() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_drafting", "vadi", 4, |_| {});
+    make_baton_v2(&n, "spec_review", "prativadi", 5, |v| {
+        v["phase_profiles"] = json!({"1": "standard"});
+    });
+    run(&b, &n).assert("f9 spec-state write may set phase_profiles", 0);
+}
+
+/// F9: a NON-spec write that changes phase_profiles is rejected.
+#[test]
+fn f9_phase_profiles_non_spec_mutation_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "implementing", "vadi", 4, |v| {
+        standard_profile(v);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(1);
+        v["phase"] = json!(1);
+    });
+    make_baton_v2(&n, "phase_review", "prativadi", 5, |v| {
+        standard_profile(v);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(1);
+        v["phase"] = json!(1);
+        v["phase_profiles"] = json!({"1": "standard"});
+    });
+    run(&b, &n).assert_contains(
+        "f9 non-spec phase_profiles mutation rejected",
+        23,
+        "bad_phase_profiles",
+    );
+}
+
+/// F9 per-phase floor: a phase declared "standard" may not carry a hard path in
+/// its own work_split chunks (message names the phase + triggering path).
+#[test]
+fn f9_per_phase_floor_hard_path_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_drafting", "vadi", 4, |_| {});
+    make_baton_v2(&n, "spec_review", "prativadi", 5, |v| {
+        v["phase_profiles"] = json!({"1": "standard"});
+        v["work_split"] = json!([{
+            "id": "c1",
+            "phase": "1",
+            "chunk_type": "implementation",
+            "owner": "vadi",
+            "owner_role": "vadi",
+            "scope": "phase-1 chunk touching a hard path",
+            "paths": ["rust/dvandva/src/foo.rs"],
+            "cross_review_by": "prativadi",
+            "can_parallelize": false,
+            "parallel_rationale": "n/a",
+            "depends_on": [],
+            "status": "planned",
+            "artifact_refs": []
+        }]);
+    });
+    run(&b, &n).assert_contains(
+        "f9 per-phase floor rejects hard path in standard phase",
+        23,
+        "bad_phase_profiles phase=1",
+    );
+}
+
+// ===================== F6: risk-triggered deep-review angles =====================
+
+fn f6_deep(b: &std::path::Path) {
+    make_baton_v2(b, "deep_review", "prativadi", 4, |v| {
+        v["phase"] = json!(1);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(1);
+    });
+}
+
+fn f6_integration_work_split(v: &mut Value) {
+    v["work_split"] = json!([
+        {"id": "a", "phase": "1", "chunk_type": "implementation", "owner": "vadi",
+         "owner_role": "vadi", "scope": "chunk a", "paths": ["src/a.ts"],
+         "cross_review_by": "prativadi", "can_parallelize": true, "parallel_rationale": "x",
+         "depends_on": [], "conflict_group": "shared", "status": "planned", "artifact_refs": []},
+        {"id": "b", "phase": "1", "chunk_type": "implementation", "owner": "prativadi",
+         "owner_role": "prativadi", "scope": "chunk b", "paths": ["src/b.ts"],
+         "cross_review_by": "vadi", "can_parallelize": true, "parallel_rationale": "x",
+         "depends_on": [], "conflict_group": "shared", "status": "planned", "artifact_refs": []}
+    ]);
+}
+
+/// F6: a credential-touching diff requires the SECURITY angle.
+#[test]
+fn f6_security_angle_required_when_triggered() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    f6_deep(&b);
+    make_baton_v2(&n, "deslop", "vadi", 5, |v| {
+        v["phase"] = json!(1);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(1);
+        v["changed_paths"] = json!([".env"]);
+        review_angles(v);
+    });
+    run(&b, &n).assert_contains(
+        "f6 security angle required",
+        23,
+        "bad_deep_review_angles missing_angle=security",
+    );
+}
+
+/// F6: the SECURITY angle satisfies the credential-touching trigger.
+#[test]
+fn f6_security_angle_satisfied() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    f6_deep(&b);
+    make_baton_v2(&n, "deslop", "vadi", 5, |v| {
+        v["phase"] = json!(1);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(1);
+        v["changed_paths"] = json!([".env"]);
+        review_angles(v);
+        security_review_track(v);
+    });
+    run(&b, &n).assert("f6 security angle satisfied", 0);
+}
+
+/// F6: a multi-owner shared-conflict-group phase requires the INTEGRATION angle.
+#[test]
+fn f6_integration_angle_required_when_triggered() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    f6_deep(&b);
+    make_baton_v2(&n, "deslop", "vadi", 5, |v| {
+        v["phase"] = json!(1);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(1);
+        v["changed_paths"] = json!(["src/clean.ts"]);
+        review_angles(v);
+        f6_integration_work_split(v);
+    });
+    run(&b, &n).assert_contains(
+        "f6 integration angle required",
+        23,
+        "bad_deep_review_angles missing_angle=integration",
+    );
+}
+
+/// F6: the INTEGRATION angle satisfies the multi-owner-seam trigger.
+#[test]
+fn f6_integration_angle_satisfied() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    f6_deep(&b);
+    make_baton_v2(&n, "deslop", "vadi", 5, |v| {
+        v["phase"] = json!(1);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(1);
+        v["changed_paths"] = json!(["src/clean.ts"]);
+        review_angles(v);
+        f6_integration_work_split(v);
+        integration_review_track(v);
+    });
+    run(&b, &n).assert("f6 integration angle satisfied", 0);
+}
+
+/// F6: a non-triggering deep_review->deslop pays nothing (base three angles only).
+#[test]
+fn f6_non_triggering_no_change() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    f6_deep(&b);
+    make_baton_v2(&n, "deslop", "vadi", 5, |v| {
+        v["phase"] = json!(1);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(1);
+        v["changed_paths"] = json!(["src/clean.ts"]);
+        review_angles(v);
+        v["work_split"] = json!([{
+            "id": "solo", "phase": "1", "chunk_type": "implementation", "owner": "vadi",
+            "owner_role": "vadi", "scope": "single chunk", "paths": ["src/solo.ts"],
+            "cross_review_by": "prativadi", "can_parallelize": false, "parallel_rationale": "x",
+            "depends_on": [], "status": "planned", "artifact_refs": []
+        }]);
+    });
+    run(&b, &n).assert("f6 non-triggering run pays nothing", 0);
+}
+
+// ===================== F10: explainer-verification gate =====================
+
+fn f10_termination(b: &std::path::Path) {
+    make_baton_v2(b, "termination_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+    });
+}
+
+/// F10: a full-profile terminal done without the doc-verifier track is rejected.
+#[test]
+fn f10_explainer_verification_missing_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    f10_termination(&b);
+    make_baton_v2(&n, "done", "team", 5, |v| {
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+    });
+    run(&b, &n).assert_contains(
+        "f10 explainer-verification missing",
+        23,
+        "bad_explainer_verification",
+    );
+}
+
+/// F10: a completed current-cycle doc-verifier track satisfies the gate.
+#[test]
+fn f10_explainer_verification_present_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    f10_termination(&b);
+    make_baton_v2(&n, "done", "team", 5, |v| {
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+        explainer_verification_track(v);
+    });
+    run(&b, &n).assert("f10 explainer-verification present", 0);
 }
