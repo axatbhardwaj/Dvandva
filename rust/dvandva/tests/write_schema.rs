@@ -1,0 +1,1548 @@
+//! `dvandva write` — schema / required-keys / status / assignee / checkpoint /
+//! phase-status / mode / done-evidence / run-explainer / backcompat themes.
+//!
+//! Ported from `scripts/test-dvandva-write.sh`; each `#[test]` name mirrors the
+//! shell case label.
+
+mod common;
+
+use common::*;
+use serde_json::{json, Value};
+use std::path::PathBuf;
+
+/// A named test-case mutator paired with its label, for tables of
+/// otherwise-identical cases that each apply a different override.
+type NamedMutator = (&'static str, Box<dyn Fn(&mut Value)>);
+
+fn tmp() -> tempfile::TempDir {
+    tempfile::tempdir().unwrap()
+}
+fn paths(dir: &tempfile::TempDir) -> (PathBuf, PathBuf) {
+    (
+        dir.path().join("baton.json"),
+        dir.path().join("baton.next.json"),
+    )
+}
+
+// ===================== scaffold =====================
+
+#[test]
+fn scaffold_installs_and_snapshots() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&n, "spec_drafting", "vadi", 0, |_| {});
+    run(&b, &n).assert("scaffold installs and snapshots", 0);
+    assert!(b.is_file());
+    assert!(d.path().join("history/0-spec_drafting-vadi.json").is_file());
+    assert!(n.is_file());
+}
+
+#[test]
+fn run_isolation_two_named_runs() {
+    let d = tmp();
+    let alpha = d.path().join(".dvandva/runs/alpha");
+    let beta = d.path().join(".dvandva/runs/beta");
+    make_baton_v2(
+        &alpha.join("baton.next.json"),
+        "research_drafting",
+        "vadi",
+        0,
+        |b| {
+            b["branch"] = json!("alpha-branch");
+            b["run_id"] = json!("alpha");
+        },
+    );
+    make_baton_v2(
+        &beta.join("baton.next.json"),
+        "research_drafting",
+        "vadi",
+        0,
+        |b| {
+            b["branch"] = json!("beta-branch");
+            b["run_id"] = json!("beta");
+        },
+    );
+    run(&alpha.join("baton.json"), &alpha.join("baton.next.json"))
+        .assert("run alpha v2 scaffold", 0);
+    run(&beta.join("baton.json"), &beta.join("baton.next.json")).assert("run beta v2 scaffold", 0);
+    assert!(alpha
+        .join("history/0-research_drafting-vadi.json")
+        .is_file());
+    assert!(beta.join("history/0-research_drafting-vadi.json").is_file());
+    assert!(!d.path().join(".dvandva/history").exists());
+}
+
+#[test]
+fn legacy_dot_dvandva_v1_scaffold_allowed() {
+    let d = tmp();
+    let dv = d.path().join(".dvandva");
+    make_baton(
+        &dv.join("baton.next.json"),
+        "spec_drafting",
+        "vadi",
+        0,
+        |_| {},
+    );
+    run(&dv.join("baton.json"), &dv.join("baton.next.json")).assert("legacy .dvandva scaffold", 0);
+}
+
+#[test]
+fn named_run_v1_scaffold_exits_23() {
+    let d = tmp();
+    let rd = d.path().join(".dvandva/runs/alpha");
+    make_baton(
+        &rd.join("baton.next.json"),
+        "spec_drafting",
+        "vadi",
+        0,
+        |_| {},
+    );
+    run(&rd.join("baton.json"), &rd.join("baton.next.json")).assert_contains(
+        "named run v1 scaffold",
+        23,
+        "DVANDVA_WRITE bad_run_id_dir",
+    );
+}
+
+#[test]
+fn named_run_v2_run_id_mismatch_exits_23() {
+    let d = tmp();
+    let rd = d.path().join(".dvandva/runs/alpha");
+    make_baton_v2(
+        &rd.join("baton.next.json"),
+        "research_drafting",
+        "vadi",
+        0,
+        |b| {
+            b["run_id"] = json!("beta");
+        },
+    );
+    run(&rd.join("baton.json"), &rd.join("baton.next.json")).assert_contains(
+        "run_id mismatch",
+        23,
+        "DVANDVA_WRITE bad_run_id_dir",
+    );
+}
+
+#[test]
+fn named_run_v2_run_id_null_exits_23() {
+    let d = tmp();
+    let rd = d.path().join(".dvandva/runs/alpha");
+    make_baton_v2(
+        &rd.join("baton.next.json"),
+        "research_drafting",
+        "vadi",
+        0,
+        |b| {
+            b["run_id"] = Value::Null;
+        },
+    );
+    run(&rd.join("baton.json"), &rd.join("baton.next.json")).assert_contains(
+        "null run_id",
+        23,
+        "DVANDVA_WRITE bad_run_id_dir",
+    );
+}
+
+#[test]
+fn named_run_v2_run_id_missing_exits_23() {
+    let d = tmp();
+    let rd = d.path().join(".dvandva/runs/alpha");
+    make_baton_v2(
+        &rd.join("baton.next.json"),
+        "research_drafting",
+        "vadi",
+        0,
+        |b| {
+            b.as_object_mut().unwrap().remove("run_id");
+        },
+    );
+    run(&rd.join("baton.json"), &rd.join("baton.next.json")).assert_contains(
+        "missing run_id",
+        23,
+        "DVANDVA_WRITE bad_run_id_dir",
+    );
+}
+
+#[test]
+fn named_run_v2_run_id_empty_exits_23() {
+    let d = tmp();
+    let rd = d.path().join(".dvandva/runs/alpha");
+    make_baton_v2(
+        &rd.join("baton.next.json"),
+        "research_drafting",
+        "vadi",
+        0,
+        |b| {
+            b["run_id"] = json!("");
+        },
+    );
+    run(&rd.join("baton.json"), &rd.join("baton.next.json")).assert_contains(
+        "empty run_id",
+        23,
+        "DVANDVA_WRITE bad_run_id_dir",
+    );
+}
+
+#[test]
+fn scaffold_wrong_initial_status_exits_24() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&n, "implementing", "vadi", 0, |_| {});
+    run(&b, &n).assert("scaffold wrong status", 24);
+    assert!(!b.is_file());
+}
+
+// ===================== candidate-level validation =====================
+
+#[test]
+fn missing_candidate_exits_21() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    run(&b, &n).assert("missing candidate", 21);
+}
+
+#[test]
+fn invalid_candidate_json_exits_22() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    std::fs::write(&n, "{\"schema\": ").unwrap();
+    run(&b, &n).assert("invalid json", 22);
+}
+
+#[test]
+fn wrong_schema_string_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&n, "spec_drafting", "vadi", 0, |b| {
+        b["schema"] = json!("dvandva.baton.v3");
+    });
+    run(&b, &n).assert_contains("wrong schema", 23, "DVANDVA_WRITE schema_mismatch");
+}
+
+#[test]
+fn missing_required_key_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&n, "spec_drafting", "vadi", 0, |b| {
+        b.as_object_mut().unwrap().remove("branch");
+    });
+    run(&b, &n).assert_contains("missing key", 23, "DVANDVA_WRITE missing_key");
+}
+
+#[test]
+fn unknown_status_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&n, "spec_drafting", "vadi", 0, |b| {
+        b["status"] = json!("doing_stuff");
+    });
+    run(&b, &n).assert("unknown status", 23);
+}
+
+#[test]
+fn empty_assignee_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&n, "spec_drafting", "vadi", 0, |b| {
+        b["assignee"] = json!("");
+    });
+    run(&b, &n).assert("empty assignee", 23);
+}
+
+#[test]
+fn string_checkpoint_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&n, "spec_drafting", "vadi", 0, |b| {
+        b["checkpoint"] = json!("5");
+    });
+    run(&b, &n).assert("string checkpoint", 23);
+}
+
+#[test]
+fn octal_string_checkpoint_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&b, "spec_drafting", "vadi", 7, |_| {});
+    make_baton(&n, "spec_review", "prativadi", 8, |b| {
+        b["checkpoint"] = json!("08");
+    });
+    run(&b, &n).assert("octal string checkpoint", 23);
+}
+
+#[test]
+fn string_checkpoint_in_current_baton_exits_25() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&b, "spec_drafting", "vadi", 7, |b| {
+        b["checkpoint"] = json!("7");
+    });
+    make_baton(&n, "spec_review", "prativadi", 8, |_| {});
+    run(&b, &n).assert("string checkpoint current", 25);
+}
+
+// ===================== v2 candidate-level validation =====================
+
+#[test]
+fn v2_scaffold_research_drafting_installs() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |_| {});
+    run(&b, &n).assert("v2 scaffold", 0);
+    let installed: Value = serde_json::from_slice(&std::fs::read(&b).unwrap()).unwrap();
+    assert_eq!(installed["run_id"], "run-a");
+    assert!(d
+        .path()
+        .join("history/0-research_drafting-vadi.json")
+        .is_file());
+}
+
+#[test]
+fn v2_empty_run_id_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        b["run_id"] = json!("")
+    });
+    run(&b, &n).assert_contains("empty run_id", 23, "DVANDVA_WRITE bad_run_id");
+}
+
+#[test]
+fn v2_unsafe_parent_run_id_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        b["run_id"] = json!("../escape")
+    });
+    run(&b, &n).assert_contains("unsafe parent run_id", 23, "DVANDVA_WRITE bad_run_id");
+}
+
+#[test]
+fn v2_unsafe_slash_run_id_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        b["run_id"] = json!("alpha/beta")
+    });
+    run(&b, &n).assert_contains("unsafe slash run_id", 23, "DVANDVA_WRITE bad_run_id");
+}
+
+#[test]
+fn v2_empty_original_ask_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        b["original_ask"] = json!("")
+    });
+    run(&b, &n).assert_contains("empty original_ask", 23, "DVANDVA_WRITE bad_original_ask");
+}
+
+#[test]
+fn v2_missing_work_split_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        b.as_object_mut().unwrap().remove("work_split");
+    });
+    run(&b, &n).assert_contains(
+        "missing work_split",
+        23,
+        "DVANDVA_WRITE missing_key key=work_split",
+    );
+}
+
+#[test]
+fn v2_empty_work_split_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        b["work_split"] = json!([])
+    });
+    run(&b, &n).assert_contains("empty work_split", 23, "DVANDVA_WRITE bad_work_split");
+}
+
+#[test]
+fn v2_unsafe_work_split_path_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        b["work_split"][0]["paths"] = json!(["../escape"]);
+    });
+    run(&b, &n).assert_contains("unsafe work_split path", 23, "DVANDVA_WRITE bad_work_split");
+}
+
+#[test]
+fn v2_empty_verification_matrix_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        b["verification_matrix"] = json!([])
+    });
+    run(&b, &n).assert_contains(
+        "empty verification_matrix",
+        23,
+        "DVANDVA_WRITE bad_verification_matrix",
+    );
+}
+
+#[test]
+fn v2_missing_run_explainer_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        b.as_object_mut().unwrap().remove("run_explainer_ref");
+    });
+    run(&b, &n).assert_contains(
+        "missing run_explainer_ref",
+        23,
+        "DVANDVA_WRITE missing_key key=run_explainer_ref",
+    );
+}
+
+#[test]
+fn v2_missing_active_roles_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        b.as_object_mut().unwrap().remove("active_roles");
+    });
+    run(&b, &n).assert_contains(
+        "missing active_roles",
+        23,
+        "DVANDVA_WRITE missing_key key=active_roles",
+    );
+}
+
+#[test]
+fn v2_arbitrary_review_target_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        b["review_target"] = json!("DR6-DR7-profile-matrix-fixups")
+    });
+    run(&b, &n).assert_contains(
+        "arbitrary review_target",
+        23,
+        "DVANDVA_WRITE bad_review_target",
+    );
+}
+
+#[test]
+fn v2_missing_agent_instances_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        b.as_object_mut().unwrap().remove("agent_instances");
+    });
+    run(&b, &n).assert_contains(
+        "missing agent_instances",
+        23,
+        "DVANDVA_WRITE missing_key key=agent_instances",
+    );
+}
+
+#[test]
+fn v2_non_array_agent_instances_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        b["agent_instances"] = json!({})
+    });
+    run(&b, &n).assert_contains(
+        "non-array agent_instances",
+        23,
+        "DVANDVA_WRITE bad_agent_instances",
+    );
+}
+
+#[test]
+fn v2_duplicate_active_roles_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        b["active_roles"] = json!(["vadi", "vadi"])
+    });
+    run(&b, &n).assert_contains(
+        "duplicate active_roles",
+        23,
+        "DVANDVA_WRITE bad_active_roles",
+    );
+}
+
+#[test]
+fn v2_empty_subagent_tracks_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        b["subagent_tracks"] = json!([])
+    });
+    run(&b, &n).assert_contains(
+        "empty subagent_tracks",
+        23,
+        "DVANDVA_WRITE bad_subagent_tracks",
+    );
+}
+
+#[test]
+fn v2_malformed_subagent_tracks_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        b["subagent_tracks"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("owner");
+    });
+    run(&b, &n).assert_contains(
+        "malformed subagent_tracks",
+        23,
+        "DVANDVA_WRITE bad_subagent_tracks",
+    );
+}
+
+#[test]
+fn v2_null_subagent_track_phase_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        b["subagent_tracks"][0]["phase"] = Value::Null;
+    });
+    run(&b, &n).assert_contains("null track phase", 23, "DVANDVA_WRITE bad_subagent_tracks");
+}
+
+#[test]
+fn v2_fake_parallel_subagent_track_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        b["subagent_tracks"][0]["parallelized"] = json!(true);
+        b["subagent_tracks"][0]["owner"] = json!("vadi");
+        b["subagent_tracks"][0]["outputs"] = json!([]);
+        b["subagent_tracks"][0]["evidence_refs"] = json!([]);
+    });
+    run(&b, &n).assert_contains(
+        "fake parallel track",
+        23,
+        "DVANDVA_WRITE bad_subagent_tracks",
+    );
+}
+
+#[test]
+fn v2_standalone_parallel_subagent_owner_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        b["subagent_tracks"][0]["parallelized"] = json!(true);
+        b["subagent_tracks"][0]["owner"] = json!("adversarial-analyst");
+        b["subagent_tracks"][0]["outputs"] = json!(["Independent review completed."]);
+        b["subagent_tracks"][0]["evidence_refs"] = json!(["subagent:adversarial-analyst"]);
+    });
+    run(&b, &n).assert("standalone parallel owner", 0);
+}
+
+#[test]
+fn v2_bundled_adversarial_parallel_owner_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        b["subagent_tracks"][0]["parallelized"] = json!(true);
+        b["subagent_tracks"][0]["owner"] = json!("dvandva-adversarial-analyst");
+        b["subagent_tracks"][0]["outputs"] = json!(["Bundled adversarial review completed."]);
+        b["subagent_tracks"][0]["evidence_refs"] = json!(["subagent:dvandva-adversarial-analyst"]);
+    });
+    run(&b, &n).assert("bundled adversarial owner", 0);
+}
+
+#[test]
+fn v2_new_bundled_owners_accepted() {
+    for owner in [
+        "dvandva-security-auditor",
+        "dvandva-integration-checker",
+        "dvandva-debugger",
+        "dvandva-doc-verifier",
+        "dvandva-pattern-mapper",
+    ] {
+        let d = tmp();
+        let (b, n) = paths(&d);
+        make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+            b["subagent_tracks"][0]["parallelized"] = json!(true);
+            b["subagent_tracks"][0]["owner"] = json!(owner);
+            b["subagent_tracks"][0]["outputs"] =
+                json!([format!("New bundled owner accepted: {owner}")]);
+            b["subagent_tracks"][0]["evidence_refs"] = json!([format!("subagent:{owner}")]);
+        });
+        run(&b, &n).assert(&format!("bundled owner {owner}"), 0);
+    }
+}
+
+// ---- dynamic agent instances ----
+
+#[test]
+fn v2_dynamic_owner_requires_agent_instance() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        dynamic_parallel_track(b);
+        b["agent_instances"] = json!([]);
+    });
+    run(&b, &n).assert_contains(
+        "dynamic owner needs instance",
+        23,
+        "DVANDVA_WRITE bad_agent_instances",
+    );
+}
+
+#[test]
+fn v2_nonparallel_dynamic_owner_requires_agent_instance() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        dynamic_parallel_track(b);
+        b["subagent_tracks"][0]["parallelized"] = json!(false);
+        b["agent_instances"] = json!([]);
+    });
+    run(&b, &n).assert_contains(
+        "nonparallel dynamic owner",
+        23,
+        "DVANDVA_WRITE bad_agent_instances",
+    );
+}
+
+#[test]
+fn v2_dynamic_owner_requires_closure_evidence() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        dynamic_agent_instances(b);
+        dynamic_parallel_track(b);
+        b["agent_instances"][0]["evidence_refs"] = json!(["subagent:r3-generated-dynamic-review"]);
+        b["agent_instances"][0]["closed_at"] = Value::Null;
+    });
+    run(&b, &n).assert_contains(
+        "dynamic closure evidence",
+        23,
+        "DVANDVA_WRITE bad_agent_instances",
+    );
+}
+
+#[test]
+fn v2_dynamic_owner_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        dynamic_agent_instances(b);
+        dynamic_parallel_track(b);
+    });
+    run(&b, &n).assert("dynamic owner accepted", 0);
+}
+
+#[test]
+fn v2_nonparallel_dynamic_owner_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        dynamic_agent_instances(b);
+        dynamic_parallel_track(b);
+        b["subagent_tracks"][0]["parallelized"] = json!(false);
+    });
+    run(&b, &n).assert("nonparallel dynamic owner accepted", 0);
+}
+
+#[test]
+fn v2_dynamic_owner_role_must_match_parent_role() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        dynamic_agent_instances(b);
+        dynamic_parallel_track(b);
+        b["subagent_tracks"][0]["owner_role"] = json!("prativadi");
+    });
+    run(&b, &n).assert_contains("owner_role match", 23, "DVANDVA_WRITE bad_agent_instances");
+}
+
+#[test]
+fn v2_agent_instance_field_validation() {
+    // parent_role, spawned_by, spawned_at_checkpoint, phase, purpose, kind,
+    // status, read_paths, depends_on, output_refs, base_checkpoint, result,
+    // work_item_ids, permission, model, unsafe id, reserved id.
+    let cases: Vec<NamedMutator> = vec![
+        (
+            "bad parent_role",
+            Box::new(|b: &mut Value| b["agent_instances"][0]["parent_role"] = json!("team")),
+        ),
+        (
+            "blank spawned_by",
+            Box::new(|b: &mut Value| b["agent_instances"][0]["spawned_by"] = json!("   ")),
+        ),
+        (
+            "bad spawn checkpoint",
+            Box::new(|b: &mut Value| b["agent_instances"][0]["spawned_at_checkpoint"] = json!("0")),
+        ),
+        (
+            "empty phase",
+            Box::new(|b: &mut Value| b["agent_instances"][0]["phase"] = json!("")),
+        ),
+        (
+            "blank purpose",
+            Box::new(|b: &mut Value| b["agent_instances"][0]["purpose"] = json!("   ")),
+        ),
+        (
+            "wrong kind",
+            Box::new(|b: &mut Value| b["agent_instances"][0]["agent_kind"] = json!("static")),
+        ),
+        (
+            "bad status",
+            Box::new(|b: &mut Value| b["agent_instances"][0]["status"] = json!("done")),
+        ),
+        (
+            "unsafe read path",
+            Box::new(|b: &mut Value| b["agent_instances"][0]["read_paths"] = json!(["/absolute"])),
+        ),
+        (
+            "bad depends_on",
+            Box::new(|b: &mut Value| b["agent_instances"][0]["depends_on"] = json!("r3-other")),
+        ),
+        (
+            "bad output_refs",
+            Box::new(|b: &mut Value| b["agent_instances"][0]["output_refs"] = json!("x")),
+        ),
+        (
+            "bad base_checkpoint",
+            Box::new(|b: &mut Value| b["agent_instances"][0]["base_checkpoint"] = json!("0")),
+        ),
+        (
+            "closed missing result",
+            Box::new(|b: &mut Value| b["agent_instances"][0]["result"] = json!("")),
+        ),
+        (
+            "closed empty work_items",
+            Box::new(|b: &mut Value| b["agent_instances"][0]["work_item_ids"] = json!([])),
+        ),
+        (
+            "unsafe id",
+            Box::new(|b: &mut Value| b["agent_instances"][0]["id"] = json!("../escape")),
+        ),
+        (
+            "bad permission",
+            Box::new(|b: &mut Value| {
+                b["agent_instances"][0]["permission_class"] = json!("full-write")
+            }),
+        ),
+        (
+            "bad model",
+            Box::new(|b: &mut Value| b["agent_instances"][0]["model_class"] = json!("haiku")),
+        ),
+    ];
+    for (name, mutate) in cases {
+        let d = tmp();
+        let (b, n) = paths(&d);
+        make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+            dynamic_agent_instances(b);
+            mutate(b);
+        });
+        run(&b, &n).assert_contains(name, 23, "DVANDVA_WRITE bad_agent_instances");
+    }
+}
+
+#[test]
+fn v2_dynamic_owner_requires_output_refs() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        dynamic_agent_instances(b);
+        dynamic_parallel_track(b);
+        b["agent_instances"][0]["output_refs"] = json!([]);
+    });
+    run(&b, &n).assert_contains(
+        "dynamic output_refs",
+        23,
+        "DVANDVA_WRITE bad_agent_instances",
+    );
+}
+
+#[test]
+fn v2_duplicate_agent_instance_ids_exit_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        dynamic_agent_instances(b);
+        let first = b["agent_instances"][0].clone();
+        b["agent_instances"].as_array_mut().unwrap().push(first);
+    });
+    run(&b, &n).assert_contains("duplicate ids", 23, "DVANDVA_WRITE bad_agent_instances");
+}
+
+#[test]
+fn v2_reserved_agent_instance_ids_rejected() {
+    for reserved in ["dvandva-implementer", "adversarial-analyst", "vadi"] {
+        let d = tmp();
+        let (b, n) = paths(&d);
+        make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+            dynamic_agent_instances(b);
+            b["agent_instances"][0]["id"] = json!(reserved);
+        });
+        run(&b, &n).assert_contains(
+            &format!("reserved {reserved}"),
+            23,
+            "DVANDVA_WRITE bad_agent_instances",
+        );
+    }
+}
+
+// ===================== v2 phase↔status =====================
+
+#[test]
+fn v2_implementation_status_rejects_research_phase() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "implementing", "vadi", 0, |b| {
+        b["phase"] = json!("research")
+    });
+    run(&b, &n).assert_contains(
+        "phase status mismatch",
+        23,
+        "DVANDVA_WRITE bad_phase_status",
+    );
+}
+
+#[test]
+fn dev_deep_review_string_phase_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "deep_review", "prativadi", 0, |b| {
+        b["phase"] = json!("deep-review-string")
+    });
+    run(&b, &n).assert_contains(
+        "dev deep_review string phase",
+        23,
+        "DVANDVA_WRITE bad_phase_status",
+    );
+}
+
+// ===================== research_ref after draft =====================
+
+#[test]
+fn v2_missing_research_ref_after_draft_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_review", "prativadi", 0, |b| {
+        b["research_ref"] = Value::Null
+    });
+    run(&b, &n).assert_contains("missing research_ref", 23, "DVANDVA_WRITE bad_research_ref");
+}
+
+#[test]
+fn v2_research_drafting_without_research_ref_can_enter_human_question() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "research_drafting", "vadi", 0, |b| {
+        b["research_ref"] = Value::Null
+    });
+    make_baton_v2(&n, "human_question", "human", 1, |b| {
+        b["research_ref"] = Value::Null;
+        b["question"] = json!("Which source should research use?");
+        b["resume_assignee"] = json!("vadi");
+        b["resume_status"] = json!("research_drafting");
+    });
+    run(&b, &n).assert("research_drafting -> human_question", 0);
+}
+
+#[test]
+fn v2_research_drafting_without_research_ref_can_escalate_human_decision() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "research_drafting", "vadi", 0, |b| {
+        b["research_ref"] = Value::Null
+    });
+    make_baton_v2(&n, "human_decision", "human", 1, |b| {
+        b["research_ref"] = Value::Null
+    });
+    run(&b, &n).assert("research_drafting -> human_decision", 0);
+}
+
+// ===================== assignee-owner =====================
+
+#[test]
+fn v2_research_revision_requires_vadi() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "research_review", "prativadi", 4, |_| {});
+    make_baton_v2(&n, "research_revision", "prativadi", 5, |_| {});
+    run(&b, &n).assert_contains("research_revision owner", 23, "bad_assignee_owner");
+}
+
+#[test]
+fn v2_deep_review_requires_prativadi() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "test_creation", "vadi", 4, |_| {});
+    make_baton_v2(&n, "deep_review", "vadi", 5, |_| {});
+    run(&b, &n).assert_contains("deep_review owner", 23, "bad_assignee_owner");
+}
+
+#[test]
+fn v2_deslop_requires_vadi() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deep_review", "prativadi", 4, |_| {});
+    make_baton_v2(&n, "deslop", "prativadi", 5, |_| {});
+    run(&b, &n).assert_contains("deslop owner", 23, "bad_assignee_owner");
+}
+
+#[test]
+fn v2_parallel_implementing_requires_team() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_review", "prativadi", 4, |_| {});
+    make_baton_v2(&n, "parallel_implementing", "vadi", 5, parallel_chunks);
+    run(&b, &n).assert_contains("parallel owner", 23, "bad_assignee_owner");
+}
+
+#[test]
+fn v2_parallel_implementing_requires_both_roles() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_review", "prativadi", 4, |_| {});
+    make_baton_v2(&n, "parallel_implementing", "team", 5, |b| {
+        parallel_chunks(b);
+        b["active_roles"] = json!(["vadi"]);
+    });
+    run(&b, &n).assert_contains("parallel roles", 23, "bad_active_roles");
+}
+
+#[test]
+fn v2_termination_review_missing_active_roles() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deslop", "vadi", 4, |_| {});
+    make_baton_v2(&n, "termination_review", "team", 5, |b| {
+        b["vadi_final_approval"] = json!(true);
+    });
+    run(&b, &n).assert_contains("termination roles", 23, "bad_active_roles");
+}
+
+// ===================== mode alias / enum / immutability =====================
+
+#[test]
+fn mode_feature_pr_on_development_edge_legal() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "research_review", "prativadi", 4, |b| {
+        b["mode"] = json!("feature-pr")
+    });
+    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+        b["mode"] = json!("feature-pr")
+    });
+    run(&b, &n).assert("feature-pr dev edge", 0);
+}
+
+#[test]
+fn mode_bogus_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        b["mode"] = json!("bogus")
+    });
+    run(&b, &n).assert_contains("bogus mode", 23, "DVANDVA_WRITE bad_mode");
+}
+
+#[test]
+fn mode_fast_still_invalid() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        b["mode"] = json!("fast")
+    });
+    run(&b, &n).assert_contains("fast mode invalid", 23, "DVANDVA_WRITE bad_mode");
+}
+
+#[test]
+fn mode_dev_to_research_mutation_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "research_review", "prativadi", 4, |b| {
+        b["mode"] = json!("development")
+    });
+    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+        b["mode"] = json!("research")
+    });
+    run(&b, &n).assert_contains("mode mutation", 24, "mode_change");
+}
+
+#[test]
+fn mode_feature_pr_to_development_immutable_equal() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "research_review", "prativadi", 4, |b| {
+        b["mode"] = json!("feature-pr")
+    });
+    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+        b["mode"] = json!("development")
+    });
+    run(&b, &n).assert("feature-pr == development", 0);
+}
+
+#[test]
+fn mode_development_to_feature_pr_immutable_equal() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "research_review", "prativadi", 4, |b| {
+        b["mode"] = json!("development")
+    });
+    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+        b["mode"] = json!("feature-pr")
+    });
+    run(&b, &n).assert("development == feature-pr", 0);
+}
+
+// ===================== phase-type for research/review modes =====================
+
+#[test]
+fn research_review_numeric_phase_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "research_drafting", "vadi", 4, |b| {
+        b["mode"] = json!("research")
+    });
+    make_baton_v2(&n, "research_review", "prativadi", 5, |b| {
+        b["mode"] = json!("research");
+        b["phase"] = json!(1);
+    });
+    run(&b, &n).assert_contains(
+        "research numeric phase",
+        23,
+        "DVANDVA_WRITE bad_phase_status",
+    );
+}
+
+#[test]
+fn research_spec_review_research_phase_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_drafting", "vadi", 4, |b| {
+        b["mode"] = json!("research");
+        b["phase"] = json!("spec");
+    });
+    make_baton_v2(&n, "spec_review", "prativadi", 5, |b| {
+        b["mode"] = json!("research");
+        b["phase"] = json!("research");
+    });
+    run(&b, &n).assert_contains("research spec phase", 23, "DVANDVA_WRITE bad_phase_status");
+}
+
+#[test]
+fn review_research_review_research_phase_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "research_drafting", "vadi", 4, |b| {
+        b["mode"] = json!("review");
+        b["phase"] = json!("review");
+    });
+    make_baton_v2(&n, "research_review", "prativadi", 5, |b| {
+        b["mode"] = json!("review");
+        b["phase"] = json!("research");
+    });
+    run(&b, &n).assert_contains(
+        "review research phase",
+        23,
+        "DVANDVA_WRITE bad_phase_status",
+    );
+}
+
+#[test]
+fn review_deep_review_numeric_phase_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "research_review", "prativadi", 4, |b| {
+        b["mode"] = json!("review");
+        b["phase"] = json!("review");
+    });
+    make_baton_v2(&n, "deep_review", "prativadi", 5, |b| {
+        b["mode"] = json!("review");
+        b["phase"] = json!(1);
+    });
+    run(&b, &n).assert_contains("review numeric phase", 23, "DVANDVA_WRITE bad_phase_status");
+}
+
+// ===================== done evidence by mode =====================
+
+#[test]
+fn v2_done_requires_run_explainer_ref() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+        b["active_roles"] = json!(["vadi", "prativadi"])
+    });
+    make_baton_v2(&n, "done", "human", 5, |b| {
+        b["run_explainer_ref"] = Value::Null
+    });
+    run(&b, &n).assert_contains("done needs explainer", 23, "bad_run_explainer_ref");
+}
+
+#[test]
+fn v2_done_rejects_invalid_run_explainer_path() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+        b["active_roles"] = json!(["vadi", "prativadi"])
+    });
+    make_baton_v2(&n, "done", "human", 5, |b| {
+        b["run_explainer_ref"] = json!("../run-a-explainer.html")
+    });
+    run(&b, &n).assert_contains("bad explainer path", 23, "bad_run_explainer_ref");
+}
+
+#[test]
+fn v2_done_rejects_mismatched_run_explainer() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+        b["run_id"] = json!("alpha");
+        b["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v2(&n, "done", "human", 5, |b| {
+        b["run_id"] = json!("alpha");
+        b["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-beta-explainer.html");
+    });
+    run(&b, &n).assert_contains("mismatched explainer", 23, "bad_run_explainer_ref");
+}
+
+#[test]
+fn v2_done_valid_run_explainer() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+        b["active_roles"] = json!(["vadi", "prativadi"]);
+        b["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        b["vadi_final_approval"] = json!(true);
+        b["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(b);
+    });
+    make_baton_v2(&n, "done", "human", 5, |b| {
+        b["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        b["vadi_final_approval"] = json!(true);
+        b["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(b);
+    });
+    run(&b, &n).assert("done valid explainer", 0);
+}
+
+#[test]
+fn v2_done_accepts_date_prefixed_run_id_explainer() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    let run_id = "2026-06-29-baton-accuracy-hook-coexist";
+    let refp = "./superpowers/run-reports/2026-06-29-baton-accuracy-hook-coexist-explainer.html";
+    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+        b["run_id"] = json!(run_id);
+        b["active_roles"] = json!(["vadi", "prativadi"]);
+        b["run_explainer_ref"] = json!(refp);
+        b["vadi_final_approval"] = json!(true);
+        b["prativadi_final_approval"] = json!(true);
+        date_prefixed_run_explainer_reviews(b);
+    });
+    make_baton_v2(&n, "done", "human", 5, |b| {
+        b["run_id"] = json!(run_id);
+        b["run_explainer_ref"] = json!(refp);
+        b["vadi_final_approval"] = json!(true);
+        b["prativadi_final_approval"] = json!(true);
+        date_prefixed_run_explainer_reviews(b);
+    });
+    run(&b, &n).assert("date-prefixed explainer", 0);
+}
+
+#[test]
+fn v2_done_rejects_double_date_run_id_explainer() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    let run_id = "2026-06-29-baton-accuracy-hook-coexist";
+    let refp =
+        "./superpowers/run-reports/2026-06-30-2026-06-29-baton-accuracy-hook-coexist-explainer.html";
+    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+        b["run_id"] = json!(run_id);
+        b["active_roles"] = json!(["vadi", "prativadi"]);
+        b["run_explainer_ref"] = json!(refp);
+        b["vadi_final_approval"] = json!(true);
+        b["prativadi_final_approval"] = json!(true);
+        double_date_run_explainer_reviews(b);
+    });
+    make_baton_v2(&n, "done", "human", 5, |b| {
+        b["run_id"] = json!(run_id);
+        b["run_explainer_ref"] = json!(refp);
+        b["vadi_final_approval"] = json!(true);
+        b["prativadi_final_approval"] = json!(true);
+        double_date_run_explainer_reviews(b);
+    });
+    run(&b, &n).assert_contains("double-date explainer", 23, "bad_run_explainer_ref");
+}
+
+#[test]
+fn v2_done_accepts_coordinator_assignees() {
+    for owner in ["human", "team", "vadi", "prativadi"] {
+        let d = tmp();
+        let (b, n) = paths(&d);
+        make_baton_v2(&b, "termination_review", "team", 4, |b| {
+            b["active_roles"] = json!(["vadi", "prativadi"]);
+            b["run_explainer_ref"] =
+                json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+            b["vadi_final_approval"] = json!(true);
+            b["prativadi_final_approval"] = json!(true);
+            run_explainer_reviews(b);
+        });
+        make_baton_v2(&n, "done", owner, 5, |b| {
+            b["run_explainer_ref"] =
+                json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+            b["vadi_final_approval"] = json!(true);
+            b["prativadi_final_approval"] = json!(true);
+            run_explainer_reviews(b);
+        });
+        run(&b, &n).assert(&format!("done owner {owner}"), 0);
+    }
+}
+
+#[test]
+fn v2_done_rejects_generated_assignee() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+        b["active_roles"] = json!(["vadi", "prativadi"])
+    });
+    make_baton_v2(&n, "done", "r3-generated-dynamic-review", 5, |b| {
+        b["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        b["vadi_final_approval"] = json!(true);
+        b["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(b);
+    });
+    run(&b, &n).assert_contains(
+        "done generated assignee",
+        23,
+        "DVANDVA_WRITE bad_done_state",
+    );
+}
+
+#[test]
+fn v2_done_rejects_missing_final_approval() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+        b["active_roles"] = json!(["vadi", "prativadi"])
+    });
+    make_baton_v2(&n, "done", "team", 5, |b| {
+        b["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        b["vadi_final_approval"] = json!(true);
+        b["prativadi_final_approval"] = json!(false);
+        run_explainer_reviews(b);
+    });
+    run(&b, &n).assert_contains("done both approvals", 23, "DVANDVA_WRITE bad_done_state");
+}
+
+#[test]
+fn v2_done_run_explainer_review_variants_rejected() {
+    // missing reviews, one review, mismatched ref, incomplete, unapproved,
+    // blank summary, empty evidence.
+    let variants: Vec<NamedMutator> = vec![
+        ("missing reviews", Box::new(|_b: &mut Value| {})),
+        (
+            "one review",
+            Box::new(|b: &mut Value| {
+                run_explainer_reviews(b);
+                let keep: Vec<Value> = b["run_explainer_reviews"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .filter(|r| r["role"] == "vadi")
+                    .cloned()
+                    .collect();
+                b["run_explainer_reviews"] = Value::Array(keep);
+            }),
+        ),
+        (
+            "mismatched ref",
+            Box::new(|b: &mut Value| {
+                run_explainer_reviews(b);
+                b["run_explainer_reviews"][1]["artifact_ref"] =
+                    json!("./superpowers/run-reports/2026-06-28-other-explainer.html");
+            }),
+        ),
+        (
+            "incomplete",
+            Box::new(|b: &mut Value| {
+                run_explainer_reviews(b);
+                b["run_explainer_reviews"][1]["status"] = json!("pending");
+            }),
+        ),
+        (
+            "unapproved",
+            Box::new(|b: &mut Value| {
+                run_explainer_reviews(b);
+                b["run_explainer_reviews"][1]["result"] = json!("rejected");
+            }),
+        ),
+        (
+            "blank summary",
+            Box::new(|b: &mut Value| {
+                run_explainer_reviews(b);
+                b["run_explainer_reviews"][1]["summary"] = json!("   ");
+            }),
+        ),
+        (
+            "empty evidence",
+            Box::new(|b: &mut Value| {
+                run_explainer_reviews(b);
+                b["run_explainer_reviews"][1]["evidence_refs"] = json!([]);
+            }),
+        ),
+    ];
+    for (name, mutate) in variants {
+        let d = tmp();
+        let (b, n) = paths(&d);
+        make_baton_v2(&b, "termination_review", "team", 4, |b| {
+            b["active_roles"] = json!(["vadi", "prativadi"]);
+            b["vadi_final_approval"] = json!(true);
+            b["prativadi_final_approval"] = json!(true);
+        });
+        make_baton_v2(&n, "done", "team", 5, |b| {
+            b["run_explainer_ref"] =
+                json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+            b["vadi_final_approval"] = json!(true);
+            b["prativadi_final_approval"] = json!(true);
+            mutate(b);
+        });
+        run(&b, &n).assert_contains(name, 23, "DVANDVA_WRITE bad_run_explainer_reviews");
+    }
+}
+
+// ---- research / review done evidence ----
+
+#[test]
+fn research_done_seed_development_with_plan_ref_legal() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+        b["mode"] = json!("research");
+        b["phase"] = json!("spec");
+        b["active_roles"] = json!(["vadi", "prativadi"]);
+        b["vadi_final_approval"] = json!(true);
+        b["prativadi_final_approval"] = json!(true);
+    });
+    make_baton_v2(&n, "done", "human", 5, |b| {
+        b["mode"] = json!("research");
+        b["phase"] = json!("spec");
+        b["research_outcome"] = json!("seed_development");
+        b["plan_ref"] = json!("./superpowers/plans/2026-06-29-run-modes-plan.html");
+        b["vadi_final_approval"] = json!(true);
+        b["prativadi_final_approval"] = json!(true);
+    });
+    run(&b, &n).assert("research done seed_development", 0);
+}
+
+#[test]
+fn research_done_exploratory_needs_only_research_ref() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+        b["mode"] = json!("research");
+        b["phase"] = json!("spec");
+        b["active_roles"] = json!(["vadi", "prativadi"]);
+        b["vadi_final_approval"] = json!(true);
+        b["prativadi_final_approval"] = json!(true);
+    });
+    make_baton_v2(&n, "done", "human", 5, |b| {
+        b["mode"] = json!("research");
+        b["phase"] = json!("spec");
+        b["research_outcome"] = json!("exploratory");
+        b["vadi_final_approval"] = json!(true);
+        b["prativadi_final_approval"] = json!(true);
+    });
+    run(&b, &n).assert("research done exploratory", 0);
+}
+
+#[test]
+fn research_done_seed_development_missing_plan_ref_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+        b["mode"] = json!("research");
+        b["phase"] = json!("spec");
+        b["active_roles"] = json!(["vadi", "prativadi"]);
+        b["vadi_final_approval"] = json!(true);
+        b["prativadi_final_approval"] = json!(true);
+    });
+    make_baton_v2(&n, "done", "human", 5, |b| {
+        b["mode"] = json!("research");
+        b["phase"] = json!("spec");
+        b["research_outcome"] = json!("seed_development");
+        b["plan_ref"] = Value::Null;
+        b["vadi_final_approval"] = json!(true);
+        b["prativadi_final_approval"] = json!(true);
+    });
+    run(&b, &n).assert_contains(
+        "research done no plan_ref",
+        23,
+        "DVANDVA_WRITE bad_research_done_ref",
+    );
+}
+
+#[test]
+fn review_done_with_review_ref_legal() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+        b["mode"] = json!("review");
+        b["phase"] = json!("review");
+        b["active_roles"] = json!(["vadi", "prativadi"]);
+        b["vadi_final_approval"] = json!(true);
+        b["prativadi_final_approval"] = json!(true);
+    });
+    make_baton_v2(&n, "done", "human", 5, |b| {
+        b["mode"] = json!("review");
+        b["phase"] = json!("review");
+        b["review_ref"] = json!("./superpowers/reviews/review-run-modes-PR-1.html");
+        b["vadi_final_approval"] = json!(true);
+        b["prativadi_final_approval"] = json!(true);
+    });
+    run(&b, &n).assert("review done review_ref", 0);
+}
+
+#[test]
+fn review_done_bad_review_refs_rejected() {
+    for bad in [
+        "../escape.html",
+        "https://example.com/review.html",
+        "./superpowers/review/review.html",
+        "./superpowers/reviews/review.md",
+        "./superpowers/reviews/../escape.html",
+        "./superpowers/reviews//review.html",
+    ] {
+        let d = tmp();
+        let (b, n) = paths(&d);
+        make_baton_v2(&b, "termination_review", "team", 4, |b| {
+            b["mode"] = json!("review");
+            b["phase"] = json!("review");
+            b["active_roles"] = json!(["vadi", "prativadi"]);
+            b["vadi_final_approval"] = json!(true);
+            b["prativadi_final_approval"] = json!(true);
+        });
+        make_baton_v2(&n, "done", "human", 5, |b| {
+            b["mode"] = json!("review");
+            b["phase"] = json!("review");
+            b["review_ref"] = json!(bad);
+            b["vadi_final_approval"] = json!(true);
+            b["prativadi_final_approval"] = json!(true);
+        });
+        run(&b, &n).assert_contains(
+            &format!("bad review_ref {bad}"),
+            23,
+            "DVANDVA_WRITE bad_review_ref",
+        );
+    }
+}
+
+#[test]
+fn review_done_missing_review_ref_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+        b["mode"] = json!("review");
+        b["phase"] = json!("review");
+        b["active_roles"] = json!(["vadi", "prativadi"]);
+        b["vadi_final_approval"] = json!(true);
+        b["prativadi_final_approval"] = json!(true);
+    });
+    make_baton_v2(&n, "done", "human", 5, |b| {
+        b["mode"] = json!("review");
+        b["phase"] = json!("review");
+        b["review_ref"] = Value::Null;
+        b["vadi_final_approval"] = json!(true);
+        b["prativadi_final_approval"] = json!(true);
+    });
+    run(&b, &n).assert_contains("review done no ref", 23, "DVANDVA_WRITE bad_review_ref");
+}
+
+// ---- v1 done ----
+
+#[test]
+fn v1_done_accepts_coordinator_assignees() {
+    for owner in ["human", "team", "vadi", "prativadi"] {
+        let d = tmp();
+        let (b, n) = paths(&d);
+        make_baton(&b, "phase_review", "prativadi", 4, |_| {});
+        make_baton(&n, "done", owner, 5, |b| {
+            b["vadi_final_approval"] = json!(true);
+            b["prativadi_final_approval"] = json!(true);
+        });
+        run(&b, &n).assert(&format!("v1 done owner {owner}"), 0);
+    }
+}
+
+#[test]
+fn v1_done_requires_both_final_approvals() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&b, "phase_review", "prativadi", 4, |_| {});
+    make_baton(&n, "done", "team", 5, |b| {
+        b["vadi_final_approval"] = json!(true);
+        b["prativadi_final_approval"] = json!(false);
+    });
+    run(&b, &n).assert_contains("v1 done approvals", 23, "DVANDVA_WRITE bad_done_state");
+}
+
+#[test]
+fn v1_done_rejects_generated_assignee() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&b, "phase_review", "prativadi", 4, |_| {});
+    make_baton(&n, "done", "generated-owner", 5, |b| {
+        b["vadi_final_approval"] = json!(true);
+        b["prativadi_final_approval"] = json!(true);
+    });
+    run(&b, &n).assert_contains("v1 done generated", 23, "DVANDVA_WRITE bad_done_state");
+}
+
+// ===================== schema backcompat =====================
+
+#[test]
+fn v2_backcompat_scaffold_missing_optional_fields() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        let o = b.as_object_mut().unwrap();
+        o.remove("research_outcome");
+        o.remove("review_ref");
+        o.remove("review_intake");
+    });
+    run(&b, &n).assert("backcompat scaffold", 0);
+}
+
+#[test]
+fn v2_backcompat_transition_missing_optional_fields() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    let strip = |b: &mut Value| {
+        let o = b.as_object_mut().unwrap();
+        o.remove("research_outcome");
+        o.remove("review_ref");
+        o.remove("review_intake");
+    };
+    make_baton_v2(&b, "research_review", "prativadi", 4, strip);
+    make_baton_v2(&n, "research_revision", "vadi", 5, strip);
+    run(&b, &n).assert("backcompat transition", 0);
+}
+
+// ===================== usage =====================
+
+#[test]
+fn usage_error_without_args_exits_2() {
+    let out = write_output(&[]);
+    assert_eq!(out.status.code(), Some(2));
+}
+
+fn write_output(args: &[&str]) -> std::process::Output {
+    let mut cmd = std::process::Command::new(env!("CARGO_BIN_EXE_dvandva"));
+    cmd.arg("write");
+    for a in args {
+        cmd.arg(a);
+    }
+    cmd.output().unwrap()
+}

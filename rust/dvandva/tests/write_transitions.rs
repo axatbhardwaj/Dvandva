@@ -1,0 +1,1881 @@
+//! `dvandva write` — transitions / edges / human states / same-status / loop /
+//! approvals themes.
+//!
+//! Ported from `scripts/test-dvandva-write.sh`; each `#[test]` name mirrors the
+//! shell case label (or the shell loop that generates it).
+
+mod common;
+
+use common::*;
+use serde_json::{json, Value};
+use std::path::PathBuf;
+
+fn tmp() -> tempfile::TempDir {
+    tempfile::tempdir().unwrap()
+}
+fn paths(dir: &tempfile::TempDir) -> (PathBuf, PathBuf) {
+    (
+        dir.path().join("baton.json"),
+        dir.path().join("baton.next.json"),
+    )
+}
+
+fn set_loop_count(b: &mut Value, edge: &str, n: i64) {
+    let mut map = serde_json::Map::new();
+    map.insert(edge.to_string(), json!(n));
+    b["loop_counts"] = Value::Object(map);
+}
+
+// ===================== v1 edges legal =====================
+
+#[test]
+fn v1_edges_legal() {
+    let edges = [
+        ("spec_drafting", "spec_review"),
+        ("spec_review", "spec_revision"),
+        ("spec_review", "implementing"),
+        ("spec_revision", "spec_review"),
+        ("implementing", "phase_review"),
+        ("phase_review", "phase_fixing"),
+        ("phase_review", "review_of_review"),
+        ("phase_review", "implementing"),
+        ("phase_review", "done"),
+        ("phase_fixing", "phase_review"),
+        ("review_of_review", "implementing"),
+        ("review_of_review", "done"),
+        ("review_of_review", "counter_review"),
+        ("counter_review", "implementing"),
+        ("counter_review", "done"),
+        ("counter_review", "review_of_review"),
+    ];
+    for (cur, new) in edges {
+        let d = tmp();
+        let (b, n) = paths(&d);
+        make_baton(&b, cur, "vadi", 4, |_| {});
+        make_baton(&n, new, "prativadi", 5, |v| {
+            if new == "done" {
+                v["vadi_final_approval"] = json!(true);
+                v["prativadi_final_approval"] = json!(true);
+            }
+        });
+        run(&b, &n).assert(&format!("edge {cur}:{new} is legal"), 0);
+    }
+}
+
+// ===================== v2 edges legal =====================
+
+const V2_EDGE_LOOP_COUNT_EDGES: &[&str] = &[
+    "deep_review:phase_fixing",
+    "cross_review:cross_fixing",
+    "termination_review:phase_fixing",
+    "review_of_review:counter_review",
+    "counter_review:review_of_review",
+];
+
+#[test]
+fn v2_edges_legal() {
+    let edges: &[&str] = &[
+        "research_drafting:research_review",
+        "research_review:research_revision",
+        "research_revision:research_review",
+        "research_review:spec_drafting",
+        "spec_drafting:spec_review",
+        "spec_review:spec_revision",
+        "spec_review:parallel_implementing",
+        "spec_revision:spec_review",
+        "parallel_implementing:test_creation",
+        "test_creation:cross_review",
+        "cross_review:cross_fixing",
+        "cross_fixing:test_creation",
+        "cross_review:deep_review",
+        "deep_review:phase_fixing",
+        "deep_review:review_of_review",
+        "deep_review:deslop",
+        "review_of_review:counter_review",
+        "review_of_review:deslop",
+        "counter_review:review_of_review",
+        "counter_review:deslop",
+        "phase_fixing:test_creation",
+        "deslop:phase_fixing",
+        "deslop:parallel_implementing",
+        "deslop:termination_review",
+        "termination_review:phase_fixing",
+        "termination_review:done",
+    ];
+    for edge in edges.iter().copied() {
+        let (cur, new) = edge.split_once(':').unwrap();
+        let d = tmp();
+        let (b, n) = paths(&d);
+        make_baton_v2(&b, cur, v2_status_owner(cur), 4, |v| {
+            if cur == "review_of_review" {
+                v["review_target"] = json!("prativadi_fixups");
+                v["narrow_fixups"] = json!(["test fixup"]);
+            }
+            if cur == "counter_review" {
+                v["review_target"] = json!("vadi_counter");
+                v["vadi_counter"] = json!(["counter change"]);
+            }
+            if V2_EDGE_LOOP_COUNT_EDGES.contains(&edge) {
+                set_loop_count(v, edge, 0);
+            }
+            if edge == "termination_review:done" {
+                v["active_roles"] = json!(["vadi", "prativadi"]);
+                v["run_explainer_ref"] =
+                    json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+                v["vadi_final_approval"] = json!(true);
+                v["prativadi_final_approval"] = json!(true);
+                run_explainer_reviews(v);
+            }
+        });
+        make_baton_v2(&n, new, v2_status_owner(new), 5, |v| {
+            if edge == "deep_review:deslop" || edge == "deep_review:review_of_review" {
+                review_angles(v);
+            }
+            if new == "review_of_review" {
+                v["review_target"] = json!("prativadi_fixups");
+                v["narrow_fixups"] = json!(["test fixup"]);
+            }
+            if new == "counter_review" {
+                v["review_target"] = json!("vadi_counter");
+                v["vadi_counter"] = json!(["counter change"]);
+            }
+            if new == "parallel_implementing" {
+                parallel_chunks(v);
+            }
+            if new == "cross_review" || new == "cross_fixing" {
+                v["active_roles"] = json!(["vadi", "prativadi"]);
+            }
+            if new == "termination_review" {
+                v["active_roles"] = json!(["vadi", "prativadi"]);
+                v["vadi_final_approval"] = json!(true);
+            }
+            if edge == "test_creation:cross_review" {
+                test_creation_track(v);
+            }
+            if edge == "cross_review:cross_fixing" {
+                cross_review_finding(v);
+            }
+            if V2_EDGE_LOOP_COUNT_EDGES.contains(&edge) {
+                set_loop_count(v, edge, 1);
+            }
+            if edge == "parallel_implementing:test_creation" {
+                parallel_chunks(v);
+                v["active_roles"] = json!([]);
+                implementation_tracks(v);
+            }
+            if edge == "cross_review:deep_review" {
+                cross_review_tracks(v);
+            }
+            if edge == "termination_review:done" {
+                v["run_explainer_ref"] =
+                    json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+                v["vadi_final_approval"] = json!(true);
+                v["prativadi_final_approval"] = json!(true);
+                run_explainer_reviews(v);
+            }
+        });
+        let name = format!("v2 edge {edge} is legal");
+        if edge == "deslop:termination_review" {
+            run_env(&b, &n, &[("DVANDVA_ROLE", "vadi")]).assert(&name, 0);
+        } else {
+            run(&b, &n).assert(&name, 0);
+        }
+    }
+}
+
+// ===================== schema / run_id / mode change =====================
+
+#[test]
+fn v2_current_cannot_downgrade_to_v1_during_research() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "research_review", "prativadi", 4, |_| {});
+    make_baton(&n, "spec_drafting", "vadi", 5, |_| {});
+    run(&b, &n).assert_contains(
+        "v2 current cannot downgrade to v1 candidate during research",
+        24,
+        "schema_change",
+    );
+}
+
+#[test]
+fn v2_current_cannot_downgrade_to_v1_during_implementation() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "implementing", "vadi", 4, |_| {});
+    make_baton(&n, "phase_review", "prativadi", 5, |_| {});
+    run(&b, &n).assert_contains(
+        "v2 current cannot downgrade to v1 candidate during implementation",
+        24,
+        "schema_change",
+    );
+}
+
+#[test]
+fn v1_current_cannot_silently_upgrade_to_v2_candidate() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&b, "spec_drafting", "vadi", 4, |_| {});
+    make_baton_v2(&n, "spec_review", "prativadi", 5, |_| {});
+    run(&b, &n).assert_contains(
+        "v1 current cannot silently upgrade to v2 candidate",
+        24,
+        "schema_change",
+    );
+}
+
+#[test]
+fn v2_current_cannot_change_run_id_mid_run() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "research_review", "prativadi", 4, |v| {
+        v["run_id"] = json!("alpha");
+    });
+    make_baton_v2(&n, "research_revision", "vadi", 5, |v| {
+        v["run_id"] = json!("beta");
+    });
+    run(&b, &n).assert_contains(
+        "v2 current cannot change run_id mid-run",
+        24,
+        "run_id_change",
+    );
+}
+
+#[test]
+fn v2_current_missing_run_id_exits_25() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "research_review", "prativadi", 4, |v| {
+        v.as_object_mut().unwrap().remove("run_id");
+    });
+    make_baton_v2(&n, "research_revision", "vadi", 5, |_| {});
+    run(&b, &n).assert_contains("v2 current missing run_id exits 25", 25, "bad_run_id");
+}
+
+// ===================== illegal edges =====================
+
+#[test]
+fn v2_research_drafting_to_spec_drafting_exits_24() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "research_drafting", "vadi", 4, |_| {});
+    make_baton_v2(&n, "spec_drafting", "vadi", 5, |_| {});
+    run(&b, &n).assert("v2 research_drafting->spec_drafting exits 24", 24);
+}
+
+#[test]
+fn v2_research_state_can_enter_human_question() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "research_review", "prativadi", 4, |_| {});
+    make_baton_v2(&n, "human_question", "human", 5, |v| {
+        v["question"] = json!("Which source should research use?");
+        v["resume_assignee"] = json!("prativadi");
+        v["resume_status"] = json!("research_review");
+    });
+    run(&b, &n).assert("v2 research state can enter human_question", 0);
+}
+
+#[test]
+fn implementing_to_done_exits_24() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&b, "implementing", "vadi", 4, |_| {});
+    make_baton(&n, "done", "human", 5, |v| {
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+    });
+    run(&b, &n).assert("implementing->done exits 24 (no self-declared done)", 24);
+}
+
+#[test]
+fn same_status_rewrite_exits_24() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&b, "implementing", "vadi", 4, |_| {});
+    make_baton(&n, "implementing", "vadi", 5, |_| {});
+    run(&b, &n).assert("same-status rewrite exits 24", 24);
+}
+
+#[test]
+fn spec_drafting_to_implementing_exits_24() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&b, "spec_drafting", "vadi", 4, |_| {});
+    make_baton(&n, "implementing", "vadi", 5, |_| {});
+    run(&b, &n).assert("spec_drafting->implementing exits 24", 24);
+}
+
+#[test]
+fn checkpoint_jump_exits_24_and_leaves_baton_unchanged() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&b, "spec_drafting", "vadi", 4, |_| {});
+    let before: Value = serde_json::from_slice(&std::fs::read(&b).unwrap()).unwrap();
+    make_baton(&n, "spec_review", "prativadi", 7, |_| {});
+    run(&b, &n).assert("checkpoint jump exits 24", 24);
+    let after: Value = serde_json::from_slice(&std::fs::read(&b).unwrap()).unwrap();
+    assert_eq!(
+        before, after,
+        "rejected write should leave baton bytes unchanged"
+    );
+}
+
+#[test]
+fn stale_checkpoint_same_exits_27() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&b, "spec_drafting", "vadi", 4, |_| {});
+    make_baton(&n, "spec_review", "prativadi", 4, |_| {});
+    run(&b, &n).assert_contains(
+        "same checkpoint exits 27 stale_checkpoint",
+        27,
+        "stale_checkpoint",
+    );
+}
+
+#[test]
+fn stale_checkpoint_lower_exits_27() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&b, "spec_drafting", "vadi", 4, |_| {});
+    make_baton(&n, "spec_review", "prativadi", 3, |_| {});
+    run(&b, &n).assert_contains(
+        "lower checkpoint exits 27 stale_checkpoint",
+        27,
+        "stale_checkpoint",
+    );
+}
+
+#[test]
+fn checkpoint_plus_two_remains_illegal_transition() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&b, "spec_drafting", "vadi", 4, |_| {});
+    make_baton(&n, "spec_review", "prativadi", 6, |_| {});
+    run(&b, &n).assert_contains(
+        "checkpoint plus two remains illegal_transition",
+        24,
+        "DVANDVA_WRITE illegal_transition",
+    );
+}
+
+// ===================== universal escalation and human resume =====================
+
+#[test]
+fn universal_escalation_to_human_decision_legal() {
+    for src in [
+        "spec_drafting",
+        "implementing",
+        "phase_review",
+        "counter_review",
+    ] {
+        let d = tmp();
+        let (b, n) = paths(&d);
+        make_baton(&b, src, "vadi", 4, |_| {});
+        make_baton(&n, "human_decision", "human", 5, |_| {});
+        run(&b, &n).assert(&format!("{src}->human_decision is legal"), 0);
+    }
+}
+
+#[test]
+fn human_decision_to_implementing_is_legal() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&b, "human_decision", "human", 4, |_| {});
+    make_baton(&n, "implementing", "vadi", 5, |_| {});
+    run(&b, &n).assert(
+        "human_decision->implementing (human-authorized) is legal",
+        0,
+    );
+}
+
+// ===================== human_question rules =====================
+
+#[test]
+fn spec_human_question_entry_with_fields_is_legal() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&b, "spec_review", "prativadi", 4, |_| {});
+    make_baton(&n, "human_question", "human", 5, |v| {
+        v["question"] = json!("Which scope?");
+        v["resume_assignee"] = json!("prativadi");
+        v["resume_status"] = json!("spec_review");
+    });
+    run(&b, &n).assert("spec human_question entry with fields is legal", 0);
+}
+
+#[test]
+fn human_question_after_plan_lock_exits_24() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&b, "spec_review", "prativadi", 4, |v| {
+        v["master_plan_locked"] = json!(true);
+    });
+    make_baton(&n, "human_question", "human", 5, |v| {
+        v["question"] = json!("Which scope?");
+        v["resume_assignee"] = json!("prativadi");
+        v["resume_status"] = json!("spec_review");
+    });
+    run(&b, &n).assert("human_question after plan lock exits 24", 24);
+}
+
+#[test]
+fn human_question_entry_with_null_fields_exits_24() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&b, "spec_review", "prativadi", 4, |_| {});
+    make_baton(&n, "human_question", "human", 5, |_| {});
+    run(&b, &n).assert("human_question entry with null fields exits 24", 24);
+}
+
+#[test]
+fn human_question_cannot_be_created_with_resume_status_done() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&b, "spec_review", "prativadi", 4, |_| {});
+    make_baton(&n, "human_question", "human", 5, |v| {
+        v["question"] = json!("Stop now?");
+        v["resume_assignee"] = json!("human");
+        v["resume_status"] = json!("done");
+    });
+    run(&b, &n).assert_contains(
+        "human_question cannot be created with resume_status done",
+        24,
+        "human_question cannot resume directly to done",
+    );
+}
+
+#[test]
+fn human_question_from_non_spec_state_exits_24() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&b, "implementing", "vadi", 4, |_| {});
+    make_baton(&n, "human_question", "human", 5, |v| {
+        v["question"] = json!("Which scope?");
+        v["resume_assignee"] = json!("vadi");
+        v["resume_status"] = json!("spec_review");
+    });
+    run(&b, &n).assert("human_question from non-spec state exits 24", 24);
+}
+
+#[test]
+fn human_question_resume_matching_resume_fields_is_legal() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&b, "human_question", "human", 4, |v| {
+        v["question"] = json!("Which scope?");
+        v["resume_assignee"] = json!("prativadi");
+        v["resume_status"] = json!("spec_review");
+    });
+    make_baton(&n, "spec_review", "prativadi", 5, |_| {});
+    run(&b, &n).assert("human_question resume matching resume fields is legal", 0);
+}
+
+#[test]
+fn human_question_resume_to_wrong_state_exits_24() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&b, "human_question", "human", 4, |v| {
+        v["question"] = json!("Which scope?");
+        v["resume_assignee"] = json!("prativadi");
+        v["resume_status"] = json!("spec_review");
+    });
+    make_baton(&n, "implementing", "vadi", 5, |_| {});
+    run(&b, &n).assert("human_question resume to wrong state exits 24", 24);
+}
+
+#[test]
+fn human_question_resume_without_clearing_fields_exits_24() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton(&b, "human_question", "human", 4, |v| {
+        v["question"] = json!("Which scope?");
+        v["resume_assignee"] = json!("prativadi");
+        v["resume_status"] = json!("spec_review");
+    });
+    make_baton(&n, "spec_review", "prativadi", 5, |v| {
+        v["question"] = json!("Which scope?");
+        v["resume_assignee"] = json!("prativadi");
+        v["resume_status"] = json!("spec_review");
+    });
+    run(&b, &n).assert("human_question resume without clearing fields exits 24", 24);
+}
+
+#[test]
+fn v2_human_question_cannot_resume_directly_to_done() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "human_question", "human", 4, |v| {
+        v["mode"] = json!("development");
+        v["phase"] = json!(1);
+        v["question"] = json!("Stop now?");
+        v["resume_assignee"] = json!("human");
+        v["resume_status"] = json!("done");
+        v["vadi_final_approval"] = json!(false);
+        v["prativadi_final_approval"] = json!(false);
+    });
+    make_baton_v2(&n, "done", "human", 5, |v| {
+        v["mode"] = json!("development");
+        v["phase"] = json!(1);
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["question"] = Value::Null;
+        v["resume_assignee"] = Value::Null;
+        v["resume_status"] = Value::Null;
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+    });
+    run(&b, &n).assert_contains(
+        "v2 human_question cannot resume directly to done",
+        24,
+        "human_question cannot resume directly to done",
+    );
+}
+
+// ===================== reject-legacy v2 edges =====================
+
+#[test]
+fn v2_implementing_to_phase_review_rejects_legacy_direct_review() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "implementing", "vadi", 4, |_| {});
+    make_baton_v2(&n, "phase_review", "prativadi", 5, |_| {});
+    run(&b, &n).assert_contains(
+        "v2 implementing->phase_review rejects legacy direct review",
+        24,
+        "no legal edge implementing->phase_review",
+    );
+}
+
+#[test]
+fn v2_spec_review_to_implementing_rejects_sequential_implementation() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_review", "prativadi", 4, |_| {});
+    make_baton_v2(&n, "implementing", "vadi", 5, |_| {});
+    run(&b, &n).assert_contains(
+        "v2 spec_review->implementing rejects sequential implementation",
+        24,
+        "no legal edge spec_review->implementing",
+    );
+}
+
+#[test]
+fn v2_test_creation_to_deep_review_requires_cross_review_first() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "test_creation", "vadi", 4, |_| {});
+    make_baton_v2(&n, "deep_review", "prativadi", 5, |_| {});
+    run(&b, &n).assert_contains(
+        "v2 test_creation->deep_review requires cross_review first",
+        24,
+        "no legal edge test_creation->deep_review",
+    );
+}
+
+#[test]
+fn v2_phase_review_to_done_rejects_legacy_terminal_review() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "phase_review", "prativadi", 4, |_| {});
+    make_baton_v2(&n, "done", "human", 5, |v| {
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+    });
+    run(&b, &n).assert_contains(
+        "v2 phase_review->done rejects legacy terminal review",
+        24,
+        "done requires current status termination_review",
+    );
+}
+
+#[test]
+fn v2_review_of_review_to_done_rejects_legacy_terminal_review() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "review_of_review", "vadi", 4, |_| {});
+    make_baton_v2(&n, "done", "human", 5, |v| {
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+    });
+    run(&b, &n).assert_contains(
+        "v2 review_of_review->done rejects legacy terminal review",
+        24,
+        "done requires current status termination_review",
+    );
+}
+
+#[test]
+fn v2_counter_review_to_done_rejects_legacy_terminal_review() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "counter_review", "prativadi", 4, |_| {});
+    make_baton_v2(&n, "done", "human", 5, |v| {
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+    });
+    run(&b, &n).assert_contains(
+        "v2 counter_review->done rejects legacy terminal review",
+        24,
+        "done requires current status termination_review",
+    );
+}
+
+// ===================== post-legality evidence gates =====================
+
+#[test]
+fn v2_test_creation_to_cross_review_rejects_missing_test_evidence() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "test_creation", "vadi", 4, |_| {});
+    make_baton_v2(&n, "cross_review", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    run(&b, &n).assert_contains(
+        "v2 test_creation->cross_review rejects missing test evidence",
+        24,
+        "completed test-creation subagent_track",
+    );
+}
+
+#[test]
+fn v2_parallel_implementing_to_test_creation_rejects_missing_impl_evidence() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "parallel_implementing", "team", 4, parallel_chunks);
+    make_baton_v2(&n, "test_creation", "vadi", 5, |v| {
+        parallel_chunks(v);
+        v["active_roles"] = json!([]);
+    });
+    run(&b, &n).assert_contains(
+        "v2 parallel_implementing->test_creation rejects missing implementation evidence",
+        24,
+        "completed implementation-chunk subagent_tracks for both roles",
+    );
+}
+
+#[test]
+fn v2_parallel_implementing_to_test_creation_requires_both_implementation_roles() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "parallel_implementing", "team", 4, parallel_chunks);
+    make_baton_v2(&n, "test_creation", "vadi", 5, |v| {
+        parallel_chunks(v);
+        v["active_roles"] = json!([]);
+        implementation_tracks(v);
+        if let Some(arr) = v["subagent_tracks"].as_array_mut() {
+            for t in arr.iter_mut() {
+                if t["track"] == "implementation-chunk" {
+                    t["owner_role"] = json!("vadi");
+                }
+            }
+        }
+    });
+    run(&b, &n).assert_contains(
+        "v2 parallel_implementing->test_creation requires both implementation roles",
+        24,
+        "completed implementation-chunk subagent_tracks for both roles",
+    );
+}
+
+#[test]
+fn v2_cross_review_to_deep_review_rejects_missing_evidence() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v2(&n, "deep_review", "prativadi", 5, |_| {});
+    run(&b, &n).assert_contains(
+        "v2 cross_review->deep_review rejects missing cross-review evidence",
+        24,
+        "completed cross-review subagent_tracks for both roles",
+    );
+}
+
+#[test]
+fn v2_cross_review_to_cross_fixing_rejects_missing_evidence() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        set_loop_count(v, "cross_review:cross_fixing", 0);
+    });
+    make_baton_v2(&n, "cross_fixing", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        set_loop_count(v, "cross_review:cross_fixing", 1);
+    });
+    run(&b, &n).assert_contains(
+        "v2 cross_review->cross_fixing rejects missing cross-review evidence",
+        24,
+        "completed cross-review subagent_tracks",
+    );
+}
+
+#[test]
+fn v2_cross_review_to_deep_review_requires_both_cross_review_roles() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v2(&n, "deep_review", "prativadi", 5, |v| {
+        cross_review_tracks(v);
+        if let Some(arr) = v["subagent_tracks"].as_array_mut() {
+            for t in arr.iter_mut() {
+                if t["track"] == "cross-review" {
+                    t["owner_role"] = json!("vadi");
+                }
+            }
+        }
+    });
+    run(&b, &n).assert_contains(
+        "v2 cross_review->deep_review requires both cross-review roles",
+        24,
+        "completed cross-review subagent_tracks for both roles",
+    );
+}
+
+#[test]
+fn v2_cross_review_to_deep_review_requires_current_review_checkpoint_evidence() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v2(&n, "deep_review", "prativadi", 5, |v| {
+        cross_review_tracks(v);
+        if let Some(arr) = v["subagent_tracks"].as_array_mut() {
+            for t in arr.iter_mut() {
+                if t["track"] == "cross-review" {
+                    t.as_object_mut().unwrap().remove("review_checkpoint");
+                }
+            }
+        }
+    });
+    run(&b, &n).assert_contains(
+        "v2 cross_review->deep_review requires current review checkpoint evidence",
+        24,
+        "current-cycle completed cross-review subagent_tracks",
+    );
+}
+
+#[test]
+fn v2_cross_review_to_deep_review_rejects_stale_cross_review_approvals() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v2(&n, "deep_review", "prativadi", 5, |v| {
+        cross_review_tracks(v);
+        if let Some(arr) = v["subagent_tracks"].as_array_mut() {
+            for t in arr.iter_mut() {
+                if t["track"] == "cross-review" {
+                    t["review_checkpoint"] = json!(3);
+                }
+            }
+        }
+    });
+    run(&b, &n).assert_contains(
+        "v2 cross_review->deep_review rejects stale cross-review approvals",
+        24,
+        "current-cycle completed cross-review subagent_tracks",
+    );
+}
+
+#[test]
+fn v2_cross_review_deep_review_after_team_sync() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    std::fs::create_dir_all(d.path().join("history")).unwrap();
+    std::fs::copy(&b, d.path().join("history/4-cross_review-team.json")).unwrap();
+    make_baton_v2(&n, "cross_review", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        cross_review_tracks(v);
+        if let Some(arr) = v["subagent_tracks"].as_array_mut() {
+            arr.retain(|t| t["owner_role"] == "prativadi");
+        }
+    });
+    run(&b, &n).assert(
+        "v2 cross_review same-status sync can record first review role",
+        0,
+    );
+    make_baton_v2(&n, "deep_review", "prativadi", 6, cross_review_tracks);
+    run(&b, &n).assert(
+        "v2 cross_review->deep_review accepts review-cycle checkpoint after team sync",
+        0,
+    );
+}
+
+#[test]
+fn v2_cross_review_cross_fixing_after_team_sync() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    std::fs::create_dir_all(d.path().join("history")).unwrap();
+    std::fs::copy(&b, d.path().join("history/4-cross_review-team.json")).unwrap();
+    make_baton_v2(&n, "cross_review", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        cross_review_finding(v);
+    });
+    run(&b, &n).assert(
+        "v2 cross_review same-status sync can record finding role",
+        0,
+    );
+    make_baton_v2(&n, "cross_fixing", "team", 6, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        set_loop_count(v, "cross_review:cross_fixing", 1);
+        cross_review_finding(v);
+    });
+    run(&b, &n).assert(
+        "v2 cross_review->cross_fixing accepts review-cycle checkpoint after team sync",
+        0,
+    );
+}
+
+#[test]
+fn v2_cross_review_tracks_must_use_status_name_phase() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v2(&n, "deep_review", "prativadi", 5, |v| {
+        cross_review_tracks(v);
+        if let Some(arr) = v["subagent_tracks"].as_array_mut() {
+            for t in arr.iter_mut() {
+                if t["track"] == "cross-review" {
+                    t["phase"] = json!(1);
+                }
+            }
+        }
+    });
+    run(&b, &n).assert_contains(
+        "v2 cross_review tracks must use status-name phase",
+        24,
+        "completed cross-review subagent_tracks for both roles",
+    );
+}
+
+#[test]
+fn v2_deep_review_to_deslop_requires_three_review_angles() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deep_review", "prativadi", 4, |_| {});
+    make_baton_v2(&n, "deslop", "vadi", 5, |_| {});
+    run(&b, &n).assert_contains(
+        "v2 deep_review->deslop requires three review angles",
+        24,
+        "three completed review-angle subagent_tracks",
+    );
+}
+
+#[test]
+fn v2_deep_review_to_deslop_rejects_stale_angles_from_another_phase() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deep_review", "prativadi", 4, |_| {});
+    make_baton_v2(&n, "deslop", "vadi", 5, |v| {
+        review_angles(v);
+        if let Some(arr) = v["subagent_tracks"].as_array_mut() {
+            for t in arr.iter_mut() {
+                if t["track"] == "correctness-regression"
+                    || t["track"] == "test-evidence"
+                    || t["track"] == "protocol-handoff"
+                {
+                    t["phase"] = json!("research");
+                }
+            }
+        }
+    });
+    run(&b, &n).assert_contains(
+        "v2 deep_review->deslop rejects stale review angles from another phase",
+        24,
+        "three completed review-angle subagent_tracks",
+    );
+}
+
+#[test]
+fn v2_deep_review_to_deslop_rejects_stale_same_phase_angles() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deep_review", "prativadi", 8, |_| {});
+    make_baton_v2(&n, "deslop", "vadi", 9, |v| {
+        review_angles(v);
+        if let Some(arr) = v["subagent_tracks"].as_array_mut() {
+            for t in arr.iter_mut() {
+                if t["track"] == "correctness-regression"
+                    || t["track"] == "test-evidence"
+                    || t["track"] == "protocol-handoff"
+                {
+                    t["review_checkpoint"] = json!(4);
+                }
+            }
+        }
+    });
+    run(&b, &n).assert_contains(
+        "v2 deep_review->deslop rejects stale same-phase review angles",
+        24,
+        "current-cycle three completed review-angle subagent_tracks",
+    );
+}
+
+#[test]
+fn v2_deep_review_to_deslop_rejects_empty_review_evidence() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deep_review", "prativadi", 4, |_| {});
+    make_baton_v2(&n, "deslop", "vadi", 5, |v| {
+        review_angles(v);
+        if let Some(arr) = v["subagent_tracks"].as_array_mut() {
+            for t in arr.iter_mut() {
+                if t["track"] == "correctness-regression"
+                    || t["track"] == "test-evidence"
+                    || t["track"] == "protocol-handoff"
+                {
+                    t["parallelized"] = json!(false);
+                    t["owner"] = json!("prativadi");
+                    t["inputs"] = json!([]);
+                    t["outputs"] = json!([]);
+                    t["evidence_refs"] = json!([]);
+                }
+            }
+        }
+    });
+    run(&b, &n).assert_contains(
+        "v2 deep_review->deslop rejects empty review evidence",
+        24,
+        "three completed review-angle subagent_tracks",
+    );
+}
+
+#[test]
+fn v2_deep_review_to_deslop_accepts_three_review_angles() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deep_review", "prativadi", 4, |_| {});
+    make_baton_v2(&n, "deslop", "vadi", 5, review_angles);
+    run(&b, &n).assert("v2 deep_review->deslop accepts three review angles", 0);
+}
+
+#[test]
+fn v2_deep_review_to_review_of_review_requires_narrow_fixups() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deep_review", "prativadi", 4, |_| {});
+    make_baton_v2(&n, "review_of_review", "vadi", 5, |v| {
+        review_angles(v);
+        v["review_target"] = json!("prativadi_fixups");
+    });
+    run(&b, &n).assert_contains(
+        "v2 deep_review->review_of_review requires narrow fixups",
+        24,
+        "review_of_review requires non-empty narrow_fixups",
+    );
+}
+
+#[test]
+fn v2_deep_review_to_review_of_review_requires_three_review_angles() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deep_review", "prativadi", 4, |_| {});
+    make_baton_v2(&n, "review_of_review", "vadi", 5, |v| {
+        v["review_target"] = json!("prativadi_fixups");
+        v["narrow_fixups"] = json!(["test fixup"]);
+    });
+    run(&b, &n).assert_contains(
+        "v2 deep_review->review_of_review requires three review angles",
+        24,
+        "three completed review-angle subagent_tracks",
+    );
+}
+
+#[test]
+fn v2_deep_review_to_review_of_review_accepts_angles_and_fixups() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deep_review", "prativadi", 4, |_| {});
+    make_baton_v2(&n, "review_of_review", "vadi", 5, |v| {
+        review_angles(v);
+        v["review_target"] = json!("prativadi_fixups");
+        v["narrow_fixups"] = json!(["test fixup"]);
+    });
+    run(&b, &n).assert(
+        "v2 deep_review->review_of_review accepts angles and fixups",
+        0,
+    );
+}
+
+// ===================== same-status team sync =====================
+
+#[test]
+fn v2_team_cross_fixing_accepts_same_status_sync_checkpoint() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "cross_fixing", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v2(&n, "cross_fixing", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["summary"] =
+            json!("Team sync: prativadi protocol slice complete; vadi owns agent-roster slice.");
+        v["next_action"] =
+            json!("Vadi: complete agent-roster slice; prativadi is polling for next checkpoint.");
+    });
+    run(&b, &n).assert(
+        "v2 team cross_fixing accepts same-status sync checkpoint",
+        0,
+    );
+}
+
+#[test]
+fn v2_team_same_status_sync_cannot_change_phase() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v2(&n, "cross_review", "team", 5, |v| {
+        v["phase"] = json!(2);
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["summary"] = json!("Team sync: attempted phase mutation.");
+        v["next_action"] =
+            json!("Team: this must be rejected because sync checkpoints cannot advance phases.");
+    });
+    run(&b, &n).assert_contains(
+        "v2 team same-status sync cannot change phase",
+        24,
+        "same-status team sync cannot change phase",
+    );
+}
+
+#[test]
+fn v2_team_sync_rejects_whitespace_summary() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v2(&n, "cross_review", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["summary"] = json!("   \t  ");
+        v["next_action"] = json!("Team: valid next action.");
+    });
+    run(&b, &n).assert_contains(
+        "v2 team sync rejects whitespace summary",
+        24,
+        "same-status team sync requires team assignee, both active_roles, summary, and next_action",
+    );
+}
+
+#[test]
+fn v2_team_sync_rejects_whitespace_next_action() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v2(&n, "cross_review", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["summary"] = json!("Team sync: valid summary.");
+        v["next_action"] = json!("   \t  ");
+    });
+    run(&b, &n).assert_contains(
+        "v2 team sync rejects whitespace next_action",
+        24,
+        "same-status team sync requires team assignee, both active_roles, summary, and next_action",
+    );
+}
+
+#[test]
+fn v2_non_team_same_status_rewrite_still_rejects() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "test_creation", "vadi", 4, |_| {});
+    make_baton_v2(&n, "test_creation", "vadi", 5, |_| {});
+    run(&b, &n).assert_contains(
+        "v2 non-team same-status rewrite still rejects",
+        24,
+        "same-status rewrite",
+    );
+}
+
+// ===================== run-explainer review ownership + termination approval ownership =====================
+
+#[test]
+fn v2_vadi_cannot_forge_prativadi_run_explainer_review() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "termination_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+    });
+    make_baton_v2(&n, "done", "team", 5, |v| {
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+        v["run_explainer_reviews"][1]["summary"] = json!("FABRICATED by vadi.");
+    });
+    run_env(&b, &n, &[("DVANDVA_ROLE", "vadi")]).assert_contains(
+        "v2 vadi cannot forge prativadi run explainer review",
+        24,
+        "run explainer review ownership",
+    );
+}
+
+#[test]
+fn v2_termination_review_allows_vadi_own_run_explainer_review() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "termination_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+        if let Some(arr) = v["run_explainer_reviews"].as_array_mut() {
+            arr.retain(|r| r["role"] == "prativadi");
+        }
+    });
+    make_baton_v2(&n, "termination_review", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["summary"] = json!("Vadi adds only its own run explainer review.");
+        v["next_action"] =
+            json!("Team: prativadi review was already installed; vadi review is now installed.");
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+    });
+    run_env(&b, &n, &[("DVANDVA_ROLE", "vadi")])
+        .assert("v2 vadi can add its own run explainer review", 0);
+}
+
+#[test]
+fn v2_termination_review_allows_prativadi_own_run_explainer_review() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "termination_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+        if let Some(arr) = v["run_explainer_reviews"].as_array_mut() {
+            arr.retain(|r| r["role"] == "vadi");
+        }
+    });
+    make_baton_v2(&n, "termination_review", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["summary"] = json!("Prativadi adds only its own run explainer review.");
+        v["next_action"] =
+            json!("Team: vadi review was already installed; prativadi review is now installed.");
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+    });
+    run_env(&b, &n, &[("DVANDVA_ROLE", "prativadi")])
+        .assert("v2 prativadi can add its own run explainer review", 0);
+}
+
+#[test]
+fn v2_vadi_cannot_edit_prativadi_run_explainer_review() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "termination_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+        if let Some(arr) = v["run_explainer_reviews"].as_array_mut() {
+            arr.retain(|r| r["role"] == "prativadi");
+        }
+    });
+    make_baton_v2(&n, "termination_review", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["summary"] = json!("Vadi tries to rewrite prativadi review while adding its own.");
+        v["next_action"] =
+            json!("Team: this must fail because peer review entries are role-owned.");
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+        v["run_explainer_reviews"][1]["summary"] = json!("Mutated by vadi.");
+    });
+    run_env(&b, &n, &[("DVANDVA_ROLE", "vadi")]).assert_contains(
+        "v2 vadi cannot edit prativadi run explainer review",
+        24,
+        "run explainer review ownership",
+    );
+}
+
+#[test]
+fn v2_run_explainer_review_changes_require_dvandva_role() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "termination_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+    });
+    make_baton_v2(&n, "termination_review", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["summary"] = json!("A review entry change without DVANDVA_ROLE must fail.");
+        v["next_action"] = json!("Team: retry with the writing role exported.");
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+        if let Some(arr) = v["run_explainer_reviews"].as_array_mut() {
+            arr.retain(|r| r["role"] == "vadi");
+        }
+    });
+    run(&b, &n).assert_contains(
+        "v2 run explainer review changes require DVANDVA_ROLE",
+        24,
+        "run explainer review ownership",
+    );
+}
+
+#[test]
+fn v2_done_requires_approvals_before_terminal_checkpoint() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "termination_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(false);
+    });
+    make_baton_v2(&n, "done", "team", 5, |v| {
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+    });
+    run(&b, &n).assert_contains(
+        "v2 done requires approvals before terminal checkpoint",
+        24,
+        "done requires current termination_review with both final approvals",
+    );
+}
+
+#[test]
+fn v2_vadi_cannot_raise_both_final_approvals_entering_termination_review() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deslop", "vadi", 4, |_| {});
+    make_baton_v2(&n, "termination_review", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+    });
+    run_env(&b, &n, &[("DVANDVA_ROLE", "vadi")]).assert_contains(
+        "v2 vadi cannot raise both final approvals entering termination_review",
+        24,
+        "final approval ownership",
+    );
+}
+
+#[test]
+fn v2_vadi_cannot_raise_prativadi_final_approval() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "termination_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(false);
+    });
+    make_baton_v2(&n, "termination_review", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["summary"] = json!("Vadi cannot approve for prativadi.");
+        v["next_action"] = json!("Prativadi must make its own stop decision.");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+    });
+    run_env(&b, &n, &[("DVANDVA_ROLE", "vadi")]).assert_contains(
+        "v2 vadi cannot raise prativadi final approval",
+        24,
+        "final approval ownership",
+    );
+}
+
+#[test]
+fn v2_prativadi_can_raise_its_own_final_approval() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "termination_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(false);
+    });
+    make_baton_v2(&n, "termination_review", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["summary"] = json!("Prativadi independently approves the shared stop decision.");
+        v["next_action"] =
+            json!("Team: final approval bits now converged; final ship may proceed.");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+    });
+    run_env(&b, &n, &[("DVANDVA_ROLE", "prativadi")])
+        .assert("v2 prativadi can raise its own final approval", 0);
+}
+
+// ===================== run-modes per-mode edges =====================
+
+const MODE_EDGE_LOOP_COUNT_EDGES: &[&str] = &[
+    "deep_review:phase_fixing",
+    "cross_review:cross_fixing",
+    "termination_review:phase_fixing",
+    "phase_review:phase_fixing",
+    "review_of_review:counter_review",
+    "counter_review:review_of_review",
+];
+
+fn v2_mode_status_filter(mode: &str, status: &str, b: &mut Value) {
+    match (mode, status) {
+        ("research", "research_drafting")
+        | ("research", "research_review")
+        | ("research", "research_revision") => {
+            b["mode"] = json!("research");
+            b["phase"] = json!("research");
+        }
+        ("research", "done") => {
+            b["mode"] = json!("research");
+            b["phase"] = json!("spec");
+            b["vadi_final_approval"] = json!(true);
+            b["prativadi_final_approval"] = json!(true);
+        }
+        ("research", "termination_review") => {
+            b["mode"] = json!("research");
+            b["phase"] = json!("spec");
+            b["active_roles"] = json!(["vadi", "prativadi"]);
+        }
+        ("research", _) => {
+            b["mode"] = json!("research");
+            b["phase"] = json!("spec");
+        }
+        ("review", "done") => {
+            b["mode"] = json!("review");
+            b["phase"] = json!("review");
+            b["review_ref"] = json!("./superpowers/reviews/review-run-modes.html");
+            b["vadi_final_approval"] = json!(true);
+            b["prativadi_final_approval"] = json!(true);
+        }
+        ("review", "termination_review") => {
+            b["mode"] = json!("review");
+            b["phase"] = json!("review");
+            b["active_roles"] = json!(["vadi", "prativadi"]);
+        }
+        ("review", _) => {
+            b["mode"] = json!("review");
+            b["phase"] = json!("review");
+        }
+        _ => {}
+    }
+}
+
+fn run_mode_edge_case(mode: &str, from_status: &str, to_status: &str) {
+    let edge = format!("{from_status}:{to_status}");
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, from_status, v2_status_owner(from_status), 4, |v| {
+        v2_mode_status_filter(mode, from_status, v);
+        if from_status == "termination_review" && to_status == "done" {
+            v["vadi_final_approval"] = json!(true);
+            v["prativadi_final_approval"] = json!(true);
+        }
+        if MODE_EDGE_LOOP_COUNT_EDGES.contains(&edge.as_str()) {
+            set_loop_count(v, &edge, 0);
+        }
+    });
+    make_baton_v2(&n, to_status, v2_status_owner(to_status), 5, |v| {
+        v2_mode_status_filter(mode, to_status, v);
+        if MODE_EDGE_LOOP_COUNT_EDGES.contains(&edge.as_str()) {
+            set_loop_count(v, &edge, 1);
+        }
+        if mode == "review" && from_status == "deep_review" && to_status == "deslop" {
+            review_angles(v);
+        }
+    });
+    let name = format!("{mode} mode {from_status}:{to_status} full edge table is legal");
+    run(&b, &n).assert(&name, 0);
+}
+
+#[test]
+fn research_mode_edges_legal() {
+    for (from, to) in [
+        ("research_drafting", "research_review"),
+        ("research_review", "research_revision"),
+        ("research_revision", "research_review"),
+        ("research_review", "spec_drafting"),
+        ("spec_drafting", "spec_review"),
+        ("spec_review", "spec_revision"),
+        ("spec_revision", "spec_review"),
+        ("research_review", "termination_review"),
+        ("spec_review", "termination_review"),
+        ("termination_review", "phase_fixing"),
+        ("phase_fixing", "research_review"),
+        ("termination_review", "done"),
+    ] {
+        run_mode_edge_case("research", from, to);
+    }
+}
+
+#[test]
+fn review_mode_edges_legal() {
+    for (from, to) in [
+        ("research_drafting", "research_review"),
+        ("research_review", "research_revision"),
+        ("research_revision", "research_review"),
+        ("research_review", "deep_review"),
+        ("deep_review", "deslop"),
+        ("deslop", "termination_review"),
+        ("termination_review", "phase_fixing"),
+        ("phase_fixing", "deep_review"),
+        ("termination_review", "done"),
+    ] {
+        run_mode_edge_case("review", from, to);
+    }
+}
+
+#[test]
+fn research_mode_spec_review_termination_review_legal() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_review", "prativadi", 4, |v| {
+        v["mode"] = json!("research");
+    });
+    make_baton_v2(&n, "termination_review", "team", 5, |v| {
+        v["mode"] = json!("research");
+        v["phase"] = json!("spec");
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    run(&b, &n).assert("research mode spec_review:termination_review is legal", 0);
+}
+
+#[test]
+fn review_mode_research_review_deep_review_legal() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "research_review", "prativadi", 4, |v| {
+        v["mode"] = json!("review");
+        v["phase"] = json!("review");
+    });
+    make_baton_v2(&n, "deep_review", "prativadi", 5, |v| {
+        v["mode"] = json!("review");
+        v["phase"] = json!("review");
+    });
+    run(&b, &n).assert("review mode research_review:deep_review is legal", 0);
+}
+
+#[test]
+fn research_mode_spec_review_parallel_implementing_illegal() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_review", "prativadi", 4, |v| {
+        v["mode"] = json!("research");
+    });
+    make_baton_v2(&n, "parallel_implementing", "team", 5, |v| {
+        v["mode"] = json!("research");
+        v["phase"] = json!("spec");
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    run(&b, &n).assert_contains(
+        "research mode spec_review:parallel_implementing exits 24",
+        24,
+        "no legal edge spec_review->parallel_implementing",
+    );
+}
+
+#[test]
+fn review_mode_parallel_implementing_test_creation_illegal() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "parallel_implementing", "team", 4, |v| {
+        v["mode"] = json!("review");
+        v["phase"] = json!("review");
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v2(&n, "test_creation", "vadi", 5, |v| {
+        v["mode"] = json!("review");
+        v["phase"] = json!("review");
+    });
+    run(&b, &n).assert_contains(
+        "review mode parallel_implementing:test_creation exits 24",
+        24,
+        "no legal edge parallel_implementing->test_creation",
+    );
+}
+
+#[test]
+fn research_mode_cross_review_termination_review_illegal() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "cross_review", "team", 4, |v| {
+        v["mode"] = json!("research");
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v2(&n, "termination_review", "team", 5, |v| {
+        v["mode"] = json!("research");
+        v["phase"] = json!("spec");
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    run(&b, &n).assert_contains(
+        "research mode cross_review:termination_review exits 24 no wildcard",
+        24,
+        "no legal edge cross_review->termination_review",
+    );
+}
+
+#[test]
+fn review_mode_deslop_termination_review_phase_review_legal() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deslop", "vadi", 4, |v| {
+        v["mode"] = json!("review");
+        v["phase"] = json!("review");
+    });
+    make_baton_v2(&n, "termination_review", "team", 5, |v| {
+        v["mode"] = json!("review");
+        v["phase"] = json!("review");
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    run(&b, &n).assert(
+        "review mode deslop:termination_review with phase review is legal",
+        0,
+    );
+}
+
+#[test]
+fn research_done_from_non_termination_review_exits_24() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_review", "prativadi", 4, |v| {
+        v["mode"] = json!("research");
+    });
+    make_baton_v2(&n, "done", "human", 5, |v| {
+        v["mode"] = json!("research");
+        v["phase"] = json!("spec");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+    });
+    run(&b, &n).assert_contains(
+        "research done from non-termination_review exits 24",
+        24,
+        "done requires current status termination_review",
+    );
+}
+
+#[test]
+fn research_done_with_one_approval_exits_24() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "termination_review", "team", 4, |v| {
+        v["mode"] = json!("research");
+        v["phase"] = json!("spec");
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(false);
+    });
+    make_baton_v2(&n, "done", "human", 5, |v| {
+        v["mode"] = json!("research");
+        v["phase"] = json!("spec");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+    });
+    run(&b, &n).assert_contains(
+        "research done with one approval exits 24",
+        24,
+        "done requires current termination_review with both final approvals",
+    );
+}
+
+#[test]
+fn review_done_from_non_termination_review_exits_24() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deslop", "vadi", 4, |v| {
+        v["mode"] = json!("review");
+        v["phase"] = json!("review");
+    });
+    make_baton_v2(&n, "done", "human", 5, |v| {
+        v["mode"] = json!("review");
+        v["phase"] = json!("review");
+        v["review_ref"] = json!("./superpowers/reviews/review-run-modes-PR-1.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+    });
+    run(&b, &n).assert_contains(
+        "review done from non-termination_review exits 24",
+        24,
+        "done requires current status termination_review",
+    );
+}
+
+#[test]
+fn review_done_with_one_approval_exits_24() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "termination_review", "team", 4, |v| {
+        v["mode"] = json!("review");
+        v["phase"] = json!("review");
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(false);
+    });
+    make_baton_v2(&n, "done", "human", 5, |v| {
+        v["mode"] = json!("review");
+        v["phase"] = json!("review");
+        v["review_ref"] = json!("./superpowers/reviews/review-run-modes-PR-1.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+    });
+    run(&b, &n).assert_contains(
+        "review done with one approval exits 24",
+        24,
+        "done requires current termination_review with both final approvals",
+    );
+}
+
+// ===================== loop caps / approval hygiene =====================
+
+#[test]
+fn v2_loop_cap_rejects_fourth_cycle() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deep_review", "prativadi", 4, |v| {
+        v["disagreement_cap"] = json!(3);
+        set_loop_count(v, "deep_review:phase_fixing", 3);
+    });
+    make_baton_v2(&n, "phase_fixing", "vadi", 5, |v| {
+        v["disagreement_cap"] = json!(3);
+        set_loop_count(v, "deep_review:phase_fixing", 4);
+    });
+    run(&b, &n).assert_contains(
+        "v2 loop cap rejects fourth review/fix cycle",
+        23,
+        "loop_cap",
+    );
+}
+
+#[test]
+fn v2_loop_count_must_increment_by_one() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deep_review", "prativadi", 4, |v| {
+        v["disagreement_cap"] = json!(3);
+        set_loop_count(v, "deep_review:phase_fixing", 1);
+    });
+    make_baton_v2(&n, "phase_fixing", "vadi", 5, |v| {
+        v["disagreement_cap"] = json!(3);
+        set_loop_count(v, "deep_review:phase_fixing", 1);
+    });
+    run(&b, &n).assert_contains("v2 loop count must increment by one", 23, "bad_loop_counts");
+}
+
+#[test]
+fn v2_loop_count_first_increment_required() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deep_review", "prativadi", 4, |v| {
+        v["disagreement_cap"] = json!(3);
+        v["loop_counts"] = json!({});
+    });
+    make_baton_v2(&n, "phase_fixing", "vadi", 5, |v| {
+        v["disagreement_cap"] = json!(3);
+        v["loop_counts"] = json!({});
+    });
+    run(&b, &n).assert_contains(
+        "v2 loop count first increment is required",
+        23,
+        "bad_loop_counts",
+    );
+}
+
+#[test]
+fn v2_loop_count_first_increment_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deep_review", "prativadi", 4, |v| {
+        v["disagreement_cap"] = json!(3);
+        v["loop_counts"] = json!({});
+    });
+    make_baton_v2(&n, "phase_fixing", "vadi", 5, |v| {
+        v["disagreement_cap"] = json!(3);
+        set_loop_count(v, "deep_review:phase_fixing", 1);
+    });
+    run(&b, &n).assert("v2 loop count first increment is accepted", 0);
+}
+
+#[test]
+fn v2_loop_cap_rejects_edges_table() {
+    let cases = [
+        ("cross_review", "cross_fixing", "team", "team"),
+        ("termination_review", "phase_fixing", "team", "vadi"),
+        ("phase_review", "phase_fixing", "prativadi", "vadi"),
+        ("review_of_review", "counter_review", "vadi", "prativadi"),
+        ("counter_review", "review_of_review", "prativadi", "vadi"),
+    ];
+    for (from_status, to_status, from_owner, to_owner) in cases {
+        let edge = format!("{from_status}:{to_status}");
+        let d = tmp();
+        let (b, n) = paths(&d);
+        make_baton_v2(&b, from_status, from_owner, 4, |v| {
+            let roles: Vec<&str> = if from_owner == "team" {
+                vec!["vadi", "prativadi"]
+            } else {
+                vec![]
+            };
+            v["active_roles"] = json!(roles);
+            v["disagreement_cap"] = json!(3);
+            set_loop_count(v, &edge, 3);
+        });
+        make_baton_v2(&n, to_status, to_owner, 5, |v| {
+            let roles: Vec<&str> = if to_owner == "team" {
+                vec!["vadi", "prativadi"]
+            } else {
+                vec![]
+            };
+            v["active_roles"] = json!(roles);
+            v["disagreement_cap"] = json!(3);
+            set_loop_count(v, &edge, 4);
+        });
+        run(&b, &n).assert_contains(
+            &format!("v2 loop cap rejects {from_status}->{to_status}"),
+            23,
+            "loop_cap",
+        );
+    }
+}
+
+#[test]
+fn v2_loop_counts_reset_on_next_phase_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deslop", "vadi", 4, |v| {
+        v["phase"] = json!(1);
+        set_loop_count(v, "deep_review:phase_fixing", 2);
+    });
+    make_baton_v2(&n, "parallel_implementing", "team", 5, |v| {
+        parallel_chunks(v);
+        v["phase"] = json!(2);
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        if let Some(arr) = v["work_split"].as_array_mut() {
+            for chunk in arr.iter_mut() {
+                if chunk["chunk_type"] == "implementation" {
+                    chunk["phase"] = json!("2");
+                }
+            }
+        }
+        set_loop_count(v, "deep_review:phase_fixing", 2);
+    });
+    run(&b, &n).assert_contains("v2 loop counts reset on next phase", 23, "bad_loop_counts");
+}
+
+#[test]
+fn v2_loop_counts_empty_on_next_phase_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deslop", "vadi", 4, |v| {
+        v["phase"] = json!(1);
+        set_loop_count(v, "deep_review:phase_fixing", 2);
+    });
+    make_baton_v2(&n, "parallel_implementing", "team", 5, |v| {
+        parallel_chunks(v);
+        v["phase"] = json!(2);
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        if let Some(arr) = v["work_split"].as_array_mut() {
+            for chunk in arr.iter_mut() {
+                if chunk["chunk_type"] == "implementation" {
+                    chunk["phase"] = json!("2");
+                }
+            }
+        }
+        v["loop_counts"] = json!({});
+    });
+    run(&b, &n).assert("v2 empty loop counts accepted on next phase", 0);
+}
+
+#[test]
+fn v2_loop_cap_may_escalate_human_decision() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deep_review", "prativadi", 4, |v| {
+        v["disagreement_cap"] = json!(3);
+        set_loop_count(v, "deep_review:phase_fixing", 3);
+    });
+    make_baton_v2(&n, "human_decision", "human", 5, |v| {
+        v["disagreement_cap"] = json!(3);
+        set_loop_count(v, "deep_review:phase_fixing", 3);
+    });
+    run(&b, &n).assert("v2 loop cap permits human_decision escalation", 0);
+}
+
+#[test]
+fn v2_approval_out_of_band_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deslop", "vadi", 4, |_| {});
+    make_baton_v2(&n, "phase_fixing", "vadi", 5, |v| {
+        v["vadi_final_approval"] = json!(true);
+    });
+    run_env(&b, &n, &[("DVANDVA_ROLE", "vadi")]).assert_contains(
+        "v2 final approval outside termination_review is rejected",
+        23,
+        "approval_out_of_band",
+    );
+}
+
+#[test]
+fn v2_stale_approval_reset_required() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "termination_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+    });
+    make_baton_v2(&n, "phase_fixing", "vadi", 5, |v| {
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+    });
+    run(&b, &n).assert_contains(
+        "v2 termination_review to phase_fixing resets final approvals",
+        23,
+        "stale_approval",
+    );
+}
+
+#[test]
+fn v2_termination_review_entry_can_set_own_approval() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "deslop", "vadi", 4, |_| {});
+    make_baton_v2(&n, "termination_review", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(false);
+    });
+    run_env(&b, &n, &[("DVANDVA_ROLE", "vadi")]).assert(
+        "v2 entering termination_review may set own final approval",
+        0,
+    );
+}
