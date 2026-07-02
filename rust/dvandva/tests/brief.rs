@@ -200,6 +200,35 @@ fn effective_profile_uses_phase_profiles_entry_when_present() {
 }
 
 #[test]
+fn effective_profile_falls_back_when_phase_profiles_entry_absent() {
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    let mut fixture = base_baton();
+    // Entry exists only for phase 3; current phase is 2.
+    fixture["phase_profiles"] = json!({"3": "standard"});
+    write_json(&baton, &fixture);
+
+    let (code, out, _err) = run_brief(&["--role", "vadi", "--file", baton.to_str().unwrap()]);
+    assert_eq!(code, 0);
+    assert!(out.contains("run profile: full"));
+    assert!(out.contains("effective profile (phase 2): full"));
+}
+
+#[test]
+fn effective_profile_falls_back_when_phase_profiles_is_falsy() {
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    let mut fixture = base_baton();
+    fixture["phase_profiles"] = json!(false);
+    write_json(&baton, &fixture);
+
+    let (code, out, _err) = run_brief(&["--role", "vadi", "--file", baton.to_str().unwrap()]);
+    assert_eq!(code, 0);
+    assert!(out.contains("run profile: full"));
+    assert!(out.contains("effective profile (phase 2): full"));
+}
+
+#[test]
 fn role_filter_prativadi_sees_only_its_own_chunk() {
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
@@ -222,8 +251,11 @@ fn history_shows_last_five_sorted_by_checkpoint_with_truncated_summary() {
     write_json(&baton, &base_baton());
 
     let history_dir = dir.path().join("history");
-    for checkpoint in 0..7 {
-        let long_summary = if checkpoint == 6 {
+    // Checkpoints run through two digits (0..=10) so the ascending sort is
+    // pinned as numeric, not lexicographic (which would sort "10" before
+    // "6").
+    for checkpoint in 0..=10 {
+        let long_summary = if checkpoint == 10 {
             "x".repeat(200)
         } else {
             format!("checkpoint {checkpoint} summary")
@@ -238,23 +270,71 @@ fn history_shows_last_five_sorted_by_checkpoint_with_truncated_summary() {
     assert_eq!(code, 0);
 
     assert!(out.contains("## Recent checkpoints"));
-    // Only the last 5 (checkpoints 2..6), oldest-of-the-five first.
+    // Only the last 5 (checkpoints 6..10), oldest-of-the-five first.
     assert!(!out.contains("cp0 "));
-    assert!(!out.contains("cp1 "));
-    assert!(out.contains("cp2 implementing vadi"));
+    assert!(!out.contains("cp5 "));
     assert!(out.contains("cp6 implementing vadi"));
+    assert!(out.contains("cp9 implementing vadi"));
+    assert!(out.contains("cp10 implementing vadi"));
 
-    let cp2_pos = out.find("cp2 implementing vadi").unwrap();
     let cp6_pos = out.find("cp6 implementing vadi").unwrap();
+    let cp9_pos = out.find("cp9 implementing vadi").unwrap();
+    let cp10_pos = out.find("cp10 implementing vadi").unwrap();
     assert!(
-        cp2_pos < cp6_pos,
-        "checkpoints should render in ascending order"
+        cp6_pos < cp9_pos && cp9_pos < cp10_pos,
+        "checkpoints should render in ascending numeric order (cp9 before cp10, not lexicographic)"
     );
 
     // Summary truncated to 160 chars with a "..." marker.
     assert!(out.contains(&"x".repeat(160)));
     assert!(!out.contains(&"x".repeat(161)));
     assert!(out.contains("..."));
+}
+
+#[test]
+fn history_skips_no_clobber_dup_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    write_json(&baton, &base_baton());
+
+    let history_dir = dir.path().join("history");
+    for checkpoint in 7..=12 {
+        write_json(
+            &history_dir.join(format!("{checkpoint}-implementing-vadi.json")),
+            &json!({
+                "status": "implementing",
+                "assignee": "vadi",
+                "summary": format!("checkpoint {checkpoint} summary")
+            }),
+        );
+    }
+    // A snapshot no-clobber duplicate for cp12 (`src/snapshot.rs` writes
+    // `<target-stem>.dup-<epoch-ns>.json` on a byte-differing collision) —
+    // must not be treated as a second canonical history entry.
+    write_json(
+        &history_dir.join("12-implementing-vadi.dup-172837465923847.json"),
+        &json!({
+            "status": "implementing",
+            "assignee": "vadi",
+            "summary": "garbled dup content"
+        }),
+    );
+
+    let (code, out, _err) = run_brief(&["--role", "vadi", "--file", baton.to_str().unwrap()]);
+    assert_eq!(code, 0);
+
+    // Exactly one cp12 row, carrying the real file's summary.
+    assert_eq!(out.matches("cp12 ").count(), 1);
+    assert!(out.contains("cp12 implementing vadi — checkpoint 12 summary"));
+    assert!(!out.contains("garbled dup content"));
+    assert!(
+        !out.contains("dup-"),
+        "dup marker must not leak into rendered history"
+    );
+
+    // The dup file must not evict the true oldest-of-last-5 (cp8).
+    assert!(out.contains("cp8 implementing vadi"));
+    assert!(!out.contains("cp7 "));
 }
 
 // ── verification_matrix fallback shapes ─────────────────────────────────
@@ -275,6 +355,24 @@ fn verification_matrix_object_shape_includes_all_rows_with_note() {
     // object rather than an array of phase-tagged rows.
     assert!(out.contains("row-a"));
     assert!(out.contains("_note:"));
+}
+
+// ── next_action ───────────────────────────────────────────────────────────
+
+#[test]
+fn next_action_object_with_all_values_falsy_renders_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    let mut fixture = base_baton();
+    fixture["next_action"] = json!({"a": null, "b": false});
+    write_json(&baton, &fixture);
+
+    let (code, out, _err) = run_brief(&["--role", "vadi", "--file", baton.to_str().unwrap()]);
+    assert_eq!(code, 0);
+    assert!(
+        out.ends_with("## Next action\n\n_none_\n"),
+        "all-falsy next_action object should render _none_, got: {out:?}"
+    );
 }
 
 // ── --out ─────────────────────────────────────────────────────────────────

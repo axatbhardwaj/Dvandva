@@ -407,8 +407,19 @@ fn render_history(out: &mut String, baton_path: &Path) {
 
 /// Parses `snapshot.rs`'s history filename convention
 /// `<checkpoint>-<status>-<assignee>.json` into its three tokens.
+///
+/// Skips snapshot no-clobber duplicates: `write_with_no_clobber` in
+/// `snapshot.rs` writes a byte-differing collision to
+/// `<checkpoint>-<status>-<assignee>.dup-<epoch-ns>.json` rather than
+/// overwriting the canonical file. That stem still parses as a checkpoint
+/// entry (with a garbled assignee token), so it must be rejected explicitly
+/// or it duplicates a row and can evict a real checkpoint from the last-5
+/// window.
 fn parse_history_filename(path: &Path) -> Option<(u64, String, String)> {
     let stem = path.file_stem()?.to_str()?;
+    if stem.contains(".dup-") {
+        return None;
+    }
     let mut parts = stem.splitn(3, '-');
     let checkpoint = parts.next()?.parse::<u64>().ok()?;
     let status = parts.next()?.to_string();
@@ -432,10 +443,15 @@ fn render_next_action(out: &mut String, root: &Value) {
     match coalesce_get(root, "next_action") {
         None => out.push_str("_none_\n"),
         Some(Value::Object(map)) if !map.is_empty() => {
+            let mut any = false;
             for (key, value) in map {
                 if let Some(value) = coalesce(Some(value)) {
                     out.push_str(&format!("- {key}: {}\n", tostring(value)));
+                    any = true;
                 }
+            }
+            if !any {
+                out.push_str("_none_\n");
             }
         }
         Some(Value::Object(_)) => out.push_str("_none_\n"),
