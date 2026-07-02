@@ -509,3 +509,228 @@ fn generate_never_overwrites_the_baton() {
     // The candidate is a separate file at the next checkpoint.
     assert_eq!(read_json(&candidate)["checkpoint"], 1);
 }
+
+// ===================== Fix 1: F1×F7×F9 amendment re-profile seam =====================
+
+#[test]
+fn f1_amendment_reprofile_exit_roundtrip() {
+    // F1×F7×F9 seam: a plan amendment opened from a STANDARD phase 2, whose spec
+    // revision re-profiles phase 3 to `full`, must be able to re-enter phase 3 as
+    // `parallel_implementing`. Before the fix, legal_transitions pinned the
+    // spec_review entry to amendment_from_phase's (standard) profile, so LIST
+    // offered only `implementing` and `next --to parallel_implementing` failed with
+    // illegal_target — while `next --to implementing --phase 3` self-failed 23
+    // bad_amendment. The fix offers BOTH entry states across the reachable
+    // re-entry phases, so the full re-entry roundtrips end to end.
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    let candidate = dir.path().join("baton.next.json");
+    make_baton_v2(&baton, "spec_review", "prativadi", 4, |b| {
+        common::standard_profile(b);
+        b["master_plan_locked"] = Value::Bool(true);
+        b["total_phases"] = Value::from(3);
+        b["amendment_from_phase"] = Value::from(2);
+        b["phase_profiles"] = serde_json::json!({"3": "full"});
+        // Seed the phase-3 parallel work_split so the generated candidate carries
+        // the five two-team chunks parallel_implementing requires.
+        common::parallel_chunks_phase(b, "3");
+    });
+
+    // LIST must offer BOTH entry states: `implementing` (phase 2 is standard) and
+    // `parallel_implementing` (phase 3 is full).
+    let (list_code, list_out, list_err) = run_next(&["--file", baton.to_str().unwrap()]);
+    assert_eq!(list_code, 0, "list exits 0\nstderr:\n{list_err}");
+    assert!(
+        list_out.contains("DVANDVA_NEXT parallel_implementing owner=team phase=advance"),
+        "list offers the full re-entry state\n{list_out}"
+    );
+    assert!(
+        list_out.contains("DVANDVA_NEXT implementing owner=vadi phase=advance"),
+        "list still offers the standard re-entry state\n{list_out}"
+    );
+
+    // GENERATE the full re-entry at phase 3.
+    let (code, stdout, stderr) = run_next(&[
+        "--file",
+        baton.to_str().unwrap(),
+        "--to",
+        "parallel_implementing",
+        "--phase",
+        "3",
+        "--summary",
+        "Amended plan re-profiles phase 3 to full; re-entering parallel implementation.",
+        "--next-action",
+        "team: run the phase-3 parallel implementation chunks.",
+    ]);
+    assert_eq!(
+        code, 0,
+        "amendment re-profile exit generate exits 0\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("to=parallel_implementing checkpoint=5"),
+        "{stdout}"
+    );
+
+    let cand = read_json(&candidate);
+    assert_eq!(cand["status"], "parallel_implementing");
+    assert_eq!(cand["assignee"], "team");
+    assert_eq!(cand["phase"], 3);
+    assert_eq!(
+        cand["amendment_from_phase"],
+        Value::Null,
+        "the amendment exit nulls amendment_from_phase"
+    );
+
+    // Strongest property: the SAME binary's `write` ACCEPTS the generated file.
+    run(&baton, &candidate).assert(
+        "write accepts the amendment re-profile parallel_implementing candidate",
+        0,
+    );
+    assert_eq!(read_json(&baton)["checkpoint"], 5);
+}
+
+#[test]
+fn spec_entry_non_amendment_phase1_single_state() {
+    // Guard (pairs with the seam fix): a non-amendment spec_review entry still
+    // resolves to the SINGLE phase-1 entry state. A standard run offers only
+    // `implementing`; the full entry state must not leak in.
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    let candidate = dir.path().join("baton.next.json");
+    make_baton_v2(&baton, "spec_review", "prativadi", 4, |b| {
+        common::standard_profile(b);
+        b["master_plan_locked"] = Value::Bool(true);
+        b["total_phases"] = Value::from(1);
+    });
+
+    let (list_code, list_out, list_err) = run_next(&["--file", baton.to_str().unwrap()]);
+    assert_eq!(list_code, 0, "list exits 0\nstderr:\n{list_err}");
+    assert!(
+        list_out.contains("DVANDVA_NEXT implementing owner=vadi phase=advance"),
+        "standard phase-1 entry offers implementing\n{list_out}"
+    );
+    assert!(
+        !list_out.contains("parallel_implementing"),
+        "no full entry state surfaces for a standard phase-1 run\n{list_out}"
+    );
+
+    let (code, stdout, stderr) = run_next(&[
+        "--file",
+        baton.to_str().unwrap(),
+        "--to",
+        "implementing",
+        "--phase",
+        "1",
+        "--summary",
+        "Spec approved; entering phase-1 implementation.",
+        "--next-action",
+        "vadi: implement phase 1.",
+    ]);
+    assert_eq!(
+        code, 0,
+        "non-amendment entry generate exits 0\nstderr:\n{stderr}"
+    );
+    assert!(stdout.contains("to=implementing checkpoint=5"), "{stdout}");
+    run(&baton, &candidate).assert("write accepts the non-amendment implementing candidate", 0);
+    assert_eq!(read_json(&baton)["checkpoint"], 5);
+}
+
+// ===================== Fix 2: human-resume scaffolding =====================
+
+#[test]
+fn human_question_resume_roundtrip() {
+    // Fix 2b: from human_question, LIST offers the recorded resume edge (restore
+    // resume_status/resume_assignee, clear the question/resume fields) and GENERATE
+    // produces a candidate `dvandva write` ACCEPTS. Red before the fix:
+    // legal_transitions offered no resume edge, so `next --to spec_review` was an
+    // illegal_target.
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    let candidate = dir.path().join("baton.next.json");
+    make_baton_v2(&baton, "human_question", "human", 4, |b| {
+        b["phase"] = Value::from("spec");
+        b["question"] = Value::from("Should feature X be in scope?");
+        b["resume_assignee"] = Value::from("prativadi");
+        b["resume_status"] = Value::from("spec_review");
+    });
+
+    // LIST offers the recorded resume edge back to (spec_review, prativadi).
+    let (list_code, list_out, list_err) = run_next(&["--file", baton.to_str().unwrap()]);
+    assert_eq!(list_code, 0, "list exits 0\nstderr:\n{list_err}");
+    assert!(
+        list_out.contains("DVANDVA_NEXT spec_review owner=prativadi phase=spec review_target=spec"),
+        "human_question list offers the recorded resume edge\n{list_out}"
+    );
+
+    // GENERATE the resume.
+    let (code, stdout, stderr) = run_next(&[
+        "--file",
+        baton.to_str().unwrap(),
+        "--to",
+        "spec_review",
+        "--summary",
+        "Human answered the scope question; resuming spec review.",
+        "--next-action",
+        "prativadi: resume the spec review with the human's answer.",
+    ]);
+    assert_eq!(
+        code, 0,
+        "human_question resume generate exits 0\nstderr:\n{stderr}"
+    );
+    assert!(stdout.contains("to=spec_review checkpoint=5"), "{stdout}");
+
+    let cand = read_json(&candidate);
+    assert_eq!(cand["status"], "spec_review");
+    assert_eq!(cand["assignee"], "prativadi");
+    assert_eq!(cand["phase"], "spec");
+    assert_eq!(cand["question"], Value::Null, "resume clears the question");
+    assert_eq!(
+        cand["resume_assignee"],
+        Value::Null,
+        "resume clears resume_assignee"
+    );
+    assert_eq!(
+        cand["resume_status"],
+        Value::Null,
+        "resume clears resume_status"
+    );
+
+    // Strongest property: the SAME binary's `write` ACCEPTS the resume candidate.
+    run(&baton, &candidate).assert("write accepts the human_question resume candidate", 0);
+    assert_eq!(read_json(&baton)["checkpoint"], 5);
+}
+
+#[test]
+fn human_decision_lists_human_resume_marker_hand_authored() {
+    // Fix 2b: human_decision authorises ANY non-terminal resume, which `next`
+    // cannot scaffold mechanically. LIST surfaces a `human_resume` marker so the
+    // edge is honest, and generate rejects it with hand-authoring guidance.
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    make_baton_v2(&baton, "human_decision", "human", 4, |b| {
+        b["phase"] = Value::from("spec");
+    });
+
+    let (list_code, list_out, list_err) = run_next(&["--file", baton.to_str().unwrap()]);
+    assert_eq!(list_code, 0, "list exits 0\nstderr:\n{list_err}");
+    assert!(
+        list_out.contains("DVANDVA_NEXT human_resume owner=human phase=same"),
+        "human_decision list surfaces the hand-authored resume marker\n{list_out}"
+    );
+
+    let (code, _stdout, stderr) = run_next(&[
+        "--file",
+        baton.to_str().unwrap(),
+        "--to",
+        "human_resume",
+        "--summary",
+        "x",
+        "--next-action",
+        "y",
+    ]);
+    assert_eq!(code, 2, "human_resume is not machine-generatable");
+    assert!(
+        stderr.contains("hand-authored") && stderr.contains("baton.next.json"),
+        "the rejection guides toward hand-authoring the candidate file\n{stderr}"
+    );
+}

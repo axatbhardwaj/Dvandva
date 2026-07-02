@@ -813,11 +813,15 @@ fn whitelist_targets(
 
 /// The legal next transitions from `current`, derived from the same whitelists
 /// and precedence the validator uses. See [`TransitionOption`] for what is and
-/// is not reflected. Advancement/entry into a numeric phase is EXACT under F9:
-/// the emitted entry state is pinned to the TARGET phase's effective profile
-/// (`implementing` for a standard next phase, `parallel_implementing` for a full
-/// one), so a phase_profiles override on the next phase is reflected here rather
-/// than left for the caller to refine.
+/// is not reflected. Advancement/entry into a numeric phase is an
+/// over-approximation under F9: for a numeric source the entry state is pinned to
+/// the (single) next phase's effective profile, but at the `spec_review` boundary
+/// an amendment exit can re-enter ANY phase in `[amendment_from_phase,
+/// total_phases]`, whose effective profiles may span both `standard` and `full`.
+/// Both entry states are then offered (`implementing` for a reachable standard
+/// re-entry phase, `parallel_implementing` for a full one); the caller supplies
+/// `--phase N` and the validator arbitrates which entry state that specific phase
+/// actually demands.
 #[allow(dead_code)]
 pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
     let schema = str_field(current, "schema");
@@ -843,22 +847,44 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
     let cur_locked = bool_field(current, "master_plan_locked");
 
     // Edge-selection profile mirrors decide_transition: numeric-source states use
-    // the current phase's effective profile; the spec_review entry/amendment-exit
-    // boundary uses the TARGET phase's effective profile (phase 1, or the active
-    // amendment's from-phase on re-entry) so the enumerated entry state matches
-    // the next phase; everything else uses the run profile.
-    let spec_entry_target = cur_amendment.or(Some(1));
+    // the current phase's effective profile; everything else uses the run profile.
+    // The spec_review boundary is handled specially below — its entry state is
+    // keyed to the TARGET phase's profile, and an amendment exit can span both
+    // profiles across the reachable re-entry range `[amendment_from_phase,
+    // total_phases]`.
+    let at_spec_entry = is_v2 && cur_eff_mode == "development" && cur_status == "spec_review";
     let edge_profile = if is_v2 && is_numeric_phase_status(&cur_status) {
         effective_phase_profile(current, cur_phase_num, &run_profile)
-    } else if is_v2 && cur_eff_mode == "development" && cur_status == "spec_review" {
-        effective_phase_profile(current, spec_entry_target, &run_profile)
     } else {
         run_profile.clone()
+    };
+    // The distinct effective profiles reachable from the spec_review entry; drives
+    // which entry states (implementing/parallel_implementing) are offered.
+    let reentry_profiles = if at_spec_entry {
+        spec_entry_reentry_profiles(current, cur_amendment, &run_profile)
+    } else {
+        Vec::new()
     };
 
     let mut out: Vec<TransitionOption> = Vec::new();
 
-    for new_status in whitelist_targets(&schema, &cur_eff_mode, &edge_profile, &cur_status) {
+    // At the spec_review boundary the entry state is keyed to the TARGET phase's
+    // profile, and the reachable re-entry phases can span both profiles, so union
+    // both whitelists and let the per-entry-state reachability filter below decide
+    // which entry states surface. Every other source uses its single edge profile.
+    let targets: Vec<String> = if at_spec_entry {
+        let mut t = whitelist_targets(&schema, &cur_eff_mode, "full", &cur_status);
+        for s in whitelist_targets(&schema, &cur_eff_mode, "standard", &cur_status) {
+            if !t.contains(&s) {
+                t.push(s);
+            }
+        }
+        t
+    } else {
+        whitelist_targets(&schema, &cur_eff_mode, &edge_profile, &cur_status)
+    };
+
+    for new_status in targets {
         if new_status == cur_status {
             continue;
         }
@@ -866,10 +892,20 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
         let is_enter = is_v2
             && cur_eff_mode == "development"
             && is_amendment_enter_edge(&edge_profile, &cur_status, &new_status);
+        // Amendment exit edge (F7): at spec_review the exit flavour follows the
+        // ENTRY STATE's own profile (implementing<=>standard,
+        // parallel_implementing<=>full), so both surface correctly under the union
+        // enumeration; is_amendment_exit_edge still gates cur_status==spec_review,
+        // so this is inert for every numeric source.
+        let exit_profile: &str = match new_status.as_str() {
+            "implementing" => "standard",
+            "parallel_implementing" => "full",
+            _ => edge_profile.as_str(),
+        };
         let is_exit = is_v2
             && cur_eff_mode == "development"
             && cur_amendment.is_some()
-            && is_amendment_exit_edge(&edge_profile, &cur_status, &new_status);
+            && is_amendment_exit_edge(exit_profile, &cur_status, &new_status);
 
         let loop_edge = format!("{cur_status}:{new_status}");
         let (loop_key, drop) = if is_enter {
@@ -886,11 +922,7 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
 
         let to_phase = classify_phase_move(&cur_status, &new_status, is_enter);
         // F9: pin an advancement/entry to the TARGET phase's entry state
-        // (implementing <=> standard, parallel_implementing <=> full). For a
-        // numeric source both entry states surface under the source profile; the
-        // next phase (N+1) fixes which one is legal. The spec_review boundary is
-        // already enumerated under the target profile above, so it keeps its
-        // single state.
+        // (implementing <=> standard, parallel_implementing <=> full).
         if is_v2
             && cur_eff_mode == "development"
             && to_phase == PhaseMove::Advance
@@ -899,19 +931,30 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
                 "implementing" | "parallel_implementing"
             )
         {
-            let target = if cur_status == "spec_review" {
-                spec_entry_target
+            if at_spec_entry {
+                // Offer an entry state iff some reachable re-entry phase carries its
+                // profile; when the range spans both profiles, both are legal and
+                // the caller's `--phase N` selects which the validator accepts.
+                let want_profile = if new_status == "parallel_implementing" {
+                    "full"
+                } else {
+                    "standard"
+                };
+                if !reentry_profiles.iter().any(|p| p == want_profile) {
+                    continue;
+                }
             } else {
-                cur_phase_num.map(|n| n + 1)
-            };
-            let target_eff = effective_phase_profile(current, target, &run_profile);
-            let want = if target_eff == "full" {
-                "parallel_implementing"
-            } else {
-                "implementing"
-            };
-            if new_status.as_str() != want {
-                continue;
+                // Numeric source: the single next phase (N+1) fixes the entry state.
+                let target = cur_phase_num.map(|n| n + 1);
+                let target_eff = effective_phase_profile(current, target, &run_profile);
+                let want = if target_eff == "full" {
+                    "parallel_implementing"
+                } else {
+                    "implementing"
+                };
+                if new_status.as_str() != want {
+                    continue;
+                }
             }
         }
         let (assignee, active_roles) = owner_for(&schema, &cur_mode, &edge_profile, &new_status);
@@ -975,6 +1018,44 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
     {
         out.push(TransitionOption {
             to_status: "human_question".to_string(),
+            to_phase: PhaseMove::Same,
+            assignee: "human".to_string(),
+            active_roles: Vec::new(),
+            review_target: None,
+            loop_key: None,
+            sets_amendment_from_phase: None,
+            clears_amendment: false,
+        });
+    }
+
+    // Human-question resume (F2): restore the recorded (resume_status,
+    // resume_assignee) and clear the question/resume fields — exactly the edge
+    // decide_transition accepts, so `next` can always generate it. Skipped for the
+    // illegal direct-to-done resume and when the resume fields are absent.
+    if cur_status == "human_question" {
+        let resume_status = str_field(current, "resume_status");
+        let resume_assignee = str_field(current, "resume_assignee");
+        if !resume_status.is_empty() && resume_status != "done" && !resume_assignee.is_empty() {
+            out.push(TransitionOption {
+                to_status: resume_status.clone(),
+                to_phase: classify_phase_move(&cur_status, &resume_status, false),
+                assignee: resume_assignee,
+                active_roles: Vec::new(),
+                review_target: review_target_for(&resume_status),
+                loop_key: None,
+                sets_amendment_from_phase: None,
+                clears_amendment: false,
+            });
+        }
+    }
+
+    // Human-decision resume (F2): the engine authorises ANY non-terminal resume
+    // from human_decision, which `next` cannot scaffold mechanically. Surface a
+    // `human_resume` marker so LIST is honest that the edge exists; `next`'s
+    // generate rejects `--to human_resume` with hand-authoring guidance.
+    if cur_status == "human_decision" {
+        out.push(TransitionOption {
+            to_status: "human_resume".to_string(),
             to_phase: PhaseMove::Same,
             assignee: "human".to_string(),
             active_roles: Vec::new(),
@@ -1094,6 +1175,34 @@ fn phase_profile_override(doc: &Value, phase_num: Option<i64>) -> Option<String>
 /// Effective profile of numeric phase `phase_num` = `phase_profiles[N]` // fallback.
 fn effective_phase_profile(doc: &Value, phase_num: Option<i64>, fallback: &str) -> String {
     phase_profile_override(doc, phase_num).unwrap_or_else(|| fallback.to_string())
+}
+
+/// The distinct effective profiles across every phase a `spec_review` entry can
+/// re-enter: during an active amendment the re-entry range is
+/// `[amendment_from_phase, total_phases]`; otherwise the initial entry lands in
+/// phase 1. Because a re-profiled phase in that range may differ from the
+/// amendment's from-phase, the set can span BOTH `standard` and `full`, in which
+/// case both entry states are legal from `spec_review`.
+#[allow(dead_code)]
+fn spec_entry_reentry_profiles(
+    current: &Value,
+    cur_amendment: Option<i64>,
+    run_profile: &str,
+) -> Vec<String> {
+    let phases: Vec<i64> = match cur_amendment {
+        Some(from) => {
+            let total = total_phases_num(current).unwrap_or(from).max(from);
+            (from..=total).collect()
+        }
+        None => vec![1],
+    };
+    let mut profiles: Vec<String> = phases
+        .iter()
+        .map(|p| effective_phase_profile(current, Some(*p), run_profile))
+        .collect();
+    profiles.sort();
+    profiles.dedup();
+    profiles
 }
 
 /// The work_split chunk paths (paths/read_paths/write_paths) declared for the
@@ -1414,6 +1523,26 @@ fn decide_transition(
             23,
             format!("DVANDVA_WRITE bad_phase_profiles candidate={cf}"),
         ));
+    }
+
+    // ---- Fix 3: numeric phase never exceeds total_phases -------------------
+    // A numeric phase is 1-indexed within [1, total_phases]. The F7 amendment
+    // loop is the one path that can LOWER total_phases, so an exit could otherwise
+    // re-enter a phase above the (now smaller) ceiling ("phase 2 of 1"). Guarded
+    // for every numeric development candidate; total_phases == 0 is the pre-lock
+    // "no ceiling yet" sentinel and imposes no bound, and human_decision is a
+    // human-authority wildcard.
+    if cx.is_v2 && cx.new_effective_mode == "development" && cx.new_status != "human_decision" {
+        if let (Some(p), Some(t)) = (new_phase_num, total_phases_num(cand)) {
+            if t >= 1 && p > t {
+                return Err((
+                    23,
+                    format!(
+                        "DVANDVA_WRITE bad_amendment phase_exceeds_total_phases phase={p} total_phases={t} candidate={cf}"
+                    ),
+                ));
+            }
+        }
     }
 
     // ---- approval gate reason ----------------------------------------------
@@ -2192,6 +2321,16 @@ fn amendment_from_phase_shape_ok(cand: &Value) -> bool {
 fn amendment_value(doc: &Value) -> Option<i64> {
     match field(doc, "amendment_from_phase") {
         Some(Value::Number(n)) => n.as_i64(),
+        _ => None,
+    }
+}
+
+/// The numeric `total_phases` value (number, or a stringified integer), or None
+/// when unset/non-numeric. `0` is the pre-lock "no ceiling yet" sentinel.
+fn total_phases_num(doc: &Value) -> Option<i64> {
+    match field(doc, "total_phases") {
+        Some(Value::Number(n)) => n.as_i64(),
+        Some(Value::String(s)) => s.parse::<i64>().ok(),
         _ => None,
     }
 }

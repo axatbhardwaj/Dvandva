@@ -208,6 +208,24 @@ fn block_message_names_next_and_write() {
     );
 }
 
+#[test]
+fn block_message_documents_candidate_and_human_resume() {
+    // Fix 2a: the block guidance is complete — it names the candidate file to edit
+    // (baton.next.json, never baton.json) and the human_question/human_decision
+    // resume path that requires hand-authoring that candidate.
+    let out = run_guard(payload("Edit", "/repo/.dvandva/baton.json").as_bytes());
+    assert_blocked(&out);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("baton.next.json"),
+        "stderr should name the candidate file to edit, got: {stderr}"
+    );
+    assert!(
+        stderr.contains("human_question") || stderr.contains("human_decision"),
+        "stderr should document the human resume path, got: {stderr}"
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Plugin hook wiring
 // ---------------------------------------------------------------------------
@@ -227,6 +245,12 @@ fn hooks_json_registers_pretooluse_matcher_and_command() {
         .expect("plugins/dvandva/hooks/hooks.json should exist");
     let value: Value = serde_json::from_slice(&bytes)
         .expect("plugins/dvandva/hooks/hooks.json should parse as JSON");
+
+    // Fix 2c: the top-level object carries no non-schema `description` key.
+    assert!(
+        value.get("description").is_none(),
+        "hooks.json should not carry a non-schema top-level description key, got: {value}"
+    );
 
     let pre_tool_use = value["hooks"]["PreToolUse"]
         .as_array()

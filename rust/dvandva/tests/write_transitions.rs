@@ -2214,6 +2214,34 @@ fn f7_amendment_reentry_below_from_phase_illegal() {
     );
 }
 
+/// Fix 3: a numeric phase can never exceed total_phases. The amendment loop is
+/// the one path that can LOWER total_phases, so an exit could otherwise re-enter a
+/// phase above the (now smaller) ceiling ("phase 2 of 1"). Guarded with a
+/// 23/bad_amendment reason.
+#[test]
+fn f7_amendment_exit_phase_above_total_phases_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "spec_review", "prativadi", 4, |v| {
+        standard_profile(v);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(1);
+        v["amendment_from_phase"] = json!(1);
+    });
+    make_baton_v2(&n, "implementing", "vadi", 5, |v| {
+        standard_profile(v);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(1);
+        // Re-entry at phase 2 while total_phases was lowered to 1.
+        v["phase"] = json!(2);
+    });
+    run(&b, &n).assert_contains(
+        "f7 amendment exit into phase above total_phases rejected",
+        23,
+        "phase_exceeds_total_phases",
+    );
+}
+
 /// The amendment_from_phase value cannot be changed mid-loop.
 #[test]
 fn f7_amendment_loop_cannot_change_from_phase() {

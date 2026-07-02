@@ -10,7 +10,7 @@ use serde_json::Value;
 use std::path::Component;
 
 /// The message printed to stderr when a tool call is blocked.
-pub const BLOCK_MESSAGE: &str = "dvandva baton-guard: direct edits to the Dvandva baton are blocked. Use `dvandva next` to scaffold a candidate baton, then `dvandva write` to install it — never edit the baton (or its history) directly.";
+pub const BLOCK_MESSAGE: &str = "dvandva baton-guard: direct edits to the Dvandva baton are blocked. Scaffold a candidate with `dvandva next` (it lists and generates the legal edges) and install it with `dvandva write` — never edit baton.json or its history directly. For a human_question or human_decision resume (which `dvandva next` may not scaffold), edit the CANDIDATE file (baton.next.json, never baton.json) to the intended non-terminal state, then run `dvandva write`.";
 
 /// Tool names this guard inspects. Any other `tool_name` is allowed without
 /// inspection.

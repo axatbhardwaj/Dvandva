@@ -5,7 +5,11 @@
 //! copy of the transition rules: both modes drive the SAME `pub(crate)` surface
 //! that `dvandva write` validates with
 //! ([`crate::write::legal_transitions`] / [`crate::write::validate_candidate`]),
-//! so a generated candidate cannot desync from the engine.
+//! and every generated candidate is re-validated by that engine in-process before
+//! it is emitted. The LIST surface over-approximates (it may offer an edge the
+//! validator later refines — e.g. a spec-entry state that only one reachable
+//! target phase accepts), so the in-process validate step, not the LIST, is the
+//! single arbiter of what actually installs.
 //!
 //! * LIST mode (`dvandva next [--file <baton>] [--role <r>]`): resolve the
 //!   baton, read it leniently, and print one line per legal transition from the
@@ -174,6 +178,16 @@ fn phase_move_token(move_: PhaseMove) -> &'static str {
 // ===========================================================================
 fn run_generate(baton_file: &Path, baton: &Value, args: &Args) -> i32 {
     let to = args.to.as_deref().unwrap_or_default();
+
+    // Human-decision resumes are hand-authored: `dvandva next` surfaces the
+    // `human_resume` marker in LIST but cannot scaffold the (arbitrary
+    // non-terminal) target. Guide the user to the candidate file instead.
+    if to == "human_resume" {
+        eprintln!(
+            "DVANDVA_NEXT human_resume: a resume from human_decision is hand-authored. Edit the CANDIDATE file (baton.next.json — never baton.json) to the intended non-terminal state, then run `dvandva write`."
+        );
+        return 2;
+    }
 
     // --summary / --next-action are always required.
     let (summary, next_action) = match (args.summary.as_deref(), args.next_action.as_deref()) {
