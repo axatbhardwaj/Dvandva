@@ -175,4 +175,4 @@ The vadi addresses prativadi research findings:
 | Reaching `done` from `seed_development` without a plan | `research_outcome: "seed_development"` requires `plan_ref` before terminal completion. |
 | Combining tests and review | Keep `test_creation` and `deep_review` as separate responsibilities. |
 | Shipping low-quality residue | Run `deslop` until nits, low/minor bugs, and stale wording are fixed or explicitly accepted in `deferred`. |
-| Pasting full baton arrays into research checkpoints | Surface `BATON_STATE_COMPACT` (`dvandva-state.sh --compact`) and cite `research_ref`/refs and counts; read the authoritative full `baton.json` before any state-changing write or handoff. |
+| Pasting full baton arrays into research checkpoints | Surface `BATON_STATE_COMPACT` (`dvandva state --compact`) and cite `research_ref`/refs and counts; read the authoritative full `baton.json` before any state-changing write or handoff. |
