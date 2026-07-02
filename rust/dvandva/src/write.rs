@@ -696,6 +696,41 @@ pub(crate) fn expected_owner(
     (assignee, active_roles)
 }
 
+/// The exact `phase` value the engine's [`phase_status_ok`] requires for a
+/// `(mode, status)` pair, given the CURRENT baton phase. This is the single
+/// engine-owned producer `dvandva next` consumes so a generated candidate's
+/// phase can never desync from what the validator demands.
+///
+/// Derived from the SAME decision tree `phase_status_ok` validates (`mode` is
+/// canonicalised internally, exactly as the shape validator feeds it the
+/// effective mode):
+/// * development/research planning statuses resolve to `"research"` / `"spec"`.
+/// * EVERY status in `review` mode resolves to `"review"`.
+/// * `human_question` / `human_decision`, numeric-phase statuses, and any
+///   unrecognised pairing preserve `current_phase` — the engine accepts any
+///   phase there, and the moves that reach them are either same-phase (preserve)
+///   or a numeric advancement whose target number is the caller's `--phase N`,
+///   which this producer does not synthesise.
+#[allow(dead_code)]
+pub(crate) fn expected_phase_for(mode: &str, status: &str, current_phase: &Value) -> Value {
+    let effective = canonical_mode(mode);
+    match (effective.as_deref(), status) {
+        (_, "human_question") | (_, "human_decision") => current_phase.clone(),
+        (Some("development"), "research_drafting" | "research_review" | "research_revision") => {
+            Value::from("research")
+        }
+        (Some("development"), "spec_drafting" | "spec_review" | "spec_revision") => {
+            Value::from("spec")
+        }
+        (Some("research"), "research_drafting" | "research_review" | "research_revision") => {
+            Value::from("research")
+        }
+        (Some("research"), _) => Value::from("spec"),
+        (Some("review"), _) => Value::from("review"),
+        _ => current_phase.clone(),
+    }
+}
+
 /// Run the full write validation pipeline against an in-memory current baton,
 /// WITHOUT acquiring the lock, installing, or writing a snapshot.
 ///

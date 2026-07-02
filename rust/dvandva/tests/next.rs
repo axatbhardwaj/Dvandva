@@ -133,6 +133,100 @@ fn generate_research_review_happy_path_and_write_accepts_it() {
 }
 
 #[test]
+fn review_mode_list_and_generate_roundtrip() {
+    // H1 regression pin: a review-mode baton pins EVERY status to phase="review"
+    // (the engine's phase_status_ok demands is_str("review") for ("review", _)).
+    // LIST must show research_review as legal, and GENERATE must emit a candidate
+    // `dvandva write` ACCEPTS — i.e. its phase is "review", not "research".
+    // Before the fix, generate reconstructed phase="research" mode-blindly and the
+    // engine rejected the candidate with exit 23 (bad_phase_status).
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    let candidate = dir.path().join("baton.next.json");
+    make_baton_v2(&baton, "research_drafting", "vadi", 0, |b| {
+        b["mode"] = Value::from("review");
+        b["phase"] = Value::from("review");
+    });
+
+    // LIST shows research_review is legal from a review-mode research_drafting.
+    let (list_code, list_out, list_err) = run_next(&["--file", baton.to_str().unwrap()]);
+    assert_eq!(list_code, 0, "list exits 0\nstderr:\n{list_err}");
+    assert!(
+        list_out.contains("DVANDVA_NEXT research_review owner=prativadi"),
+        "review-mode list shows research_review\n{list_out}"
+    );
+
+    // GENERATE the research_review candidate.
+    let (code, stdout, stderr) = run_next(&[
+        "--file",
+        baton.to_str().unwrap(),
+        "--to",
+        "research_review",
+        "--summary",
+        "Research drafted; handing to prativadi for review.",
+        "--next-action",
+        "prativadi: run research_review against the artifact.",
+    ]);
+    assert_eq!(code, 0, "review-mode generate exits 0\nstderr:\n{stderr}");
+    assert!(
+        stdout.contains("to=research_review checkpoint=1"),
+        "ok line names the target + checkpoint\n{stdout}"
+    );
+
+    let cand = read_json(&candidate);
+    assert_eq!(cand["status"], "research_review");
+    assert_eq!(cand["assignee"], "prativadi");
+    // The crux: review mode pins the phase to "review", NOT "research".
+    assert_eq!(
+        cand["phase"], "review",
+        "review-mode candidate carries phase=review, matching phase_status_ok"
+    );
+
+    // Strongest property: the SAME binary's `write` accepts the generated file.
+    run(&baton, &candidate).assert("write accepts the review-mode research_review candidate", 0);
+    assert_eq!(read_json(&baton)["checkpoint"], 1);
+}
+
+#[test]
+fn research_mode_generate_keeps_research_phase() {
+    // Research-mode guard: a research-mode baton keeps its (correct) behavior of
+    // pinning research_* statuses to phase="research". Locks in that the H1 fix
+    // does not regress research mode.
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    let candidate = dir.path().join("baton.next.json");
+    make_baton_v2(&baton, "research_drafting", "vadi", 0, |b| {
+        b["mode"] = Value::from("research");
+        b["phase"] = Value::from("research");
+    });
+
+    let (code, _stdout, stderr) = run_next(&[
+        "--file",
+        baton.to_str().unwrap(),
+        "--to",
+        "research_review",
+        "--summary",
+        "Research drafted; handing to prativadi for review.",
+        "--next-action",
+        "prativadi: run research_review against the artifact.",
+    ]);
+    assert_eq!(code, 0, "research-mode generate exits 0\nstderr:\n{stderr}");
+
+    let cand = read_json(&candidate);
+    assert_eq!(cand["status"], "research_review");
+    assert_eq!(
+        cand["phase"], "research",
+        "research-mode research_review keeps phase=research"
+    );
+
+    run(&baton, &candidate).assert(
+        "write accepts the research-mode research_review candidate",
+        0,
+    );
+    assert_eq!(read_json(&baton)["checkpoint"], 1);
+}
+
+#[test]
 fn generate_loop_edge_increments_loop_counts() {
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
@@ -259,6 +353,11 @@ fn generate_human_question_requires_resume_flags() {
     assert_eq!(cand["question"], "Should feature X be in scope?");
     assert_eq!(cand["resume_assignee"], "vadi");
     assert_eq!(cand["resume_status"], "research_drafting");
+
+    // M1: prove `dvandva write` ACCEPTS the emitted human_question candidate
+    // (parity with the other three edge classes), and installs it at checkpoint 1.
+    run(&baton, &candidate).assert("write accepts the generated human_question candidate", 0);
+    assert_eq!(read_json(&baton)["checkpoint"], 1);
 }
 
 #[test]

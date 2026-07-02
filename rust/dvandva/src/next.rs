@@ -21,7 +21,9 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 
 use crate::util::{self, is_safe_run_id};
-use crate::write::{legal_transitions, validate_candidate, PhaseMove, TransitionOption};
+use crate::write::{
+    expected_phase_for, legal_transitions, validate_candidate, PhaseMove, TransitionOption,
+};
 
 const USAGE: &str = "\
 Usage:
@@ -232,11 +234,16 @@ fn run_generate(baton_file: &Path, baton: &Value, args: &Args) -> i32 {
             }
         },
         PhaseMove::Spec => {
-            if is_research_status(to) {
-                Value::from("research")
-            } else {
-                Value::from("spec")
-            }
+            // Consume the engine-owned phase producer: the planning-phase value is
+            // MODE-AWARE (development/research resolve research_*/spec_* to
+            // "research"/"spec"; review mode pins every status to "review"), so the
+            // candidate's phase can never desync from what phase_status_ok demands.
+            let mode = baton
+                .get("mode")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let current_phase = baton.get("phase").cloned().unwrap_or(Value::Null);
+            expected_phase_for(mode, to, &current_phase)
         }
         PhaseMove::Same => baton.get("phase").cloned().unwrap_or(Value::Null),
     };
@@ -363,13 +370,6 @@ fn apply_loop_counts(candidate: &mut Value, baton: &Value, option: &TransitionOp
 // ===========================================================================
 // helpers
 // ===========================================================================
-fn is_research_status(status: &str) -> bool {
-    matches!(
-        status,
-        "research_drafting" | "research_review" | "research_revision"
-    )
-}
-
 /// jq `-r` render of an optional phase field (`null`/absent -> "null").
 fn phase_string(value: Option<&Value>) -> String {
     match value {
