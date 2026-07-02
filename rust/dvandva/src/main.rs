@@ -27,9 +27,9 @@ const USAGE: &str = "\
 Usage: dvandva <subcommand> [args...]
        dvandva --version
 
-Runtime:   state | resolve | write | wait | snapshot
+ resolve | resolve | write | wait | snapshot
 Preflight: preflight | hook-preflight
-Git gate:  commit-gate | drift-lint | install-hooks | git-hook <name>
+Git gate:  commit-gate | drift-lint | install-hooks | git-hook <name> | baton-guard
 Install:   install | install-codex | smoke-install | retire-agents
 Lints:     lint <artifacts|skills|protocol-phase1|skill-phase3|phase4-research|
                  run3-dynamic-agents|run4-path-gates|run4-standalone-agents>
@@ -70,6 +70,9 @@ fn main() -> ExitCode {
 
     let code = match subcommand {
         Some("state") => cmd::state::run(sub_args),
+        Some("next") => cmd::next::run(sub_args),
+        Some("brief") => cmd::brief::run(sub_args),
+        Some("baton-guard") => cmd::baton_guard::run(sub_args),
         Some("resolve") => cmd::resolve::run(sub_args),
         Some("write") => cmd::write::run(sub_args),
         Some("wait") => cmd::wait::run(sub_args),

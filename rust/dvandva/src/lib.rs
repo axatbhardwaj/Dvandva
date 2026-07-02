@@ -15,6 +15,8 @@
 //! parent-of-parent directory of `argv[0]`.
 
 pub mod baton;
+pub mod baton_guard;
+pub mod brief;
 pub mod commit_gate;
 pub mod drift_lint;
 pub mod emit;
@@ -25,6 +27,7 @@ pub mod install_hooks;
 pub mod installers;
 pub mod lint;
 pub mod lock;
+pub mod next;
 pub mod preflight;
 pub mod resolve;
 pub mod retire;
