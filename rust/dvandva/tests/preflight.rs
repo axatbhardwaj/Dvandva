@@ -1,0 +1,452 @@
+//! Integration tests for the `dvandva preflight` subcommand, porting
+//! `scripts/test-dvandva-preflight.sh`.
+//!
+//! RE-KEY (whole-file): the shell suite's `stage_stubbed_runtime` section
+//! (its "resolved path" / "ask" / "ask-with-stderr" / "create" /
+//! "role-mismatch" cases at lines 39-144) replaced `dvandva-resolve.sh` and
+//! `dvandva-hook-preflight.sh` with FAKE scripts to test the outer
+//! orchestrator's dispatch logic in isolation from the real resolver/hook
+//! stage. Post-port there is no subprocess indirection to stub: `preflight`
+//! calls `dvandva::resolve::resolve_active_run` and
+//! `dvandva::hook_preflight::run_hook_preflight` in-process as ordinary
+//! function calls, so the orchestrator and the real resolver/hook stage
+//! cannot be exercised separately. Every stubbed case is re-keyed below to
+//! the equivalent REAL-repo integration test (`real_resolved_*`,
+//! `real_ask_*`, `real_ask_corrupt_*`, `real_create_*`,
+//! `real_role_mismatch_*`), extending the shell suite's own "Real
+//! integration" section (lines 146-231) to also cover role-mismatch and
+//! corrupt-baton-stderr, which that section didn't.
+//!
+//! DROPPED: the "vadi and prativadi turn/hook-stage preflight helpers are
+//! byte-identical" cases (lines 56-68) — post-port there is exactly one
+//! compiled binary handling both roles via `--role`, so no per-role script
+//! pair exists to compare.
+
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
+
+fn bin() -> PathBuf {
+    PathBuf::from(env!("CARGO_BIN_EXE_dvandva"))
+}
+
+/// A command with an isolated git environment and no ambient Dvandva vars.
+fn base_cmd<P: AsRef<std::ffi::OsStr>>(program: P) -> Command {
+    let mut cmd = Command::new(program);
+    cmd.env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env_remove("DVANDVA_ROLE")
+        .env_remove("DVANDVA_HOOK_SELFCHECK")
+        .env_remove("DVANDVA_HOOK_PREFLIGHT")
+        .env_remove("DVANDVA_BATON_FILE")
+        .env_remove("DVANDVA_RUN_DIR")
+        .env_remove("DVANDVA_RUN_ID");
+    cmd
+}
+
+fn git(repo: &Path, args: &[&str]) -> Output {
+    base_cmd("git")
+        .arg("-C")
+        .arg(repo)
+        .args(args)
+        .output()
+        .expect("git invocation")
+}
+
+fn init_repo(dir: &Path) {
+    fs::create_dir_all(dir).unwrap();
+    assert!(git(dir, &["init", "-q"]).status.success(), "git init");
+    git(dir, &["config", "user.email", "test@dvandva.test"]);
+    git(dir, &["config", "user.name", "Dvandva Test"]);
+    git(dir, &["config", "commit.gpgsign", "false"]);
+    fs::write(dir.join(".gitkeep"), "").unwrap();
+    git(dir, &["add", ".gitkeep"]);
+    assert!(
+        git(dir, &["commit", "-q", "-m", "initial"])
+            .status
+            .success(),
+        "initial commit"
+    );
+}
+
+fn write_baton(path: &Path, run_id: &str, status: &str, updated_at: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        path,
+        format!(
+            r#"{{"run_id":"{run_id}","status":"{status}","assignee":"vadi","updated_at":"{updated_at}"}}"#
+        ),
+    )
+    .unwrap();
+}
+
+/// Run `dvandva preflight <extra...>` with cwd set to `repo`.
+fn preflight(repo: &Path, role: Option<&str>, extra: &[&str]) -> Output {
+    let mut cmd = base_cmd(bin());
+    cmd.arg("preflight").args(extra).current_dir(repo);
+    if let Some(role) = role {
+        cmd.env("DVANDVA_ROLE", role);
+    }
+    cmd.output().expect("dvandva preflight")
+}
+
+fn code(out: &Output) -> i32 {
+    out.status.code().unwrap_or(-1)
+}
+
+fn stdout(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stdout).into_owned()
+}
+
+fn stderr(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+fn cfg_read(repo: &Path, key: &str) -> String {
+    let wt = git(repo, &["config", "--bool", "extensions.worktreeConfig"]);
+    if String::from_utf8_lossy(&wt.stdout).trim() == "true" {
+        let out = git(repo, &["config", "--worktree", "--get", key]);
+        if out.status.success() {
+            return String::from_utf8_lossy(&out.stdout).trim().to_string();
+        }
+    }
+    let out = git(repo, &["config", "--local", "--get", key]);
+    if out.status.success() {
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    } else {
+        String::new()
+    }
+}
+
+const HOOK_REL: &str = ".dvandva/githooks";
+
+// ===========================================================================
+// RESOLVED: a single resumable run drives the hook stage in-process.
+// ===========================================================================
+
+// (re-key of the stubbed "resolved path" cases, lines 70-82) — a real repo
+// with exactly one resumable baton resolves via discovery, prints the
+// canonical baton path / run_id / selected_by=discovery, then runs the hook
+// stage to completion (result=ok), adopting the delegated wrapper.
+#[test]
+fn real_resolved_runs_hook_stage_to_ok() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    write_baton(
+        &repo.join(".dvandva/runs/accuracy/baton.json"),
+        "accuracy",
+        "in_progress",
+        "2026-06-29T00:00:00Z",
+    );
+
+    let out = preflight(repo, Some("vadi"), &["--role", "vadi"]);
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("DVANDVA_PREFLIGHT"), "stdout: {text}");
+    assert!(text.contains("result=resolved"), "stdout: {text}");
+    assert!(
+        text.contains(&format!(
+            "baton={}",
+            repo.join(".dvandva/runs/accuracy/baton.json")
+                .canonicalize()
+                .unwrap()
+                .display()
+        )),
+        "stdout: {text}"
+    );
+    assert!(text.contains("run_id=accuracy"), "stdout: {text}");
+    assert!(text.contains("selected_by=discovery"), "stdout: {text}");
+    assert!(text.contains("DVANDVA_HOOK_PREFLIGHT"), "stdout: {text}");
+    assert!(text.contains("result=ok"), "stdout: {text}");
+    assert_eq!(cfg_read(repo, "core.hooksPath"), HOOK_REL);
+}
+
+// (re-key) an explicit DVANDVA_RUN_ID selector short-circuits discovery and
+// is reported via selected_by=DVANDVA_RUN_ID.
+#[test]
+fn real_resolved_via_explicit_run_id_reports_selector() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    write_baton(
+        &repo.join(".dvandva/runs/accuracy/baton.json"),
+        "accuracy",
+        "in_progress",
+        "2026-06-29T00:00:00Z",
+    );
+    write_baton(
+        &repo.join(".dvandva/runs/other/baton.json"),
+        "other",
+        "in_progress",
+        "2026-06-29T01:00:00Z",
+    );
+
+    let mut cmd = base_cmd(bin());
+    cmd.arg("preflight")
+        .args(["--role", "vadi"])
+        .current_dir(repo)
+        .env("DVANDVA_ROLE", "vadi")
+        .env("DVANDVA_RUN_ID", "accuracy");
+    let out = cmd.output().expect("dvandva preflight");
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("run_id=accuracy"), "stdout: {text}");
+    assert!(
+        text.contains("selected_by=DVANDVA_RUN_ID"),
+        "stdout: {text}"
+    );
+}
+
+// (re-key) a legacy `.dvandva/baton.json` path reports run_id=legacy.
+#[test]
+fn real_resolved_legacy_baton_reports_legacy_run_id() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    write_baton(
+        &repo.join(".dvandva/baton.json"),
+        "legacy-run",
+        "in_progress",
+        "2026-06-29T00:00:00Z",
+    );
+
+    let out = preflight(repo, Some("vadi"), &["--role", "vadi"]);
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("run_id=legacy"),
+        "stdout: {}",
+        stdout(&out)
+    );
+}
+
+// (re-key) `--mode off` threads through to the hook stage: the preflight
+// still resolves and reports result=resolved, but the hook stage reports
+// mode=off / result=off and never adopts the delegated wrapper.
+#[test]
+fn real_resolved_mode_off_skips_hook_adoption() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    write_baton(
+        &repo.join(".dvandva/runs/accuracy/baton.json"),
+        "accuracy",
+        "in_progress",
+        "2026-06-29T00:00:00Z",
+    );
+
+    let out = preflight(repo, Some("vadi"), &["--role", "vadi", "--mode", "off"]);
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("result=resolved"), "stdout: {text}");
+    assert!(text.contains("mode=off"), "stdout: {text}");
+    assert!(text.contains("result=off"), "stdout: {text}");
+    assert_eq!(cfg_read(repo, "core.hooksPath"), "");
+}
+
+// ===========================================================================
+// ASK: more than one resumable run and no explicit selector; the hook stage
+// must never run.
+// ===========================================================================
+
+// (re-key of the stubbed "ask" case, lines 84-98; matches the shell suite's
+// real-integration "real ASK" case, lines 207-219)
+#[test]
+fn real_ask_does_not_run_hook_stage() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    write_baton(
+        &repo.join(".dvandva/runs/aa/baton.json"),
+        "aa",
+        "in_progress",
+        "2026-06-29T00:00:00Z",
+    );
+    write_baton(
+        &repo.join(".dvandva/runs/bb/baton.json"),
+        "bb",
+        "in_progress",
+        "2026-06-29T01:00:00Z",
+    );
+
+    let out = preflight(repo, Some("vadi"), &["--role", "vadi"]);
+    assert_eq!(code(&out), 12, "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("result=ask"),
+        "stdout: {}",
+        stdout(&out)
+    );
+    assert!(
+        !repo.join(".dvandva/githooks").exists(),
+        "ask must not run the hook stage"
+    );
+}
+
+// (re-key of the stubbed "ask-with-stderr" case, lines 100-111) — a corrupt
+// baton fails discovery closed (ASK []) and the resolver's own diagnostic
+// (not the stub's synthetic text) is surfaced on stderr.
+#[test]
+fn real_ask_corrupt_baton_surfaces_resolver_diagnostic() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    write_baton(
+        &repo.join(".dvandva/runs/aa/baton.json"),
+        "aa",
+        "in_progress",
+        "2026-06-29T00:00:00Z",
+    );
+    let corrupt = repo.join(".dvandva/runs/corrupt/baton.json");
+    fs::create_dir_all(corrupt.parent().unwrap()).unwrap();
+    fs::write(&corrupt, "{ not valid json\n").unwrap();
+
+    let out = preflight(repo, Some("vadi"), &["--role", "vadi"]);
+    assert_eq!(code(&out), 12, "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("result=ask"),
+        "stdout: {}",
+        stdout(&out)
+    );
+    assert!(
+        stdout(&out).contains("choices=[]"),
+        "stdout: {}",
+        stdout(&out)
+    );
+    let err = stderr(&out);
+    assert!(err.contains("DVANDVA_RESOLVE"), "stderr: {err}");
+    assert!(err.contains("corrupt_baton"), "stderr: {err}");
+    assert!(
+        !repo.join(".dvandva/githooks").exists(),
+        "ask must not run the hook stage"
+    );
+}
+
+// ===========================================================================
+// CREATE: no resumable run; the hook stage must never run.
+// ===========================================================================
+
+// (re-key of the stubbed "create" case, lines 113-128; matches the shell
+// suite's real-integration "real CREATE" case, lines 221-231)
+#[test]
+fn real_create_does_not_run_hook_stage() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+
+    let out = preflight(repo, Some("vadi"), &["--role", "vadi"]);
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("result=create"), "stdout: {text}");
+    assert!(
+        text.contains(&format!(
+            "scaffold={}",
+            repo.canonicalize()
+                .unwrap()
+                .join(".dvandva/runs/run/baton.json")
+                .display()
+        )),
+        "stdout: {text}"
+    );
+    assert!(text.contains("run_id=run"), "stdout: {text}");
+    assert!(
+        !repo.join(".dvandva/githooks").exists(),
+        "create must not run the hook stage"
+    );
+}
+
+// ===========================================================================
+// Role mismatch: DVANDVA_ROLE set and different from --role. The hook stage
+// must never run. (re-key of the stubbed "role-mismatch" case, lines
+// 130-144 — no real-integration equivalent existed in the shell suite.)
+// ===========================================================================
+#[test]
+fn real_role_mismatch_exits_1_without_hook_stage() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    write_baton(
+        &repo.join(".dvandva/runs/accuracy/baton.json"),
+        "accuracy",
+        "in_progress",
+        "2026-06-29T00:00:00Z",
+    );
+
+    let out = preflight(repo, Some("vadi"), &["--role", "prativadi"]);
+    assert_eq!(code(&out), 1, "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("reason=role_mismatch"),
+        "stdout: {}",
+        stdout(&out)
+    );
+    assert!(
+        !repo.join(".dvandva/githooks").exists(),
+        "role mismatch must not run the hook stage"
+    );
+}
+
+// A role matching (or absent) DVANDVA_ROLE proceeds normally.
+#[test]
+fn role_matches_absent_env_role_proceeds() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+
+    let out = preflight(repo, None, &["--role", "prativadi"]);
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    assert!(
+        stdout(&out).contains("result=create"),
+        "stdout: {}",
+        stdout(&out)
+    );
+}
+
+// ===========================================================================
+// CLI / usage contract (new: the shell suite never exercised the argument
+// parser directly, since it ran the script's own internal `usage`/exit-2
+// paths implicitly; mirrors the "CLI / usage contract" section convention
+// established in tests/install_hooks.rs).
+// ===========================================================================
+
+#[test]
+fn missing_role_exits_2() {
+    let out = base_cmd(bin()).args(["preflight"]).output().unwrap();
+    assert_eq!(code(&out), 2);
+    assert!(stderr(&out).contains("Usage"), "stderr: {}", stderr(&out));
+}
+
+#[test]
+fn invalid_role_exits_2() {
+    let out = base_cmd(bin())
+        .args(["preflight", "--role", "team"])
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 2);
+}
+
+#[test]
+fn invalid_mode_exits_2() {
+    let out = base_cmd(bin())
+        .args(["preflight", "--role", "vadi", "--mode", "bogus"])
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 2);
+}
+
+#[test]
+fn unknown_flag_exits_2() {
+    let out = base_cmd(bin())
+        .args(["preflight", "--bogus"])
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 2);
+}
+
+#[test]
+fn help_flag_exits_0() {
+    let out = base_cmd(bin())
+        .args(["preflight", "--help"])
+        .output()
+        .unwrap();
+    assert_eq!(code(&out), 0);
+    assert!(stdout(&out).contains("Usage"), "stdout: {}", stdout(&out));
+}
