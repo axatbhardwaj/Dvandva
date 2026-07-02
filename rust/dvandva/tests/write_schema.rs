@@ -1112,6 +1112,7 @@ fn v2_done_rejects_mismatched_run_explainer() {
 fn v2_done_valid_run_explainer() {
     let d = tmp();
     let (b, n) = paths(&d);
+    seed_done_artifacts(d.path()); // S4-T1
     make_baton_v2(&b, "termination_review", "team", 4, |b| {
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
@@ -1125,6 +1126,7 @@ fn v2_done_valid_run_explainer() {
         b["prativadi_final_approval"] = json!(true);
         run_explainer_reviews(b);
         explainer_verification_track(b); // F10
+        done_matrix_fresh(b); // S4-T6
     });
     run(&b, &n).assert("done valid explainer", 0);
 }
@@ -1135,6 +1137,7 @@ fn v2_done_accepts_date_prefixed_run_id_explainer() {
     let (b, n) = paths(&d);
     let run_id = "2026-06-29-baton-accuracy-hook-coexist";
     let refp = "./superpowers/run-reports/2026-06-29-baton-accuracy-hook-coexist-explainer.html";
+    seed_done_artifacts(d.path()); // S4-T1
     make_baton_v2(&b, "termination_review", "team", 4, |b| {
         b["run_id"] = json!(run_id);
         b["active_roles"] = json!(["vadi", "prativadi"]);
@@ -1150,6 +1153,7 @@ fn v2_done_accepts_date_prefixed_run_id_explainer() {
         b["prativadi_final_approval"] = json!(true);
         date_prefixed_run_explainer_reviews(b);
         explainer_verification_track(b); // F10
+        done_matrix_fresh(b); // S4-T6
     });
     run(&b, &n).assert("date-prefixed explainer", 0);
 }
@@ -1184,6 +1188,7 @@ fn v2_done_accepts_coordinator_assignees() {
     for owner in ["human", "team", "vadi", "prativadi"] {
         let d = tmp();
         let (b, n) = paths(&d);
+        seed_done_artifacts(d.path()); // S4-T1
         make_baton_v2(&b, "termination_review", "team", 4, |b| {
             b["active_roles"] = json!(["vadi", "prativadi"]);
             b["run_explainer_ref"] =
@@ -1199,6 +1204,7 @@ fn v2_done_accepts_coordinator_assignees() {
             b["prativadi_final_approval"] = json!(true);
             run_explainer_reviews(b);
             explainer_verification_track(b); // F10
+            done_matrix_fresh(b); // S4-T6
         });
         run(&b, &n).assert(&format!("done owner {owner}"), 0);
     }
@@ -1322,6 +1328,7 @@ fn v2_done_run_explainer_review_variants_rejected() {
 fn research_done_seed_development_with_plan_ref_legal() {
     let d = tmp();
     let (b, n) = paths(&d);
+    seed_done_artifacts(d.path()); // S4-T1
     make_baton_v2(&b, "termination_review", "team", 4, |b| {
         b["mode"] = json!("research");
         b["phase"] = json!("spec");
@@ -1344,6 +1351,7 @@ fn research_done_seed_development_with_plan_ref_legal() {
 fn research_done_exploratory_needs_only_research_ref() {
     let d = tmp();
     let (b, n) = paths(&d);
+    seed_done_artifacts(d.path()); // S4-T1
     make_baton_v2(&b, "termination_review", "team", 4, |b| {
         b["mode"] = json!("research");
         b["phase"] = json!("spec");
@@ -1391,6 +1399,7 @@ fn research_done_seed_development_missing_plan_ref_exits_23() {
 fn review_done_with_review_ref_legal() {
     let d = tmp();
     let (b, n) = paths(&d);
+    seed_done_artifacts(d.path()); // S4-T1
     make_baton_v2(&b, "termination_review", "team", 4, |b| {
         b["mode"] = json!("review");
         b["phase"] = json!("review");

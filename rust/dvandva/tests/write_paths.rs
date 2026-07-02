@@ -1029,6 +1029,7 @@ fn profile_fast_termination_fixing_edge_legal() {
 fn profile_fast_done_without_explainer_legal() {
     let d = tmp();
     let (b, n) = paths(&d);
+    seed_done_artifacts(d.path()); // S4-T1
     make_baton_v2(&b, "termination_review", "team", 4, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
@@ -1705,6 +1706,7 @@ fn profile_standard_review_termination_edge_legal() {
 fn profile_standard_done_without_explainer_legal() {
     let d = tmp();
     let (b, n) = paths(&d);
+    seed_done_artifacts(d.path()); // S4-T1
     make_baton_v2(&b, "termination_review", "team", 4, |b| {
         standard_profile(b);
         compact_terminal_evidence(b);

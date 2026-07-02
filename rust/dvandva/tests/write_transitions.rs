@@ -106,6 +106,8 @@ fn v2_edges_legal() {
         let (cur, new) = edge.split_once(':').unwrap();
         let d = tmp();
         let (b, n) = paths(&d);
+        // S4-T1: the done gate resolves required refs to real files.
+        seed_done_artifacts(d.path());
         make_baton_v2(&b, cur, v2_status_owner(cur), 4, |v| {
             if cur == "review_of_review" {
                 v["review_target"] = json!("prativadi_fixups");
@@ -177,6 +179,7 @@ fn v2_edges_legal() {
                 v["prativadi_final_approval"] = json!(true);
                 run_explainer_reviews(v);
                 explainer_verification_track(v); // F10
+                done_matrix_fresh(v); // S4-T6
             }
         });
         let name = format!("v2 edge {edge} is legal");
@@ -808,8 +811,10 @@ fn v2_cross_review_deep_review_after_team_sync() {
     make_baton_v2(&n, "cross_review", "team", 5, |v| {
         v["active_roles"] = json!(["vadi", "prativadi"]);
         cross_review_tracks(v);
+        // S4-T4: a same-status team sync must keep the installed peer data —
+        // record the prativadi review role while preserving the seed track.
         if let Some(arr) = v["subagent_tracks"].as_array_mut() {
-            arr.retain(|t| t["owner_role"] == "prativadi");
+            arr.retain(|t| t["owner_role"] == "prativadi" || t["id"] == "startup-controller");
         }
     });
     run(&b, &n).assert(
@@ -1401,6 +1406,8 @@ fn run_mode_edge_case(mode: &str, from_status: &str, to_status: &str) {
     let edge = format!("{from_status}:{to_status}");
     let d = tmp();
     let (b, n) = paths(&d);
+    // S4-T1: research/review done gates resolve required refs to real files.
+    seed_done_artifacts(d.path());
     make_baton_v2(&b, from_status, v2_status_owner(from_status), 4, |v| {
         v2_mode_status_filter(mode, from_status, v);
         if from_status == "termination_review" && to_status == "done" {
@@ -2751,6 +2758,7 @@ fn f10_explainer_verification_missing_rejected() {
 fn f10_explainer_verification_present_accepted() {
     let d = tmp();
     let (b, n) = paths(&d);
+    seed_done_artifacts(d.path()); // S4-T1
     f10_termination(&b);
     make_baton_v2(&n, "done", "team", 5, |v| {
         v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
@@ -2758,6 +2766,7 @@ fn f10_explainer_verification_present_accepted() {
         v["prativadi_final_approval"] = json!(true);
         run_explainer_reviews(v);
         explainer_verification_track(v);
+        done_matrix_fresh(v); // S4-T6
     });
     run(&b, &n).assert("f10 explainer-verification present", 0);
 }
@@ -3264,4 +3273,569 @@ fn s4t7_review_mode_deep_review_to_phase_fixing_accepted() {
         "s4t7 review-mode deep_review->phase_fixing hands fixes back to vadi",
         0,
     );
+}
+
+// ===================== S4-T1: missing_artifact done gate =====================
+
+/// A full-profile dev `done` candidate that clears F10 + S4-T6 (fresh matrix) +
+/// approvals, so the only remaining done gate under test is S4-T1
+/// missing_artifact. Pairs with the `f10_termination` current baton.
+fn full_done_candidate(n: &std::path::Path) {
+    make_baton_v2(n, "done", "team", 5, |v| {
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+        explainer_verification_track(v); // F10
+        done_matrix_fresh(v); // S4-T6
+    });
+}
+
+#[test]
+fn s4t1_dev_full_done_missing_research_ref_file_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    // run_explainer present, research_ref file absent -> research_ref checked first.
+    write_artifact(
+        d.path(),
+        "superpowers/run-reports/2026-06-28-run-a-explainer.html",
+    );
+    f10_termination(&b);
+    full_done_candidate(&n);
+    run(&b, &n).assert_contains(
+        "s4t1 dev full done missing research_ref file",
+        23,
+        "missing_artifact ref=research_ref",
+    );
+}
+
+#[test]
+fn s4t1_dev_full_done_missing_run_explainer_file_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    // research_ref present, run_explainer file absent.
+    write_artifact(d.path(), "superpowers/research/run-a.html");
+    f10_termination(&b);
+    full_done_candidate(&n);
+    run(&b, &n).assert_contains(
+        "s4t1 dev full done missing run_explainer_ref file",
+        23,
+        "missing_artifact ref=run_explainer_ref",
+    );
+}
+
+#[test]
+fn s4t1_dev_full_done_empty_run_explainer_file_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    write_artifact(d.path(), "superpowers/research/run-a.html");
+    // run_explainer exists but is EMPTY -> not a non-empty regular file.
+    let empty = d
+        .path()
+        .join("superpowers/run-reports/2026-06-28-run-a-explainer.html");
+    std::fs::create_dir_all(empty.parent().unwrap()).unwrap();
+    std::fs::write(&empty, b"").unwrap();
+    f10_termination(&b);
+    full_done_candidate(&n);
+    run(&b, &n).assert_contains(
+        "s4t1 dev full done empty run_explainer file",
+        23,
+        "missing_artifact ref=run_explainer_ref",
+    );
+}
+
+#[test]
+fn s4t1_dev_full_done_all_artifacts_present_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    seed_done_artifacts(d.path());
+    f10_termination(&b);
+    full_done_candidate(&n);
+    run(&b, &n).assert("s4t1 dev full done all artifacts present", 0);
+}
+
+#[test]
+fn s4t1_done_ref_resolving_to_directory_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    seed_done_artifacts(d.path());
+    // replace the research_ref target file with a directory: not a regular file.
+    let p = d.path().join("superpowers/research/run-a.html");
+    std::fs::remove_file(&p).unwrap();
+    std::fs::create_dir_all(&p).unwrap();
+    f10_termination(&b);
+    full_done_candidate(&n);
+    run(&b, &n).assert_contains(
+        "s4t1 done ref resolving to a directory",
+        23,
+        "missing_artifact ref=research_ref",
+    );
+}
+
+#[test]
+fn s4t1_dev_compact_done_missing_research_ref_file_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    // no artifacts seeded: research_ref file absent for a compact done.
+    make_baton_v2(&b, "termination_review", "team", 4, |v| {
+        standard_profile(v);
+        compact_terminal_evidence(v);
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+    });
+    make_baton_v2(&n, "done", "team", 5, |v| {
+        standard_profile(v);
+        compact_terminal_evidence(v);
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+    });
+    run(&b, &n).assert_contains(
+        "s4t1 compact done missing research_ref file",
+        23,
+        "missing_artifact ref=research_ref",
+    );
+}
+
+#[test]
+fn s4t1_research_seed_done_missing_plan_ref_file_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    // research_ref present, plan_ref file absent on the seed path.
+    write_artifact(d.path(), "superpowers/research/run-a.html");
+    make_baton_v2(&b, "termination_review", "team", 4, |v| {
+        v["mode"] = json!("research");
+        v["phase"] = json!("spec");
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+    });
+    make_baton_v2(&n, "done", "human", 5, |v| {
+        v["mode"] = json!("research");
+        v["phase"] = json!("spec");
+        v["research_outcome"] = json!("seed_development");
+        v["plan_ref"] = json!("./superpowers/plans/2026-06-29-run-modes-plan.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+    });
+    run(&b, &n).assert_contains(
+        "s4t1 research seed done missing plan_ref file",
+        23,
+        "missing_artifact ref=plan_ref",
+    );
+}
+
+#[test]
+fn s4t1_research_exploratory_done_needs_no_plan_ref_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    // exploratory outcome requires only research_ref (present); no plan_ref file.
+    write_artifact(d.path(), "superpowers/research/run-a.html");
+    make_baton_v2(&b, "termination_review", "team", 4, |v| {
+        v["mode"] = json!("research");
+        v["phase"] = json!("spec");
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+    });
+    make_baton_v2(&n, "done", "human", 5, |v| {
+        v["mode"] = json!("research");
+        v["phase"] = json!("spec");
+        v["research_outcome"] = json!("exploratory");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+    });
+    run(&b, &n).assert("s4t1 research exploratory done needs no plan_ref", 0);
+}
+
+#[test]
+fn s4t1_review_done_missing_review_ref_file_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    // research_ref present, review_ref file absent.
+    write_artifact(d.path(), "superpowers/research/run-a.html");
+    make_baton_v2(&b, "termination_review", "team", 4, |v| {
+        v["mode"] = json!("review");
+        v["phase"] = json!("review");
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+    });
+    make_baton_v2(&n, "done", "human", 5, |v| {
+        v["mode"] = json!("review");
+        v["phase"] = json!("review");
+        v["review_ref"] = json!("./superpowers/reviews/review-run-modes-PR-1.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+    });
+    run(&b, &n).assert_contains(
+        "s4t1 review done missing review_ref file",
+        23,
+        "missing_artifact ref=review_ref",
+    );
+}
+
+// ===================== S4-T6: stale_verification_matrix =====================
+
+#[test]
+fn s4t6_full_done_pending_matrix_row_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    seed_done_artifacts(d.path());
+    f10_termination(&b);
+    // seed verification_matrix rows keep result="pending" -> incomplete -> stale.
+    make_baton_v2(&n, "done", "team", 5, |v| {
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+        explainer_verification_track(v);
+    });
+    run(&b, &n).assert_contains(
+        "s4t6 full done pending matrix row",
+        23,
+        "stale_verification_matrix row=verify-research-coverage anchor=0",
+    );
+}
+
+#[test]
+fn s4t6_full_done_row_missing_checkpoint_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    seed_done_artifacts(d.path());
+    f10_termination(&b);
+    make_baton_v2(&n, "done", "team", 5, |v| {
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+        explainer_verification_track(v);
+        // rows complete (passed) but carry NO numeric checkpoint -> stale.
+        if let Some(rows) = v["verification_matrix"].as_array_mut() {
+            for r in rows {
+                r["result"] = json!("passed");
+                r["evidence_refs"] = json!(["command:PASS"]);
+            }
+        }
+    });
+    run(&b, &n).assert_contains(
+        "s4t6 full done matrix row missing checkpoint",
+        23,
+        "stale_verification_matrix",
+    );
+}
+
+#[test]
+fn s4t6_full_done_checkpoint_below_anchor_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    seed_done_artifacts(d.path());
+    // history carries a parallel_implementing at checkpoint 3 -> anchor 3.
+    let hist = d.path().join("history/3-parallel_implementing.json");
+    std::fs::create_dir_all(hist.parent().unwrap()).unwrap();
+    make_baton_v2(&hist, "parallel_implementing", "team", 3, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    f10_termination(&b);
+    make_baton_v2(&n, "done", "team", 5, |v| {
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+        explainer_verification_track(v);
+        // rows complete but evidence_checkpoint 2 < anchor 3 -> stale.
+        if let Some(rows) = v["verification_matrix"].as_array_mut() {
+            for r in rows {
+                r["result"] = json!("passed");
+                r["evidence_refs"] = json!(["command:PASS"]);
+                r["evidence_checkpoint"] = json!(2);
+            }
+        }
+    });
+    run(&b, &n).assert_contains(
+        "s4t6 full done matrix checkpoint below anchor",
+        23,
+        "stale_verification_matrix row=verify-research-coverage anchor=3",
+    );
+}
+
+#[test]
+fn s4t6_full_done_review_checkpoint_coalesced_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    seed_done_artifacts(d.path());
+    f10_termination(&b);
+    make_baton_v2(&n, "done", "team", 5, |v| {
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+        explainer_verification_track(v);
+        // rows carry review_checkpoint (not evidence_checkpoint) -> coalesced fresh.
+        if let Some(rows) = v["verification_matrix"].as_array_mut() {
+            for r in rows {
+                r["result"] = json!("approved");
+                r["evidence_refs"] = json!(["command:PASS"]);
+                r["review_checkpoint"] = json!(4);
+            }
+        }
+    });
+    run(&b, &n).assert("s4t6 full done review_checkpoint coalesced fresh", 0);
+}
+
+#[test]
+fn s4t6_full_done_fresh_matrix_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    seed_done_artifacts(d.path());
+    f10_termination(&b);
+    full_done_candidate(&n); // done_matrix_fresh marks rows passed + fresh
+    run(&b, &n).assert("s4t6 full done fresh matrix", 0);
+}
+
+#[test]
+fn s4t6_object_matrix_stale_value_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    seed_done_artifacts(d.path());
+    f10_termination(&b);
+    make_baton_v2(&n, "done", "team", 5, |v| {
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+        explainer_verification_track(v);
+        // object matrix: row-a fresh, row-b missing a checkpoint -> stale (row-b).
+        v["verification_matrix"] = json!({
+            "row-a": {"result": "passed", "evidence_refs": ["e"], "evidence_checkpoint": 5},
+            "row-b": {"result": "passed", "evidence_refs": ["e"]}
+        });
+    });
+    run(&b, &n).assert_contains(
+        "s4t6 object matrix stale value",
+        23,
+        "stale_verification_matrix row=row-b",
+    );
+}
+
+#[test]
+fn s4t6_compact_done_row_missing_checkpoint_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    seed_done_artifacts(d.path());
+    make_baton_v2(&b, "termination_review", "team", 4, |v| {
+        standard_profile(v);
+        compact_terminal_evidence(v);
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+    });
+    make_baton_v2(&n, "done", "team", 5, |v| {
+        standard_profile(v);
+        compact_terminal_evidence(v);
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        // strip the evidence_checkpoint compact_terminal_evidence set -> stale.
+        if let Some(rows) = v["verification_matrix"].as_array_mut() {
+            for r in rows {
+                r.as_object_mut().unwrap().remove("evidence_checkpoint");
+            }
+        }
+    });
+    run(&b, &n).assert_contains(
+        "s4t6 compact done matrix row missing checkpoint",
+        23,
+        "stale_verification_matrix",
+    );
+}
+
+// ===================== S4-T4: lost_update superset guard =====================
+
+/// A completed cross-review track fixture the installed baton carries and a
+/// retry must not drop.
+fn peer_track(id: &str) -> Value {
+    json!({
+        "id": id,
+        "phase": "cross_review",
+        "status": "completed",
+        "track": "cross-review",
+        "owner": "dvandva-cross-reviewer",
+        "owner_role": "vadi",
+        "parallelized": true,
+        "rationale": "Installed peer review evidence.",
+        "inputs": [],
+        "outputs": ["Peer chunk reviewed."],
+        "evidence_refs": ["subagent:peer"],
+        "review_checkpoint": 4,
+        "result": "approved"
+    })
+}
+
+#[test]
+fn s4t4_lost_update_subagent_tracks_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        push(v, "subagent_tracks", peer_track("peer-review-x"));
+    });
+    make_baton_v2(&n, "cross_review", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["summary"] = json!("Team sync that drops installed peer evidence.");
+        v["next_action"] = json!("Team: this retry lost peer-review-x.");
+        // candidate keeps only the seed startup-controller (drops peer-review-x).
+    });
+    run(&b, &n).assert_contains(
+        "s4t4 lost subagent track",
+        23,
+        "lost_update field=subagent_tracks missing=peer-review-x",
+    );
+}
+
+#[test]
+fn s4t4_lost_update_work_split_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        push(
+            v,
+            "work_split",
+            json!({
+                "id": "extra-chunk",
+                "phase": "1",
+                "chunk_type": "implementation",
+                "owner": "vadi",
+                "owner_role": "vadi",
+                "scope": "Installed chunk a retry must retain.",
+                "paths": ["src/extra.ts"],
+                "cross_review_by": "prativadi",
+                "can_parallelize": false,
+                "parallel_rationale": "x",
+                "depends_on": [],
+                "status": "planned",
+                "artifact_refs": []
+            }),
+        );
+    });
+    make_baton_v2(&n, "cross_review", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["summary"] = json!("Team sync that drops an installed work_split chunk.");
+        v["next_action"] = json!("Team: this retry lost extra-chunk.");
+        // candidate keeps only the seed work_split (drops extra-chunk).
+    });
+    run(&b, &n).assert_contains(
+        "s4t4 lost work_split chunk",
+        23,
+        "lost_update field=work_split missing=extra-chunk",
+    );
+}
+
+#[test]
+fn s4t4_lost_update_findings_string_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["findings"] = json!(["finding-keep", {"id": "finding-obj"}]);
+    });
+    make_baton_v2(&n, "cross_review", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["summary"] = json!("Team sync that drops a string finding.");
+        v["next_action"] = json!("Team: this retry lost finding-keep.");
+        v["findings"] = json!([{"id": "finding-obj"}]);
+    });
+    run(&b, &n).assert_contains(
+        "s4t4 lost string finding",
+        23,
+        "lost_update field=findings missing=finding-keep",
+    );
+}
+
+#[test]
+fn s4t4_lost_update_findings_object_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["findings"] = json!([{"id": "finding-obj", "note": "keep me"}]);
+    });
+    make_baton_v2(&n, "cross_review", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["summary"] = json!("Team sync that drops an object finding.");
+        v["next_action"] = json!("Team: this retry lost finding-obj.");
+        v["findings"] = json!([]);
+    });
+    run(&b, &n).assert_contains(
+        "s4t4 lost object finding",
+        23,
+        "lost_update field=findings missing=finding-obj",
+    );
+}
+
+#[test]
+fn s4t4_superset_or_grown_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        push(v, "subagent_tracks", peer_track("peer-review-x"));
+        v["findings"] = json!(["finding-keep"]);
+    });
+    make_baton_v2(&n, "cross_review", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["summary"] = json!("Team sync that keeps all peer data and adds more.");
+        v["next_action"] = json!("Team: superset retry is accepted.");
+        push(v, "subagent_tracks", peer_track("peer-review-x"));
+        push(v, "subagent_tracks", peer_track("peer-review-y"));
+        v["findings"] = json!(["finding-keep", "finding-new"]);
+    });
+    run(&b, &n).assert("s4t4 superset/grown id-sets accepted", 0);
+}
+
+#[test]
+fn s4t4_human_decision_escalation_exempt() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        push(v, "subagent_tracks", peer_track("peer-review-x"));
+    });
+    // an escalation to human_decision must not be blocked by array bookkeeping,
+    // even though it drops the installed peer track.
+    make_baton_v2(&n, "human_decision", "human", 5, |v| {
+        v["question"] = json!("A blocker needs a human decision.");
+    });
+    run(&b, &n).assert("s4t4 human_decision escalation is exempt", 0);
+}
+
+#[test]
+fn s4t4_non_team_current_not_gated() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    // spec_review is prativadi-owned (not team): dropping installed data is fine.
+    make_baton_v2(&b, "spec_review", "prativadi", 4, |v| {
+        push(
+            v,
+            "subagent_tracks",
+            json!({
+                "id": "peer-x",
+                "phase": "spec",
+                "status": "completed",
+                "track": "spec-review",
+                "owner": "prativadi",
+                "owner_role": "prativadi",
+                "parallelized": false,
+                "rationale": "x",
+                "inputs": [],
+                "outputs": ["o"],
+                "evidence_refs": ["e"],
+                "result": "approved"
+            }),
+        );
+    });
+    make_baton_v2(&n, "spec_revision", "vadi", 5, |_| {
+        // candidate keeps only the seed subagent track (drops peer-x) — allowed.
+    });
+    run(&b, &n).assert("s4t4 non-team current not gated by lost_update", 0);
 }

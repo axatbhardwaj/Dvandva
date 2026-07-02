@@ -31,6 +31,7 @@ use std::sync::OnceLock;
 use regex::Regex;
 use serde_json::Value;
 
+use crate::gitcfg;
 use crate::lock::{self, Acquire};
 use crate::snapshot::snapshot_baton;
 use crate::util;
@@ -1661,6 +1662,21 @@ fn decide_transition(
         review_ownership_reason = "run explainer review ownership requires DVANDVA_ROLE=vadi/prativadi and only that role may change its own run_explainer_reviews entries".to_string();
     }
 
+    // ---- S4-T4 lost_update reason (team-owned current status) --------------
+    // A retry that dropped peer data must fail even when the edge is otherwise
+    // legal. Escalations are exempt — an escalation must not be blocked by array
+    // bookkeeping.
+    let mut lost_update_reason = String::new();
+    if cx.is_v2
+        && is_team_sync_status(&cur_status)
+        && !matches!(
+            cx.new_status,
+            "human_decision" | "human_question" | "abandoned"
+        )
+    {
+        lost_update_reason = lost_update_violation(cur_doc, cand);
+    }
+
     // ---- compact done phase-review checkpoint gate (baton exists) ----------
     if cx.is_v2
         && cx.new_effective_mode == "development"
@@ -1764,6 +1780,10 @@ fn decide_transition(
             cur_checkpoint_i64 + 1,
             cx.new_checkpoint
         );
+    } else if !lost_update_reason.is_empty() {
+        // S4-T4: positioned after the checkpoint gates, before the whitelist —
+        // a legal edge cannot rescue a candidate that lost installed peer data.
+        return Err((23, format!("DVANDVA_WRITE {lost_update_reason}")));
     } else if approval_reason.starts_with("approval_out_of_band")
         || approval_reason.starts_with("stale_approval")
     {
@@ -2083,6 +2103,27 @@ fn decide_transition(
         }
     }
 
+    // ---- S4-T6 (D3): verification_matrix freshness (development done) -------
+    // Full-profile done requires EVERY matrix row complete AND fresh; compact
+    // done layers the freshness qualifier onto the existing good_matrix (which
+    // already enforced completeness earlier). The anchor is the last
+    // implementation-family checkpoint across history + current.
+    if legal && cx.is_v2 && cx.new_effective_mode == "development" && cx.new_status == "done" {
+        let anchor = implementation_family_anchor(baton_dir, cur_doc, cur_checkpoint_i64);
+        let full = cx.new_effective_profile == "full";
+        if let Some(row) = stale_verification_matrix_row(cand, anchor, full) {
+            return Err((
+                23,
+                format!("DVANDVA_WRITE stale_verification_matrix row={row} anchor={anchor}"),
+            ));
+        }
+    }
+
+    // ---- S4-T1: required done-gate artifacts must resolve to real files ----
+    if legal && cx.is_v2 && cx.new_status == "done" {
+        required_done_artifacts_ok(baton_dir, cand, cx)?;
+    }
+
     if !legal {
         return Err((24, format!("DVANDVA_WRITE illegal_transition {reason}")));
     }
@@ -2098,18 +2139,8 @@ fn install_and_snapshot(
     _cand: &Value,
     mut plan: InstallPlan,
 ) -> i32 {
-    // Test-only deterministic interleaving seam.
-    if let Ok(barrier) = std::env::var("DVANDVA_WRITE_BARRIER") {
-        if !barrier.is_empty() {
-            let _ = std::fs::write(format!("{barrier}.arrived"), b"");
-            let release = PathBuf::from(format!("{barrier}.release"));
-            let mut waited = 0;
-            while !release.exists() && waited < 200 {
-                std::thread::sleep(std::time::Duration::from_millis(50));
-                waited += 1;
-            }
-        }
-    }
+    // Test-only deterministic interleaving seam (pre-mv fence-check).
+    barrier_wait("DVANDVA_WRITE_BARRIER");
 
     // Fencing: re-verify we still own the lock before the irreversible install.
     if !plan.lock.holds() {
@@ -2120,6 +2151,13 @@ fn install_and_snapshot(
         plan.lock.disarm(); // the lock now belongs to the thief; do not remove it
         return 29;
     }
+
+    // S4-T10 test seam: a SECOND barrier stage that pauses AFTER the pre-mv
+    // fence-check but BEFORE the rename, so a test can steal the lock inside the
+    // one window the pre-mv fence cannot cover (fence passes, then a thief lands,
+    // then this writer installs). Keyed on its own env var so the pre-mv barrier
+    // (and the existing race tests) are untouched.
+    barrier_wait("DVANDVA_WRITE_BARRIER_POSTFENCE");
 
     let baton_dir = baton_file
         .parent()
@@ -2142,6 +2180,21 @@ fn install_and_snapshot(
         return 26;
     }
 
+    // S4-T10 post-mv fence: the rename is done — the baton IS installed. Re-verify
+    // we still hold the lock. If a thief replaced our fencing token in the
+    // fence-check→rename window, the baton we just wrote may already be superseded
+    // by the lock's new owner, so the caller must re-read. Do NOT release the
+    // thief's lock (disarm), and skip the snapshot (it would archive a state we no
+    // longer own).
+    if !plan.lock.holds() {
+        eprintln!(
+            "DVANDVA_WRITE lock_lost_post_install path={} baton_installed=true may_be_superseded=true caller_must_reread=true",
+            plan.lock.dir.join(lock::LOCK_DIR_NAME).display()
+        );
+        plan.lock.disarm();
+        return 29;
+    }
+
     if snapshot_baton(baton_file).is_err() {
         eprintln!(
             "DVANDVA_WRITE snapshot_failed file={} baton_is_installed=true",
@@ -2155,6 +2208,25 @@ fn install_and_snapshot(
         plan.status, plan.assignee, plan.phase, plan.checkpoint
     );
     0
+}
+
+/// Test-only deterministic interleaving seam: when `env` names a non-empty
+/// path, touch `<path>.arrived` and block until `<path>.release` appears (or a
+/// bounded number of polls elapse). Two independent seams — `DVANDVA_WRITE_BARRIER`
+/// (pre-mv fence-check) and `DVANDVA_WRITE_BARRIER_POSTFENCE` (fence→rename
+/// window) — let a test drive either lock-theft race deterministically.
+fn barrier_wait(env: &str) {
+    if let Ok(barrier) = std::env::var(env) {
+        if !barrier.is_empty() {
+            let _ = std::fs::write(format!("{barrier}.arrived"), b"");
+            let release = PathBuf::from(format!("{barrier}.release"));
+            let mut waited = 0;
+            while !release.exists() && waited < 200 {
+                std::thread::sleep(std::time::Duration::from_millis(50));
+                waited += 1;
+            }
+        }
+    }
 }
 
 fn reap_stale_tmp(baton_dir: &Path) {
@@ -4009,6 +4081,212 @@ fn phase_review_cycle_checkpoint(
         }
     }
     cycle
+}
+
+// ===========================================================================
+// S4-T1: required done-gate artifacts resolve to real files
+// ===========================================================================
+
+/// S4-T1: at a v2 `done` gate, every ref REQUIRED by the candidate's mode/profile
+/// must resolve to an existing, non-empty, regular file under the baton's repo
+/// root (git toplevel of the baton dir; fall back to the baton dir itself). Refs
+/// are repo-root-relative paths, possibly starting `./`. Reason
+/// `missing_artifact ref=<field> path=<resolved>` (exit 23).
+fn required_done_artifacts_ok(
+    baton_dir: &Path,
+    cand: &Value,
+    cx: &Ctx,
+) -> Result<(), (i32, String)> {
+    let root = gitcfg::repo_toplevel(baton_dir).unwrap_or_else(|| baton_dir.to_path_buf());
+    let check = |field_name: &str| -> Result<(), (i32, String)> {
+        let rel = str_field(cand, field_name);
+        let rel_trim = rel.strip_prefix("./").unwrap_or(&rel);
+        let resolved = root.join(rel_trim);
+        let ok = std::fs::metadata(&resolved)
+            .map(|m| m.is_file() && m.len() > 0)
+            .unwrap_or(false);
+        if ok {
+            Ok(())
+        } else {
+            Err((
+                23,
+                format!(
+                    "DVANDVA_WRITE missing_artifact ref={field_name} path={}",
+                    resolved.display()
+                ),
+            ))
+        }
+    };
+    // research_ref is required at every v2 done gate (all modes/profiles).
+    check("research_ref")?;
+    match cx.new_effective_mode {
+        // Full development done additionally requires the run explainer.
+        "development" if cx.new_effective_profile == "full" => check("run_explainer_ref")?,
+        // Research done on the seed path additionally requires the plan.
+        "research" => {
+            if matches!(field(cand, "research_outcome"), Some(Value::String(s)) if s == "seed_development")
+            {
+                check("plan_ref")?;
+            }
+        }
+        // Review done additionally requires the review artifact.
+        "review" => check("review_ref")?,
+        _ => {}
+    }
+    Ok(())
+}
+
+// ===========================================================================
+// S4-T6 (D3): verification_matrix freshness
+// ===========================================================================
+
+/// The implementation-family freshness anchor: the max checkpoint across history
+/// and current entries whose status is one of the implementation-family statuses
+/// `phase_fixing` / `implementing` / `parallel_implementing` / `cross_fixing`.
+/// Returns `0` when no such entry exists, which imposes no floor.
+fn implementation_family_anchor(baton_dir: &Path, cur_doc: &Value, current_checkpoint: i64) -> i64 {
+    collect_cycle_rows(baton_dir, cur_doc, current_checkpoint, false)
+        .iter()
+        .filter(|r| {
+            matches!(
+                r.status.as_str(),
+                "phase_fixing" | "implementing" | "parallel_implementing" | "cross_fixing"
+            )
+        })
+        .map(|r| r.checkpoint)
+        .max()
+        .unwrap_or(0)
+}
+
+/// A verification_matrix row's identity for the `stale_verification_matrix`
+/// reason: its `id` field, else the supplied array-index / object-key fallback.
+fn matrix_row_label(row: &Value, fallback: &str) -> String {
+    match field(row, "id") {
+        Some(Value::String(s)) if !s.is_empty() => s.clone(),
+        _ => fallback.to_string(),
+    }
+}
+
+/// A row is complete when its coalesced `current // result` is passed/approved
+/// (case-insensitive).
+fn matrix_row_complete(row: &Value) -> bool {
+    let result =
+        util::coalesce(field(row, "current")).or_else(|| util::coalesce(field(row, "result")));
+    matches!(result, Some(Value::String(s)) if {
+        let s = s.to_ascii_lowercase();
+        s == "passed" || s == "approved"
+    })
+}
+
+/// A row's numeric evidence checkpoint: coalesced `evidence_checkpoint //
+/// review_checkpoint`. `None` when neither is a number.
+fn matrix_row_checkpoint(row: &Value) -> Option<i64> {
+    for key in ["evidence_checkpoint", "review_checkpoint"] {
+        if let Some(Value::Number(n)) = util::coalesce(field(row, key)) {
+            if let Some(i) = n.as_i64() {
+                return Some(i);
+            }
+        }
+    }
+    None
+}
+
+/// S4-T6: the first stale verification_matrix row, or `None` when every row is
+/// fresh. A row is fresh iff it carries a numeric checkpoint `>= anchor` and (for
+/// full profile, `require_complete`) is complete. Compact profile enforces
+/// completeness earlier (good_matrix), so only the freshness qualifier is added.
+/// Object matrices are checked over all values (labelled by key).
+fn stale_verification_matrix_row(
+    cand: &Value,
+    anchor: i64,
+    require_complete: bool,
+) -> Option<String> {
+    let rows: Vec<(String, &Value)> = match field(cand, "verification_matrix") {
+        Some(Value::Array(items)) => items
+            .iter()
+            .enumerate()
+            .map(|(i, v)| (matrix_row_label(v, &i.to_string()), v))
+            .collect(),
+        Some(Value::Object(m)) => m.iter().map(|(k, v)| (matrix_row_label(v, k), v)).collect(),
+        _ => return None,
+    };
+    for (label, row) in rows {
+        let fresh = matrix_row_checkpoint(row)
+            .map(|c| c >= anchor)
+            .unwrap_or(false);
+        let complete = !require_complete || matrix_row_complete(row);
+        if !fresh || !complete {
+            return Some(label);
+        }
+    }
+    None
+}
+
+// ===========================================================================
+// S4-T4: lost_update superset guard (team-owned current status)
+// ===========================================================================
+
+/// The `id`-set of an array-or-object of entries (subagent_tracks /
+/// agent_instances / work_split), keyed by each entry's `id` string field.
+fn id_set(v: Option<&Value>) -> Vec<String> {
+    iter_values(v)
+        .iter()
+        .filter_map(|e| match field(e, "id") {
+            Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The identity-set of `findings`: string entries by their exact value, object
+/// entries by their `id` string field.
+fn findings_ids(v: Option<&Value>) -> Vec<String> {
+    arr(v)
+        .iter()
+        .filter_map(|e| match e {
+            Value::String(s) => Some(s.clone()),
+            Value::Object(_) => match field(e, "id") {
+                Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect()
+}
+
+/// S4-T4: when the CURRENT status is team-owned, the candidate's peer-data
+/// id-sets must each remain a SUPERSET of the installed baton's; the first
+/// dropped id yields the `lost_update field=<f> missing=<id>` reason (empty
+/// string when clean).
+fn lost_update_violation(cur_doc: &Value, cand: &Value) -> String {
+    let checks: [(&str, Vec<String>, Vec<String>); 4] = [
+        (
+            "subagent_tracks",
+            id_set(field(cur_doc, "subagent_tracks")),
+            id_set(field(cand, "subagent_tracks")),
+        ),
+        (
+            "agent_instances",
+            id_set(field(cur_doc, "agent_instances")),
+            id_set(field(cand, "agent_instances")),
+        ),
+        (
+            "work_split",
+            id_set(field(cur_doc, "work_split")),
+            id_set(field(cand, "work_split")),
+        ),
+        (
+            "findings",
+            findings_ids(field(cur_doc, "findings")),
+            findings_ids(field(cand, "findings")),
+        ),
+    ];
+    for (name, installed, candidate) in &checks {
+        if let Some(missing) = installed.iter().find(|id| !candidate.contains(id)) {
+            return format!("lost_update field={name} missing={missing}");
+        }
+    }
+    String::new()
 }
 
 // ===========================================================================

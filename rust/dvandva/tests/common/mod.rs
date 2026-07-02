@@ -174,7 +174,8 @@ fn spawn(baton: &Path, candidate: &Path, envs: &[(&str, &str)]) -> Out {
     cmd.arg("write").arg(baton).arg(candidate);
     cmd.env_remove("DVANDVA_ROLE")
         .env_remove("DVANDVA_LOCK_TIMEOUT")
-        .env_remove("DVANDVA_WRITE_BARRIER");
+        .env_remove("DVANDVA_WRITE_BARRIER")
+        .env_remove("DVANDVA_WRITE_BARRIER_POSTFENCE");
     for (k, v) in envs {
         cmd.env(k, v);
     }
@@ -821,6 +822,11 @@ pub fn compact_terminal_evidence(b: &mut Value) {
         for m in matrix {
             m["current"] = json!("passed");
             m["evidence_refs"] = json!(["command:bash scripts/test-dvandva-write.sh"]);
+            // S4-T6: a compact-profile done requires every matrix row to carry a
+            // numeric evidence checkpoint at/after the implementation-family
+            // freshness anchor. These fixtures have no impl-family history, so the
+            // anchor is 0 and any non-negative checkpoint keeps the row fresh.
+            m["evidence_checkpoint"] = json!(4);
         }
     }
     push(
@@ -865,4 +871,52 @@ pub fn old_low_floor_history(b: &mut Value) {
         "actor_role": "vadi", "reason": "historical lower floor before later escalation",
         "evidence_refs": ["test:old-low-floor-history"]
     }]);
+}
+
+// ---------------------------------------------------------------------------
+// S4-T1 / S4-T6 done-gate fixtures (WE2).
+// ---------------------------------------------------------------------------
+
+/// Write a single non-empty artifact file at `rel` (repo-root-relative, a
+/// leading `./` is stripped) under `baton_dir`. The write test temp dirs are
+/// never git repos, so the engine's repo-root resolution (git toplevel of the
+/// baton dir, else the baton dir) collapses to `baton_dir` — the same root used
+/// here, so `missing_artifact` sees the file the engine resolves.
+pub fn write_artifact(baton_dir: &Path, rel: &str) {
+    let rel = rel.strip_prefix("./").unwrap_or(rel);
+    let p = baton_dir.join(rel);
+    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+    std::fs::write(&p, b"<html>artifact</html>").unwrap();
+}
+
+/// S4-T1: create every standard done-gate artifact file used across the
+/// success-path done tests (research/run-explainer/plan/review refs), so a
+/// `missing_artifact` check resolves each required ref to a non-empty file.
+pub fn seed_done_artifacts(baton_dir: &Path) {
+    for rel in [
+        "superpowers/research/run-a.html",
+        "superpowers/run-reports/2026-06-28-run-a-explainer.html",
+        "superpowers/run-reports/2026-06-29-baton-accuracy-hook-coexist-explainer.html",
+        "superpowers/plans/2026-06-29-run-modes-plan.html",
+        "superpowers/reviews/review-run-modes-PR-1.html",
+        "superpowers/reviews/review-run-modes.html",
+    ] {
+        write_artifact(baton_dir, rel);
+    }
+}
+
+/// S4-T6: mark every `verification_matrix` row complete (result passed) and
+/// fresh (numeric `evidence_checkpoint` = the candidate's checkpoint, which is
+/// at/after the freshness anchor in these no-impl-history fixtures) so a
+/// full-profile `done` clears the `stale_verification_matrix` gate.
+pub fn done_matrix_fresh(b: &mut Value) {
+    let cp = b["checkpoint"].clone();
+    if let Some(rows) = b["verification_matrix"].as_array_mut() {
+        for r in rows {
+            r["result"] = json!("passed");
+            r["current"] = json!("passed");
+            r["evidence_refs"] = json!(["command:bash scripts/test PASS"]);
+            r["evidence_checkpoint"] = cp.clone();
+        }
+    }
 }

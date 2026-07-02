@@ -31,7 +31,8 @@ fn write_command(baton: &Path, candidate: &Path, envs: &[(&str, &str)]) -> Comma
     cmd.arg("write").arg(baton).arg(candidate);
     cmd.env_remove("DVANDVA_ROLE")
         .env_remove("DVANDVA_LOCK_TIMEOUT")
-        .env_remove("DVANDVA_WRITE_BARRIER");
+        .env_remove("DVANDVA_WRITE_BARRIER")
+        .env_remove("DVANDVA_WRITE_BARRIER_POSTFENCE");
     for (k, v) in envs {
         cmd.env(k, v);
     }
@@ -347,6 +348,85 @@ fn concurrent_write_race() {
     let installed: Value = serde_json::from_slice(&std::fs::read(&baton).unwrap()).unwrap();
     assert_eq!(installed["checkpoint"], 5);
     assert_eq!(installed["status"], "cross_review");
+}
+
+// ===================== S4-T10: post-mv fence =====================
+
+/// S4-T10: a thief that steals the lock in the pre-mv-fence→rename window is
+/// detected AFTER the rename. The install DID happen (baton carries the writer's
+/// checkpoint), the writer exits 29 with `lock_lost_post_install`, and the
+/// thief's lock is left intact. Uses the second barrier stage
+/// (`DVANDVA_WRITE_BARRIER_POSTFENCE`) which pauses between the fence check and
+/// the rename; the pre-mv barrier (`DVANDVA_WRITE_BARRIER`) is untouched.
+#[test]
+fn s4t10_post_mv_theft_detected_exits_29() {
+    let d = tmp();
+    let box_dir = d.path();
+    let baton = box_dir.join("baton.json");
+    let cand = box_dir.join("cand.json");
+
+    make_baton_v2(&baton, "cross_review", "team", 4, |b| {
+        cross_review_chunks(b);
+        b["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v2(&cand, "cross_review", "team", 5, |b| {
+        cross_review_chunks(b);
+        b["active_roles"] = json!(["vadi", "prativadi"]);
+        b["summary"] = json!("Post-mv fence: writer parked after the fence check.");
+        b["next_action"] = json!("Team: detect the theft in the fence->rename window.");
+    });
+
+    let barrier = box_dir.join("postmv");
+    let arrived = PathBuf::from(format!("{}.arrived", barrier.display()));
+    let release = PathBuf::from(format!("{}.release", barrier.display()));
+
+    // (1) spawn the writer; it acquires the lock, PASSES the pre-mv fence check,
+    //     then parks between the fence check and the rename, capturing stderr.
+    let child = write_command(
+        &baton,
+        &cand,
+        &[("DVANDVA_WRITE_BARRIER_POSTFENCE", barrier.to_str().unwrap())],
+    )
+    .stderr(std::process::Stdio::piped())
+    .spawn()
+    .expect("failed to spawn dvandva write");
+
+    // (2) wait until the writer has passed the fence check and parked.
+    let mut waited = 0;
+    while !arrived.is_file() && waited < 200 {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+        waited += 1;
+    }
+    assert!(
+        arrived.is_file(),
+        "writer never reached the post-fence barrier"
+    );
+
+    // (3) a thief replaces the owner token while the writer is parked.
+    let lock_owner = box_dir.join(".baton.lock.d").join("owner");
+    std::fs::write(&lock_owner, "thief-token").unwrap();
+
+    // (4) release the barrier: the writer renames (installs) then re-checks holds().
+    std::fs::write(&release, b"").unwrap();
+
+    let out = child.wait_with_output().expect("writer did not exit");
+    let rc = out.status.code().unwrap_or(-1);
+    let text = String::from_utf8_lossy(&out.stderr);
+
+    assert_eq!(rc, 29, "post-mv theft must exit 29, got {rc}\n{text}");
+    assert!(
+        text.contains("lock_lost_post_install"),
+        "post-mv theft must report lock_lost_post_install, got:\n{text}"
+    );
+    // the install DID happen: the baton carries the writer's checkpoint 5.
+    let installed: Value = serde_json::from_slice(&std::fs::read(&baton).unwrap()).unwrap();
+    assert_eq!(
+        installed["checkpoint"], 5,
+        "the rename must have installed the baton despite the lost lock"
+    );
+    // the thief's lock is intact (never deleted by the fenced writer).
+    let owner = std::fs::read_to_string(&lock_owner).unwrap();
+    assert_eq!(owner, "thief-token", "the thief's lock token must survive");
 }
 
 // ===================== usage =====================
