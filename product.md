@@ -88,7 +88,7 @@ Status: rewritten 2026-05-14 for richer flow (spec phase + phased implementation
 > is retained. All new fields are additive nullable; absent = pre-patch behavior.
 >
 > **Spec rev 2026-07-02 (hardening S2/S4/S5/S6):** Protocol-hardening slices
-> re-keyed to the Rust engine; crate → `2.0.0-alpha.4`, plugin manifests →
+> re-keyed to the Rust engine; crate → `2.0.0-alpha.5`, plugin manifests →
 > `1.4.0`. **S2-T1/T3:** a new terminal status `abandoned` (enterable only from
 > `human_question`/`human_decision`, `assignee: "human"`, `active_roles: []`, no
 > artifact/approval/loop gates, snapshot-archived like `done`); `dvandva wait`
@@ -550,7 +550,7 @@ Auto-activation depends entirely on `description`. Tuning rules:
 dvandva install
 ```
 
-`dvandva install` wraps the public install path for users: it registers the Dvandva marketplace and installs `dvandva@dvandva` in both Claude Code and Codex. It accepts `--claude-only` and `--codex-only` for one-engine installs. For Codex, it delegates to `dvandva install-codex`, which runs `codex plugin add dvandva@dvandva` on current Codex builds and keeps the legacy app-server RPC install as a fallback for older builds. The `dvandva` binary must already be on `PATH` (`cargo install dvandva --version 2.0.0-alpha.4`, or `cargo install --path rust/dvandva` from a checkout). The authoritative preflight is whether the current agent session can see and invoke the required Superpowers skills.
+`dvandva install` wraps the public install path for users: it registers the Dvandva marketplace and installs `dvandva@dvandva` in both Claude Code and Codex. It accepts `--claude-only` and `--codex-only` for one-engine installs. For Codex, it delegates to `dvandva install-codex`, which runs `codex plugin add dvandva@dvandva` on current Codex builds and keeps the legacy app-server RPC install as a fallback for older builds. The `dvandva` binary must already be on `PATH` (`cargo install dvandva --version 2.0.0-alpha.5`, or `cargo install --path rust/dvandva` from a checkout). The authoritative preflight is whether the current agent session can see and invoke the required Superpowers skills.
 
 ### 11.2 Development install fallback
 

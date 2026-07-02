@@ -13,6 +13,7 @@ Prefer concise, source-backed docs over speculative architecture. If a workflow 
 - Keep tool research in `docs/research/`.
 - Keep case studies in `docs/case-studies/`.
 - Keep public case studies sanitized and source-backed.
+- Author every human-facing HTML deliverable with the `dvandva:html-deliverables` skill (`plugins/dvandva/skills/html-deliverables/` — house tokens, components, diagram rules, `template.html`); never restyle from scratch.
 - Do not put private project secrets, proprietary source snippets, or raw private PR exports in this repo.
 - If importing a private PR history for local research, keep raw JSON and timelines outside the public tree, for example under ignored `private-artifacts/`.
 

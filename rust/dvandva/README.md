@@ -29,12 +29,12 @@ The binary is a multicall executable: when invoked through a git-hook symlink
 (`pre-commit`, `prepare-commit-msg`, ...) the hook name is taken from `argv[0]`.
 `dvandva --version` prints the version line.
 
-Version `2.0.0-alpha.4`. Licensed under `MIT OR Apache-2.0`.
+Version `2.0.0-alpha.5`. Licensed under `MIT OR Apache-2.0`.
 
 ## Install
 
 ```bash
-cargo install dvandva --version 2.0.0-alpha.4
+cargo install dvandva --version 2.0.0-alpha.5
 # or, from a checkout: cargo install --path rust/dvandva
 ```
 
