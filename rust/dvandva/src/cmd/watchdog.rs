@@ -23,8 +23,11 @@ included, it is a monitor, not a gate); exit 2 is reserved for usage errors.
 
 --stale-max seconds (default 1800): a mid-work baton whose updated_at age is
 at least this old emits a watchdog_stale finding. A baton whose updated_at
-cannot be parsed at all is treated as stale too (reason=unparseable_updated_at)
-since liveness cannot be proven without it, regardless of its status.
+cannot be parsed at all is treated as stale too (reason=unparseable_updated_at),
+and one whose updated_at sits more than 120s in the future is treated as
+stale as well (reason=future_updated_at, checked before the paused branch so
+even a human_question/human_decision baton is flagged) — liveness cannot be
+proven without a trustworthy timestamp, regardless of status.
 
 --remind-paused seconds (default 0 = off): a human_question / human_decision
 baton whose age is at least this old emits a watchdog_paused reminder.
@@ -34,9 +37,18 @@ best-effort ntfy-compatible notification for each new finding. Repeat
 findings are deduplicated per baton via a small marker file next to it,
 keyed on status + checkpoint + age bucket (1x/4x/24x the threshold) — a
 continuously stuck run re-notifies at the threshold, ~4x, and ~24x, then
-stays silent. Missing both --notify and DVANDVA_NOTIFY_URL still prints the
-finding lines, plus one DVANDVA_WATCHDOG note notify_unconfigured line so
-cron logs show it.";
+stays silent. The marker is written only after a confirmed successful POST,
+so a failed delivery (dead endpoint, 5xx, timeout) is retried on the next
+scan instead of going silent. Missing both --notify and DVANDVA_NOTIFY_URL
+still prints the finding lines and never touches the marker (so delivery
+resumes on the next scan once a URL is configured), plus one DVANDVA_WATCHDOG
+note notify_unconfigured line so cron logs show it.
+
+Duplicate/aliased root arguments (same path given twice, or a symlink alias)
+are deduplicated before scanning, so each baton is counted and reported once.
+An unreadable .dvandva/runs directory (e.g. permission denied) emits one
+DVANDVA_WATCHDOG note skipped_unreadable_runs_dir line per root and counts
+toward the summary's skipped total.";
 
 #[derive(Default)]
 struct RawArgs {
@@ -79,8 +91,16 @@ pub fn run(args: &[String]) -> i32 {
         eprintln!("ERROR: --remind-paused and --stale-max must be non-negative integers");
         return 2;
     }
-    let remind_paused: u64 = remind_paused_str.parse().unwrap_or(0);
-    let stale_max: u64 = stale_max_str.parse().unwrap_or(1800);
+    // `is_all_digits` only checks character shape, not range: a 20+-digit
+    // value overflows u64 here. Fail loud with the same usage error rather
+    // than silently falling back to a default the user didn't ask for.
+    let (Ok(remind_paused), Ok(stale_max)) = (
+        remind_paused_str.parse::<u64>(),
+        stale_max_str.parse::<u64>(),
+    ) else {
+        eprintln!("ERROR: --remind-paused and --stale-max must be non-negative integers");
+        return 2;
+    };
 
     let roots: Vec<PathBuf> = if raw.roots.is_empty() {
         vec![default_root()]

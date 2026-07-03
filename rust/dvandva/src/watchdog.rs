@@ -75,8 +75,19 @@ pub fn run(cfg: &WatchdogConfig) -> i32 {
     let mut paused: u64 = 0;
     let mut skipped: u64 = 0;
 
-    for root in &cfg.roots {
-        for baton_file in discover_batons(root) {
+    let roots = dedupe_roots(&cfg.roots);
+
+    for root in &roots {
+        let (baton_files, runs_dir_unreadable) = discover_batons(root);
+        if runs_dir_unreadable {
+            skipped += 1;
+            println!(
+                "DVANDVA_WATCHDOG note skipped_unreadable_runs_dir root={} path={}",
+                root.display(),
+                root.join(".dvandva/runs").display()
+            );
+        }
+        for baton_file in baton_files {
             batons += 1;
             match read_json_lenient(&baton_file) {
                 Err(_) => {
@@ -108,9 +119,25 @@ pub fn run(cfg: &WatchdogConfig) -> i32 {
 
     println!(
         "DVANDVA_WATCHDOG summary roots={} batons={batons} stale={stale} paused={paused} skipped={skipped}",
-        cfg.roots.len()
+        roots.len()
     );
     0
+}
+
+/// Canonicalized+deduped roots, in first-seen order — `watchdog <r> <r>`
+/// (identical or symlink-aliased paths) scans and counts each baton once. A
+/// root that fails to canonicalize (e.g. doesn't exist) keeps its original
+/// form and is deduped on that literal path instead.
+fn dedupe_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
+    let mut seen: std::collections::BTreeSet<PathBuf> = std::collections::BTreeSet::new();
+    let mut out = Vec::new();
+    for root in roots {
+        let key = std::fs::canonicalize(root).unwrap_or_else(|_| root.clone());
+        if seen.insert(key) {
+            out.push(root.clone());
+        }
+    }
+    out
 }
 
 /// Classify one successfully-parsed baton, reporting a finding (stdout line
@@ -130,27 +157,50 @@ fn classify_baton(
     let assignee = field_str(value, "assignee");
     let checkpoint = checkpoint_str(value);
     let updated_at = field_str(value, "updated_at");
-    let age = age_seconds(&updated_at);
 
     // Fail loud: a baton that cannot prove when it last advanced cannot
     // prove liveness at all, regardless of what status it happens to carry.
-    let Some(age_s) = age else {
-        report_finding(
-            cfg,
-            root,
-            baton_file,
-            Finding {
-                event: "watchdog_stale",
-                run_id: &run_id,
-                status: &status,
-                assignee: &assignee,
-                checkpoint: &checkpoint,
-                age_s: None,
-                reason: Some("unparseable_updated_at"),
-                threshold: cfg.stale_max,
-            },
-        );
-        return Classification::Stale;
+    // This applies globally — even a paused baton is reclassified to
+    // Stale, since an unparseable or materially-future timestamp defeats
+    // the monitor's whole purpose regardless of status.
+    let age_s = match classify_age(&updated_at) {
+        ParsedAge::Unparseable => {
+            report_finding(
+                cfg,
+                root,
+                baton_file,
+                Finding {
+                    event: "watchdog_stale",
+                    run_id: &run_id,
+                    status: &status,
+                    assignee: &assignee,
+                    checkpoint: &checkpoint,
+                    age_s: None,
+                    reason: Some("unparseable_updated_at"),
+                    threshold: cfg.stale_max,
+                },
+            );
+            return Classification::Stale;
+        }
+        ParsedAge::FutureBeyondTolerance => {
+            report_finding(
+                cfg,
+                root,
+                baton_file,
+                Finding {
+                    event: "watchdog_stale",
+                    run_id: &run_id,
+                    status: &status,
+                    assignee: &assignee,
+                    checkpoint: &checkpoint,
+                    age_s: None,
+                    reason: Some("future_updated_at"),
+                    threshold: cfg.stale_max,
+                },
+            );
+            return Classification::Stale;
+        }
+        ParsedAge::Age(age_s) => age_s,
     };
 
     if is_paused(&status) {
@@ -218,6 +268,13 @@ fn report_finding(cfg: &WatchdogConfig, root: &Path, baton_file: &Path, finding:
         root.display(),
     );
 
+    // No URL configured: never touch the dedupe marker at all, so the first
+    // real POST after the user later sets DVANDVA_NOTIFY_URL is not
+    // pre-suppressed by markers that accrued while notification was off.
+    let Some(url) = cfg.notify_url.as_deref().filter(|u| !u.is_empty()) else {
+        return;
+    };
+
     let bucket = match finding.age_s {
         None => "unparseable".to_string(),
         Some(age_s) => bucket_label(age_s, finding.threshold).to_string(),
@@ -226,11 +283,13 @@ fn report_finding(cfg: &WatchdogConfig, root: &Path, baton_file: &Path, finding:
         "status={} checkpoint={} bucket={bucket}",
         finding.status, finding.checkpoint
     );
-    if !should_notify(baton_file, finding.event, &key) {
+    // Read-only decision: a failed POST below must not be recorded as
+    // delivered, so the marker is written only after confirmed success.
+    if !should_attempt_notify(baton_file, finding.event, &key) {
         return;
     }
-    send_notify(
-        cfg,
+    let delivered = send_notify(
+        url,
         finding.event,
         finding.run_id,
         finding.status,
@@ -238,6 +297,9 @@ fn report_finding(cfg: &WatchdogConfig, root: &Path, baton_file: &Path, finding:
         &age_field,
         finding.reason,
     );
+    if delivered {
+        write_marker(baton_file, finding.event, &key);
+    }
 }
 
 /// Which re-notify bucket `age_s` falls into relative to `threshold`
@@ -262,34 +324,39 @@ fn marker_path(baton_file: &Path, event: &str) -> PathBuf {
         .join(format!(".watchdog-{event}"))
 }
 
-/// `true` exactly when `key` differs from the last-persisted marker content
-/// for this event (and persists it as a side effect). Read/write failures
-/// degrade silently to "treat as new" — best-effort, never crashes the scan.
-fn should_notify(baton_file: &Path, event: &str, key: &str) -> bool {
+/// `true` exactly when `key` differs from the last-confirmed-delivered
+/// marker content for this event next to `baton_file`. Read-only: a marker
+/// is only ever written after a confirmed successful POST, by
+/// [`write_marker`]. A read failure (including "marker doesn't exist yet")
+/// degrades silently to "treat as new" — best-effort, never crashes the scan.
+fn should_attempt_notify(baton_file: &Path, event: &str, key: &str) -> bool {
     let path = marker_path(baton_file, event);
-    if std::fs::read_to_string(&path).ok().as_deref() == Some(key) {
-        return false;
-    }
-    let _ = std::fs::write(&path, key);
-    true
+    std::fs::read_to_string(&path).ok().as_deref() != Some(key)
 }
 
-/// Best-effort webhook notification (a no-op when disabled) with an
-/// ntfy-style `Title: Dvandva <run_id>: <event>` header and a 3-second
-/// timeout. Failure is logged to stderr as `DVANDVA_WATCHDOG notify_failed
-/// url=<u> err=<short>` and never affects the scan's exit code.
+/// Persist `key` as the delivered marker content for `event` next to
+/// `baton_file`. Called only after [`send_notify`] confirms success — a
+/// failed POST must never be recorded as delivered. Write failure degrades
+/// silently — best-effort, never crashes the scan.
+fn write_marker(baton_file: &Path, event: &str, key: &str) {
+    let path = marker_path(baton_file, event);
+    let _ = std::fs::write(&path, key);
+}
+
+/// Best-effort webhook notification with an ntfy-style
+/// `Title: Dvandva <run_id>: <event>` header and a 3-second timeout.
+/// Returns `true` on confirmed success (2xx/3xx). Failure is logged to
+/// stderr as `DVANDVA_WATCHDOG notify_failed url=<u> err=<short>` and never
+/// affects the scan's exit code.
 fn send_notify(
-    cfg: &WatchdogConfig,
+    url: &str,
     event: &str,
     run_id: &str,
     status: &str,
     assignee: &str,
     age_s: &str,
     reason: Option<&str>,
-) {
-    let Some(url) = cfg.notify_url.as_deref().filter(|u| !u.is_empty()) else {
-        return;
-    };
+) -> bool {
     let reason_suffix = reason.map(|r| format!(" reason={r}")).unwrap_or_default();
     let body = format!(
         "run_id={run_id} event={event} status={status} assignee={assignee} age_s={age_s}{reason_suffix}"
@@ -302,11 +369,15 @@ fn send_notify(
         .post(url)
         .header("Title", format!("Dvandva {run_id}: {event}"))
         .send(body);
-    if let Err(err) = result {
-        eprintln!(
-            "DVANDVA_WATCHDOG notify_failed url={url} err={}",
-            truncate_chars(&err.to_string(), 200)
-        );
+    match result {
+        Ok(_) => true,
+        Err(err) => {
+            eprintln!(
+                "DVANDVA_WATCHDOG notify_failed url={url} err={}",
+                truncate_chars(&err.to_string(), 200)
+            );
+            false
+        }
     }
 }
 
@@ -326,34 +397,68 @@ fn truncate_chars(s: &str, max: usize) -> String {
 /// importantly, entangled with ASK/CREATE selection (status filtering) that
 /// this monitor must not apply — a watchdog needs to see terminal and
 /// corrupt batons too, not just resumable ones.
-fn discover_batons(root: &Path) -> Vec<PathBuf> {
+///
+/// The second element is `true` when `.dvandva/runs` exists but could not
+/// be read (e.g. permission denied) — a missing `.dvandva/runs` (never
+/// created) is not an error and yields `false`.
+fn discover_batons(root: &Path) -> (Vec<PathBuf>, bool) {
     let mut files = Vec::new();
     let legacy = root.join(".dvandva/baton.json");
     if legacy.is_file() {
         files.push(legacy);
     }
     let runs_dir = root.join(".dvandva/runs");
-    if let Ok(entries) = std::fs::read_dir(&runs_dir) {
-        let mut run_batons: Vec<PathBuf> = Vec::new();
-        for entry in entries.flatten() {
-            let candidate = entry.path().join("baton.json");
-            if candidate.is_file() {
-                run_batons.push(candidate);
+    let mut runs_dir_unreadable = false;
+    match std::fs::read_dir(&runs_dir) {
+        Ok(entries) => {
+            let mut run_batons: Vec<PathBuf> = Vec::new();
+            for entry in entries.flatten() {
+                let candidate = entry.path().join("baton.json");
+                if candidate.is_file() {
+                    run_batons.push(candidate);
+                }
             }
+            run_batons.sort();
+            files.extend(run_batons);
         }
-        run_batons.sort();
-        files.extend(run_batons);
+        Err(err) if err.kind() != std::io::ErrorKind::NotFound => {
+            runs_dir_unreadable = true;
+        }
+        Err(_) => {}
     }
-    files
+    (files, runs_dir_unreadable)
 }
 
-/// Age in whole seconds between now and a parsed `updated_at`, saturating at
-/// `0` for a value that parses but sits in the future (clock skew). `None`
-/// when `updated_at` does not parse at all.
-fn age_seconds(updated_at: &str) -> Option<u64> {
-    let parsed = parse_rfc3339(updated_at)?;
+/// Tolerance for a parsed `updated_at` sitting in the future before it is
+/// treated as corrupt rather than benign clock skew.
+const FUTURE_TOLERANCE_SECS: i64 = 120;
+
+/// The result of parsing and age-classifying a baton's `updated_at`.
+enum ParsedAge {
+    /// A non-negative age in whole seconds (within the future-tolerance
+    /// window, a future value saturates to `0`).
+    Age(u64),
+    /// `updated_at` did not parse as RFC3339 at all.
+    Unparseable,
+    /// `updated_at` parsed but sits more than [`FUTURE_TOLERANCE_SECS`] in
+    /// the future — a far-future or corrupt-but-valid date, which would
+    /// otherwise read as "freshest forever" if simply saturated to `0`.
+    FutureBeyondTolerance,
+}
+
+/// Parse `updated_at` and classify its age relative to now, saturating a
+/// within-tolerance future value to `0` (benign clock skew) but flagging a
+/// materially-future value instead of silently treating it as fresh.
+fn classify_age(updated_at: &str) -> ParsedAge {
+    let Some(parsed) = parse_rfc3339(updated_at) else {
+        return ParsedAge::Unparseable;
+    };
     let now = OffsetDateTime::now_utc();
-    Some((now - parsed).whole_seconds().max(0) as u64)
+    let diff_secs = (now - parsed).whole_seconds();
+    if diff_secs < -FUTURE_TOLERANCE_SECS {
+        return ParsedAge::FutureBeyondTolerance;
+    }
+    ParsedAge::Age(diff_secs.max(0) as u64)
 }
 
 fn is_terminal(status: &str) -> bool {
@@ -469,14 +574,43 @@ mod tests {
     }
 
     #[test]
-    fn age_seconds_is_none_for_unparseable_updated_at() {
-        assert!(age_seconds("not-a-timestamp").is_none());
-        assert!(age_seconds("").is_none());
+    fn classify_age_is_unparseable_for_unparseable_updated_at() {
+        assert!(matches!(
+            classify_age("not-a-timestamp"),
+            ParsedAge::Unparseable
+        ));
+        assert!(matches!(classify_age(""), ParsedAge::Unparseable));
     }
 
     #[test]
-    fn age_seconds_computes_a_positive_age_for_a_past_timestamp() {
-        assert!(age_seconds("2020-01-01T00:00:00Z").unwrap() > 0);
+    fn classify_age_computes_a_positive_age_for_a_past_timestamp() {
+        assert!(matches!(
+            classify_age("2020-01-01T00:00:00Z"),
+            ParsedAge::Age(age) if age > 0
+        ));
+    }
+
+    #[test]
+    fn classify_age_saturates_within_tolerance_future_to_zero() {
+        let ts = OffsetDateTime::now_utc() + time::Duration::seconds(30);
+        let formatted = format!(
+            "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
+            ts.year(),
+            ts.month() as u8,
+            ts.day(),
+            ts.hour(),
+            ts.minute(),
+            ts.second()
+        );
+        assert!(matches!(classify_age(&formatted), ParsedAge::Age(0)));
+    }
+
+    #[test]
+    fn classify_age_flags_materially_future_timestamps() {
+        assert!(matches!(
+            classify_age("2099-01-01T00:00:00Z"),
+            ParsedAge::FutureBeyondTolerance
+        ));
     }
 
     #[test]
@@ -489,10 +623,27 @@ mod tests {
         std::fs::write(root.join(".dvandva/runs/beta/baton.json"), "{}").unwrap();
         std::fs::write(root.join(".dvandva/runs/alpha/baton.json"), "{}").unwrap();
 
-        let found = discover_batons(root);
+        let (found, runs_dir_unreadable) = discover_batons(root);
+        assert!(!runs_dir_unreadable);
         assert_eq!(found.len(), 3);
         assert_eq!(found[0], root.join(".dvandva/baton.json"));
         assert_eq!(found[1], root.join(".dvandva/runs/alpha/baton.json"));
         assert_eq!(found[2], root.join(".dvandva/runs/beta/baton.json"));
+    }
+
+    #[test]
+    fn discover_batons_missing_runs_dir_is_not_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let (found, runs_dir_unreadable) = discover_batons(dir.path());
+        assert!(found.is_empty());
+        assert!(!runs_dir_unreadable);
+    }
+
+    #[test]
+    fn dedupe_roots_removes_repeated_and_canonicalized_duplicates() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().to_path_buf();
+        let deduped = dedupe_roots(&[root.clone(), root.clone()]);
+        assert_eq!(deduped.len(), 1);
     }
 }
