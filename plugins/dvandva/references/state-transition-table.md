@@ -525,7 +525,13 @@ These gates keep the walkaway loop live and bound its cycles.
   per baton via a marker file keyed on status/checkpoint/age-bucket (1x/4x/24x
   the threshold, then silent), plus a `DVANDVA_WATCHDOG summary roots=<n>
   batons=<n> stale=<n> paused=<n> skipped=<n>` line at the end. Always exits
-  0 — it is a monitor, not a gate.
+  0 — it is a monitor, not a gate. Fail-loud rules: a baton that cannot
+  prove liveness is reported stale with a reason suffix
+  (`reason=unparseable_updated_at`, `reason=future_updated_at` for
+  timestamps more than 120s ahead), an unreadable runs directory prints
+  `note skipped_unreadable_runs_dir` and counts as skipped, and the dedupe
+  marker commits only on confirmed notify delivery, so a failed push is
+  retried on the next scan instead of being recorded as sent.
 
 ## Regular checkpoint commits
 
