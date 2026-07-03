@@ -16,13 +16,13 @@ Dvandva ships as an installable plugin (version `1.4.2`) for both engines. The r
 
 ## Quickstart
 
-The `dvandva` binary IS the Dvandva runtime — the read path, the write path, waiting, preflight, git work-gating, the installers, and the lints, all in one multicall binary. This checkout is `2.0.0-alpha.6` (unpublished); the latest published crates.io release is `dvandva 2.0.0-alpha.5`.
+The `dvandva` binary IS the Dvandva runtime — the read path, the write path, waiting, preflight, git work-gating, the installers, and the lints, all in one multicall binary. It is published on crates.io as `dvandva 2.0.0-beta.1`.
 
-**1. Install the binary.** From a checkout (primary; builds `2.0.0-alpha.6`), or from crates.io:
+**1. Install the binary.** From crates.io, or from a checkout:
 
 ```bash
-cargo install --path rust/dvandva
-# or, latest published release: cargo install dvandva --version 2.0.0-alpha.5
+cargo install dvandva --version 2.0.0-beta.1
+# or, from a checkout: cargo install --path rust/dvandva
 ```
 
 The binary must be on `PATH` for the installed skills to run — the plugin bundles no executables.
@@ -118,7 +118,7 @@ Disputes run through bounded findings→fixing loops (`deep_review → phase_fix
 
 ## The runtime
 
-The `dvandva` binary is one multicall runtime. Invoked through a git-hook symlink (`pre-commit`, `prepare-commit-msg`, ...) it takes the hook name from `argv[0]`; `dvandva --version` prints the version line (`dvandva 2.0.0-alpha.6` for this checkout).
+The `dvandva` binary is one multicall runtime. Invoked through a git-hook symlink (`pre-commit`, `prepare-commit-msg`, ...) it takes the hook name from `argv[0]`; `dvandva --version` prints the version line (`dvandva 2.0.0-beta.1`).
 
 | Group | Subcommands |
 |---|---|
