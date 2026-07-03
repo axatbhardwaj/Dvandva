@@ -31,7 +31,7 @@ use crate::lint;
 
 /// Expected published Dvandva plugin version (bumped to `1.4.0` for the S2/S4/S5/S6
 /// hardening slice; was `1.3.0` for the flow patches and `1.2.0` for the Rust port).
-pub const EXPECTED_DVANDVA_VERSION: &str = "1.4.1";
+pub const EXPECTED_DVANDVA_VERSION: &str = "1.4.2";
 
 /// The exact 15-agent seed roster, mirroring the shell script's array (and
 /// its already-alphabetical order).

@@ -37,19 +37,21 @@ Dvandva model classes are vendor-neutral. Agent frontmatter uses `model: opus` a
 Dvandva ships as an installable plugin for both engines. The repo lives at https://github.com/axatbhardwaj/Dvandva.
 
 The `dvandva` binary IS the Dvandva runtime: read path, write path, waiting,
-preflight, git work-gating, installers, and lints. It is published on
-crates.io as `dvandva 2.0.0-alpha.5`. Install it with `cargo install dvandva
---version 2.0.0-alpha.5` (or `cargo install --path rust/dvandva` from a
-checkout) before installing the plugin; the plugin no longer bundles
-executables.
+preflight, git work-gating, installers, and lints. This checkout is
+`2.0.0-alpha.6` (unpublished); the latest published crates.io release is
+`dvandva 2.0.0-alpha.5`. Install it with `cargo install --path rust/dvandva`
+from a checkout (primary; builds `2.0.0-alpha.6`), or `cargo install dvandva
+--version 2.0.0-alpha.5` for the latest published release (`cargo install
+dvandva --version 2.0.0-alpha.6` once published) before installing the
+plugin; the plugin no longer bundles executables.
 
 ## Quickstart
 
 Install the `dvandva` binary, then the marketplace in both Claude Code and Codex:
 
 ```bash
-cargo install dvandva --version 2.0.0-alpha.5
-# or, from a checkout: cargo install --path rust/dvandva
+cargo install --path rust/dvandva
+# or, latest published release: cargo install dvandva --version 2.0.0-alpha.5
 dvandva install
 ```
 
@@ -69,8 +71,9 @@ app-server RPC path.
 
 `dvandva install` is separate from installing the binary itself. `dvandva install`
 adds the Dvandva skills, commands, agents, and references to Claude Code and/or
-Codex; `cargo install dvandva --version 2.0.0-alpha.5` (or `cargo install
---path rust/dvandva` from a checkout) installs only the `dvandva` binary. The binary
+Codex; `cargo install --path rust/dvandva` from a checkout (primary; builds
+`2.0.0-alpha.6`), or `cargo install dvandva --version 2.0.0-alpha.5` for the
+latest published release, installs only the `dvandva` binary. The binary
 must be on `PATH` for the installed skills to run — the plugin no longer
 bundles executables.
 
@@ -125,11 +128,11 @@ $prativadi
 
 The `dvandva` binary IS the Dvandva runtime — the read path, the write path,
 waiting, preflight, git work-gating, and the installers, all in one multicall
-binary. Install it from crates.io:
+binary. Install it from a checkout, or from crates.io:
 
 ```bash
-cargo install dvandva --version 2.0.0-alpha.5
-# or, from a checkout: cargo install --path rust/dvandva
+cargo install --path rust/dvandva
+# or, latest published release (2.0.0-alpha.5): cargo install dvandva --version 2.0.0-alpha.5
 ```
 
 The binary must be on `PATH` for the Dvandva skills to run. `cargo install`
@@ -173,7 +176,7 @@ New subcommands (flow patches):
 
 Invoked through a git-hook symlink (`pre-commit`, `prepare-commit-msg`, ...) the
 binary takes the hook name from `argv[0]`. `dvandva --version` prints the
-version line (`dvandva 2.0.0-alpha.5`).
+version line (`dvandva 2.0.0-alpha.6` for this checkout).
 
 ## Current State
 
@@ -201,7 +204,7 @@ The default `run_mode` is `walkaway`: start both sessions once, then let the bat
 
 | Prerequisite | Verify |
 |---|---|
-| `dvandva` binary on `PATH`, hard runtime dependency | `dvandva --version` (install with `cargo install dvandva --version 2.0.0-alpha.5`, or `cargo install --path rust/dvandva` from a checkout) |
+| `dvandva` binary on `PATH`, hard runtime dependency | `dvandva --version` (install with `cargo install --path rust/dvandva` from a checkout — primary, builds `2.0.0-alpha.6` — or `cargo install dvandva --version 2.0.0-alpha.5` for the latest published release) |
 | Claude Code, if using Claude | `claude --version` |
 | Codex CLI, if using Codex | `codex --version` |
 | Superpowers plugin on every engine running a Dvandva role, hard runtime dependency | `/skills` lists `superpowers:using-superpowers`, `superpowers:brainstorming`, `superpowers:test-driven-development`, and `superpowers:verification-before-completion` |
@@ -223,6 +226,8 @@ That is foreground waiting, not model polling. The agent resumes when the baton 
 The primary dispute mechanism is the findings→fixing loops (`deep_review->phase_fixing`, `cross_review->cross_fixing`, `phase_review->phase_fixing`) bounded by `loop_counts` caps at `disagreement_cap`. The `review_of_review`/`counter_review` vadi-counter loop is a retained but rarely-exercised safety valve — it has never fired across the ~24 recorded runs.
 
 Continuous polling is the default hard rule: `--max-wait` is a heartbeat interval, not permission to stop. The helper keeps polling until the baton assigns the role, reaches post-handshake `done`, enters `human_question` / `human_decision`, or the user interrupts. Use `--until-actionable` for normal walkaway waits so team-owned `active_roles` states do not wake a role until that role has dependency-unblocked actionable work; after a handoff write, combine it with `--since-checkpoint <written_checkpoint>`. `termination_review` is the shared multipart termination state: it keeps both roles active so they either keep polling or stop together after both approve. Final approval and development explainer-review ownership are helper-enforced: `DVANDVA_ROLE=vadi` may raise only `vadi_final_approval` and may add/change only `run_explainer_reviews` entries with `role: "vadi"`; `DVANDVA_ROLE=prativadi` may raise only `prativadi_final_approval` and may add/change only entries with `role: "prativadi"`. `--persist` is accepted for older call sites and is now redundant. `--persist-max <seconds>` adds a total wall-clock cap and exits 23 when reached; in walkaway mode that cap is a shell-budget heartbeat, so the role must immediately re-enter the wait unless the user interrupts. `--finite` is compatibility-only and is not valid for normal walkaway loops. The helper's built-in directory watcher wakes it the moment the baton changes instead of sleeping the full interval; if the watcher cannot start, it falls back to interval polling.
+
+Add `--through-human` for zero-touch resumption: instead of exiting 11/12 on a `human_question`/`human_decision` pause, the wait keeps polling through it, noting and notifying once per pause episode (deduped across a shell-budget re-invocation via a marker file beside the baton) with the stall watchdog suspended, then resumes normal semantics the moment the pause clears. Per F5, only the non-surfacing session ever passes this flag — the Claude Code-hosted session still exits 11/12 to ask the human.
 
 The prativadi can also be launched *before* the vadi has scaffolded the baton. Its preflight detects the missing baton, runs the wait helper with `--allow-missing`, and resumes once the vadi writes the file. Simultaneous-launch dogfooding is therefore safe — no need to order the two starts.
 

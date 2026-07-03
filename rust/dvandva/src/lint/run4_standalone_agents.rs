@@ -16,7 +16,7 @@ use crate::lint::{
     resolve_root, union_slurp_matches_ci, Report,
 };
 
-const EXPECTED_VERSION: &str = "1.4.1";
+const EXPECTED_VERSION: &str = "1.4.2";
 
 const EXPECTED_AGENTS: [&str; 15] = [
     "adversarial-analyst",

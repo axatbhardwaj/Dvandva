@@ -135,6 +135,20 @@ records the writer for traceability. Recommended pairing: run waits with
 `dvandva wait --notify <url>` (or `DVANDVA_NOTIFY_URL`) so a pause also pings your
 phone.
 
+`--through-human` (F5-consistent): a wait invoked with this flag keeps polling
+THROUGH a `human_question`/`human_decision` pause instead of exiting 11/12, so
+the non-surfacing session's turn does not end and it resumes automatically
+once the pause clears. Each pause episode still prints one `DVANDVA_WAIT note
+human_pause status=<status> checkpoint=<checkpoint>[ sibling_run_id=<id>]`
+line and fires the same notify event exactly once, deduped across a
+shell-budget re-invocation via a `.wait-pause-<role>` marker file beside the
+baton; the stall watchdog is suspended for the duration. Per F5 the Claude
+Code-hosted session must never pass `--through-human` — it owns surfacing and
+still exits 11/12 to ask the human directly. The non-surfacing session
+(Codex-hosted in a mixed pair, or the non-writer session in an all-Codex pair)
+appends it so the pause stops that session's active work without stopping its
+wait loop. `done`, `abandoned`, and split-brain detection are unaffected.
+
 Run 4 standalone-agent retirement is intentionally Dvandva-only: it covers only
 Dvandva-covered workflows with functional parity via Runs 1-4 usage. The
 allowlist is the five Claude symlink agents `adversarial-analyst`, `architect`,

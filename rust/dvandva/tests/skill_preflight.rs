@@ -1118,3 +1118,33 @@ mod f5_human_surfacing_contract {
         }
     });
 }
+
+/// `--through-human` flag contract: Codex-hosted sessions may append it to a
+/// wait for zero-touch resumption through a human_question/human_decision
+/// pause; Claude Code-hosted sessions must never use it because F5 makes
+/// them own surfacing to the human.
+mod through_human_flag_contract {
+    use super::*;
+
+    live_tree_test!(documents_through_human_zero_touch_resumption, {
+        for (path, role) in role_skills() {
+            require_match(
+                &path,
+                r"--through-human.{0,400}zero-touch resumption|zero-touch resumption.{0,400}--through-human",
+                &format!("{role} skill documents --through-human zero-touch resumption"),
+            );
+        }
+    });
+
+    live_tree_test!(claude_hosted_sessions_must_not_use_through_human, {
+        for (path, role) in role_skills() {
+            require_match(
+                &path,
+                r"Claude Code-hosted sessions MUST NOT use `--through-human`",
+                &format!(
+                    "{role} skill says Claude Code-hosted sessions must not use --through-human"
+                ),
+            );
+        }
+    });
+}

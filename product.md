@@ -115,6 +115,23 @@ Status: rewritten 2026-05-14 for richer flow (spec phase + phased implementation
 > holds the status catalog, required-key list, channel-doc copies, and HISTORICAL
 > markers in parity. All new fields are additive nullable; absent = pre-hardening
 > behavior.
+>
+> **Spec rev 2026-07-03:** `dvandva wait` gains `--through-human`; crate →
+> `2.0.0-alpha.6`, plugin manifests → `1.4.2`. Instead of exiting 11/12 on a
+> `human_question`/`human_decision` pause (own or a newer paired sibling's),
+> the wait keeps polling indefinitely: each pause episode prints one
+> `DVANDVA_WAIT note human_pause status=<status> checkpoint=<checkpoint>[
+> sibling_run_id=<id>]` line and fires the same notify event once (deduped
+> across a persist-max/shell-budget re-invocation via a `.wait-pause-<role>`
+> marker file beside the baton), suspends the stall watchdog for the
+> duration, and resumes normal semantics — including `--until-actionable` —
+> the instant the resume baton lands. `done`/`abandoned` still exit
+> immediately and split-brain detection is unaffected. Per F5, the Claude
+> Code-hosted session, which owns surfacing `human_question`/`human_decision`
+> to the human, must never pass `--through-human` and still exits 11/12; the
+> non-surfacing session (Codex-hosted in a mixed pair, or the non-writer
+> session in an all-Codex pair) appends it so a pause stops that session's
+> active work without ending its wait loop.
 
 ## 1. What it is
 
@@ -218,6 +235,7 @@ If criterion #5 fails (any runaway loop observed during pilot), v1 does not ship
 - The generated user-facing artifacts are HTML: plans, research reports, evaluations, reviews, pilot write-ups, and run reports. Every completed full-profile v2 development run must produce a one-date explainer under `./superpowers/run-reports/`: use `YYYY-MM-DD-<run_id>-explainer.html` for date-less run IDs, or `<run_id>-explainer.html` when `run_id` already starts with `YYYY-MM-DD-`; never add a second date prefix. The explainer includes decisions, development, architecture, verification, and diagrams. Fast/standard v2 development runs skip the explainer and instead require `profile_decision`, passing final verification, completed `verification_matrix` evidence, and completed approved prativadi `phase-review` evidence with current-cycle `review_checkpoint`. Platform/source Markdown such as `SKILL.md`, command files, README/source docs, and prompt templates stays in its native format.
 - Continuous polling is the hard rule. `dvandva wait` treats `--max-wait` as a heartbeat interval by default and keeps polling until the selected baton assigns the role, reaches `done`/`human_question`/`human_decision`, or the user interrupts. After a handoff write, roles pass `--since-checkpoint <written_checkpoint> --until-actionable` so the helper keeps polling while the selected baton remains at or below that checkpoint, even if team-owned `active_roles` still names the writer; action-aware waiting then wakes only when the baton advances and the role has dependency-unblocked work. `human_question` and `human_decision` are paired run pauses that stop both roles together. During any selected non-terminal wait, a newer sibling run's `human_question` or `human_decision` is propagated to the selected waiter unless `DVANDVA_CONCURRENT=1`; older sibling human-intervention batons are ignored, and sibling `human_question` output preserves `question`, `resume_assignee`, and `resume_status`. `--persist` is accepted for older call sites and is now redundant. `--persist-max <seconds>` is a shell-budget cap; wait-helper persist cap exit 23 is not proof the peer is done and the role must immediately re-enter the wait unless the user interrupts. The write-helper validation exit 23 means a candidate failed schema/required-key/status validation. Finite exit 20 is available only through explicit `--finite` compatibility mode and is not valid for normal walkaway loops.
 - Claude Code has a Bash-tool cap around 600 seconds, so Claude-hosted sessions must relaunch the wait if the harness stops the shell before a terminal baton state. Codex-hosted sessions may use unbounded default continuous polling or pass `--persist` for older snippets; both are the same continuous wait contract.
+- `--through-human` keeps a wait polling THROUGH a `human_question`/`human_decision` pause (this role's own, or a newer paired sibling's) instead of exiting 11/12: each pause episode prints one `DVANDVA_WAIT note human_pause status=<status> checkpoint=<checkpoint>` line (with `sibling_run_id=<id>` appended for a propagated sibling pause) and fires the notify event once — including once across a re-invocation after a persist-max/shell-budget exit, via a `.wait-pause-<role>` marker file next to the baton — then normal wait logic resumes as soon as the pause clears, with the stall watchdog suspended for the duration. `done`/`abandoned` and split-brain detection are unaffected. Per F5, the Claude Code-hosted session must not use it — it owns surfacing human_question/human_decision and still exits 11/12; the non-surfacing session (Codex-hosted in a mixed pair, or the non-writer in an all-Codex pair) appends it for zero-touch resumption.
 
 ### 3.2 Out of v1 (non-goals)
 
@@ -550,7 +568,7 @@ Auto-activation depends entirely on `description`. Tuning rules:
 dvandva install
 ```
 
-`dvandva install` wraps the public install path for users: it registers the Dvandva marketplace and installs `dvandva@dvandva` in both Claude Code and Codex. It accepts `--claude-only` and `--codex-only` for one-engine installs. For Codex, it delegates to `dvandva install-codex`, which runs `codex plugin add dvandva@dvandva` on current Codex builds and keeps the legacy app-server RPC install as a fallback for older builds. The `dvandva` binary must already be on `PATH` (`cargo install dvandva --version 2.0.0-alpha.5`, or `cargo install --path rust/dvandva` from a checkout). The authoritative preflight is whether the current agent session can see and invoke the required Superpowers skills.
+`dvandva install` wraps the public install path for users: it registers the Dvandva marketplace and installs `dvandva@dvandva` in both Claude Code and Codex. It accepts `--claude-only` and `--codex-only` for one-engine installs. For Codex, it delegates to `dvandva install-codex`, which runs `codex plugin add dvandva@dvandva` on current Codex builds and keeps the legacy app-server RPC install as a fallback for older builds. The `dvandva` binary must already be on `PATH` (`cargo install --path rust/dvandva` from a checkout — primary, builds `2.0.0-alpha.6` — or `cargo install dvandva --version 2.0.0-alpha.5` for the latest published release; `cargo install dvandva --version 2.0.0-alpha.6` once published). The authoritative preflight is whether the current agent session can see and invoke the required Superpowers skills.
 
 ### 11.2 Development install fallback
 

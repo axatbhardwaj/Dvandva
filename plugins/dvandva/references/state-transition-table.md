@@ -94,6 +94,23 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
   `--persist-max <seconds>` is a total wall-clock cap; the wait-helper persist cap exit 23 is not a terminal baton state and must re-enter wait unless the
   user interrupts. Explicit `--finite` compatibility mode is the only path to
   exit 20 and is not valid for normal walkaway loops.
+- `dvandva wait --through-human`: keeps polling THROUGH a `human_question`/
+  `human_decision` pause (this role's own, or a newer paired sibling's)
+  instead of exiting 11/12. Each pause episode (keyed by status and
+  checkpoint, plus sibling run id for a propagated pause) prints one line to
+  stderr — `DVANDVA_WAIT note human_pause status=<status>
+  checkpoint=<checkpoint>` for an own pause, with ` sibling_run_id=<run_id>`
+  appended for a sibling pause — and fires the same notify event the pre-flag
+  exit-11/12 path used, exactly once per episode; a `.wait-pause-<role>`
+  marker file next to the baton dedupes the note/notify across a wait
+  re-invocation after a persist-max/shell-budget exit. The stall watchdog is
+  suspended for the duration of the pause and resumes counting from a fresh
+  anchor the moment the pause clears; continuous-mode `--max-wait` heartbeats
+  continue uninterrupted. `done` and `abandoned` still exit immediately;
+  split-brain detection is unaffected. Per F5, the Claude Code-hosted session
+  (which owns surfacing `human_question`/`human_decision`) must never pass
+  `--through-human`; only a non-surfacing session (Codex-hosted in a mixed
+  pair, or the non-writer session in an all-Codex pair) uses it.
 - `dvandva write`: the write-helper validation exit 23 means a baton
   candidate failed schema, required-key, safe-run-id, status-owner, status, or
   enum validation. Fix the candidate and rerun the helper; do not edit the
