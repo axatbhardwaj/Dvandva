@@ -105,6 +105,30 @@ fn sanity_check(baton_path: &Path) -> SanityCheck {
     SanityCheck::Ok
 }
 
+/// A headless walkaway run's only human channels are the mobile session and
+/// ntfy pushes; without `DVANDVA_NOTIFY_URL` set, the out-of-band watchdog
+/// (`dvandva watchdog`) has nothing to notify, and a dead-both-sessions
+/// baton would go silent forever. This is a non-blocking heads-up, printed
+/// once the baton has RESOLVED and passed the sanity check: it never changes
+/// the preflight's exit code, so a missing/unreadable baton (already
+/// surfaced elsewhere) just skips it quietly via the lenient read.
+fn warn_if_walkaway_notify_unconfigured(baton: &Path) {
+    let Ok(value) = read_json_lenient(baton) else {
+        return;
+    };
+    if str_field(&value, "run_mode") != "walkaway" {
+        return;
+    }
+    let configured = std::env::var("DVANDVA_NOTIFY_URL")
+        .map(|v| !v.is_empty())
+        .unwrap_or(false);
+    if !configured {
+        eprintln!(
+            "DVANDVA_PREFLIGHT note=notify_unconfigured hint=set DVANDVA_NOTIFY_URL for headless runs"
+        );
+    }
+}
+
 /// jq `//`-style string read: `null`/`false`/absent coalesce to `""`.
 fn str_field(value: &Value, key: &str) -> String {
     match coalesce(value.get(key)) {
@@ -198,6 +222,7 @@ pub fn run_preflight(role: Role, mode: HookMode) -> i32 {
                 "DVANDVA_PREFLIGHT role={role_str} result=resolved baton={} run_id={run_id} selected_by={chosen_by}{note}",
                 baton.display()
             );
+            warn_if_walkaway_notify_unconfigured(&baton);
             run_hook_preflight(role, Some(&root), mode)
         }
         // The shell resolver's catch-all `unexpected_resolver_output` branch:

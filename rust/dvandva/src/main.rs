@@ -29,6 +29,7 @@ Usage: dvandva <subcommand> [args...]
 
 Core:      state | resolve | write | wait | snapshot | next | brief
 Preflight: preflight | hook-preflight
+Monitor:   watchdog
 Git gate:  commit-gate | drift-lint | install-hooks | git-hook <name> | baton-guard
 Install:   install | install-codex | smoke-install | retire-agents
 Lints:     lint <artifacts|skills|protocol-phase1|skill-phase3|phase4-research|
@@ -76,6 +77,7 @@ fn main() -> ExitCode {
         Some("resolve") => cmd::resolve::run(sub_args),
         Some("write") => cmd::write::run(sub_args),
         Some("wait") => cmd::wait::run(sub_args),
+        Some("watchdog") => cmd::watchdog::run(sub_args),
         Some("snapshot") => cmd::snapshot::run(sub_args),
         Some("preflight") => cmd::preflight::run(sub_args),
         Some("hook-preflight") => cmd::hook_preflight::run(sub_args),

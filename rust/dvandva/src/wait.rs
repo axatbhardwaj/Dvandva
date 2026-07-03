@@ -881,7 +881,10 @@ fn newer_sibling_time(
 /// builds the same [`OffsetDateTime`] from the always-available core
 /// constructors instead. Returns `None` (never panics) on anything that does
 /// not match the shape, including non-ASCII input.
-fn parse_rfc3339(value: &str) -> Option<OffsetDateTime> {
+///
+/// `pub(crate)`: also reused by [`crate::watchdog`] to compute a baton's
+/// out-of-band staleness age from the same `updated_at` shape.
+pub(crate) fn parse_rfc3339(value: &str) -> Option<OffsetDateTime> {
     if !value.is_ascii() || value.len() < 20 {
         return None;
     }
