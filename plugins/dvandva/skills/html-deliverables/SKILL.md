@@ -31,16 +31,18 @@ Every page IS, in order:
 | `--panel` / `--panel2` | `#121821` / `#182130` | cards, figures |
 | `--line` | `#26303e` | borders |
 | `--ink` / `--dim` / `--faint` | `#dce4ee` / `#8a97a8` / `#5c6774` | text tiers |
-| `--vadi` | `#5ca9ff` | actor A / primary accent |
-| `--prat` | `#ff7ab0` | actor B / opposing accent |
-| `--team` | `#b791ff` | shared / both |
+| `--vadi` | `#34d399` | actor A / primary accent |
+| `--prat` | `#a78bfa` | actor B / opposing accent |
+| `--team` | `#5ca9ff` | shared / both |
 | `--human` | `#e0a63d` | the human, pauses |
 | `--seal` | `#46c26a` | success, gates, done |
 | `--stop` | `#ff6a5e` | failure, dead ends |
 
 Two actors in tension is the identity: map the subject's own opposition onto
 `--vadi`/`--prat` (writer/reviewer, client/server, before/after). Semantic
-color (`--seal`/`--stop`/`--human`) never doubles as decoration.
+color (`--seal`/`--stop`/`--human`) never doubles as decoration. `--vadi`'s
+emerald is lighter/cooler than `--seal`'s forest green — keep gates on the
+`--seal`-stroked-rect idiom so the two greens never carry the same shape.
 
 ## Components (all defined in the template)
 
