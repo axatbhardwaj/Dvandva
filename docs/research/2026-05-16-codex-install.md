@@ -3,6 +3,8 @@
 **Date:** 2026-05-16
 **Context:** Dvandva protocol-ergonomics run (Phase 1 of 5). Informs Phase 4 (Codex slash commands) and Phase 5 (Codex install one-liner). Verified against `codex-cli 0.130.0` on Linux.
 
+*Historical record (2026-05-16, updated 2026-06-27); `scripts/install-codex.sh` has since been retired — the Rust `dvandva` binary now owns this path as the `dvandva install-codex` subcommand. See product.md and README.md for current install behavior.*
+
 **2026-06-27 update:** Current local verification against `codex-cli 0.142.3`
 shows Codex now exposes a stable non-interactive install command:
 `codex plugin add dvandva@dvandva`. `scripts/install-codex.sh` now uses that

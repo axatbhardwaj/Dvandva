@@ -133,7 +133,7 @@ PR 353 proved the driver/reviewer pattern works, but it also exposed costs:
 Dvandva changes the defaults:
 
 - Local baton first, PR comments second.
-- One active model-work loop at a time, with the other role blocked in the shell wait helper.
+- One active model-work loop at a time, with the other role blocked in the wait helper.
 - Checkpoint batches instead of every tiny thought.
 - Explicit `assignee` field for "ball is in your court".
 - Raw PR history archived locally for offline analysis, outside any public repo.

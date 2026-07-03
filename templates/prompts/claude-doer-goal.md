@@ -1,5 +1,7 @@
 # Claude Doer Goal Prompt
 
+*Historical record (v0 prompt template, 2026-05-12 era) — demoted to a reference artifact per product.md; superseded by the plugin's `/dvandva:vadi` and `/dvandva:prativadi` commands. See product.md and README.md for current usage.*
+
 Paste into Claude Code from the target worktree.
 
 ```text

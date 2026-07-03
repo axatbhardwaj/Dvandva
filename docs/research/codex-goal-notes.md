@@ -2,6 +2,8 @@
 
 Research date: 2026-05-12.
 
+*Historical record (2026-05-12 era); the shell scripts referenced below (`scripts/dvandva-wait.sh`, `dvandva-state.sh`) were later ported into the `dvandva` Rust binary (`dvandva wait`, `dvandva state --compact`) — see product.md for current behavior.*
+
 ## Local Verification
 
 On this machine, `codex features list` reports:
