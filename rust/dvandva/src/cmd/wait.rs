@@ -13,7 +13,7 @@ use dvandva::wait::{self, WaitConfig};
 use dvandva::Role;
 
 const USAGE: &str = "\
-Usage: dvandva wait --role <vadi|prativadi> [--file .dvandva/baton.json] [--interval seconds] [--max-wait seconds] [--allow-missing] [--persist] [--persist-max seconds] [--stall-max seconds] [--since-checkpoint checkpoint] [--until-actionable] [--finite] [--notify <url>] [--through-human]
+Usage: dvandva wait --role <vadi|prativadi> [--file .dvandva/baton.json] [--interval seconds] [--max-wait seconds] [--allow-missing] [--persist] [--persist-max seconds] [--stall-max seconds] [--since-checkpoint checkpoint] [--until-actionable] [--finite] [--through-human]
 
 Defaults: --interval 60 --max-wait 540
 Default file resolution: --file wins; otherwise DVANDVA_BATON_FILE,
@@ -44,19 +44,14 @@ Use --until-actionable in team-owned states to keep polling until this role has
 actionable work, not merely because active_roles names it. This prevents a
 parallel_implementing role from waking while only the peer has ready chunks.
 
-Use --notify <url> (or DVANDVA_NOTIFY_URL; --notify wins, empty disables) to
-POST a best-effort ntfy-compatible notification on human_question,
-human_decision, done, split_brain, and stalled.
-
 Use --through-human to keep polling THROUGH human_question / human_decision
 pauses (this role's own, or a newer paired sibling's) instead of exiting
 11/12. Each pause episode (by status and checkpoint) prints one DVANDVA_WAIT
-note human_pause line and fires the same notify event once — including once
-across a wait re-invocation after a persist-max/shell-budget exit, via a
-small marker file next to the baton — then normal wait logic (including
---until-actionable) resumes as soon as the pause clears. The stall watchdog
-is suspended for the duration of the pause. done and abandoned still exit
-immediately; split-brain is unaffected.";
+note human_pause line — including once across a wait re-invocation after a
+persist-max/shell-budget exit, via a small marker file next to the baton —
+then normal wait logic (including --until-actionable) resumes as soon as the
+pause clears. The stall watchdog is suspended for the duration of the pause.
+done and abandoned still exit immediately; split-brain is unaffected.";
 
 const RUN_ID_UNSAFE: &str =
     "DVANDVA_RUN_ID must be one safe path segment (letters, numbers, dot, underscore, dash; no slash or '..')";
@@ -73,7 +68,6 @@ struct RawArgs {
     stall_max: String,
     since_checkpoint: Option<String>,
     until_actionable: bool,
-    notify: Option<String>,
     through_human: bool,
 }
 
@@ -90,7 +84,6 @@ impl Default for RawArgs {
             stall_max: "0".to_string(),
             since_checkpoint: None,
             until_actionable: false,
-            notify: None,
             through_human: false,
         }
     }
@@ -226,13 +219,6 @@ pub fn run(args: &[String]) -> i32 {
         .map(|value| value == "1")
         .unwrap_or(false);
 
-    // --notify wins over DVANDVA_NOTIFY_URL; an empty value from either source
-    // disables notification.
-    let notify_url = raw
-        .notify
-        .or_else(|| std::env::var("DVANDVA_NOTIFY_URL").ok())
-        .filter(|value| !value.is_empty());
-
     let cfg = WaitConfig {
         role,
         baton_file,
@@ -246,7 +232,6 @@ pub fn run(args: &[String]) -> i32 {
         since_checkpoint,
         until_actionable: raw.until_actionable,
         concurrent,
-        notify_url,
         through_human: raw.through_human,
     };
     wait::run(&cfg)
@@ -300,10 +285,6 @@ fn parse_args(args: &[String]) -> Result<RawArgs, ParseError> {
             "--finite" => {
                 raw.persist = false;
                 index += 1;
-            }
-            "--notify" => {
-                raw.notify = Some(take_value(args, index)?);
-                index += 2;
             }
             "--through-human" => {
                 raw.through_human = true;

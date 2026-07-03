@@ -6,17 +6,15 @@
 //! sessions die (reboot, OOM, host loss) a mid-work baton goes silent
 //! forever — nothing left in-process ever wakes up to say so. This module is
 //! the out-of-band answer: run one-shot from cron/systemd, it scans every
-//! run under the given roots, classifies each baton, and pushes a
-//! best-effort notification whenever a baton looks stuck. Unlike `wait`, it
-//! never blocks and always exits 0 on a healthy scan — it is a monitor, not
-//! a gate.
+//! run under the given roots, classifies each baton, and prints a finding
+//! line whenever a baton looks stuck — cron logs are the record. Unlike
+//! `wait`, it never blocks and always exits 0 on a healthy scan — it is a
+//! monitor, not a gate.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use serde_json::Value;
 use time::OffsetDateTime;
-use ureq::Agent;
 
 use crate::util::{coalesce, read_json_lenient};
 use crate::wait::parse_rfc3339;
@@ -32,10 +30,6 @@ pub struct WatchdogConfig {
     pub remind_paused: u64,
     /// `--stale-max` seconds; a mid-work baton at or past this age is stale.
     pub stale_max: u64,
-    /// Best-effort webhook URL for findings (`--notify` / `DVANDVA_NOTIFY_URL`,
-    /// flag wins). `None` (or an empty string) disables notification, but
-    /// finding lines are still printed either way.
-    pub notify_url: Option<String>,
 }
 
 /// How a single baton was classified this scan.
@@ -62,9 +56,6 @@ struct Finding<'a> {
     checkpoint: &'a str,
     age_s: Option<u64>,
     reason: Option<&'static str>,
-    /// The threshold (`stale_max` or `remind_paused`) this finding's age
-    /// bucket is measured against, for dedupe bucketing.
-    threshold: u64,
 }
 
 /// Run one scan across every root, returning the process exit code. Always
@@ -108,15 +99,6 @@ pub fn run(cfg: &WatchdogConfig) -> i32 {
         }
     }
 
-    if cfg
-        .notify_url
-        .as_deref()
-        .filter(|u| !u.is_empty())
-        .is_none()
-    {
-        println!("DVANDVA_WATCHDOG note notify_unconfigured");
-    }
-
     println!(
         "DVANDVA_WATCHDOG summary roots={} batons={batons} stale={stale} paused={paused} skipped={skipped}",
         roots.len()
@@ -140,8 +122,8 @@ fn dedupe_roots(roots: &[PathBuf]) -> Vec<PathBuf> {
     out
 }
 
-/// Classify one successfully-parsed baton, reporting a finding (stdout line
-/// plus a dedupe-gated notify POST) when it warrants one.
+/// Classify one successfully-parsed baton, printing a finding line when it
+/// warrants one.
 fn classify_baton(
     cfg: &WatchdogConfig,
     root: &Path,
@@ -166,9 +148,7 @@ fn classify_baton(
     let age_s = match classify_age(&updated_at) {
         ParsedAge::Unparseable => {
             report_finding(
-                cfg,
                 root,
-                baton_file,
                 Finding {
                     event: "watchdog_stale",
                     run_id: &run_id,
@@ -177,16 +157,13 @@ fn classify_baton(
                     checkpoint: &checkpoint,
                     age_s: None,
                     reason: Some("unparseable_updated_at"),
-                    threshold: cfg.stale_max,
                 },
             );
             return Classification::Stale;
         }
         ParsedAge::FutureBeyondTolerance => {
             report_finding(
-                cfg,
                 root,
-                baton_file,
                 Finding {
                     event: "watchdog_stale",
                     run_id: &run_id,
@@ -195,7 +172,6 @@ fn classify_baton(
                     checkpoint: &checkpoint,
                     age_s: None,
                     reason: Some("future_updated_at"),
-                    threshold: cfg.stale_max,
                 },
             );
             return Classification::Stale;
@@ -206,9 +182,7 @@ fn classify_baton(
     if is_paused(&status) {
         if cfg.remind_paused > 0 && age_s >= cfg.remind_paused {
             report_finding(
-                cfg,
                 root,
-                baton_file,
                 Finding {
                     event: "watchdog_paused",
                     run_id: &run_id,
@@ -217,7 +191,6 @@ fn classify_baton(
                     checkpoint: &checkpoint,
                     age_s: Some(age_s),
                     reason: None,
-                    threshold: cfg.remind_paused,
                 },
             );
         }
@@ -226,9 +199,7 @@ fn classify_baton(
 
     if age_s >= cfg.stale_max {
         report_finding(
-            cfg,
             root,
-            baton_file,
             Finding {
                 event: "watchdog_stale",
                 run_id: &run_id,
@@ -237,7 +208,6 @@ fn classify_baton(
                 checkpoint: &checkpoint,
                 age_s: Some(age_s),
                 reason: None,
-                threshold: cfg.stale_max,
             },
         );
         return Classification::Stale;
@@ -246,10 +216,10 @@ fn classify_baton(
     Classification::Healthy
 }
 
-/// Print the finding's `DVANDVA_WATCHDOG` line (always), then POST the
-/// notify event unless a marker file next to the baton shows this exact
-/// (status, checkpoint, age-bucket) combination was already reported.
-fn report_finding(cfg: &WatchdogConfig, root: &Path, baton_file: &Path, finding: Finding) {
+/// Print the finding's `DVANDVA_WATCHDOG` line. Called on every scan that
+/// warrants a finding — there is no dedupe or pacing, so a continuously
+/// stuck run reports again on every scan; cron logs are the record.
+fn report_finding(root: &Path, finding: Finding) {
     let age_field = finding
         .age_s
         .map(|a| a.to_string())
@@ -267,126 +237,6 @@ fn report_finding(cfg: &WatchdogConfig, root: &Path, baton_file: &Path, finding:
         finding.checkpoint,
         root.display(),
     );
-
-    // No URL configured: never touch the dedupe marker at all, so the first
-    // real POST after the user later sets DVANDVA_NOTIFY_URL is not
-    // pre-suppressed by markers that accrued while notification was off.
-    let Some(url) = cfg.notify_url.as_deref().filter(|u| !u.is_empty()) else {
-        return;
-    };
-
-    let bucket = match finding.age_s {
-        None => "unparseable".to_string(),
-        Some(age_s) => bucket_label(age_s, finding.threshold).to_string(),
-    };
-    let key = format!(
-        "status={} checkpoint={} bucket={bucket}",
-        finding.status, finding.checkpoint
-    );
-    // Read-only decision: a failed POST below must not be recorded as
-    // delivered, so the marker is written only after confirmed success.
-    if !should_attempt_notify(baton_file, finding.event, &key) {
-        return;
-    }
-    let delivered = send_notify(
-        url,
-        finding.event,
-        finding.run_id,
-        finding.status,
-        finding.assignee,
-        &age_field,
-        finding.reason,
-    );
-    if delivered {
-        write_marker(baton_file, finding.event, &key);
-    }
-}
-
-/// Which re-notify bucket `age_s` falls into relative to `threshold`
-/// (`stale_max` or `remind_paused`): the finding only exists once
-/// `age_s >= threshold`, so a stuck run re-reminds at `threshold`, ~4x, and
-/// ~24x, then stays in the same (final) bucket forever — silent from then on.
-fn bucket_label(age_s: u64, threshold: u64) -> &'static str {
-    if age_s >= threshold.saturating_mul(24) {
-        "24x"
-    } else if age_s >= threshold.saturating_mul(4) {
-        "4x"
-    } else {
-        "1x"
-    }
-}
-
-/// The dedupe marker path for `event` next to `baton_file`.
-fn marker_path(baton_file: &Path, event: &str) -> PathBuf {
-    baton_file
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join(format!(".watchdog-{event}"))
-}
-
-/// `true` exactly when `key` differs from the last-confirmed-delivered
-/// marker content for this event next to `baton_file`. Read-only: a marker
-/// is only ever written after a confirmed successful POST, by
-/// [`write_marker`]. A read failure (including "marker doesn't exist yet")
-/// degrades silently to "treat as new" — best-effort, never crashes the scan.
-fn should_attempt_notify(baton_file: &Path, event: &str, key: &str) -> bool {
-    let path = marker_path(baton_file, event);
-    std::fs::read_to_string(&path).ok().as_deref() != Some(key)
-}
-
-/// Persist `key` as the delivered marker content for `event` next to
-/// `baton_file`. Called only after [`send_notify`] confirms success — a
-/// failed POST must never be recorded as delivered. Write failure degrades
-/// silently — best-effort, never crashes the scan.
-fn write_marker(baton_file: &Path, event: &str, key: &str) {
-    let path = marker_path(baton_file, event);
-    let _ = std::fs::write(&path, key);
-}
-
-/// Best-effort webhook notification with an ntfy-style
-/// `Title: Dvandva <run_id>: <event>` header and a 3-second timeout.
-/// Returns `true` on confirmed success (2xx/3xx). Failure is logged to
-/// stderr as `DVANDVA_WATCHDOG notify_failed url=<u> err=<short>` and never
-/// affects the scan's exit code.
-fn send_notify(
-    url: &str,
-    event: &str,
-    run_id: &str,
-    status: &str,
-    assignee: &str,
-    age_s: &str,
-    reason: Option<&str>,
-) -> bool {
-    let reason_suffix = reason.map(|r| format!(" reason={r}")).unwrap_or_default();
-    let body = format!(
-        "run_id={run_id} event={event} status={status} assignee={assignee} age_s={age_s}{reason_suffix}"
-    );
-    let config = Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(3)))
-        .build();
-    let agent: Agent = config.into();
-    let result = agent
-        .post(url)
-        .header("Title", format!("Dvandva {run_id}: {event}"))
-        .send(body);
-    match result {
-        Ok(_) => true,
-        Err(err) => {
-            eprintln!(
-                "DVANDVA_WATCHDOG notify_failed url={url} err={}",
-                truncate_chars(&err.to_string(), 200)
-            );
-            false
-        }
-    }
-}
-
-fn truncate_chars(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        s.chars().take(max).collect()
-    }
 }
 
 /// Every baton under `root`: the legacy `.dvandva/baton.json` (if present)
@@ -516,16 +366,6 @@ fn checkpoint_str(value: &Value) -> String {
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn bucket_label_thresholds() {
-        assert_eq!(bucket_label(10, 10), "1x");
-        assert_eq!(bucket_label(39, 10), "1x");
-        assert_eq!(bucket_label(40, 10), "4x");
-        assert_eq!(bucket_label(239, 10), "4x");
-        assert_eq!(bucket_label(240, 10), "24x");
-        assert_eq!(bucket_label(1_000_000, 10), "24x");
-    }
 
     #[test]
     fn is_terminal_and_is_paused_classify_status_tokens() {

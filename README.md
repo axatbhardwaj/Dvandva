@@ -146,7 +146,7 @@ dvandva next --file <baton> [--role <r>]              # list legal transitions
 dvandva next --file <baton> --to <status> --summary <t> --next-action <t> [--out <f>]  # scaffold a validated candidate
 dvandva brief --role <vadi|prativadi> --file <baton>  # fresh-context pack (markdown)
 dvandva write "$BATON_FILE" "$BATON_NEXT_FILE"
-dvandva wait --role <vadi|prativadi> --until-actionable [--notify <url>]
+dvandva wait --role <vadi|prativadi> --until-actionable
 dvandva baton-guard                                   # PreToolUse hook; reads a JSON payload on stdin
 ```
 
@@ -168,11 +168,6 @@ New subcommands (flow patches):
   2), failing open (exit 0) on unparseable stdin so a guard bug never bricks
   unrelated tools. The plugin ships the hook; the `dvandva` binary must be on
   `PATH`. Codex has no hook surface, so this is Claude-side enforcement only.
-- `dvandva wait --notify <url>` (or the `DVANDVA_NOTIFY_URL` env var; the flag
-  wins) sends a best-effort ntfy-style POST on
-  `human_question`/`human_decision`/`done`/`split_brain`/`stalled` (3s timeout,
-  never changes exit codes or timing), e.g.
-  `dvandva wait --role vadi --until-actionable --notify https://ntfy.sh/my-dvandva-runs`.
 
 Invoked through a git-hook symlink (`pre-commit`, `prepare-commit-msg`, ...) the
 binary takes the hook name from `argv[0]`. `dvandva --version` prints the
@@ -221,13 +216,13 @@ dvandva wait --role <vadi|prativadi> --file "$BATON_FILE" --interval 60 --max-wa
 
 The active baton is selected in this order: `DVANDVA_BATON_FILE`, then `DVANDVA_RUN_DIR/baton.json`, then safe `DVANDVA_RUN_ID` mapped to `.dvandva/runs/<run_id>/baton.json`, then Existing baton discovery over `.dvandva/runs/*/baton.json` and legacy `.dvandva/baton.json`. If an active baton exists and the prompt does not choose one, the vadi asks whether to continue or start a new named run. If only terminal batons exist, the vadi auto-creates a new named run instead of overwriting old state. Set the same safe `DVANDVA_RUN_ID` in both sessions to run more than one Dvandva loop in one worktree.
 
-That is foreground waiting, not model polling. The agent resumes when the baton assigns its role again, or stops for completion only when the baton reaches post-handshake `done`. `human_question` and `human_decision` are human-intervention pauses, not completion. The Claude Code-hosted session owns surfacing human_question and human_decision to the human: whichever role Claude Code hosts asks the human in-session (mobile-reachable) on writing a pause or on a wait exit 11/12, while the Codex-hosted role stops silently unless it is the only session; if no Claude session is in the run, the writer surfaces. Pair the wait with `--notify <url>` (or `DVANDVA_NOTIFY_URL`) so a pause also pings your phone.
+That is foreground waiting, not model polling. The agent resumes when the baton assigns its role again, or stops for completion only when the baton reaches post-handshake `done`. `human_question` and `human_decision` are human-intervention pauses, not completion. The Claude Code-hosted session owns surfacing human_question and human_decision to the human: whichever role Claude Code hosts asks the human in-session (mobile-reachable) on writing a pause or on a wait exit 11/12, while the Codex-hosted role stops silently unless it is the only session; if no Claude session is in the run, the writer surfaces. The native Claude Code remote session is the human notification channel, reachable from mobile.
 
 The primary dispute mechanism is the findings→fixing loops (`deep_review->phase_fixing`, `cross_review->cross_fixing`, `phase_review->phase_fixing`) bounded by `loop_counts` caps at `disagreement_cap`. The `review_of_review`/`counter_review` vadi-counter loop is a retained but rarely-exercised safety valve — it has never fired across the ~24 recorded runs.
 
 Continuous polling is the default hard rule: `--max-wait` is a heartbeat interval, not permission to stop. The helper keeps polling until the baton assigns the role, reaches post-handshake `done`, enters `human_question` / `human_decision`, or the user interrupts. Use `--until-actionable` for normal walkaway waits so team-owned `active_roles` states do not wake a role until that role has dependency-unblocked actionable work; after a handoff write, combine it with `--since-checkpoint <written_checkpoint>`. `termination_review` is the shared multipart termination state: it keeps both roles active so they either keep polling or stop together after both approve. Final approval and development explainer-review ownership are helper-enforced: `DVANDVA_ROLE=vadi` may raise only `vadi_final_approval` and may add/change only `run_explainer_reviews` entries with `role: "vadi"`; `DVANDVA_ROLE=prativadi` may raise only `prativadi_final_approval` and may add/change only entries with `role: "prativadi"`. `--persist` is accepted for older call sites and is now redundant. `--persist-max <seconds>` adds a total wall-clock cap and exits 23 when reached; in walkaway mode that cap is a shell-budget heartbeat, so the role must immediately re-enter the wait unless the user interrupts. `--finite` is compatibility-only and is not valid for normal walkaway loops. The helper's built-in directory watcher wakes it the moment the baton changes instead of sleeping the full interval; if the watcher cannot start, it falls back to interval polling.
 
-Add `--through-human` for zero-touch resumption: instead of exiting 11/12 on a `human_question`/`human_decision` pause, the wait keeps polling through it, noting and notifying once per pause episode (deduped across a shell-budget re-invocation via a marker file beside the baton) with the stall watchdog suspended, then resumes normal semantics the moment the pause clears. Per F5, only the non-surfacing session ever passes this flag — the Claude Code-hosted session still exits 11/12 to ask the human.
+Add `--through-human` for zero-touch resumption: instead of exiting 11/12 on a `human_question`/`human_decision` pause, the wait keeps polling through it, noting once per pause episode (deduped across a shell-budget re-invocation via a marker file beside the baton) with the stall watchdog suspended, then resumes normal semantics the moment the pause clears. Per F5, only the non-surfacing session ever passes this flag — the Claude Code-hosted session still exits 11/12 to ask the human.
 
 The prativadi can also be launched *before* the vadi has scaffolded the baton. Its preflight detects the missing baton, runs the wait helper with `--allow-missing`, and resumes once the vadi writes the file. Simultaneous-launch dogfooding is therefore safe — no need to order the two starts.
 
@@ -368,11 +363,12 @@ installed development copies.
 A one-shot, cron-driven liveness monitor for headless walkaway runs — it covers
 the case the in-protocol dead-peer watchdog (`--stall-max`) cannot: both roles'
 sessions dying at once (VPS reboot, OOM sweep, network loss), with nothing
-alive to write `human_decision`. Run it from cron/systemd, not from inside a
+alive to write `human_decision`. The human channel is the Claude Code remote
+session, not this monitor — run it from cron/systemd, not from inside a
 session:
 
 ```bash
-*/10 * * * * DVANDVA_NOTIFY_URL=https://ntfy.sh/<topic> dvandva watchdog /srv/repos/projA /srv/repos/projB
+*/10 * * * * dvandva watchdog /srv/<repos...> >> /var/log/dvandva-watchdog.log 2>&1
 ```
 
 It scans every baton under the given roots (default: git toplevel of cwd, else
@@ -380,12 +376,11 @@ cwd) and prints one `DVANDVA_WATCHDOG watchdog_stale` line per mid-work baton
 unmoved past `--stale-max` (default 1800s) and one `DVANDVA_WATCHDOG
 watchdog_paused` line per `human_question`/`human_decision` baton unmoved past
 `--remind-paused` (default 0 = off), plus a `DVANDVA_WATCHDOG summary
-roots=<n> batons=<n> stale=<n> paused=<n> skipped=<n>` line at the end. Repeat
-findings are deduplicated per baton via a marker file keyed on
-status/checkpoint/age-bucket, re-notifying only at 1x/4x/24x the threshold
-before going silent — cron can run every few minutes without spamming.
-Garbage or unreadable baton files are skipped and counted, never crash the
-scan. Always exits 0 — it is a monitor, not a gate.
+roots=<n> batons=<n> stale=<n> paused=<n> skipped=<n>` line at the end. It is a
+stateless scanner — findings print on every scan that finds them, with no
+dedup or pacing; cron logs are the record. Garbage or unreadable baton files
+are skipped and counted, never crash the scan. Always exits 0 — it is a
+monitor, not a gate.
 
 ## Release Checklist
 

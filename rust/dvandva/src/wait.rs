@@ -26,7 +26,6 @@ use std::time::Duration;
 use notify::{RecursiveMode, Watcher};
 use serde_json::Value;
 use time::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time, UtcOffset};
-use ureq::Agent;
 
 use crate::util::{coalesce, now_epoch, read_json_lenient};
 
@@ -53,14 +52,10 @@ pub struct WaitConfig {
     pub until_actionable: bool,
     /// `DVANDVA_CONCURRENT=1`: suppress sibling-run split-brain / paired-stop.
     pub concurrent: bool,
-    /// Best-effort webhook URL for pause-event notifications (`--notify` /
-    /// `DVANDVA_NOTIFY_URL`, flag wins). `None` (or an empty string) disables
-    /// notification entirely.
-    pub notify_url: Option<String>,
     /// `--through-human`: keep polling THROUGH human_question/human_decision
     /// pauses (own or a newer paired sibling's) instead of exiting 11/12.
-    /// Each pause episode prints one note line and fires the notify event
-    /// once, then normal wait logic resumes as soon as the pause clears.
+    /// Each pause episode prints one note line, then normal wait logic
+    /// resumes as soon as the pause clears.
     pub through_human: bool,
 }
 
@@ -73,7 +68,7 @@ pub fn run(cfg: &WaitConfig) -> i32 {
     // resets. `--stall-max 0` disables it.
     let mut stall_started = now_epoch();
     let mut stall_last_checkpoint: Option<String> = None;
-    // --through-human: in-process once-per-episode note/notify bookkeeping.
+    // --through-human: in-process once-per-episode note bookkeeping.
     // The own-baton pause is keyed by (status, checkpoint); a
     // sibling-propagated pause also carries the sibling run id (a different
     // sibling could otherwise collide on the same (status, checkpoint) pair).
@@ -121,8 +116,6 @@ pub fn run(cfg: &WaitConfig) -> i32 {
                             &mut elapsed,
                             persist_started,
                             stall_started,
-                            &selected_run_id,
-                            "",
                             through_human_paused,
                         ) {
                             return code;
@@ -141,8 +134,6 @@ pub fn run(cfg: &WaitConfig) -> i32 {
                     &mut elapsed,
                     persist_started,
                     stall_started,
-                    &selected_run_id,
-                    "",
                     through_human_paused,
                 ) {
                     return code;
@@ -179,7 +170,6 @@ pub fn run(cfg: &WaitConfig) -> i32 {
         let active_roles = active_roles_csv(&value);
         let updated_at = field_str(&value, "updated_at");
         let current_engine = field_str(&value, "current_engine");
-        let next_action = field_str(&value, "next_action");
 
         // Reset the stall watchdog whenever the baton advances (checkpoint change
         // is progress); the empty first-read baseline also resets.
@@ -202,7 +192,6 @@ pub fn run(cfg: &WaitConfig) -> i32 {
                 println!(
                     "DVANDVA_WAIT done phase={phase} checkpoint={checkpoint} assignee={assignee}"
                 );
-                notify_plain(cfg, "done", &selected_run_id, &next_action);
                 return 10;
             }
             "human_decision" | "human_question" if cfg.through_human => {
@@ -219,17 +208,6 @@ pub fn run(cfg: &WaitConfig) -> i32 {
                         eprintln!(
                             "DVANDVA_WAIT note human_pause status={status} checkpoint={checkpoint}"
                         );
-                        if status == "human_decision" {
-                            notify_plain(cfg, "human_decision", &selected_run_id, &next_action);
-                        } else {
-                            notify_question(
-                                cfg,
-                                &selected_run_id,
-                                &question,
-                                &resume_assignee,
-                                &resume_status,
-                            );
-                        }
                     }
                 }
                 // Fall through: no return, keep polling at the normal
@@ -237,25 +215,16 @@ pub fn run(cfg: &WaitConfig) -> i32 {
             }
             "human_decision" => {
                 println!("DVANDVA_WAIT human_decision phase={phase} checkpoint={checkpoint} assignee={assignee}");
-                notify_plain(cfg, "human_decision", &selected_run_id, &next_action);
                 return 11;
             }
             "human_question" => {
                 println!("DVANDVA_WAIT human_question phase={phase} checkpoint={checkpoint} assignee={assignee} resume_assignee={resume_assignee} resume_status={resume_status} question={question}");
-                notify_question(
-                    cfg,
-                    &selected_run_id,
-                    &question,
-                    &resume_assignee,
-                    &resume_status,
-                );
                 return 12;
             }
             "abandoned" => {
                 println!(
                     "DVANDVA_WAIT abandoned phase={phase} checkpoint={checkpoint} assignee={assignee}"
                 );
-                notify_plain(cfg, "abandoned", &selected_run_id, &next_action);
                 return 13;
             }
             _ => {}
@@ -285,12 +254,6 @@ pub fn run(cfg: &WaitConfig) -> i32 {
                                 "DVANDVA_WAIT note human_pause status=human_decision checkpoint={} sibling_run_id={}",
                                 scan.human_checkpoint, scan.human_run_id
                             );
-                            notify_plain(
-                                cfg,
-                                "human_decision",
-                                &scan.human_run_id,
-                                &scan.human_next_action,
-                            );
                         }
                     }
                 }
@@ -313,13 +276,6 @@ pub fn run(cfg: &WaitConfig) -> i32 {
                                 "DVANDVA_WAIT note human_pause status=human_question checkpoint={} sibling_run_id={}",
                                 scan.human_checkpoint, scan.human_run_id
                             );
-                            notify_question(
-                                cfg,
-                                &scan.human_run_id,
-                                &scan.human_question,
-                                &scan.human_resume_assignee,
-                                &scan.human_resume_status,
-                            );
                         }
                     }
                 }
@@ -330,12 +286,6 @@ pub fn run(cfg: &WaitConfig) -> i32 {
                         scan.human_run_id,
                         heartbeat_meta(cfg, &selected_run_id, scan.active_count),
                         run_id_note,
-                    );
-                    notify_plain(
-                        cfg,
-                        "human_decision",
-                        &scan.human_run_id,
-                        &scan.human_next_action,
                     );
                     return 11;
                 }
@@ -350,13 +300,6 @@ pub fn run(cfg: &WaitConfig) -> i32 {
                         heartbeat_meta(cfg, &selected_run_id, scan.active_count),
                         run_id_note,
                     );
-                    notify_question(
-                        cfg,
-                        &scan.human_run_id,
-                        &scan.human_question,
-                        &scan.human_resume_assignee,
-                        &scan.human_resume_status,
-                    );
                     return 12;
                 }
                 _ => {}
@@ -368,7 +311,6 @@ pub fn run(cfg: &WaitConfig) -> i32 {
                     heartbeat_meta(cfg, &selected_run_id, scan.active_count),
                     run_id_note,
                 );
-                notify_plain(cfg, "split_brain", &selected_run_id, &next_action);
                 return 29;
             }
         }
@@ -436,8 +378,6 @@ pub fn run(cfg: &WaitConfig) -> i32 {
                     &mut elapsed,
                     persist_started,
                     stall_started,
-                    &selected_run_id,
-                    &next_action,
                     through_human_paused,
                 ) {
                     return code;
@@ -457,8 +397,6 @@ pub fn run(cfg: &WaitConfig) -> i32 {
             &mut elapsed,
             persist_started,
             stall_started,
-            &selected_run_id,
-            &next_action,
             through_human_paused,
         ) {
             return code;
@@ -467,9 +405,7 @@ pub fn run(cfg: &WaitConfig) -> i32 {
 }
 
 /// Increment the interval accounting, then enforce persist-max and stall-max
-/// (both wall-clock). Returns `Some(exit_code)` when a cap fires. `run_id` and
-/// `next_action` are best-effort context for the `stalled` notification (empty
-/// when the baton has never been successfully parsed, e.g. still missing).
+/// (both wall-clock). Returns `Some(exit_code)` when a cap fires.
 /// `suspend_stall` skips the stall-max check for this call: under
 /// `--through-human` the caller resets `stall_started` to "now" for every
 /// iteration observed inside a pause, but that reset alone does not stop the
@@ -481,8 +417,6 @@ fn record_wait_elapsed(
     elapsed: &mut u64,
     persist_started: u64,
     stall_started: u64,
-    run_id: &str,
-    next_action: &str,
     suspend_stall: bool,
 ) -> Option<i32> {
     *elapsed += cfg.interval;
@@ -503,7 +437,6 @@ fn record_wait_elapsed(
                 "DVANDVA_WAIT stalled role={} file={} stall_elapsed={total}s stall_max={}s",
                 cfg.role, cfg.baton_file, cfg.stall_max
             );
-            notify_plain(cfg, "stalled", run_id, next_action);
             return Some(24);
         }
     }
@@ -522,7 +455,7 @@ fn heartbeat_meta(cfg: &WaitConfig, run_id: &str, sibling_active_count: u64) -> 
 /// The marker path for a `--through-human` pause episode: a tiny file next to
 /// the baton, named for the role, so a `wait` invocation that re-enters after
 /// a shell-budget cap (persist-max exit + immediate re-invoke) can see what
-/// an earlier invocation already noted and not re-notify the same pause.
+/// an earlier invocation already noted and not re-note the same pause.
 fn pause_marker_path(cfg: &WaitConfig) -> std::path::PathBuf {
     Path::new(&dirname(&cfg.baton_file)).join(format!(".wait-pause-{}", cfg.role))
 }
@@ -531,7 +464,7 @@ fn pause_marker_path(cfg: &WaitConfig) -> std::path::PathBuf {
 /// content for this role (and persists it as a side effect). Read/write
 /// failures degrade silently to "treat as new" — the in-process episode
 /// check at each call site (checked before this function is ever reached)
-/// remains the fallback guard against re-notifying within one process, so a
+/// remains the fallback guard against re-noting within one process, so a
 /// broken marker file never causes a crash and, at worst, only loses
 /// cross-process dedup.
 fn mark_pause_episode_if_new(cfg: &WaitConfig, key: &str) -> bool {
@@ -541,70 +474,6 @@ fn mark_pause_episode_if_new(cfg: &WaitConfig, key: &str) -> bool {
     }
     let _ = std::fs::write(&path, key);
     true
-}
-
-// ── pause-event notifications (F3, best-effort) ──────────────────────────────
-
-/// Best-effort webhook notification for a pause event whose body carries a
-/// `next_action` excerpt (`done`, `human_decision`, `split_brain`, `stalled`).
-/// `next_action` is truncated to 300 chars per the notify contract.
-fn notify_plain(cfg: &WaitConfig, event: &str, run_id: &str, next_action: &str) {
-    let body = format!(
-        "run_id={run_id} event={event} next_action={}",
-        truncate_chars(next_action, 300)
-    );
-    send_notify(cfg, event, run_id, &body);
-}
-
-/// Best-effort webhook notification for a `human_question` pause, carrying the
-/// question text (truncated to 300 chars, per §F3) and resume fields instead
-/// of `next_action`.
-fn notify_question(
-    cfg: &WaitConfig,
-    run_id: &str,
-    question: &str,
-    resume_assignee: &str,
-    resume_status: &str,
-) {
-    let body = format!(
-        "run_id={run_id} event=human_question question={} resume_assignee={resume_assignee} resume_status={resume_status}",
-        truncate_chars(question, 300)
-    );
-    send_notify(cfg, "human_question", run_id, &body);
-}
-
-/// POST `body` to `cfg.notify_url` (a no-op when disabled) with an ntfy-style
-/// `Title: Dvandva <run_id>: <event>` header and a 3-second timeout. Strictly
-/// best-effort: any failure is logged to stderr as
-/// `DVANDVA_WAIT notify_failed url=<u> err=<short>` and never changes the
-/// wait loop's exit code or timing beyond this worst-case 3s.
-fn send_notify(cfg: &WaitConfig, event: &str, run_id: &str, body: &str) {
-    let Some(url) = cfg.notify_url.as_deref().filter(|u| !u.is_empty()) else {
-        return;
-    };
-    let config = Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(3)))
-        .build();
-    let agent: Agent = config.into();
-    let result = agent
-        .post(url)
-        .header("Title", format!("Dvandva {run_id}: {event}"))
-        .send(body);
-    if let Err(err) = result {
-        eprintln!(
-            "DVANDVA_WAIT notify_failed url={url} err={}",
-            truncate_chars(&err.to_string(), 200)
-        );
-    }
-}
-
-/// Truncate `s` to at most `max` chars (not bytes).
-fn truncate_chars(s: &str, max: usize) -> String {
-    if s.chars().count() <= max {
-        s.to_string()
-    } else {
-        s.chars().take(max).collect()
-    }
 }
 
 /// The other coordinating role (`vadi` <-> `prativadi`); anything not `vadi`
@@ -685,7 +554,6 @@ struct SiblingScan {
     human_question: String,
     human_resume_assignee: String,
     human_resume_status: String,
-    human_next_action: String,
 }
 
 /// A human-pause sibling (`human_decision` / `human_question`) that qualifies
@@ -699,7 +567,6 @@ struct HumanCandidate {
     question: String,
     resume_assignee: String,
     resume_status: String,
-    next_action: String,
 }
 
 /// A sibling that structurally triggers split-brain (claims this role while
@@ -796,7 +663,6 @@ fn scan_sibling_runs(
                             question: field_str(&sibling, "question"),
                             resume_assignee: field_str(&sibling, "resume_assignee"),
                             resume_status: field_str(&sibling, "resume_status"),
-                            next_action: field_str(&sibling, "next_action"),
                         });
                     }
                 }
@@ -829,7 +695,6 @@ fn scan_sibling_runs(
         scan.human_question = best.question;
         scan.human_resume_assignee = best.resume_assignee;
         scan.human_resume_status = best.resume_status;
-        scan.human_next_action = best.next_action;
         return scan;
     }
 

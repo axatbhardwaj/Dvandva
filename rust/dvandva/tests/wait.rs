@@ -11,10 +11,9 @@
 //! case needs. `timeout 124` (shell "keeps polling") maps to "process still
 //! running at the kill deadline" — asserted via [`Outcome::kept_polling`].
 
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
-use std::sync::mpsc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -22,13 +21,12 @@ fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_dvandva"))
 }
 
-const SELECTOR_ENV: [&str; 6] = [
+const SELECTOR_ENV: [&str; 5] = [
     "DVANDVA_ROLE",
     "DVANDVA_BATON_FILE",
     "DVANDVA_RUN_DIR",
     "DVANDVA_RUN_ID",
     "DVANDVA_CONCURRENT",
-    "DVANDVA_NOTIFY_URL",
 ];
 
 /// Result of a spawned `dvandva wait`: `code: None` means the process was still
@@ -2090,472 +2088,6 @@ fn usage_advertises_540_default_and_help_exits_0() {
     assert!(o.contains("--max-wait 540"), "{}", o.out);
 }
 
-// ── Task B3 (F3 notify) ────────────────────────────────────────────────────
-//
-// Spin a TCP listener on 127.0.0.1:0, accept exactly one connection in a
-// background thread, read the raw HTTP request off it, respond 200, and hand
-// the captured request text back over a channel. `dvandva wait` is a plain
-// `ureq` POST client here, so a bare socket is enough to assert on method,
-// headers, and body without pulling in a full HTTP server dependency.
-
-fn start_notify_listener() -> (u16, mpsc::Receiver<String>) {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind notify listener");
-    let port = listener.local_addr().expect("local_addr").port();
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        if let Ok((mut stream, _)) = listener.accept() {
-            let request = read_full_http_request(&mut stream);
-            let _ = stream
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-            let _ = tx.send(request);
-        }
-    });
-    (port, rx)
-}
-
-/// Read headers, then (per a `Content-Length` header, case-insensitive) the
-/// full body. A single `read()` call can return just the headers if the
-/// client's headers and body land in separate TCP segments, so this loops
-/// with a short read timeout until the declared body length is satisfied.
-fn read_full_http_request(stream: &mut std::net::TcpStream) -> String {
-    stream
-        .set_read_timeout(Some(Duration::from_millis(500)))
-        .ok();
-    let mut raw: Vec<u8> = Vec::new();
-    let mut buf = [0u8; 8192];
-    loop {
-        match stream.read(&mut buf) {
-            Ok(0) => break,
-            Ok(n) => {
-                raw.extend_from_slice(&buf[..n]);
-                if let Some(header_end) = find_subslice(&raw, b"\r\n\r\n") {
-                    let headers = String::from_utf8_lossy(&raw[..header_end]).to_lowercase();
-                    let want_body = headers
-                        .lines()
-                        .find_map(|line| line.strip_prefix("content-length:"))
-                        .and_then(|value| value.trim().parse::<usize>().ok())
-                        .unwrap_or(0);
-                    if raw.len() >= header_end + 4 + want_body {
-                        break;
-                    }
-                }
-            }
-            Err(_) => break, // read timeout: stop waiting for more data
-        }
-    }
-    String::from_utf8_lossy(&raw).into_owned()
-}
-
-fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack
-        .windows(needle.len())
-        .position(|window| window == needle)
-}
-
-#[test]
-fn notify_posts_on_human_question_with_title_and_body() {
-    let d = tmp();
-    write_named_question_baton(
-        &d.path().join(".dvandva/runs/alpha/baton.json"),
-        "alpha",
-        "2026-07-02T09:00:00Z",
-        "codex",
-    );
-    let (port, rx) = start_notify_listener();
-    let url = format!("http://127.0.0.1:{port}/");
-    let o = run_wait(
-        Some(d.path()),
-        &[("DVANDVA_RUN_ID", "alpha")],
-        &[
-            "--role",
-            "prativadi",
-            "--interval",
-            "0",
-            "--max-wait",
-            "0",
-            "--notify",
-            &url,
-        ],
-        BUDGET_FAST,
-    );
-    assert_eq!(o.code, Some(12), "{}", o.out);
-    let request = rx
-        .recv_timeout(Duration::from_secs(3))
-        .expect("notify request");
-    assert!(request.starts_with("POST"), "{request}");
-    // HTTP header names are case-insensitive; ureq serializes them lowercase
-    // on the wire.
-    assert!(
-        request
-            .to_lowercase()
-            .contains("title: dvandva alpha: human_question"),
-        "{request}"
-    );
-    assert!(request.contains("run_id=alpha"), "{request}");
-    assert!(request.contains("event=human_question"), "{request}");
-    assert!(
-        request.contains("question=Which scope should Dvandva choose?"),
-        "{request}"
-    );
-    assert!(request.contains("resume_assignee=prativadi"), "{request}");
-    assert!(request.contains("resume_status=spec_review"), "{request}");
-}
-
-#[test]
-fn notify_unreachable_port_still_exits_12_and_logs_notify_failed() {
-    let d = tmp();
-    let f = d.path().join("question.json");
-    write_question_baton(&f);
-    let o = run_wait(
-        None,
-        &[],
-        &[
-            "--role",
-            "vadi",
-            "--file",
-            f.to_str().unwrap(),
-            "--interval",
-            "0",
-            "--max-wait",
-            "0",
-            "--notify",
-            "http://127.0.0.1:1/",
-        ],
-        BUDGET_FAST,
-    );
-    assert_eq!(o.code, Some(12), "{}", o.out);
-    assert!(o.contains("notify_failed"), "{}", o.out);
-    assert!(o.contains("url=http://127.0.0.1:1/"), "{}", o.out);
-}
-
-#[test]
-fn notify_env_fallback_used_when_flag_absent() {
-    let d = tmp();
-    write_named_question_baton(
-        &d.path().join(".dvandva/runs/alpha/baton.json"),
-        "alpha",
-        "2026-07-02T09:05:00Z",
-        "codex",
-    );
-    let (port, rx) = start_notify_listener();
-    let url = format!("http://127.0.0.1:{port}/");
-    let o = run_wait(
-        Some(d.path()),
-        &[("DVANDVA_RUN_ID", "alpha"), ("DVANDVA_NOTIFY_URL", &url)],
-        &["--role", "vadi", "--interval", "0", "--max-wait", "0"],
-        BUDGET_FAST,
-    );
-    assert_eq!(o.code, Some(12), "{}", o.out);
-    let request = rx
-        .recv_timeout(Duration::from_secs(3))
-        .expect("notify request");
-    assert!(request.contains("event=human_question"), "{request}");
-}
-
-#[test]
-fn notify_flag_takes_precedence_over_env() {
-    let d = tmp();
-    write_named_question_baton(
-        &d.path().join(".dvandva/runs/alpha/baton.json"),
-        "alpha",
-        "2026-07-02T09:10:00Z",
-        "codex",
-    );
-    let (flag_port, flag_rx) = start_notify_listener();
-    let (env_port, env_rx) = start_notify_listener();
-    let flag_url = format!("http://127.0.0.1:{flag_port}/");
-    let env_url = format!("http://127.0.0.1:{env_port}/");
-    let o = run_wait(
-        Some(d.path()),
-        &[
-            ("DVANDVA_RUN_ID", "alpha"),
-            ("DVANDVA_NOTIFY_URL", &env_url),
-        ],
-        &[
-            "--role",
-            "vadi",
-            "--interval",
-            "0",
-            "--max-wait",
-            "0",
-            "--notify",
-            &flag_url,
-        ],
-        BUDGET_FAST,
-    );
-    assert_eq!(o.code, Some(12), "{}", o.out);
-    assert!(
-        flag_rx.recv_timeout(Duration::from_secs(3)).is_ok(),
-        "flag-selected listener should have received the notify POST"
-    );
-    assert!(
-        env_rx.recv_timeout(Duration::from_millis(300)).is_err(),
-        "env-selected listener should NOT receive a notify POST when --notify is set"
-    );
-}
-
-#[test]
-fn notify_posts_on_done() {
-    let d = tmp();
-    let f = d.path().join("done.json");
-    write_baton(&f, "human", "done");
-    let (port, rx) = start_notify_listener();
-    let url = format!("http://127.0.0.1:{port}/");
-    let o = run_wait(
-        None,
-        &[],
-        &[
-            "--role",
-            "vadi",
-            "--file",
-            f.to_str().unwrap(),
-            "--interval",
-            "0",
-            "--max-wait",
-            "0",
-            "--notify",
-            &url,
-        ],
-        BUDGET_FAST,
-    );
-    assert_eq!(o.code, Some(10), "{}", o.out);
-    let request = rx
-        .recv_timeout(Duration::from_secs(3))
-        .expect("notify request");
-    assert!(request.starts_with("POST"), "{request}");
-    assert!(request.contains("event=done"), "{request}");
-    assert!(request.contains("run_id="), "{request}");
-}
-
-#[test]
-fn notify_posts_on_split_brain() {
-    let d = tmp();
-    write_named_observed_baton(
-        &d.path().join(".dvandva/runs/alpha/baton.json"),
-        "alpha",
-        "prativadi",
-        "phase_review",
-        "2026-06-29T15:00:00Z",
-        "codex",
-    );
-    write_named_observed_baton(
-        &d.path().join(".dvandva/runs/beta/baton.json"),
-        "beta",
-        "vadi",
-        "implementing",
-        "2026-06-29T15:01:00Z",
-        "claude",
-    );
-    let (port, rx) = start_notify_listener();
-    let url = format!("http://127.0.0.1:{port}/");
-    let o = run_wait(
-        Some(d.path()),
-        &[("DVANDVA_RUN_ID", "alpha")],
-        &[
-            "--role",
-            "vadi",
-            "--persist",
-            "--interval",
-            "1",
-            "--max-wait",
-            "1",
-            "--notify",
-            &url,
-        ],
-        BUDGET_FAST,
-    );
-    assert_eq!(o.code, Some(29), "{}", o.out);
-    let request = rx
-        .recv_timeout(Duration::from_secs(3))
-        .expect("notify request");
-    assert!(request.starts_with("POST"), "{request}");
-    assert!(request.contains("event=split_brain"), "{request}");
-    assert!(request.contains("run_id=alpha"), "{request}");
-}
-
-#[test]
-fn notify_posts_on_stalled() {
-    let d = tmp();
-    write_named_parallel_work_baton(
-        &d.path().join(".dvandva/runs/alpha/baton.json"),
-        "alpha",
-        80,
-        "2026-07-01T10:08:00Z",
-        "vadi",
-    );
-    let (port, rx) = start_notify_listener();
-    let url = format!("http://127.0.0.1:{port}/");
-    let o = run_wait(
-        Some(d.path()),
-        &[("DVANDVA_RUN_ID", "alpha")],
-        &[
-            "--role",
-            "prativadi",
-            "--until-actionable",
-            "--interval",
-            "1",
-            "--max-wait",
-            "540",
-            "--stall-max",
-            "1",
-            "--notify",
-            &url,
-        ],
-        BUDGET_SLOW,
-    );
-    assert_eq!(o.code, Some(24), "{}", o.out);
-    let request = rx
-        .recv_timeout(Duration::from_secs(3))
-        .expect("notify request");
-    assert!(request.starts_with("POST"), "{request}");
-    assert!(request.contains("event=stalled"), "{request}");
-    assert!(request.contains("run_id=alpha"), "{request}");
-}
-
-// ── Fix round 1 (reviewer coverage + truncation) ─────────────────────────────
-
-#[test]
-fn notify_posts_on_own_human_decision() {
-    let d = tmp();
-    let f = d.path().join("human.json");
-    write_baton(&f, "human", "human_decision");
-    let (port, rx) = start_notify_listener();
-    let url = format!("http://127.0.0.1:{port}/");
-    let o = run_wait(
-        None,
-        &[],
-        &[
-            "--role",
-            "vadi",
-            "--file",
-            f.to_str().unwrap(),
-            "--interval",
-            "0",
-            "--max-wait",
-            "0",
-            "--notify",
-            &url,
-        ],
-        BUDGET_FAST,
-    );
-    assert_eq!(o.code, Some(11), "{}", o.out);
-    let request = rx
-        .recv_timeout(Duration::from_secs(3))
-        .expect("notify request");
-    assert!(request.starts_with("POST"), "{request}");
-    assert!(request.contains("event=human_decision"), "{request}");
-    assert!(request.contains("run_id="), "{request}");
-}
-
-#[test]
-fn notify_posts_sibling_human_decision_with_sibling_next_action() {
-    let d = tmp();
-    write_named_observed_baton(
-        &d.path().join(".dvandva/runs/alpha/baton.json"),
-        "alpha",
-        "prativadi",
-        "phase_review",
-        "2026-07-02T09:20:00Z",
-        "codex",
-    );
-    let beta = d.path().join(".dvandva/runs/beta/baton.json");
-    mkparent(&beta);
-    std::fs::write(
-        &beta,
-        r#"{
-  "schema": "dvandva.baton.v2",
-  "run_id": "beta",
-  "assignee": "human",
-  "status": "human_decision",
-  "phase": 2,
-  "checkpoint": 8,
-  "updated_at": "2026-07-02T09:21:00Z",
-  "current_engine": "claude",
-  "next_action": "prativadi merges phase 2"
-}"#,
-    )
-    .unwrap();
-    let (port, rx) = start_notify_listener();
-    let url = format!("http://127.0.0.1:{port}/");
-    let o = run_wait(
-        Some(d.path()),
-        &[("DVANDVA_RUN_ID", "alpha")],
-        &[
-            "--role",
-            "vadi",
-            "--persist",
-            "--interval",
-            "1",
-            "--max-wait",
-            "540",
-            "--notify",
-            &url,
-        ],
-        BUDGET_FAST,
-    );
-    assert_eq!(o.code, Some(11), "{}", o.out);
-    let request = rx
-        .recv_timeout(Duration::from_secs(3))
-        .expect("notify request");
-    assert!(request.starts_with("POST"), "{request}");
-    assert!(request.contains("event=human_decision"), "{request}");
-    assert!(request.contains("run_id=beta"), "{request}");
-    assert!(
-        request.contains("next_action=prativadi merges phase 2"),
-        "{request}"
-    );
-}
-
-#[test]
-fn notify_posts_sibling_human_question_with_sibling_fields() {
-    let d = tmp();
-    write_named_observed_baton(
-        &d.path().join(".dvandva/runs/alpha/baton.json"),
-        "alpha",
-        "vadi",
-        "phase_review",
-        "2026-07-02T09:30:00Z",
-        "codex",
-    );
-    write_named_question_baton(
-        &d.path().join(".dvandva/runs/beta/baton.json"),
-        "beta",
-        "2026-07-02T09:31:00Z",
-        "claude",
-    );
-    let (port, rx) = start_notify_listener();
-    let url = format!("http://127.0.0.1:{port}/");
-    let o = run_wait(
-        Some(d.path()),
-        &[("DVANDVA_RUN_ID", "alpha")],
-        &[
-            "--role",
-            "prativadi",
-            "--persist",
-            "--interval",
-            "1",
-            "--max-wait",
-            "540",
-            "--notify",
-            &url,
-        ],
-        BUDGET_FAST,
-    );
-    assert_eq!(o.code, Some(12), "{}", o.out);
-    let request = rx
-        .recv_timeout(Duration::from_secs(3))
-        .expect("notify request");
-    assert!(request.starts_with("POST"), "{request}");
-    assert!(request.contains("event=human_question"), "{request}");
-    assert!(request.contains("run_id=beta"), "{request}");
-    assert!(
-        request.contains("question=Which scope should Dvandva choose?"),
-        "{request}"
-    );
-    assert!(request.contains("resume_assignee=prativadi"), "{request}");
-    assert!(request.contains("resume_status=spec_review"), "{request}");
-}
-
 // ── Task S2-T1 (abandoned terminal) ─────────────────────────────────────────
 
 #[test]
@@ -2584,49 +2116,6 @@ fn returns_13_and_abandoned_line_grammar_when_run_is_abandoned() {
         "{}",
         o.out
     );
-}
-
-#[test]
-fn notify_posts_on_abandoned_with_title_and_event() {
-    let d = tmp();
-    write_named_observed_baton(
-        &d.path().join(".dvandva/runs/alpha/baton.json"),
-        "alpha",
-        "human",
-        "abandoned",
-        "2026-07-02T09:00:00Z",
-        "codex",
-    );
-    let (port, rx) = start_notify_listener();
-    let url = format!("http://127.0.0.1:{port}/");
-    let o = run_wait(
-        Some(d.path()),
-        &[("DVANDVA_RUN_ID", "alpha")],
-        &[
-            "--role",
-            "vadi",
-            "--interval",
-            "0",
-            "--max-wait",
-            "0",
-            "--notify",
-            &url,
-        ],
-        BUDGET_FAST,
-    );
-    assert_eq!(o.code, Some(13), "{}", o.out);
-    let request = rx
-        .recv_timeout(Duration::from_secs(3))
-        .expect("notify request");
-    assert!(request.starts_with("POST"), "{request}");
-    assert!(
-        request
-            .to_lowercase()
-            .contains("title: dvandva alpha: abandoned"),
-        "{request}"
-    );
-    assert!(request.contains("run_id=alpha"), "{request}");
-    assert!(request.contains("event=abandoned"), "{request}");
 }
 
 #[test]
@@ -2875,85 +2364,11 @@ fn allow_missing_wakes_within_interval_when_run_dir_does_not_exist_yet() {
     assert_eq!(o.code, Some(0), "{}", o.out);
 }
 
-#[test]
-fn notify_question_body_truncates_long_question_to_300_chars() {
-    let d = tmp();
-    let long_question = "x".repeat(400);
-    let f = d.path().join("long-question.json");
-    std::fs::write(
-        &f,
-        format!(
-            r#"{{
-  "schema": "dvandva.baton.v1",
-  "assignee": "human",
-  "status": "human_question",
-  "phase": "spec",
-  "checkpoint": 8,
-  "question": "{long_question}",
-  "resume_assignee": "prativadi",
-  "resume_status": "spec_review"
-}}"#
-        ),
-    )
-    .unwrap();
-    let (port, rx) = start_notify_listener();
-    let url = format!("http://127.0.0.1:{port}/");
-    let o = run_wait(
-        None,
-        &[],
-        &[
-            "--role",
-            "vadi",
-            "--file",
-            f.to_str().unwrap(),
-            "--interval",
-            "0",
-            "--max-wait",
-            "0",
-            "--notify",
-            &url,
-        ],
-        BUDGET_FAST,
-    );
-    assert_eq!(o.code, Some(12), "{}", o.out);
-    let request = rx
-        .recv_timeout(Duration::from_secs(3))
-        .expect("notify request");
-    let truncated_question = "x".repeat(300);
-    assert!(
-        request.contains(&format!("question={truncated_question} resume_assignee=")),
-        "{request}"
-    );
-    assert!(!request.contains(&"x".repeat(301)), "{request}");
-}
-
 // ── Task S6 (--through-human) ────────────────────────────────────────────────
 //
 // A paired session that does NOT own surfacing pauses keeps polling THROUGH
-// human_question/human_decision instead of exiting 11/12, noting+notifying
-// exactly once per pause episode, and auto-wakes when the pause resolves.
-
-/// Like [`start_notify_listener`] but accepts every connection on the port
-/// (not just the first), forwarding each request over the channel. Needed for
-/// cases that expect more than one notify POST across the run (episode
-/// re-key, cross-process dedupe).
-fn start_notify_listener_multi() -> (u16, mpsc::Receiver<String>) {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind notify listener");
-    let port = listener.local_addr().expect("local_addr").port();
-    let (tx, rx) = mpsc::channel();
-    thread::spawn(move || {
-        for stream in listener.incoming() {
-            let Ok(mut stream) = stream else { break };
-            let request = read_full_http_request(&mut stream);
-            let _ = stream
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
-            if tx.send(request).is_err() {
-                break;
-            }
-        }
-    });
-    (port, rx)
-}
+// human_question/human_decision instead of exiting 11/12, noting exactly once
+// per pause episode, and auto-wakes when the pause resolves.
 
 fn write_question_baton_at(file: &Path, checkpoint: u64, question: &str) {
     mkparent(file);
@@ -2980,8 +2395,6 @@ fn s6th_flag_finite_human_question_no_exit_note_once_no_duplicate() {
     let d = tmp();
     let f = d.path().join("question.json");
     write_question_baton(&f); // checkpoint 8
-    let (port, rx) = start_notify_listener();
-    let url = format!("http://127.0.0.1:{port}/");
     let o = run_wait(
         None,
         &[],
@@ -2996,8 +2409,6 @@ fn s6th_flag_finite_human_question_no_exit_note_once_no_duplicate() {
             "2",
             "--finite",
             "--through-human",
-            "--notify",
-            &url,
         ],
         BUDGET_SLOW,
     );
@@ -3012,14 +2423,6 @@ fn s6th_flag_finite_human_question_no_exit_note_once_no_duplicate() {
         "{}",
         o.out
     );
-    let request = rx
-        .recv_timeout(Duration::from_secs(3))
-        .expect("notify request");
-    assert!(request.contains("event=human_question"), "{request}");
-    assert!(
-        request.contains("question=Which scope should Dvandva choose?"),
-        "{request}"
-    );
 }
 
 #[test]
@@ -3027,8 +2430,6 @@ fn s6th_flag_finite_human_decision_no_exit() {
     let d = tmp();
     let f = d.path().join("human.json");
     write_baton(&f, "human", "human_decision"); // checkpoint 7
-    let (port, rx) = start_notify_listener();
-    let url = format!("http://127.0.0.1:{port}/");
     let o = run_wait(
         None,
         &[],
@@ -3043,8 +2444,6 @@ fn s6th_flag_finite_human_decision_no_exit() {
             "1",
             "--finite",
             "--through-human",
-            "--notify",
-            &url,
         ],
         BUDGET_SLOW,
     );
@@ -3057,10 +2456,6 @@ fn s6th_flag_finite_human_decision_no_exit() {
         "{}",
         o.out
     );
-    let request = rx
-        .recv_timeout(Duration::from_secs(3))
-        .expect("notify request");
-    assert!(request.contains("event=human_decision"), "{request}");
 }
 
 #[test]
@@ -3140,8 +2535,6 @@ fn s6th_flag_sibling_pause_no_exit_note_once() {
         "2026-07-02T10:01:00Z",
         "claude",
     );
-    let (port, rx) = start_notify_listener();
-    let url = format!("http://127.0.0.1:{port}/");
     let o = run_wait(
         Some(d.path()),
         &[("DVANDVA_RUN_ID", "alpha")],
@@ -3154,8 +2547,6 @@ fn s6th_flag_sibling_pause_no_exit_note_once() {
             "--max-wait",
             "540",
             "--through-human",
-            "--notify",
-            &url,
         ],
         BUDGET_POLL,
     );
@@ -3173,11 +2564,6 @@ fn s6th_flag_sibling_pause_no_exit_note_once() {
         "{}",
         o.out
     );
-    let request = rx
-        .recv_timeout(Duration::from_secs(3))
-        .expect("notify request");
-    assert!(request.contains("event=human_decision"), "{request}");
-    assert!(request.contains("run_id=beta"), "{request}");
 }
 
 #[test]
@@ -3287,16 +2673,11 @@ fn s6th_flag_episode_rekey_on_new_checkpoint() {
     let d = tmp();
     let f = d.path().join("question.json");
     write_question_baton_at(&f, 8, "Which scope should Dvandva choose?");
-    let (_port, rx) = {
-        let (port, rx) = start_notify_listener_multi();
-        (port, rx)
-    };
     let flip = f.clone();
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(1200));
         write_question_baton_at(&flip, 9, "Which module owns retries?");
     });
-    let url = format!("http://127.0.0.1:{_port}/");
     let o = run_wait(
         None,
         &[],
@@ -3310,8 +2691,6 @@ fn s6th_flag_episode_rekey_on_new_checkpoint() {
             "--max-wait",
             "540",
             "--through-human",
-            "--notify",
-            &url,
         ],
         Duration::from_secs(4),
     );
@@ -3336,20 +2715,6 @@ fn s6th_flag_episode_rekey_on_new_checkpoint() {
         1,
         "{}",
         o.out
-    );
-    let first = rx
-        .recv_timeout(Duration::from_secs(3))
-        .expect("first notify request");
-    assert!(
-        first.contains("question=Which scope should Dvandva choose?"),
-        "{first}"
-    );
-    let second = rx
-        .recv_timeout(Duration::from_secs(3))
-        .expect("second notify request (new episode)");
-    assert!(
-        second.contains("question=Which module owns retries?"),
-        "{second}"
     );
 }
 
@@ -3404,8 +2769,6 @@ fn s6th_flag_cross_process_dedupe_same_episode() {
     let d = tmp();
     let f = d.path().join("question.json");
     write_question_baton(&f);
-    let (port, rx) = start_notify_listener_multi();
-    let url = format!("http://127.0.0.1:{port}/");
     let args: Vec<&str> = vec![
         "--role",
         "vadi",
@@ -3417,20 +2780,23 @@ fn s6th_flag_cross_process_dedupe_same_episode() {
         "0",
         "--finite",
         "--through-human",
-        "--notify",
-        &url,
     ];
 
     let first = run_wait(None, &[], &args, BUDGET_FAST);
     assert_eq!(first.code, Some(20), "{}", first.out);
-    let request = rx
-        .recv_timeout(Duration::from_secs(3))
-        .expect("first invocation should notify");
-    assert!(request.contains("event=human_question"), "{request}");
+    assert_eq!(
+        first
+            .out
+            .matches("DVANDVA_WAIT note human_pause status=human_question checkpoint=8")
+            .count(),
+        1,
+        "{}",
+        first.out
+    );
 
     // A second, separate process re-observing the SAME (status, checkpoint)
-    // episode must not re-note or re-notify: the marker file next to the
-    // baton persisted what the first invocation already noted.
+    // episode must not re-note: the marker file next to the baton persisted
+    // what the first invocation already noted.
     let second = run_wait(None, &[], &args, BUDGET_FAST);
     assert_eq!(second.code, Some(20), "{}", second.out);
     assert_eq!(
@@ -3438,10 +2804,6 @@ fn s6th_flag_cross_process_dedupe_same_episode() {
         0,
         "second invocation must not re-note the same episode\n{}",
         second.out
-    );
-    assert!(
-        rx.recv_timeout(Duration::from_millis(300)).is_err(),
-        "second invocation must not re-notify the same episode"
     );
 
     let marker = d.path().join(".wait-pause-vadi");
@@ -3454,8 +2816,6 @@ fn s6th_flag_cross_process_new_episode_after_rekey() {
     let d = tmp();
     let f = d.path().join("question.json");
     write_question_baton_at(&f, 8, "Which scope should Dvandva choose?");
-    let (port, rx) = start_notify_listener_multi();
-    let url = format!("http://127.0.0.1:{port}/");
     let args: Vec<&str> = vec![
         "--role",
         "vadi",
@@ -3467,14 +2827,10 @@ fn s6th_flag_cross_process_new_episode_after_rekey() {
         "0",
         "--finite",
         "--through-human",
-        "--notify",
-        &url,
     ];
 
     let first = run_wait(None, &[], &args, BUDGET_FAST);
     assert_eq!(first.code, Some(20), "{}", first.out);
-    rx.recv_timeout(Duration::from_secs(3))
-        .expect("first invocation should notify");
 
     // The human answered, installing a NEW human_question at a later
     // checkpoint before the second invocation starts.
@@ -3490,12 +2846,5 @@ fn s6th_flag_cross_process_new_episode_after_rekey() {
         1,
         "{}",
         second.out
-    );
-    let request = rx
-        .recv_timeout(Duration::from_secs(3))
-        .expect("second invocation should notify a new episode");
-    assert!(
-        request.contains("question=Which module owns retries?"),
-        "{request}"
     );
 }

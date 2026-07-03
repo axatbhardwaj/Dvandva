@@ -1,8 +1,8 @@
 //! CLI wrapper for `dvandva watchdog [<root>...] [flags]`.
 //!
-//! Parses zero or more positional root directories plus `--remind-paused`,
-//! `--stale-max`, and `--notify`, defaults the root list to the git toplevel
-//! of cwd (else cwd) when none were given, and hands the resolved config to
+//! Parses zero or more positional root directories plus `--remind-paused`
+//! and `--stale-max`, defaults the root list to the git toplevel of cwd
+//! (else cwd) when none were given, and hands the resolved config to
 //! [`dvandva::watchdog::run`].
 
 use std::path::PathBuf;
@@ -10,7 +10,7 @@ use std::path::PathBuf;
 use dvandva::watchdog::{self, WatchdogConfig};
 
 const USAGE: &str = "\
-Usage: dvandva watchdog [<root>...] [--remind-paused seconds] [--stale-max seconds] [--notify <url>]
+Usage: dvandva watchdog [<root>...] [--remind-paused seconds] [--stale-max seconds]
 
 One-shot out-of-band liveness monitor for headless walkaway runs — run this
 from cron/systemd, not from inside a session. For each root (default: git
@@ -20,6 +20,8 @@ abandoned, ignored), paused (human_question / human_decision), or mid-work.
 Prints one DVANDVA_WATCHDOG <event> line per stale or reminder-due baton,
 plus a DVANDVA_WATCHDOG summary line at the end. Always exits 0 (findings
 included, it is a monitor, not a gate); exit 2 is reserved for usage errors.
+It is a stateless scanner: findings print on every scan that finds them, with
+no dedup or pacing — cron logs are the record.
 
 --stale-max seconds (default 1800): a mid-work baton whose updated_at age is
 at least this old emits a watchdog_stale finding. A baton whose updated_at
@@ -32,18 +34,6 @@ proven without a trustworthy timestamp, regardless of status.
 --remind-paused seconds (default 0 = off): a human_question / human_decision
 baton whose age is at least this old emits a watchdog_paused reminder.
 
---notify <url> (or DVANDVA_NOTIFY_URL; --notify wins, empty disables) posts a
-best-effort ntfy-compatible notification for each new finding. Repeat
-findings are deduplicated per baton via a small marker file next to it,
-keyed on status + checkpoint + age bucket (1x/4x/24x the threshold) — a
-continuously stuck run re-notifies at the threshold, ~4x, and ~24x, then
-stays silent. The marker is written only after a confirmed successful POST,
-so a failed delivery (dead endpoint, 5xx, timeout) is retried on the next
-scan instead of going silent. Missing both --notify and DVANDVA_NOTIFY_URL
-still prints the finding lines and never touches the marker (so delivery
-resumes on the next scan once a URL is configured), plus one DVANDVA_WATCHDOG
-note notify_unconfigured line so cron logs show it.
-
 Duplicate/aliased root arguments (same path given twice, or a symlink alias)
 are deduplicated before scanning, so each baton is counted and reported once.
 An unreadable .dvandva/runs directory (e.g. permission denied) emits one
@@ -55,7 +45,6 @@ struct RawArgs {
     roots: Vec<String>,
     remind_paused: Option<String>,
     stale_max: Option<String>,
-    notify: Option<String>,
 }
 
 enum ParseError {
@@ -108,16 +97,10 @@ pub fn run(args: &[String]) -> i32 {
         raw.roots.into_iter().map(PathBuf::from).collect()
     };
 
-    let notify_url = raw
-        .notify
-        .or_else(|| std::env::var("DVANDVA_NOTIFY_URL").ok())
-        .filter(|value| !value.is_empty());
-
     let cfg = WatchdogConfig {
         roots,
         remind_paused,
         stale_max,
-        notify_url,
     };
     watchdog::run(&cfg)
 }
@@ -139,10 +122,6 @@ fn parse_args(args: &[String]) -> Result<RawArgs, ParseError> {
             }
             "--stale-max" => {
                 raw.stale_max = Some(take_value(args, index)?);
-                index += 2;
-            }
-            "--notify" => {
-                raw.notify = Some(take_value(args, index)?);
                 index += 2;
             }
             "-h" | "--help" => return Err(ParseError::Help),
@@ -174,7 +153,6 @@ mod tests {
         assert!(raw.roots.is_empty());
         assert!(raw.remind_paused.is_none());
         assert!(raw.stale_max.is_none());
-        assert!(raw.notify.is_none());
     }
 
     #[test]

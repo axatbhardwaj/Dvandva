@@ -40,8 +40,7 @@ fn base_cmd<P: AsRef<std::ffi::OsStr>>(program: P) -> Command {
         .env_remove("DVANDVA_HOOK_PREFLIGHT")
         .env_remove("DVANDVA_BATON_FILE")
         .env_remove("DVANDVA_RUN_DIR")
-        .env_remove("DVANDVA_RUN_ID")
-        .env_remove("DVANDVA_NOTIFY_URL");
+        .env_remove("DVANDVA_RUN_ID");
     cmd
 }
 
@@ -96,28 +95,6 @@ fn write_baton_v2(
         path,
         format!(
             r#"{{"schema":"dvandva.baton.v2","run_id":"{run_id}","status":"{status}","assignee":"{assignee}","active_roles":{active_roles},"mode":"development","profile":"standard","updated_at":"{updated_at}"}}"#
-        ),
-    )
-    .unwrap();
-}
-
-/// A healthy schema-v2 baton with an explicit `run_mode`, for the
-/// walkaway-notify-unconfigured warn cases.
-#[allow(clippy::too_many_arguments)]
-fn write_baton_v2_run_mode(
-    path: &Path,
-    run_id: &str,
-    status: &str,
-    assignee: &str,
-    active_roles: &str,
-    run_mode: &str,
-    updated_at: &str,
-) {
-    fs::create_dir_all(path.parent().unwrap()).unwrap();
-    fs::write(
-        path,
-        format!(
-            r#"{{"schema":"dvandva.baton.v2","run_id":"{run_id}","status":"{status}","assignee":"{assignee}","active_roles":{active_roles},"mode":"development","profile":"standard","run_mode":"{run_mode}","updated_at":"{updated_at}"}}"#
         ),
     )
     .unwrap();
@@ -620,97 +597,6 @@ fn sanity_check_v1_schema_baton_skips_with_note() {
     assert!(text.contains("note=v1_skipped"), "stdout: {text}");
     assert!(text.contains("DVANDVA_HOOK_PREFLIGHT"), "stdout: {text}");
     assert!(text.contains("result=ok"), "stdout: {text}");
-}
-
-// ===========================================================================
-// Walkaway notify-unconfigured warn (non-blocking): a RESOLVED walkaway
-// baton without DVANDVA_NOTIFY_URL set gets a heads-up on stderr; the exit
-// code and stdout result line are unaffected either way.
-// ===========================================================================
-
-#[test]
-fn notify_unconfigured_warns_for_walkaway_baton_with_env_unset() {
-    let tmp = tempfile::tempdir().unwrap();
-    let repo = tmp.path();
-    init_repo(repo);
-    write_baton_v2_run_mode(
-        &repo.join(".dvandva/runs/accuracy/baton.json"),
-        "accuracy",
-        "implementing",
-        "vadi",
-        "[]",
-        "walkaway",
-        "2026-06-29T00:00:00Z",
-    );
-
-    let out = preflight(repo, Some("vadi"), &["--role", "vadi"]);
-    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
-    assert!(
-        stdout(&out).contains("result=resolved"),
-        "stdout: {}",
-        stdout(&out)
-    );
-    let err = stderr(&out);
-    assert!(
-        err.contains(
-            "DVANDVA_PREFLIGHT note=notify_unconfigured hint=set DVANDVA_NOTIFY_URL for headless runs"
-        ),
-        "stderr: {err}"
-    );
-}
-
-#[test]
-fn notify_unconfigured_silent_when_env_set() {
-    let tmp = tempfile::tempdir().unwrap();
-    let repo = tmp.path();
-    init_repo(repo);
-    write_baton_v2_run_mode(
-        &repo.join(".dvandva/runs/accuracy/baton.json"),
-        "accuracy",
-        "implementing",
-        "vadi",
-        "[]",
-        "walkaway",
-        "2026-06-29T00:00:00Z",
-    );
-
-    let mut cmd = base_cmd(bin());
-    cmd.arg("preflight")
-        .args(["--role", "vadi"])
-        .current_dir(repo)
-        .env("DVANDVA_ROLE", "vadi")
-        .env("DVANDVA_NOTIFY_URL", "https://ntfy.sh/example");
-    let out = cmd.output().expect("dvandva preflight");
-    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
-    assert!(
-        !stderr(&out).contains("notify_unconfigured"),
-        "stderr: {}",
-        stderr(&out)
-    );
-}
-
-#[test]
-fn notify_unconfigured_silent_for_supervised_mode() {
-    let tmp = tempfile::tempdir().unwrap();
-    let repo = tmp.path();
-    init_repo(repo);
-    write_baton_v2_run_mode(
-        &repo.join(".dvandva/runs/accuracy/baton.json"),
-        "accuracy",
-        "implementing",
-        "vadi",
-        "[]",
-        "supervised",
-        "2026-06-29T00:00:00Z",
-    );
-
-    let out = preflight(repo, Some("vadi"), &["--role", "vadi"]);
-    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
-    assert!(
-        !stderr(&out).contains("notify_unconfigured"),
-        "stderr: {}",
-        stderr(&out)
-    );
 }
 
 // ===========================================================================

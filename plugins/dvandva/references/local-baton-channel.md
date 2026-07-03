@@ -131,18 +131,18 @@ mobile/remote surface to reach the user away from the PC. The Codex-hosted role
 writes or observes the pause and stops silently and must not compete to consume
 the human answer. If no Claude Code session is part of the run (both roles
 Codex-hosted), the writer of the pause surfaces it; `current_engine` still
-records the writer for traceability. Recommended pairing: run waits with
-`dvandva wait --notify <url>` (or `DVANDVA_NOTIFY_URL`) so a pause also pings your
-phone.
+records the writer for traceability. The native Claude Code remote session is
+the human notification channel (F5); ensure the Claude-hosted session is the
+one surfacing pauses.
 
 `--through-human` (F5-consistent): a wait invoked with this flag keeps polling
 THROUGH a `human_question`/`human_decision` pause instead of exiting 11/12, so
 the non-surfacing session's turn does not end and it resumes automatically
 once the pause clears. Each pause episode still prints one `DVANDVA_WAIT note
 human_pause status=<status> checkpoint=<checkpoint>[ sibling_run_id=<id>]`
-line and fires the same notify event exactly once, deduped across a
-shell-budget re-invocation via a `.wait-pause-<role>` marker file beside the
-baton; the stall watchdog is suspended for the duration. Per F5 the Claude
+line exactly once, deduped across a shell-budget re-invocation via a
+`.wait-pause-<role>` marker file beside the baton; the stall watchdog is
+suspended for the duration. Per F5 the Claude
 Code-hosted session must never pass `--through-human` — it owns surfacing and
 still exits 11/12 to ask the human directly. The non-surfacing session
 (Codex-hosted in a mixed pair, or the non-writer session in an all-Codex pair)
@@ -155,14 +155,14 @@ surfacing both require at least one session to still be running. `dvandva
 watchdog [<root>...]`, run separately from cron/systemd, covers the row those
 cannot: both sessions dying at once (VPS reboot, OOM sweep, network loss). It
 scans every baton under the given roots, classifying each terminal/paused/
-mid-work, and for a mid-work baton unmoved past `--stale-max` (default 1800s)
-or a paused baton past `--remind-paused` prints `DVANDVA_WATCHDOG <event>
-run_id=<id> status=<s> assignee=<a> checkpoint=<n> age_s=<n> root=<path>`
-(`<event>` is `watchdog_stale` or `watchdog_paused`) plus a best-effort
-ntfy-compatible notify POST, deduped per baton via a marker file keyed on
-status/checkpoint/age-bucket (escalating 1x/4x/24x the threshold, then
-silent), and a `DVANDVA_WATCHDOG summary roots=<n> batons=<n> stale=<n>
-paused=<n> skipped=<n>` line at the end. It always exits 0 — it is a monitor,
+mid-work. It is a stateless scanner: for a mid-work baton unmoved past
+`--stale-max` (default 1800s) or a paused baton past `--remind-paused`, it
+prints `DVANDVA_WATCHDOG <event> run_id=<id> status=<s> assignee=<a>
+checkpoint=<n> age_s=<n> root=<path>` (`<event>` is `watchdog_stale` or
+`watchdog_paused`) on every scan that finds it — no dedup or pacing, so a
+continuously stuck run reports again each scan; cron logs are the record. A
+`DVANDVA_WATCHDOG summary roots=<n> batons=<n> stale=<n> paused=<n>
+skipped=<n>` line prints at the end. It always exits 0 — it is a monitor,
 not a gate — and garbage/unreadable baton files are skipped and counted
 rather than crashing the scan.
 
@@ -600,8 +600,7 @@ This is the core anti-token-polling rule:
 - Claude Code has a Bash-tool wall-clock cap around 600 seconds, so Claude-hosted sessions must relaunch the wait if a harness cap stops the shell before a terminal baton state. Codex-hosted sessions may use unbounded default continuous polling or pass `--persist` for older snippets.
 - In supervised mode, the assigned-away agent exits and the human invokes the next role manually.
 - When the helper exits 0 (`ready` or `checkpoint_advanced`), the agent re-reads the baton and resumes.
-- When the helper exits 10, the agent surfaces post-handshake `done` and stops. When it exits 13, the agent surfaces the terminal `abandoned` state (`DVANDVA_WAIT abandoned phase=… checkpoint=… assignee=…`) and stops. When it exits 11 or 12, the agent surfaces the human-intervention `human_decision` or `human_question` state and pauses for the human. For `human_question`, the helper also prints `question`, `resume_assignee`, and `resume_status`. Per F5, the Claude Code-hosted session owns surfacing these to the human in-session.
-- With `--notify <url>` (or the `DVANDVA_NOTIFY_URL` env var; the flag wins), the wait sends a best-effort ntfy-style POST on `human_question`, `human_decision`, `done`, `abandoned`, `split_brain`, and `stalled` (3s timeout, `Title: Dvandva <run_id>: <event>` header, never changes exit codes or timing) so a Claude-hosted session's pause reaches the human's phone. Failures log `DVANDVA_WAIT notify_failed url=… err=…` on stderr only.
+- When the helper exits 10, the agent surfaces post-handshake `done` and stops. When it exits 13, the agent surfaces the terminal `abandoned` state (`DVANDVA_WAIT abandoned phase=… checkpoint=… assignee=…`) and stops. When it exits 11 or 12, the agent surfaces the human-intervention `human_decision` or `human_question` state and pauses for the human. For `human_question`, the helper also prints `question`, `resume_assignee`, and `resume_status`. Per F5, the Claude Code-hosted session owns surfacing these to the human in-session — the native Claude Code remote session is the human notification channel, reachable from mobile.
 
 ## Goal Conditions
 

@@ -100,10 +100,9 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
   checkpoint, plus sibling run id for a propagated pause) prints one line to
   stderr — `DVANDVA_WAIT note human_pause status=<status>
   checkpoint=<checkpoint>` for an own pause, with ` sibling_run_id=<run_id>`
-  appended for a sibling pause — and fires the same notify event the pre-flag
-  exit-11/12 path used, exactly once per episode; a `.wait-pause-<role>`
-  marker file next to the baton dedupes the note/notify across a wait
-  re-invocation after a persist-max/shell-budget exit. The stall watchdog is
+  appended for a sibling pause — exactly once per episode; a
+  `.wait-pause-<role>` marker file next to the baton dedupes the note across
+  a wait re-invocation after a persist-max/shell-budget exit. The stall watchdog is
   suspended for the duration of the pause and resumes counting from a fresh
   anchor the moment the pause clears; continuous-mode `--max-wait` heartbeats
   continue uninterrupted. `done` and `abandoned` still exit immediately;
@@ -517,21 +516,20 @@ These gates keep the walkaway loop live and bound its cycles.
   separate one-shot subcommand run from cron/systemd, not from inside a
   session — it covers the case the in-protocol dead-peer watchdog above
   cannot: both roles' sessions dying at once (VPS reboot, OOM sweep, network
-  loss), leaving nothing alive to write `human_decision`. It scans every
-  baton under the given roots and, for each stale (`--stale-max`, default
-  1800s) or reminder-due (`--remind-paused`) baton, prints `DVANDVA_WATCHDOG
-  <event> run_id=<id> status=<s> assignee=<a> checkpoint=<n> age_s=<n>
-  root=<path>` (`<event>` is `watchdog_stale` or `watchdog_paused`), deduped
-  per baton via a marker file keyed on status/checkpoint/age-bucket (1x/4x/24x
-  the threshold, then silent), plus a `DVANDVA_WATCHDOG summary roots=<n>
-  batons=<n> stale=<n> paused=<n> skipped=<n>` line at the end. Always exits
-  0 — it is a monitor, not a gate. Fail-loud rules: a baton that cannot
-  prove liveness is reported stale with a reason suffix
-  (`reason=unparseable_updated_at`, `reason=future_updated_at` for
-  timestamps more than 120s ahead), an unreadable runs directory prints
-  `note skipped_unreadable_runs_dir` and counts as skipped, and the dedupe
-  marker commits only on confirmed notify delivery, so a failed push is
-  retried on the next scan instead of being recorded as sent.
+  loss), leaving nothing alive to write `human_decision`. It is a stateless
+  scanner: for each stale (`--stale-max`, default 1800s) or reminder-due
+  (`--remind-paused`) baton it finds under the given roots, it prints
+  `DVANDVA_WATCHDOG <event> run_id=<id> status=<s> assignee=<a>
+  checkpoint=<n> age_s=<n> root=<path>` (`<event>` is `watchdog_stale` or
+  `watchdog_paused`) on every scan that finds it — no dedup or pacing, so a
+  continuously stuck run reports again each scan; cron logs are the record.
+  A `DVANDVA_WATCHDOG summary roots=<n> batons=<n> stale=<n> paused=<n>
+  skipped=<n>` line prints at the end. Always exits 0 — it is a monitor, not
+  a gate. Fail-loud rules: a baton that cannot prove liveness is reported
+  stale with a reason suffix (`reason=unparseable_updated_at`,
+  `reason=future_updated_at` for timestamps more than 120s ahead), and an
+  unreadable runs directory prints `note skipped_unreadable_runs_dir` and
+  counts as skipped.
 
 ## Regular checkpoint commits
 

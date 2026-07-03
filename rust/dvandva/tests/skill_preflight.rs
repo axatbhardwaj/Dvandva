@@ -1107,16 +1107,6 @@ mod f5_human_surfacing_contract {
             );
         }
     });
-
-    live_tree_test!(role_skills_recommend_notify_pairing, {
-        for (path, role) in role_skills() {
-            require_match(
-                &path,
-                r"--notify",
-                &format!("{role} skill recommends pairing waits with dvandva wait --notify"),
-            );
-        }
-    });
 }
 
 /// `--through-human` flag contract: Codex-hosted sessions may append it to a
@@ -1154,10 +1144,9 @@ mod through_human_flag_contract {
 /// `human_decision`. The canonical rule sentence is pinned verbatim (no
 /// backticks on the status token) so a single substring survives newline
 /// flattening — the same needle the `skill-phase3` lint requires in each
-/// role skill, mirroring the F5 needle treatment above. Also covers the two
-/// companion hardenings the design calls out alongside it: `--stall-max`
-/// becomes required (not optional) in walkaway waits, and headless/VPS
-/// walkaway runs are told to set `DVANDVA_NOTIFY_URL`.
+/// role skill, mirroring the F5 needle treatment above. Also covers the
+/// companion hardening the design calls out alongside it: `--stall-max`
+/// becomes required (not optional) in walkaway waits.
 mod never_silent_stop_contract {
     use super::*;
 
@@ -1191,12 +1180,12 @@ mod never_silent_stop_contract {
         }
     });
 
-    live_tree_test!(role_skills_require_notify_url_for_headless_runs, {
+    live_tree_test!(role_skills_document_native_notification_channel, {
         for (path, role) in role_skills() {
             require_match(
                 &path,
-                r"REQUIRE `DVANDVA_NOTIFY_URL`",
-                &format!("{role} skill requires DVANDVA_NOTIFY_URL for headless runs"),
+                r"The native Claude Code remote session is the human notification channel",
+                &format!("{role} skill documents the native Claude Code remote session as the human notification channel"),
             );
         }
     });
