@@ -1148,3 +1148,64 @@ mod through_human_flag_contract {
         }
     });
 }
+
+/// Never-silent-stop contract: a walkaway session never ends its turn
+/// mid-run without one of a baton write, an active wait, or a surfaced
+/// `human_decision`. The canonical rule sentence is pinned verbatim (no
+/// backticks on the status token) so a single substring survives newline
+/// flattening — the same needle the `skill-phase3` lint requires in each
+/// role skill, mirroring the F5 needle treatment above. Also covers the two
+/// companion hardenings the design calls out alongside it: `--stall-max`
+/// becomes required (not optional) in walkaway waits, and headless/VPS
+/// walkaway runs are told to set `DVANDVA_NOTIFY_URL`.
+mod never_silent_stop_contract {
+    use super::*;
+
+    const NEVER_SILENT_STOP_NEEDLE: &str = r"A walkaway session never ends its turn mid-run without one of: a baton write, an active wait, or a surfaced human_decision";
+
+    live_tree_test!(role_skills_carry_the_needle, {
+        for (path, role) in role_skills() {
+            require_match(
+                &path,
+                NEVER_SILENT_STOP_NEEDLE,
+                &format!("{role} skill carries the never-silent-stop needle"),
+            );
+        }
+    });
+
+    live_tree_test!(product_md_carries_the_needle, {
+        require_match(
+            &product_md(),
+            NEVER_SILENT_STOP_NEEDLE,
+            "product.md carries the never-silent-stop needle",
+        );
+    });
+
+    live_tree_test!(role_skills_require_stall_max_in_walkaway_waits, {
+        for (path, role) in role_skills() {
+            require_match(
+                &path,
+                r"is required in every walkaway wait to arm the dead-peer watchdog",
+                &format!("{role} skill makes --stall-max required in walkaway waits"),
+            );
+        }
+    });
+
+    live_tree_test!(role_skills_require_notify_url_for_headless_runs, {
+        for (path, role) in role_skills() {
+            require_match(
+                &path,
+                r"REQUIRE `DVANDVA_NOTIFY_URL`",
+                &format!("{role} skill requires DVANDVA_NOTIFY_URL for headless runs"),
+            );
+        }
+    });
+
+    live_tree_test!(readme_documents_the_watchdog_subcommand, {
+        require_match(
+            &readme(),
+            r"dvandva watchdog",
+            "README documents the dvandva watchdog subcommand",
+        );
+    });
+}

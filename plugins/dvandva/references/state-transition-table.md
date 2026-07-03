@@ -513,6 +513,19 @@ These gates keep the walkaway loop live and bound its cycles.
   (`stalled`) when the baton does not advance within the bound; the role then
   writes `human_decision`. Wait exit 24 is distinct from `dvandva write`
   exit 24 (illegal transition).
+- **Out-of-band liveness monitor.** `dvandva watchdog [<root>...]` is a
+  separate one-shot subcommand run from cron/systemd, not from inside a
+  session — it covers the case the in-protocol dead-peer watchdog above
+  cannot: both roles' sessions dying at once (VPS reboot, OOM sweep, network
+  loss), leaving nothing alive to write `human_decision`. It scans every
+  baton under the given roots and, for each stale (`--stale-max`, default
+  1800s) or reminder-due (`--remind-paused`) baton, prints `DVANDVA_WATCHDOG
+  <event> run_id=<id> status=<s> assignee=<a> checkpoint=<n> age_s=<n>
+  root=<path>` (`<event>` is `watchdog_stale` or `watchdog_paused`), deduped
+  per baton via a marker file keyed on status/checkpoint/age-bucket (1x/4x/24x
+  the threshold, then silent), plus a `DVANDVA_WATCHDOG summary roots=<n>
+  batons=<n> stale=<n> paused=<n> skipped=<n>` line at the end. Always exits
+  0 — it is a monitor, not a gate.
 
 ## Regular checkpoint commits
 

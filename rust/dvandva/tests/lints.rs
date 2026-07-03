@@ -187,6 +187,7 @@ Exit 23 signals the persistent cap.
 Continuous polling is the hard rule.
 Phase convention: implementation-chunk N of M.
 The Claude Code-hosted session owns surfacing human_question and human_decision to the human.
+A walkaway session never ends its turn mid-run without one of: a baton write, an active wait, or a surfaced human_decision.
 Scaffold candidates with dvandva next before dvandva write.
 "#
     .to_string()

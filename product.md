@@ -131,7 +131,22 @@ Status: rewritten 2026-05-14 for richer flow (spec phase + phased implementation
 > to the human, must never pass `--through-human` and still exits 11/12; the
 > non-surfacing session (Codex-hosted in a mixed pair, or the non-writer
 > session in an all-Codex pair) appends it so a pause stops that session's
-> active work without ending its wait loop.
+> active work without ending its wait loop. Also new in this rev: `dvandva
+> watchdog [<root>...]` is a one-shot, out-of-band liveness monitor meant for
+> cron/systemd, not a session — the in-protocol dead-peer watchdog
+> (`--stall-max`) only covers one session dying while its peer survives;
+> `dvandva watchdog` covers both sessions dying at once (VPS reboot, OOM
+> sweep, network loss). It scans every baton under the given roots,
+> classifies each terminal/paused/mid-work, and for each stale
+> (`--stale-max`, default 1800s) or reminder-due (`--remind-paused`) baton
+> prints a `DVANDVA_WATCHDOG <event> run_id=... status=... assignee=...
+> checkpoint=... age_s=... root=...` line and a deduped best-effort notify
+> POST (1x/4x/24x threshold buckets, then silent); a `DVANDVA_WATCHDOG
+> summary roots=... batons=... stale=... paused=... skipped=...` line always
+> prints last, and the process always exits 0 — it is a monitor, not a gate.
+> `dvandva preflight` also now warns (non-blocking, `DVANDVA_PREFLIGHT
+> note=notify_unconfigured hint=set DVANDVA_NOTIFY_URL for headless runs`)
+> when a walkaway run has no `DVANDVA_NOTIFY_URL` configured.
 
 ## 1. What it is
 
@@ -595,6 +610,8 @@ Consumer repos may check the plugin into their own tree or use project-scoped ma
 | Superpowers absent on an engine running a Dvandva role | Surface install instructions referencing section 4 and the relevant plugin marketplace/install path. Do not continue with active work; if the baton exists and the role owns it, route to `human_decision` rather than writing a success or advancement baton. |
 | `status: human_question` | Stop and surface the one concrete `question` plus `resume_assignee` and `resume_status`. If the user answers in the current prompt, restore `assignee` and `status` from those fields, clear the question fields, and continue. Enterable pre-lock from any planning state and post-lock from the working states `implementing`/`parallel_implementing`/`test_creation`/`cross_fixing`/`phase_fixing` (S4-T5/D1); `human_decision` remains the re-routing and scope escalation. |
 | `status: human_question` or `human_decision` written or observed (F5) | The Claude Code-hosted session owns surfacing human_question and human_decision to the human. Whichever role the Claude Code session hosts asks the human directly in-session (question, options, resume fields) — on writing the pause or on wait exit 11/12 (including sibling propagation) — and stays available for the answer via Claude Code's mobile/remote surface. The Codex-hosted role writes/observes the pause and stops silently; it must not compete to consume the answer. If no Claude Code session is part of the run, the writer of the pause surfaces it. `current_engine` still records the writer for traceability. Recommended pairing: run waits with `dvandva wait --notify <url>` (or `DVANDVA_NOTIFY_URL`) so the pause also pings your phone. |
+| A walkaway session is about to end its turn mid-run with no baton write, no active wait, and no surfaced human intervention (never-silent-stop) | A walkaway session never ends its turn mid-run without one of: a baton write, an active wait, or a surfaced human_decision. Unrecoverable errors route to `human_decision` — never a bare stop. On wait exit 24 (`stalled`), the surviving role writes `human_decision` naming the stall. Enforced like F5: pinned verbatim in both skills and checked by a `skill-phase3` lint needle plus doc-contract tests. |
+| Both roles' sessions die simultaneously (VPS reboot, OOM sweep, network loss) — nothing alive in-protocol to write `human_decision` | Run `dvandva watchdog [<root>...]` out-of-band from cron/systemd (not from inside a session); it scans every `.dvandva/runs/*/baton.json` under the given roots, classifies each baton terminal/paused/mid-work, and for a mid-work baton unmoved past `--stale-max` (default 1800s) prints `DVANDVA_WATCHDOG watchdog_stale run_id=<id> status=<s> assignee=<a> checkpoint=<n> age_s=<n> root=<path>` plus a best-effort notify POST, deduped per baton via a marker file and escalating at 1x/4x/24x the threshold. Always exits 0 — it is a monitor, not a gate. |
 | `plan_ref` missing, or referenced plan file missing during a phase mode | Doer: surface "spec phase did not complete; cannot start phase implementation." Exit. Reviewer: same. |
 | `total_phases` is 0 or unset during phase mode | Both: surface schema integrity error, exit. The spec phase is responsible for setting this. |
 | `disagreement_round >= disagreement_cap` | Whichever agent next writes the baton: set `status: human_decision, assignee: human`. Do not write further counter-changes. |

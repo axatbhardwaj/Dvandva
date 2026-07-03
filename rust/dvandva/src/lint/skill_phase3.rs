@@ -69,6 +69,12 @@ pub fn report(root: &Path) -> Report {
             "The Claude Code-hosted session owns surfacing human_question and human_decision to the human",
             "skill carries the F5 human-intervention surfacing needle",
         );
+        // Never-silent-stop: the walkaway turn-boundary invariant (verbatim,
+        // no backticks on the status token) — mirrors the F5 needle above.
+        req(
+            "A walkaway session never ends its turn mid-run without one of: a baton write, an active wait, or a surfaced human_decision",
+            "skill carries the never-silent-stop needle",
+        );
         // Flow patches: skills must point agents at `dvandva next` for
         // candidate scaffolding before `dvandva write`.
         req(

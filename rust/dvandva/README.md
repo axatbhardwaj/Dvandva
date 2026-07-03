@@ -21,6 +21,8 @@ this one binary.
     baton assigns the role or reaches a terminal state.
   - `dvandva snapshot "$BATON_FILE"` — write a history snapshot for the baton.
 - **Preflight** — `preflight`, `hook-preflight`.
+- **Monitor** — `watchdog` — one-shot, out-of-band liveness scan for headless
+  walkaway runs (run from cron/systemd); always exits 0.
 - **Git work-gate** — `commit-gate`, `drift-lint`, `install-hooks`, `git-hook <name>`.
 - **Install** — `install`, `install-codex`, `smoke-install`, `retire-agents`.
 - **Lints** — `lint <artifacts|skills|schema-parity|protocol-phase1|skill-phase3|phase4-research|run3-dynamic-agents|run4-path-gates|run4-standalone-agents>`.

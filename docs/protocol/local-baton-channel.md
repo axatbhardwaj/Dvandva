@@ -149,6 +149,23 @@ still exits 11/12 to ask the human directly. The non-surfacing session
 appends it so the pause stops that session's active work without stopping its
 wait loop. `done`, `abandoned`, and split-brain detection are unaffected.
 
+Out-of-band liveness layer (complements the in-protocol stall watchdog and
+F5): the in-session `--stall-max` dead-peer watchdog and F5 human-intervention
+surfacing both require at least one session to still be running. `dvandva
+watchdog [<root>...]`, run separately from cron/systemd, covers the row those
+cannot: both sessions dying at once (VPS reboot, OOM sweep, network loss). It
+scans every baton under the given roots, classifying each terminal/paused/
+mid-work, and for a mid-work baton unmoved past `--stale-max` (default 1800s)
+or a paused baton past `--remind-paused` prints `DVANDVA_WATCHDOG <event>
+run_id=<id> status=<s> assignee=<a> checkpoint=<n> age_s=<n> root=<path>`
+(`<event>` is `watchdog_stale` or `watchdog_paused`) plus a best-effort
+ntfy-compatible notify POST, deduped per baton via a marker file keyed on
+status/checkpoint/age-bucket (escalating 1x/4x/24x the threshold, then
+silent), and a `DVANDVA_WATCHDOG summary roots=<n> batons=<n> stale=<n>
+paused=<n> skipped=<n>` line at the end. It always exits 0 — it is a monitor,
+not a gate — and garbage/unreadable baton files are skipped and counted
+rather than crashing the scan.
+
 Run 4 standalone-agent retirement is intentionally Dvandva-only: it covers only
 Dvandva-covered workflows with functional parity via Runs 1-4 usage. The
 allowlist is the five Claude symlink agents `adversarial-analyst`, `architect`,

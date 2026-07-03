@@ -363,6 +363,30 @@ Codex-only helper under isolated homes, checks that Codex renders all six Dvandv
 checks the installed cache version, and checks exact 15-agent roster parity in the
 installed development copies.
 
+### Out-of-band liveness monitor (`dvandva watchdog`)
+
+A one-shot, cron-driven liveness monitor for headless walkaway runs — it covers
+the case the in-protocol dead-peer watchdog (`--stall-max`) cannot: both roles'
+sessions dying at once (VPS reboot, OOM sweep, network loss), with nothing
+alive to write `human_decision`. Run it from cron/systemd, not from inside a
+session:
+
+```bash
+*/10 * * * * DVANDVA_NOTIFY_URL=https://ntfy.sh/<topic> dvandva watchdog /srv/repos/projA /srv/repos/projB
+```
+
+It scans every baton under the given roots (default: git toplevel of cwd, else
+cwd) and prints one `DVANDVA_WATCHDOG watchdog_stale` line per mid-work baton
+unmoved past `--stale-max` (default 1800s) and one `DVANDVA_WATCHDOG
+watchdog_paused` line per `human_question`/`human_decision` baton unmoved past
+`--remind-paused` (default 0 = off), plus a `DVANDVA_WATCHDOG summary
+roots=<n> batons=<n> stale=<n> paused=<n> skipped=<n>` line at the end. Repeat
+findings are deduplicated per baton via a marker file keyed on
+status/checkpoint/age-bucket, re-notifying only at 1x/4x/24x the threshold
+before going silent — cron can run every few minutes without spamming.
+Garbage or unreadable baton files are skipped and counted, never crash the
+scan. Always exits 0 — it is a monitor, not a gate.
+
 ## Release Checklist
 
 1. Bump `.claude-plugin/marketplace.json`, `plugins/dvandva/.claude-plugin/plugin.json`, and `plugins/dvandva/.codex-plugin/plugin.json` together.
