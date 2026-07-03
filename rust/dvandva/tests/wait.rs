@@ -2926,3 +2926,576 @@ fn notify_question_body_truncates_long_question_to_300_chars() {
     );
     assert!(!request.contains(&"x".repeat(301)), "{request}");
 }
+
+// ── Task S6 (--through-human) ────────────────────────────────────────────────
+//
+// A paired session that does NOT own surfacing pauses keeps polling THROUGH
+// human_question/human_decision instead of exiting 11/12, noting+notifying
+// exactly once per pause episode, and auto-wakes when the pause resolves.
+
+/// Like [`start_notify_listener`] but accepts every connection on the port
+/// (not just the first), forwarding each request over the channel. Needed for
+/// cases that expect more than one notify POST across the run (episode
+/// re-key, cross-process dedupe).
+fn start_notify_listener_multi() -> (u16, mpsc::Receiver<String>) {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind notify listener");
+    let port = listener.local_addr().expect("local_addr").port();
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        for stream in listener.incoming() {
+            let Ok(mut stream) = stream else { break };
+            let request = read_full_http_request(&mut stream);
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+            if tx.send(request).is_err() {
+                break;
+            }
+        }
+    });
+    (port, rx)
+}
+
+fn write_question_baton_at(file: &Path, checkpoint: u64, question: &str) {
+    mkparent(file);
+    std::fs::write(
+        file,
+        format!(
+            r#"{{
+  "schema": "dvandva.baton.v1",
+  "assignee": "human",
+  "status": "human_question",
+  "phase": "spec",
+  "checkpoint": {checkpoint},
+  "question": "{question}",
+  "resume_assignee": "prativadi",
+  "resume_status": "spec_review"
+}}"#
+        ),
+    )
+    .unwrap();
+}
+
+#[test]
+fn s6th_flag_finite_human_question_no_exit_note_once_no_duplicate() {
+    let d = tmp();
+    let f = d.path().join("question.json");
+    write_question_baton(&f); // checkpoint 8
+    let (port, rx) = start_notify_listener();
+    let url = format!("http://127.0.0.1:{port}/");
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "1",
+            "--max-wait",
+            "2",
+            "--finite",
+            "--through-human",
+            "--notify",
+            &url,
+        ],
+        BUDGET_SLOW,
+    );
+    // Non-actionable for the whole finite window -> finite returns its normal
+    // "kept waiting, ran out of budget" code, never 12.
+    assert_eq!(o.code, Some(20), "{}", o.out);
+    assert_eq!(
+        o.out
+            .matches("DVANDVA_WAIT note human_pause status=human_question checkpoint=8")
+            .count(),
+        1,
+        "{}",
+        o.out
+    );
+    let request = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("notify request");
+    assert!(request.contains("event=human_question"), "{request}");
+    assert!(
+        request.contains("question=Which scope should Dvandva choose?"),
+        "{request}"
+    );
+}
+
+#[test]
+fn s6th_flag_finite_human_decision_no_exit() {
+    let d = tmp();
+    let f = d.path().join("human.json");
+    write_baton(&f, "human", "human_decision"); // checkpoint 7
+    let (port, rx) = start_notify_listener();
+    let url = format!("http://127.0.0.1:{port}/");
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+            "--finite",
+            "--through-human",
+            "--notify",
+            &url,
+        ],
+        BUDGET_SLOW,
+    );
+    assert_eq!(o.code, Some(20), "{}", o.out);
+    assert_eq!(
+        o.out
+            .matches("DVANDVA_WAIT note human_pause status=human_decision checkpoint=7")
+            .count(),
+        1,
+        "{}",
+        o.out
+    );
+    let request = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("notify request");
+    assert!(request.contains("event=human_decision"), "{request}");
+}
+
+#[test]
+fn s6th_without_flag_human_question_regression_pairing() {
+    let d = tmp();
+    let f = d.path().join("question.json");
+    write_question_baton(&f);
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "0",
+            "--max-wait",
+            "0",
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(12), "{}", o.out);
+}
+
+#[test]
+fn s6th_flag_continuous_auto_wake_on_resume() {
+    let d = tmp();
+    let f = d.path().join("question.json");
+    write_question_baton(&f);
+    let resume = f.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(700));
+        write_baton(&resume, "vadi", "implementing");
+    });
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "1",
+            "--max-wait",
+            "540",
+            "--through-human",
+        ],
+        BUDGET_SLOW,
+    );
+    assert_eq!(o.code, Some(0), "{}", o.out);
+    assert!(o.contains("DVANDVA_WAIT ready role=vadi"), "{}", o.out);
+    assert!(
+        o.contains("DVANDVA_WAIT note human_pause status=human_question checkpoint=8"),
+        "{}",
+        o.out
+    );
+}
+
+#[test]
+fn s6th_flag_sibling_pause_no_exit_note_once() {
+    let d = tmp();
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "prativadi",
+        "phase_review",
+        "2026-07-02T10:00:00Z",
+        "codex",
+    );
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/beta/baton.json"),
+        "beta",
+        "human",
+        "human_decision",
+        "2026-07-02T10:01:00Z",
+        "claude",
+    );
+    let (port, rx) = start_notify_listener();
+    let url = format!("http://127.0.0.1:{port}/");
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "vadi",
+            "--persist",
+            "--interval",
+            "1",
+            "--max-wait",
+            "540",
+            "--through-human",
+            "--notify",
+            &url,
+        ],
+        BUDGET_POLL,
+    );
+    assert!(
+        o.kept_polling(),
+        "expected keeps-polling, got {:?}\n{}",
+        o.code,
+        o.out
+    );
+    assert_eq!(
+        o.out
+            .matches("DVANDVA_WAIT note human_pause status=human_decision checkpoint=8 sibling_run_id=beta")
+            .count(),
+        1,
+        "{}",
+        o.out
+    );
+    let request = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("notify request");
+    assert!(request.contains("event=human_decision"), "{request}");
+    assert!(request.contains("run_id=beta"), "{request}");
+}
+
+#[test]
+fn s6th_flag_abandoned_still_exits_13() {
+    let d = tmp();
+    let f = d.path().join("abandoned.json");
+    write_baton(&f, "human", "abandoned");
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "0",
+            "--max-wait",
+            "0",
+            "--through-human",
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(13), "{}", o.out);
+    assert!(
+        o.contains("DVANDVA_WAIT abandoned phase=1 checkpoint=7 assignee=human"),
+        "{}",
+        o.out
+    );
+}
+
+#[test]
+fn s6th_flag_stall_suspended_during_pause() {
+    let d = tmp();
+    write_named_question_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "2026-07-02T10:20:00Z",
+        "codex",
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "vadi",
+            "--interval",
+            "1",
+            "--max-wait",
+            "540",
+            "--stall-max",
+            "1",
+            "--through-human",
+        ],
+        Duration::from_secs(4),
+    );
+    assert!(
+        o.kept_polling(),
+        "expected keeps-polling (stall suspended during pause), got {:?}\n{}",
+        o.code,
+        o.out
+    );
+    assert!(!o.contains("stalled"), "{}", o.out);
+}
+
+#[test]
+fn s6th_flag_stall_resumes_after_pause_ends() {
+    let d = tmp();
+    let f = d.path().join(".dvandva/runs/alpha/baton.json");
+    write_named_question_baton(&f, "alpha", "2026-07-02T10:30:00Z", "codex"); // checkpoint 9
+    let flip = f.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(1200));
+        // Resolves the pause into a plain non-actionable-for-vadi state at a
+        // different checkpoint (8), then never moves again.
+        write_named_observed_baton(
+            &flip,
+            "alpha",
+            "prativadi",
+            "phase_review",
+            "2026-07-02T10:31:00Z",
+            "codex",
+        );
+    });
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "vadi",
+            "--interval",
+            "1",
+            "--max-wait",
+            "540",
+            "--stall-max",
+            "1",
+            "--through-human",
+        ],
+        Duration::from_secs(6),
+    );
+    assert_eq!(o.code, Some(24), "{}", o.out);
+    assert!(o.contains("stalled"), "{}", o.out);
+}
+
+#[test]
+fn s6th_flag_episode_rekey_on_new_checkpoint() {
+    let d = tmp();
+    let f = d.path().join("question.json");
+    write_question_baton_at(&f, 8, "Which scope should Dvandva choose?");
+    let (_port, rx) = {
+        let (port, rx) = start_notify_listener_multi();
+        (port, rx)
+    };
+    let flip = f.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(1200));
+        write_question_baton_at(&flip, 9, "Which module owns retries?");
+    });
+    let url = format!("http://127.0.0.1:{_port}/");
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "1",
+            "--max-wait",
+            "540",
+            "--through-human",
+            "--notify",
+            &url,
+        ],
+        Duration::from_secs(4),
+    );
+    assert!(
+        o.kept_polling(),
+        "expected keeps-polling, got {:?}\n{}",
+        o.code,
+        o.out
+    );
+    assert_eq!(
+        o.out
+            .matches("DVANDVA_WAIT note human_pause status=human_question checkpoint=8")
+            .count(),
+        1,
+        "{}",
+        o.out
+    );
+    assert_eq!(
+        o.out
+            .matches("DVANDVA_WAIT note human_pause status=human_question checkpoint=9")
+            .count(),
+        1,
+        "{}",
+        o.out
+    );
+    let first = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("first notify request");
+    assert!(
+        first.contains("question=Which scope should Dvandva choose?"),
+        "{first}"
+    );
+    let second = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("second notify request (new episode)");
+    assert!(
+        second.contains("question=Which module owns retries?"),
+        "{second}"
+    );
+}
+
+// ── Contract amendment (A): indefinite wait during a pause ─────────────────
+
+#[test]
+fn s6th_flag_continuous_survives_max_wait_during_pause() {
+    let d = tmp();
+    let f = d.path().join("question.json");
+    write_question_baton(&f);
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+            "--through-human",
+        ],
+        Duration::from_secs(4),
+    );
+    assert!(
+        o.kept_polling(),
+        "max-wait must never end a --through-human wait during a pause, got {:?}\n{}",
+        o.code,
+        o.out
+    );
+    assert!(
+        o.out.matches("DVANDVA_WAIT heartbeat").count() >= 2,
+        "expected several max-wait heartbeat cycles to have elapsed without exiting\n{}",
+        o.out
+    );
+    assert_eq!(
+        o.out
+            .matches("DVANDVA_WAIT note human_pause status=human_question checkpoint=8")
+            .count(),
+        1,
+        "{}",
+        o.out
+    );
+}
+
+// ── Contract amendment (B): cross-process episode dedupe ───────────────────
+
+#[test]
+fn s6th_flag_cross_process_dedupe_same_episode() {
+    let d = tmp();
+    let f = d.path().join("question.json");
+    write_question_baton(&f);
+    let (port, rx) = start_notify_listener_multi();
+    let url = format!("http://127.0.0.1:{port}/");
+    let args: Vec<&str> = vec![
+        "--role",
+        "vadi",
+        "--file",
+        f.to_str().unwrap(),
+        "--interval",
+        "0",
+        "--max-wait",
+        "0",
+        "--finite",
+        "--through-human",
+        "--notify",
+        &url,
+    ];
+
+    let first = run_wait(None, &[], &args, BUDGET_FAST);
+    assert_eq!(first.code, Some(20), "{}", first.out);
+    let request = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("first invocation should notify");
+    assert!(request.contains("event=human_question"), "{request}");
+
+    // A second, separate process re-observing the SAME (status, checkpoint)
+    // episode must not re-note or re-notify: the marker file next to the
+    // baton persisted what the first invocation already noted.
+    let second = run_wait(None, &[], &args, BUDGET_FAST);
+    assert_eq!(second.code, Some(20), "{}", second.out);
+    assert_eq!(
+        second.out.matches("DVANDVA_WAIT note human_pause").count(),
+        0,
+        "second invocation must not re-note the same episode\n{}",
+        second.out
+    );
+    assert!(
+        rx.recv_timeout(Duration::from_millis(300)).is_err(),
+        "second invocation must not re-notify the same episode"
+    );
+
+    let marker = d.path().join(".wait-pause-vadi");
+    let marker_content = std::fs::read_to_string(&marker).expect("marker file written");
+    assert_eq!(marker_content, "own status=human_question checkpoint=8");
+}
+
+#[test]
+fn s6th_flag_cross_process_new_episode_after_rekey() {
+    let d = tmp();
+    let f = d.path().join("question.json");
+    write_question_baton_at(&f, 8, "Which scope should Dvandva choose?");
+    let (port, rx) = start_notify_listener_multi();
+    let url = format!("http://127.0.0.1:{port}/");
+    let args: Vec<&str> = vec![
+        "--role",
+        "vadi",
+        "--file",
+        f.to_str().unwrap(),
+        "--interval",
+        "0",
+        "--max-wait",
+        "0",
+        "--finite",
+        "--through-human",
+        "--notify",
+        &url,
+    ];
+
+    let first = run_wait(None, &[], &args, BUDGET_FAST);
+    assert_eq!(first.code, Some(20), "{}", first.out);
+    rx.recv_timeout(Duration::from_secs(3))
+        .expect("first invocation should notify");
+
+    // The human answered, installing a NEW human_question at a later
+    // checkpoint before the second invocation starts.
+    write_question_baton_at(&f, 9, "Which module owns retries?");
+
+    let second = run_wait(None, &[], &args, BUDGET_FAST);
+    assert_eq!(second.code, Some(20), "{}", second.out);
+    assert_eq!(
+        second
+            .out
+            .matches("DVANDVA_WAIT note human_pause status=human_question checkpoint=9")
+            .count(),
+        1,
+        "{}",
+        second.out
+    );
+    let request = rx
+        .recv_timeout(Duration::from_secs(3))
+        .expect("second invocation should notify a new episode");
+    assert!(
+        request.contains("question=Which module owns retries?"),
+        "{request}"
+    );
+}

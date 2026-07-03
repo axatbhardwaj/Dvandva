@@ -57,6 +57,11 @@ pub struct WaitConfig {
     /// `DVANDVA_NOTIFY_URL`, flag wins). `None` (or an empty string) disables
     /// notification entirely.
     pub notify_url: Option<String>,
+    /// `--through-human`: keep polling THROUGH human_question/human_decision
+    /// pauses (own or a newer paired sibling's) instead of exiting 11/12.
+    /// Each pause episode prints one note line and fires the notify event
+    /// once, then normal wait logic resumes as soon as the pause clears.
+    pub through_human: bool,
 }
 
 /// Drive the wait loop to a terminal exit code.
@@ -68,9 +73,27 @@ pub fn run(cfg: &WaitConfig) -> i32 {
     // resets. `--stall-max 0` disables it.
     let mut stall_started = now_epoch();
     let mut stall_last_checkpoint: Option<String> = None;
+    // --through-human: in-process once-per-episode note/notify bookkeeping.
+    // The own-baton pause is keyed by (status, checkpoint); a
+    // sibling-propagated pause also carries the sibling run id (a different
+    // sibling could otherwise collide on the same (status, checkpoint) pair).
+    // This is the fast path — it never touches disk on a repeat heartbeat.
+    // [`mark_pause_episode_if_new`] additionally consults a marker file on
+    // the *first* in-process observation of a key, catching the case where an
+    // earlier process already noted the same episode before a shell-budget
+    // re-entry.
+    let mut through_human_selected_episode: Option<(String, String)> = None;
+    let mut through_human_sibling_episode: Option<(String, String, String)> = None;
 
     loop {
         let mut wait_detail = String::new();
+        // Set inside the --through-human pause branches below (own or
+        // sibling-propagated). Suspends the stall-max check for this
+        // iteration's `record_wait_elapsed` call: resetting `stall_started`
+        // to "now" in those branches is not enough by itself, since one full
+        // `--interval` still elapses between that reset and the check below
+        // it, which fires immediately whenever `stall_max <= interval`.
+        let mut through_human_paused = false;
         let baton_path = Path::new(&cfg.baton_file);
         let is_file = std::fs::metadata(baton_path)
             .map(|m| m.is_file())
@@ -100,6 +123,7 @@ pub fn run(cfg: &WaitConfig) -> i32 {
                             stall_started,
                             &selected_run_id,
                             "",
+                            through_human_paused,
                         ) {
                             return code;
                         }
@@ -119,6 +143,7 @@ pub fn run(cfg: &WaitConfig) -> i32 {
                     stall_started,
                     &selected_run_id,
                     "",
+                    through_human_paused,
                 ) {
                     return code;
                 }
@@ -180,6 +205,36 @@ pub fn run(cfg: &WaitConfig) -> i32 {
                 notify_plain(cfg, "done", &selected_run_id, &next_action);
                 return 10;
             }
+            "human_decision" | "human_question" if cfg.through_human => {
+                // Suspend the stall watchdog for the duration of the pause;
+                // it resumes counting from "now" the moment the pause clears
+                // (contract 6).
+                stall_started = now_epoch();
+                through_human_paused = true;
+                let episode = (status.clone(), checkpoint.clone());
+                if through_human_selected_episode.as_ref() != Some(&episode) {
+                    through_human_selected_episode = Some(episode);
+                    let marker_key = format!("own status={status} checkpoint={checkpoint}");
+                    if mark_pause_episode_if_new(cfg, &marker_key) {
+                        eprintln!(
+                            "DVANDVA_WAIT note human_pause status={status} checkpoint={checkpoint}"
+                        );
+                        if status == "human_decision" {
+                            notify_plain(cfg, "human_decision", &selected_run_id, &next_action);
+                        } else {
+                            notify_question(
+                                cfg,
+                                &selected_run_id,
+                                &question,
+                                &resume_assignee,
+                                &resume_status,
+                            );
+                        }
+                    }
+                }
+                // Fall through: no return, keep polling at the normal
+                // interval/heartbeat cadence below.
+            }
             "human_decision" => {
                 println!("DVANDVA_WAIT human_decision phase={phase} checkpoint={checkpoint} assignee={assignee}");
                 notify_plain(cfg, "human_decision", &selected_run_id, &next_action);
@@ -211,6 +266,63 @@ pub fn run(cfg: &WaitConfig) -> i32 {
             let scan = scan_sibling_runs(cfg, &assignee, &updated_at);
             sibling_active_count = scan.active_count;
             match scan.human_status.as_deref() {
+                Some("human_decision") if cfg.through_human => {
+                    stall_started = now_epoch();
+                    through_human_paused = true;
+                    let episode = (
+                        scan.human_run_id.clone(),
+                        "human_decision".to_string(),
+                        scan.human_checkpoint.clone(),
+                    );
+                    if through_human_sibling_episode.as_ref() != Some(&episode) {
+                        through_human_sibling_episode = Some(episode);
+                        let marker_key = format!(
+                            "sibling run_id={} status=human_decision checkpoint={}",
+                            scan.human_run_id, scan.human_checkpoint
+                        );
+                        if mark_pause_episode_if_new(cfg, &marker_key) {
+                            eprintln!(
+                                "DVANDVA_WAIT note human_pause status=human_decision checkpoint={} sibling_run_id={}",
+                                scan.human_checkpoint, scan.human_run_id
+                            );
+                            notify_plain(
+                                cfg,
+                                "human_decision",
+                                &scan.human_run_id,
+                                &scan.human_next_action,
+                            );
+                        }
+                    }
+                }
+                Some("human_question") if cfg.through_human => {
+                    stall_started = now_epoch();
+                    through_human_paused = true;
+                    let episode = (
+                        scan.human_run_id.clone(),
+                        "human_question".to_string(),
+                        scan.human_checkpoint.clone(),
+                    );
+                    if through_human_sibling_episode.as_ref() != Some(&episode) {
+                        through_human_sibling_episode = Some(episode);
+                        let marker_key = format!(
+                            "sibling run_id={} status=human_question checkpoint={}",
+                            scan.human_run_id, scan.human_checkpoint
+                        );
+                        if mark_pause_episode_if_new(cfg, &marker_key) {
+                            eprintln!(
+                                "DVANDVA_WAIT note human_pause status=human_question checkpoint={} sibling_run_id={}",
+                                scan.human_checkpoint, scan.human_run_id
+                            );
+                            notify_question(
+                                cfg,
+                                &scan.human_run_id,
+                                &scan.human_question,
+                                &scan.human_resume_assignee,
+                                &scan.human_resume_status,
+                            );
+                        }
+                    }
+                }
                 Some("human_decision") => {
                     println!(
                         "DVANDVA_WAIT human_decision role={} selected_run_id={selected_run_id} sibling_run_id={} waiting_on={assignee} phase={phase} status={status} checkpoint={checkpoint} {}{}",
@@ -326,6 +438,7 @@ pub fn run(cfg: &WaitConfig) -> i32 {
                     stall_started,
                     &selected_run_id,
                     &next_action,
+                    through_human_paused,
                 ) {
                     return code;
                 }
@@ -346,6 +459,7 @@ pub fn run(cfg: &WaitConfig) -> i32 {
             stall_started,
             &selected_run_id,
             &next_action,
+            through_human_paused,
         ) {
             return code;
         }
@@ -356,6 +470,12 @@ pub fn run(cfg: &WaitConfig) -> i32 {
 /// (both wall-clock). Returns `Some(exit_code)` when a cap fires. `run_id` and
 /// `next_action` are best-effort context for the `stalled` notification (empty
 /// when the baton has never been successfully parsed, e.g. still missing).
+/// `suspend_stall` skips the stall-max check for this call: under
+/// `--through-human` the caller resets `stall_started` to "now" for every
+/// iteration observed inside a pause, but that reset alone does not stop the
+/// check below from firing on the very same pass whenever `stall_max <=
+/// interval` (one full interval always elapses between the reset and this
+/// call) — the flag closes that gap.
 fn record_wait_elapsed(
     cfg: &WaitConfig,
     elapsed: &mut u64,
@@ -363,6 +483,7 @@ fn record_wait_elapsed(
     stall_started: u64,
     run_id: &str,
     next_action: &str,
+    suspend_stall: bool,
 ) -> Option<i32> {
     *elapsed += cfg.interval;
     if cfg.persist && cfg.persist_max > 0 {
@@ -375,7 +496,7 @@ fn record_wait_elapsed(
             return Some(23);
         }
     }
-    if cfg.stall_max > 0 {
+    if !suspend_stall && cfg.stall_max > 0 {
         let total = now_epoch().saturating_sub(stall_started);
         if total >= cfg.stall_max {
             println!(
@@ -394,6 +515,32 @@ fn heartbeat_meta(cfg: &WaitConfig, run_id: &str, sibling_active_count: u64) -> 
         "run_id={run_id} file={} selected_by={} sibling_active_runs={sibling_active_count}",
         cfg.baton_file, cfg.selected_by
     )
+}
+
+// ── --through-human cross-process episode marker (best-effort) ──────────────
+
+/// The marker path for a `--through-human` pause episode: a tiny file next to
+/// the baton, named for the role, so a `wait` invocation that re-enters after
+/// a shell-budget cap (persist-max exit + immediate re-invoke) can see what
+/// an earlier invocation already noted and not re-notify the same pause.
+fn pause_marker_path(cfg: &WaitConfig) -> std::path::PathBuf {
+    Path::new(&dirname(&cfg.baton_file)).join(format!(".wait-pause-{}", cfg.role))
+}
+
+/// `true` exactly when `key` was not already the last-persisted marker
+/// content for this role (and persists it as a side effect). Read/write
+/// failures degrade silently to "treat as new" — the in-process episode
+/// check at each call site (checked before this function is ever reached)
+/// remains the fallback guard against re-notifying within one process, so a
+/// broken marker file never causes a crash and, at worst, only loses
+/// cross-process dedup.
+fn mark_pause_episode_if_new(cfg: &WaitConfig, key: &str) -> bool {
+    let path = pause_marker_path(cfg);
+    if std::fs::read_to_string(&path).ok().as_deref() == Some(key) {
+        return false;
+    }
+    let _ = std::fs::write(&path, key);
+    true
 }
 
 // ── pause-event notifications (F3, best-effort) ──────────────────────────────
@@ -534,6 +681,7 @@ struct SiblingScan {
     split_brain_run_id: Option<String>,
     human_status: Option<String>,
     human_run_id: String,
+    human_checkpoint: String,
     human_question: String,
     human_resume_assignee: String,
     human_resume_status: String,
@@ -547,6 +695,7 @@ struct HumanCandidate {
     status: String,
     run_id: String,
     updated_at: OffsetDateTime,
+    checkpoint: String,
     question: String,
     resume_assignee: String,
     resume_status: String,
@@ -643,6 +792,7 @@ fn scan_sibling_runs(
                             status: sibling_status,
                             run_id: sibling_run_id,
                             updated_at: parsed,
+                            checkpoint: checkpoint_str(&sibling),
                             question: field_str(&sibling, "question"),
                             resume_assignee: field_str(&sibling, "resume_assignee"),
                             resume_status: field_str(&sibling, "resume_status"),
@@ -675,6 +825,7 @@ fn scan_sibling_runs(
     }) {
         scan.human_status = Some(best.status);
         scan.human_run_id = best.run_id;
+        scan.human_checkpoint = best.checkpoint;
         scan.human_question = best.question;
         scan.human_resume_assignee = best.resume_assignee;
         scan.human_resume_status = best.resume_status;
