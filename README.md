@@ -222,6 +222,7 @@ Old pre-plugin installs used `dvandva-vadi` and `dvandva-prativadi` symlinks poi
 
 ```
 docs/
+  dvandva-explainer.html            # visual product explainer (dark, self-contained; open via file://)
   case-studies/pr-353.md            # sanitized case study that motivated the design
   protocol/local-baton-channel.md   # baton protocol spec
   workflows/two-mode-agent-workflow.md
