@@ -1538,6 +1538,72 @@ pub fn report(root: &Path) -> Report {
             format!("{file} avoids stale broad sonnet workload wording"),
         );
     }
+    for file in [
+        "plugins/dvandva/commands/vadi.md",
+        "plugins/dvandva/commands/prativadi.md",
+    ] {
+        req(
+            &mut r,
+            root,
+            file,
+            "Model-class mapping is vendor-neutral",
+            format!("{file} documents vendor-neutral model-class mapping"),
+        );
+        req(
+            &mut r,
+            root,
+            file,
+            "Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models",
+            format!("{file} documents Claude model-class mapping"),
+        );
+        req(
+            &mut r,
+            root,
+            file,
+            "Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`",
+            format!("{file} documents Codex model-class mapping"),
+        );
+        req(
+            &mut r,
+            root,
+            file,
+            "Codex should request `xhigh` reasoning effort where the active surface exposes it",
+            format!("{file} documents Codex xhigh effort guidance"),
+        );
+        req(
+            &mut r,
+            root,
+            file,
+            "Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work",
+            format!("{file} documents opus workload routing"),
+        );
+        req(
+            &mut r,
+            root,
+            file,
+            "Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop",
+            format!("{file} documents sonnet workload routing"),
+        );
+        r.add(
+            file_contains(root, file, "Never use `haiku`")
+                || file_contains(root, file, "Do not use `haiku` for Dvandva subagents"),
+            format!("{file} forbids haiku-class Dvandva subagents"),
+        );
+        rej(
+            &mut r,
+            root,
+            file,
+            "strongest available planning/review/architecture class",
+            format!("{file} avoids stale broad opus workload wording"),
+        );
+        rej(
+            &mut r,
+            root,
+            file,
+            "implementation/documentation workhorse class",
+            format!("{file} avoids stale broad sonnet workload wording"),
+        );
+    }
     req(
         &mut r,
         root,

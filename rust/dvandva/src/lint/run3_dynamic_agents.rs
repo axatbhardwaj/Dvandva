@@ -123,6 +123,17 @@ pub fn report(root: &Path) -> Report {
         "surface documents sonnet workload routing",
     );
     r.add(
+        !surface_contains(
+            &surface,
+            "strongest available planning/review/architecture class",
+        ),
+        "surface avoids stale broad opus workload wording",
+    );
+    r.add(
+        !surface_contains(&surface, "implementation/documentation workhorse class"),
+        "surface avoids stale broad sonnet workload wording",
+    );
+    r.add(
         surface_matches(
             &surface,
             "generated agents?.*(do not|must not|never).*(own|set|mutate).*(assignee|active_roles|transitions)|(assignee|active_roles|transitions).*(do not|must not|never).*(belong to|owned by).*(generated agents?)",

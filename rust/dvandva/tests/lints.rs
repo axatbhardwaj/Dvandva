@@ -535,7 +535,7 @@ fn phase4_fixture(root: &Path) {
 
     // commands
     let command = format!(
-        "{SUPERPOWERS}research_ref work_split verification_matrix test_creation deep_review deslop\nparallel subagents\nconditional parallelism\nsubagent_tracks\nInvoke `dvandva:research`.\nregular local checkpoint commits\n"
+        "{SUPERPOWERS}research_ref work_split verification_matrix test_creation deep_review deslop\nparallel subagents\nconditional parallelism\nsubagent_tracks\nInvoke `dvandva:research`.\nregular local checkpoint commits\nModel-class mapping is vendor-neutral.\n{MODEL_CLASSES}"
     );
     w(root, "plugins/dvandva/commands/vadi.md", &command);
     w(root, "plugins/dvandva/commands/prativadi.md", &command);
@@ -656,6 +656,20 @@ fn phase4_research_rejects_wrong_model_class() {
     fs::write(&p, text).unwrap();
     let r = phase4_research::report(d.path());
     assert!(r.fails_with("uses sonnet-class model"));
+}
+
+#[test]
+fn phase4_research_rejects_command_missing_model_policy() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/commands/vadi.md");
+    let text = fs::read_to_string(&p).unwrap().replace(
+        "Codex should request `xhigh` reasoning effort where the active surface exposes it.\n",
+        "",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("plugins/dvandva/commands/vadi.md documents Codex xhigh effort guidance"));
 }
 
 #[test]
@@ -788,6 +802,24 @@ fn run3_rejects_missing_no_daemon() {
     );
     let r = run3_dynamic_agents::report(d.path());
     assert!(r.fails_with("surface rejects a runtime daemon"));
+}
+
+#[test]
+fn run3_rejects_stale_broad_model_policy() {
+    let d = tmp();
+    run3_base(d.path());
+    w(
+        d.path(),
+        "plugins/dvandva/skills/research/SKILL.md",
+        RUN3_SURFACE,
+    );
+    w(
+        d.path(),
+        "plugins/dvandva/commands/vadi.md",
+        "Agent files say opus means the strongest available planning/review/architecture class.\n",
+    );
+    let r = run3_dynamic_agents::report(d.path());
+    assert!(r.fails_with("surface avoids stale broad opus workload wording"));
 }
 
 #[test]
