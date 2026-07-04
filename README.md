@@ -100,7 +100,7 @@ Development runs also carry an orthogonal flow `profile`:
 
 Hard-risk paths — product specs, baton schemas, role skills, helper scripts, protocol docs, hooks, top-level scripts, dependency manifests, secret/env surfaces, external API clients, or artifact/history formats — force `profile_floor: "full"`. Profile downgrades below `profile_floor` route to `human_decision`.
 
-**Dvandva model classes are vendor-neutral.** Agent frontmatter uses `model: opus` and `model: sonnet` as class labels, not Anthropic-only product IDs. Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models. Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`. Do not use `haiku` for Dvandva subagents.
+**Dvandva model classes are vendor-neutral workload-routing labels.** Agent frontmatter uses `model: opus` and `model: sonnet` as durable class labels, not Anthropic-only product IDs or a ranked model table. Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models. Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`. Codex should request `xhigh` reasoning effort where the active surface exposes it. Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work. Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop. Do not use `haiku` for Dvandva subagents.
 
 ## The human rail
 

@@ -338,7 +338,7 @@ Run 3 turns the static 15-agent roster into a **seed roster** for run-scoped dyn
 }
 ```
 
-Model classes are vendor-neutral: `opus-class|gpt-5.5` for architecture/planning/review (Opus on Claude Code, gpt-5.5 on Codex); `sonnet-class|gpt-5.4` for implementation/docs (Sonnet on Claude Code, gpt-5.4 on Codex). Permission classes are `readonly`, `verify-only`, `edit-scoped`, or `write-artifact-only`.
+Model classes are durable workload-routing classes, not a literal ranked model table. Accepted compatibility strings remain vendor-neutral: `opus-class|gpt-5.5` maps to `opus`, and `sonnet-class|gpt-5.4` maps to `sonnet`. Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models. Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`. Codex should request `xhigh` reasoning effort where the active surface exposes it. Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work. Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop. Permission classes are `readonly`, `verify-only`, `edit-scoped`, or `write-artifact-only`.
 
 `spawned_by` is the executable provenance used for generated-instance validation. `seed_agent` is advisory human-readable metadata that records which seed-roster contract shaped the brief; the write helper does not currently validate that `seed_agent` equals `spawned_by` or belongs to the seed roster.
 

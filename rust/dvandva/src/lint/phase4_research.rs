@@ -45,20 +45,25 @@ const NEW_AGENTS: [&str; 5] = [
     "doc-verifier",
     "pattern-mapper",
 ];
-const OPUS_AGENTS: [&str; 11] = [
+const OPUS_AGENTS: [&str; 7] = [
     "adversarial-analyst",
     "architect",
     "baton-auditor",
-    "cross-reviewer",
     "deep-reviewer",
     "doc-verifier",
     "integration-checker",
+    "security-auditor",
+];
+const SONNET_AGENTS: [&str; 8] = [
+    "cross-reviewer",
+    "debugger",
+    "deslopper",
+    "implementer",
     "pattern-mapper",
     "researcher",
     "sandbox-verifier",
-    "security-auditor",
+    "test-creator",
 ];
-const SONNET_AGENTS: [&str; 4] = ["debugger", "deslopper", "implementer", "test-creator"];
 const DOWNSTREAM: [&str; 6] = [
     "researcher",
     "architect",
@@ -1152,11 +1157,17 @@ pub fn report(root: &Path) -> Report {
             root,
             &format!("plugins/dvandva/agents/{agent}.md"),
             "opus",
-            format!("agent {agent} uses opus-class model for planning/reviewing/architecture"),
+            format!("agent {agent} uses opus-class model for hard reasoning"),
         );
     }
     for agent in SONNET_AGENTS {
-        require_agent_model(&mut r, root, &format!("plugins/dvandva/agents/{agent}.md"), "sonnet", format!("agent {agent} uses sonnet-class model for development/implementation/documentation"));
+        require_agent_model(
+            &mut r,
+            root,
+            &format!("plugins/dvandva/agents/{agent}.md"),
+            "sonnet",
+            format!("agent {agent} uses sonnet-class model for bounded execution"),
+        );
     }
     for agent in DOWNSTREAM {
         req(
@@ -1488,8 +1499,43 @@ pub fn report(root: &Path) -> Report {
             &mut r,
             root,
             file,
+            "Codex should request `xhigh` reasoning effort where the active surface exposes it",
+            format!("{file} documents Codex xhigh effort guidance"),
+        );
+        req(
+            &mut r,
+            root,
+            file,
+            "Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work",
+            format!("{file} documents opus workload routing"),
+        );
+        req(
+            &mut r,
+            root,
+            file,
+            "Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop",
+            format!("{file} documents sonnet workload routing"),
+        );
+        req(
+            &mut r,
+            root,
+            file,
             "Do not use `haiku` for Dvandva subagents",
             format!("{file} forbids haiku-class Dvandva subagents"),
+        );
+        rej(
+            &mut r,
+            root,
+            file,
+            "strongest available planning/review/architecture class",
+            format!("{file} avoids stale broad opus workload wording"),
+        );
+        rej(
+            &mut r,
+            root,
+            file,
+            "implementation/documentation workhorse class",
+            format!("{file} avoids stale broad sonnet workload wording"),
         );
     }
     req(

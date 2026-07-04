@@ -324,6 +324,9 @@ write-helper validation exit 23
 const MODEL_CLASSES: &str = r#"Dvandva model classes are vendor-neutral.
 Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models.
 Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`.
+Codex should request `xhigh` reasoning effort where the active surface exposes it.
+Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.
+Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
 Do not use `haiku` for Dvandva subagents.
 "#;
 
@@ -354,13 +357,9 @@ fn phase4_agent(name: &str) -> String {
         "adversarial-analyst",
         "architect",
         "baton-auditor",
-        "cross-reviewer",
         "deep-reviewer",
         "doc-verifier",
         "integration-checker",
-        "pattern-mapper",
-        "researcher",
-        "sandbox-verifier",
         "security-auditor",
     ];
     let model = if opus.contains(&name) {
@@ -649,8 +648,8 @@ fn phase4_research_rejects_haiku_agent() {
 fn phase4_research_rejects_wrong_model_class() {
     let d = tmp();
     phase4_fixture(d.path());
-    // implementer must be sonnet; flip to opus.
-    let p = d.path().join("plugins/dvandva/agents/implementer.md");
+    // Researcher is bounded read-only research, so it must stay sonnet.
+    let p = d.path().join("plugins/dvandva/agents/researcher.md");
     let text = fs::read_to_string(&p)
         .unwrap()
         .replace("model: sonnet", "model: opus");
@@ -694,6 +693,9 @@ There is no daemon and no mailbox.
 There is no hidden scheduler or hidden central process.
 Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models.
 Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`.
+Codex should request `xhigh` reasoning effort where the active surface exposes it.
+Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.
+Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
 generated agents never own assignee, active_roles, or transitions.
 "#;
 
@@ -707,6 +709,9 @@ There is no daemon and no mailbox.
 There is no hidden scheduler or hidden central process.
 Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models.
 Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`.
+Codex should request `xhigh` reasoning effort where the active surface exposes it.
+Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.
+Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
 generated agents never own assignee, active_roles, or transitions.
 "#;
 

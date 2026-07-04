@@ -102,6 +102,27 @@ pub fn report(root: &Path) -> Report {
         "surface documents Codex gpt-5.5/gpt-5.4 model-class mapping",
     );
     r.add(
+        surface_contains(
+            &surface,
+            "Codex should request `xhigh` reasoning effort where the active surface exposes it",
+        ),
+        "surface documents Codex xhigh effort guidance",
+    );
+    r.add(
+        surface_contains(
+            &surface,
+            "Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work",
+        ),
+        "surface documents opus workload routing",
+    );
+    r.add(
+        surface_contains(
+            &surface,
+            "Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop",
+        ),
+        "surface documents sonnet workload routing",
+    );
+    r.add(
         surface_matches(
             &surface,
             "generated agents?.*(do not|must not|never).*(own|set|mutate).*(assignee|active_roles|transitions)|(assignee|active_roles|transitions).*(do not|must not|never).*(belong to|owned by).*(generated agents?)",
