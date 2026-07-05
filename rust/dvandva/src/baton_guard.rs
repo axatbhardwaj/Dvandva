@@ -216,7 +216,10 @@ mod tests {
     #[test]
     fn dvandva_bash_command_always_allowed_even_when_sla_breached() {
         let breached = sla(false, Some(999), 120);
-        let body = payload("Bash", serde_json::json!({ "command": "dvandva write --foo" }));
+        let body = payload(
+            "Bash",
+            serde_json::json!({ "command": "dvandva write --foo" }),
+        );
         assert_eq!(should_block(&body, &breached), Decision::Allow);
     }
 
@@ -230,21 +233,33 @@ mod tests {
     #[test]
     fn sla_breach_blocks_any_tool_not_just_guarded_ones() {
         let breached = sla(false, Some(999), 120);
-        let body = payload("Read", serde_json::json!({ "file_path": "/repo/.dvandva/baton.json" }));
-        assert!(matches!(should_block(&body, &breached), Decision::BlockSla(_)));
+        let body = payload(
+            "Read",
+            serde_json::json!({ "file_path": "/repo/.dvandva/baton.json" }),
+        );
+        assert!(matches!(
+            should_block(&body, &breached),
+            Decision::BlockSla(_)
+        ));
     }
 
     #[test]
     fn sla_not_breached_falls_through_to_direct_edit_guard() {
         let ok = sla(true, None, 120);
-        let body = payload("Edit", serde_json::json!({ "file_path": "/repo/.dvandva/baton.json" }));
+        let body = payload(
+            "Edit",
+            serde_json::json!({ "file_path": "/repo/.dvandva/baton.json" }),
+        );
         assert_eq!(should_block(&body, &ok), Decision::BlockDirectEdit);
     }
 
     #[test]
     fn sla_not_breached_allows_non_guarded_tool() {
         let ok = sla(true, None, 120);
-        let body = payload("Read", serde_json::json!({ "file_path": "/repo/.dvandva/baton.json" }));
+        let body = payload(
+            "Read",
+            serde_json::json!({ "file_path": "/repo/.dvandva/baton.json" }),
+        );
         assert_eq!(should_block(&body, &ok), Decision::Allow);
     }
 }
