@@ -197,6 +197,7 @@ fn skill_vadi_block() -> String {
     let mut s = skill_shared_block();
     s.push_str(
         r#"Record the user's original ask in the initial baton context.
+Do not exit this discovery-wait loop while waiting for baton creation.
 Plans live at ./superpowers/plans/YYYY-MM-DD-<topic>.html
 Full-profile v2 writes `status: "test_creation"`; fast/standard-profile v2 writes `status: "phase_review"`.
 Development/full fixbacks keep the numeric implementation phase, set `status: "test_creation"`.

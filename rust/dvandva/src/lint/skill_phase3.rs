@@ -93,6 +93,14 @@ pub fn report(root: &Path) -> Report {
         "vadi seeds original ask",
     );
     r.add(
+        file_contains(
+            root,
+            vadi,
+            "Do not exit this discovery-wait loop while waiting for baton creation",
+        ),
+        "vadi keeps missing-baton discovery wait indefinite",
+    );
+    r.add(
         file_contains(root, vadi, "./superpowers/plans/YYYY-MM-DD-<topic>.html"),
         "vadi writes HTML plan refs",
     );
