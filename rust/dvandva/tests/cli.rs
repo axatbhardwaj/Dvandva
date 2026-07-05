@@ -22,7 +22,7 @@ fn version_flag_prints_exact_line() {
     );
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "dvandva 2.0.0-beta.2\n",
+        "dvandva 2.0.0-beta.3\n",
     );
 }
 

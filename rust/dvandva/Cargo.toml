@@ -1,6 +1,6 @@
 [package]
 name = "dvandva"
-version = "2.0.0-beta.2"
+version = "2.0.0-beta.3"
 edition = "2021"
 description = "A governed-loop protocol for adversarial AI pairs. Multicall binary for two-role (vadi/prativadi) agent coordination over a validated JSON baton — state machine, waits, preflights, git gates, installers, and lints. No daemon, no orchestrator."
 license = "MIT OR Apache-2.0"
