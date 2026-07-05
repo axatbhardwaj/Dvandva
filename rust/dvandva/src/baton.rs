@@ -282,7 +282,7 @@ mod tests {
     fn deserializes_reference_schema_baton() {
         let baton = Baton::from_json_str(REFERENCE_BATON).expect("reference baton parses");
         assert_eq!(baton.schema, "dvandva.baton.v2");
-        assert_eq!(baton.status, Status::ResearchDrafting);
+        assert_eq!(baton.status, Status::ClarifyingQuestionsDrafting);
         assert_eq!(baton.assignee, Assignee::Vadi);
         assert_eq!(baton.checkpoint, 0);
         // Unread dynamic arrays / objects land in `rest` and are not lost.

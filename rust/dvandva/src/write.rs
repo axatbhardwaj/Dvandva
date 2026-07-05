@@ -2521,7 +2521,7 @@ pub(crate) fn v2_required_keys() -> Vec<&'static str> {
 }
 
 /// The canonical `dvandva.baton.v2` status catalog — the single in-code source
-/// of truth for the 22 lifecycle status tokens. `status_enum_ok` (this file),
+/// of truth for the 26 lifecycle status tokens. `status_enum_ok` (this file),
 /// [`crate::baton::Status`], [`crate::preflight::V2_STATUS_TOKENS`], and every
 /// doc copy the S6-T1 schema-parity lint checks
 /// (`baton-schema-v2.json` `status_catalog`, `product.md`'s status catalog

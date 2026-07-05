@@ -247,9 +247,9 @@ pub fn report(root: &Path) -> Report {
         file_slurp_matches_ci(
             root,
             "rust/dvandva/src/commit_gate.rs",
-            "done.*human_question.*human_decision|human_question.*human_decision.*done",
+            "done.*clarifying_questions_answer.*clarifying_questions_followup_answer.*human_question.*human_decision",
         ),
-        "rust/dvandva/src/commit_gate.rs must share terminal baton statuses",
+        "rust/dvandva/src/commit_gate.rs must share inactive baton statuses",
     );
 
     for rel in [

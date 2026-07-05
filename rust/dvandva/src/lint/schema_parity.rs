@@ -14,18 +14,18 @@
 //!
 //! ## What [`report`] asserts (and the exact doc-wave contract each expects)
 //!
-//! 1. **Status-enum parity.** Three doc copies must enumerate exactly the 22
+//! 1. **Status-enum parity.** Three doc copies must enumerate exactly the 26
 //!    engine status tokens:
 //!    * `plugins/dvandva/references/baton-schema-v2.json` — its `status_catalog`
 //!      JSON array of strings.
 //!    * `product.md` — a single line of the form
-//!      `Status catalog (22): research_drafting, research_review, … abandoned`.
-//!      Everything after the literal marker `Status catalog (22):` is tokenised
+//!      `Status catalog (26): clarifying_questions_drafting, … abandoned`.
+//!      Everything after the literal marker `Status catalog (26):` is tokenised
 //!      (`[a-z][a-z0-9_]*`) and must equal the engine catalog exactly, so the
-//!      marker line must carry ONLY the 22 tokens (any stray lowercase word is
+//!      marker line must carry ONLY the 26 tokens (any stray lowercase word is
 //!      treated as drift).
 //!    * `plugins/dvandva/references/state-transition-table.md` — the same
-//!      `Status catalog (22):` marker line.
+//!      `Status catalog (26):` marker line.
 //! 2. **Required-keys parity.** The `vadi` + `prativadi` SKILL.md inline
 //!    fenced `json` blocks' top-level keys must equal
 //!    [`crate::write::v2_required_keys`]. The fence is extracted with the
@@ -61,7 +61,7 @@ use crate::lint::skills;
 use crate::lint::{file_contains, read, resolve_root, Report};
 use crate::write::{v2_required_keys, V2_STATUS_CATALOG};
 
-const CATALOG_MARKER: &str = "Status catalog (22):";
+const CATALOG_MARKER: &str = "Status catalog (26):";
 const HISTORICAL_MARKER: &str = "HISTORICAL: dvandva.baton.v1";
 const WRITE_SRC: &str = "rust/dvandva/src/write.rs";
 const CHANNEL_A: &str = "docs/protocol/local-baton-channel.md";
@@ -140,7 +140,7 @@ fn json_status_catalog(root: &Path) -> Option<Vec<String>> {
     Some(tokens)
 }
 
-/// The status tokens on the `Status catalog (22):` marker line of a markdown
+/// The status tokens on the `Status catalog (26):` marker line of a markdown
 /// doc, sorted (duplicates preserved so they read as drift). `None` when no line
 /// contains the marker.
 fn marked_catalog(root: &Path, rel: &str) -> Option<Vec<String>> {
@@ -264,11 +264,11 @@ mod tests {
     use crate::write::{status_enum_ok, v2_required_keys, V2_STATUS_CATALOG};
 
     #[test]
-    fn engine_catalog_has_22_unique_tokens() {
+    fn engine_catalog_has_26_unique_tokens() {
         let mut sorted = V2_STATUS_CATALOG.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
-        assert_eq!(sorted.len(), 22, "engine catalog must be 22 unique tokens");
+        assert_eq!(sorted.len(), 26, "engine catalog must be 26 unique tokens");
         assert_eq!(
             sorted.len(),
             V2_STATUS_CATALOG.len(),
@@ -279,7 +279,7 @@ mod tests {
     #[test]
     fn baton_status_matches_engine_catalog() {
         // Each engine token maps bijectively onto a `Status` (FromStr + as_str
-        // round-trip). With `baton`'s own 22-variant enforcement, the bijection
+        // round-trip). With `baton`'s own 26-variant enforcement, the bijection
         // pins the two catalogs equal in both directions.
         for tok in V2_STATUS_CATALOG {
             let s =

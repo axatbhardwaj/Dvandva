@@ -81,6 +81,26 @@ pub fn report(root: &Path) -> Report {
             "dvandva next",
             "skill documents dvandva next candidate scaffolding",
         );
+        req(
+            "dvandva:clarifying-questions",
+            "skill routes clarifying questions phase",
+        );
+        req(
+            "clarifying_questions_drafting",
+            "skill handles clarifying_questions_drafting",
+        );
+        req(
+            "clarifying_questions_answer",
+            "skill handles clarifying_questions_answer",
+        );
+        req(
+            "clarifying_questions_followup",
+            "skill handles clarifying_questions_followup",
+        );
+        req(
+            "clarifying_questions_followup_answer",
+            "skill handles clarifying_questions_followup_answer",
+        );
     }
 
     let vadi = "plugins/dvandva/skills/vadi/SKILL.md";
@@ -152,7 +172,7 @@ pub fn report(root: &Path) -> Report {
         file_contains(
             root,
             vadi,
-            "fast` is allowlisted prose-only work with a `research_drafting -> research_review -> implementing` prelude",
+            "fast` is allowlisted prose-only work with a mandatory `clarifying_questions_drafting -> clarifying_questions_answer -> clarifying_questions_followup -> clarifying_questions_followup_answer -> research_drafting -> research_review -> implementing` prelude",
         ),
         "vadi fast profile documents research prelude",
     );

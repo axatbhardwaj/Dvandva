@@ -371,6 +371,13 @@ pub fn report(root: &Path) -> Report {
             &mut r,
             root,
             &skill,
+            "clarifying_questions_drafting",
+            format!("{role} handles clarifying_questions_drafting before research"),
+        );
+        req(
+            &mut r,
+            root,
+            &skill,
             "research_drafting",
             format!("{role} handles research_drafting"),
         );
@@ -739,6 +746,13 @@ pub fn report(root: &Path) -> Report {
         "plugins/dvandva/references/local-baton-channel.md",
         "plugins/dvandva/references/state-transition-table.md",
     ] {
+        req(
+            &mut r,
+            root,
+            file,
+            "clarifying_questions_drafting",
+            format!("{file} documents clarifying questions before research"),
+        );
         req(
             &mut r,
             root,

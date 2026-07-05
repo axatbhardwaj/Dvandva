@@ -6,7 +6,7 @@ bundled transition reference available after plugin install.
 
 The `dvandva write` subcommand enforces v1 and v2 transition subsets deterministically at write time; the write port's `cargo test` suite asserts every documented v1 edge plus the v2 research/test/review/deslop edges below.
 
-Status catalog (22): research_drafting, research_review, research_revision, spec_drafting, spec_review, spec_revision, implementing, parallel_implementing, test_creation, cross_review, cross_fixing, deep_review, review_of_review, counter_review, deslop, termination_review, phase_review, phase_fixing, human_question, human_decision, done, abandoned
+Status catalog (26): clarifying_questions_drafting, clarifying_questions_answer, clarifying_questions_followup, clarifying_questions_followup_answer, research_drafting, research_review, research_revision, spec_drafting, spec_review, spec_revision, implementing, parallel_implementing, test_creation, cross_review, cross_fixing, deep_review, review_of_review, counter_review, deslop, termination_review, phase_review, phase_fixing, human_question, human_decision, done, abandoned
 
 `dvandva lint schema-parity` (S6-T1) holds this line equal to the engine `dvandva.baton.v2` status enum, `baton-schema-v2.json` `status_catalog`, and the `product.md` copy. `done` and `abandoned` (S2-T1) are the two terminal statuses.
 
@@ -233,10 +233,10 @@ early. Scalar-owner states still reject same-status rewrites.
   "profile_decision": "object recording selected_profile, floor, reason, decided_by, decided_at, risk_inputs, hard_triggers, allowlist_match, allowlist_refs, and evidence_refs",
   "profile_history": "append-only array of profile change records: from, to, floor, checkpoint, actor_role, reason, evidence_refs",
   "run_mode": "walkaway | supervised",
-  "phase": "research | spec | review | 1 | 2 | ... | done",
+  "phase": "clarifying | research | spec | review | 1 | 2 | ... | done",
   "total_phases": "integer, set during spec phase; engine-frozen once master_plan_locked is true (write reason bad_amendment total_phases_frozen), changeable only inside an F7 amendment loop (amendment_from_phase non-null) or on a write into human_decision",
   "phase_profiles": "F9 additive nullable object {\"<numeric phase>\": \"standard\" | \"full\"}; effective profile of numeric phase N = phase_profiles[N] // run profile; set/changed only in spec states and never below the per-phase hard-path floor (write reason bad_phase_profiles); absent = null",
-  "status": "research_drafting | research_review | research_revision | spec_drafting | spec_review | spec_revision | human_question | implementing | parallel_implementing | test_creation | cross_review | cross_fixing | deep_review | deslop | termination_review | phase_review | phase_fixing | review_of_review | counter_review | human_decision | done | abandoned (22-token v2 catalog; see the Status catalog line near the top; abandoned is the S2-T1 terminal enterable only from human_question/human_decision)",
+  "status": "clarifying_questions_drafting | clarifying_questions_answer | clarifying_questions_followup | clarifying_questions_followup_answer | research_drafting | research_review | research_revision | spec_drafting | spec_review | spec_revision | human_question | implementing | parallel_implementing | test_creation | cross_review | cross_fixing | deep_review | deslop | termination_review | phase_review | phase_fixing | review_of_review | counter_review | human_decision | done | abandoned (26-token v2 catalog; see the Status catalog line near the top; abandoned is the S2-T1 terminal enterable only from human_question/human_decision)",
   "assignee": "non-empty string; v1 conventions are vadi | prativadi | human; v2 status-owner pairs include team for concurrent states",
   "active_roles": "v2 concurrent roles array, usually [] or [\"vadi\", \"prativadi\"]",
   "current_engine": "optional; claude | codex | null. Records which CLI wrote the most recent baton; traceability only.",
@@ -310,6 +310,10 @@ This is the exhaustive v2 development table. Every route into
 
 | From | To | Trigger |
 |---|---|---|
+| `clarifying_questions_drafting` | `clarifying_questions_answer` | Vadi writes round-1 feature/change questions. |
+| `clarifying_questions_answer` | `clarifying_questions_followup` | The Claude Code-hosted session records the human's round-1 answers. |
+| `clarifying_questions_followup` | `clarifying_questions_followup_answer` | Prativadi writes reviewer-lens followup questions; total questions across both rounds is at least five. |
+| `clarifying_questions_followup_answer` | `research_drafting` | The Claude Code-hosted session records the human's round-2 answers and research can begin. |
 | `research_drafting` | `research_review` | Vadi writes `research_ref` and hands to prativadi. |
 | `research_review` | `research_revision` | Prativadi surfaces research findings back to vadi. |
 | `research_revision` | `research_review` | Vadi addresses research findings and hands back. |
@@ -347,6 +351,10 @@ implementation and review path.
 
 | From | To | Trigger |
 |---|---|---|
+| `clarifying_questions_drafting` | `clarifying_questions_answer` | Vadi writes round-1 feature/change questions. |
+| `clarifying_questions_answer` | `clarifying_questions_followup` | The Claude Code-hosted session records the human's round-1 answers. |
+| `clarifying_questions_followup` | `clarifying_questions_followup_answer` | Prativadi writes reviewer-lens followup questions; total questions across both rounds is at least five. |
+| `clarifying_questions_followup_answer` | `research_drafting` | The Claude Code-hosted session records the human's round-2 answers and research can begin. |
 | `research_drafting` | `research_review` | Vadi writes `research_ref`, `profile_decision`, work split, and verification matrix. |
 | `research_review` | `research_revision` | Prativadi finds research/profile gaps. |
 | `research_revision` | `research_review` | Vadi addresses research/profile gaps. |
@@ -377,6 +385,10 @@ evidence, `profile_floor: "fast"`, and no hard-risk paths.
 
 | From | To | Trigger |
 |---|---|---|
+| `clarifying_questions_drafting` | `clarifying_questions_answer` | Vadi writes round-1 feature/change questions. |
+| `clarifying_questions_answer` | `clarifying_questions_followup` | The Claude Code-hosted session records the human's round-1 answers. |
+| `clarifying_questions_followup` | `clarifying_questions_followup_answer` | Prativadi writes reviewer-lens followup questions; total questions across both rounds is at least five. |
+| `clarifying_questions_followup_answer` | `research_drafting` | The Claude Code-hosted session records the human's round-2 answers and research can begin. |
 | `research_drafting` | `research_review` | Optional fast research prelude records `research_ref`, `profile_decision`, allowlist evidence, work split, and verification matrix before compact implementation. |
 | `research_review` | `research_revision` | Prativadi requests a research/evidence correction before fast implementation. |
 | `research_revision` | `research_review` | Vadi refreshes the fast research package and returns to prativadi. |
@@ -398,6 +410,10 @@ plan before termination; when it does, set `research_outcome:
 
 | From | To | Trigger |
 |---|---|---|
+| `clarifying_questions_drafting` | `clarifying_questions_answer` | Vadi writes round-1 research-scope questions. |
+| `clarifying_questions_answer` | `clarifying_questions_followup` | The Claude Code-hosted session records the human's round-1 answers. |
+| `clarifying_questions_followup` | `clarifying_questions_followup_answer` | Prativadi writes reviewer-lens followup questions; total questions across both rounds is at least five. |
+| `clarifying_questions_followup_answer` | `research_drafting` | The Claude Code-hosted session records the human's round-2 answers and research can begin. |
 | `research_drafting` | `research_review` | Vadi writes `research_ref` and hands to prativadi. |
 | `research_review` | `research_revision` | Prativadi surfaces research findings back to vadi. |
 | `research_revision` | `research_review` | Vadi addresses research findings and hands back. |
@@ -422,6 +438,10 @@ termination. Every review-mode status uses `phase: "review"`. S4-T7 adds the
 
 | From | To | Trigger |
 |---|---|---|
+| `clarifying_questions_drafting` | `clarifying_questions_answer` | Vadi writes round-1 review-intake questions. |
+| `clarifying_questions_answer` | `clarifying_questions_followup` | The Claude Code-hosted session records the human's round-1 answers. |
+| `clarifying_questions_followup` | `clarifying_questions_followup_answer` | Prativadi writes reviewer-lens followup questions about review scope and risks; total questions across both rounds is at least five. |
+| `clarifying_questions_followup_answer` | `research_drafting` | The Claude Code-hosted session records the human's round-2 answers and intake research can begin. |
 | `research_drafting` | `research_review` | Vadi writes review scope/intake research and hands to prativadi. |
 | `research_review` | `research_revision` | Prativadi finds intake gaps and routes back to vadi. |
 | `research_revision` | `research_review` | Vadi fixes intake gaps and hands back. |

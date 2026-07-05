@@ -45,6 +45,13 @@ pub fn report(root: &Path) -> Report {
         ),
         "product spec defines research states",
     );
+    r.add(
+        file_matches(root, "product.md", "clarifying_questions_drafting")
+            && file_matches(root, "product.md", "clarifying_questions_answer")
+            && file_matches(root, "product.md", "clarifying_questions_followup")
+            && file_matches(root, "product.md", "clarifying_questions_followup_answer"),
+        "product spec defines clarifying questions prefix states",
+    );
     // RE-KEYED: shell `dvandva-wait.sh --persist` -> binary `dvandva wait` + `--persist`.
     r.add(
         file_matches(root, "product.md", "dvandva wait")
@@ -218,6 +225,11 @@ pub fn report(root: &Path) -> Report {
             format!("{file} documents subagent track phase convention"),
         );
         r.add(
+            file_matches(root, file, "clarifying_questions_drafting")
+                && file_matches(root, file, "clarifying_questions_followup_answer"),
+            format!("{file} documents clarifying questions prefix"),
+        );
+        r.add(
             file_matches(
                 root,
                 file,
@@ -262,6 +274,11 @@ pub fn report(root: &Path) -> Report {
         "v2 schema seed includes research_ref",
     );
     r.add(
+        file_matches(root, v2, r#""clarifying_questions_drafting""#)
+            && file_matches(root, v2, r#""clarifying_questions_followup_answer""#),
+        "v2 schema seed includes clarifying status catalog entries",
+    );
+    r.add(
         file_matches(root, v2, r#""run_explainer_reviews""#),
         "v2 schema seed includes final explainer review records",
     );
@@ -299,6 +316,13 @@ pub fn report(root: &Path) -> Report {
             "research_drafting|research_review|research_revision",
         ),
         "transition table documents research states",
+    );
+    r.add(
+        file_matches(root, stt, "clarifying_questions_drafting")
+            && file_matches(root, stt, "clarifying_questions_answer")
+            && file_matches(root, stt, "clarifying_questions_followup")
+            && file_matches(root, stt, "clarifying_questions_followup_answer"),
+        "transition table documents clarifying questions prefix states",
     );
     r.add(
         file_matches(root, stt, "run_explainer_reviews"),

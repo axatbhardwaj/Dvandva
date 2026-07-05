@@ -6,7 +6,7 @@ Status: rewritten 2026-05-14 for richer flow (spec phase + phased implementation
 >
 > **Spec rev 2026-06-27:** v2 design adds named run directories, a first-class research phase, generated user-facing HTML artifacts, and persistent shell waiting. Legacy v1 still uses `.dvandva/baton.json`; v2 runs use `.dvandva/runs/<run_id>/baton.json` with `schema: "dvandva.baton.v2"`, `run_id`, `original_ask`, `research_ref`, `run_explainer_ref`, `run_explainer_reviews`, `active_roles`, `work_split`, `agent_instances`, `subagent_tracks`, and `verification_matrix`.
 >
-> **Spec rev 2026-06-28:** Run 4 adds generalized `work_split` path gates, repo-local git work-gating, and safe Dvandva-only retirement of replaced standalone user agents. The write helper applies `safe_rel_path` to `work_split.paths`, `work_split.read_paths`, and `work_split.write_paths`; for write-capable chunks, `write_paths` supplements rather than narrows `paths`, so the effective write set is their union; live write-capable chunks collide unless they share a `conflict_group` and an explicit `depends_on` serialization edge; `cross_review` remains read-only unless explicit `write_paths` are present. The git gate is local shell/git-hook enforcement (`DVANDVA_ROLE`, `core.hooksPath=.dvandva/githooks`, `Dvandva-Checkpoint`, drift lint), not a daemon or hidden central process; role preflight exports/asserts the role, installs a `.dvandva/githooks` delegating wrapper, preserves the prior hook chain, and records `dvandva.hooksAdoptedAt` as the local drift-lint baseline. Drift lint scans from the hook-adoption baseline floor when present so later stamped checkpoints cannot hide unstamped sandwich bypasses; terminal `done`, `human_question`, and `human_decision` batons are inactive for commit gating and active-baton drift detection. Retirement is limited to Dvandva-covered workflows: the five Claude symlink agents `adversarial-analyst`, `architect`, `developer`, `quality-reviewer`, and `sandbox-executor`; functional parity is justified by equivalent-or-better usage across Runs 1-4 plus 1.1.0 cache/roster parity and reversibility. Codex agent-axis retirement is a no-op, skills are out of scope, and the helper writes a backup manifest with restore support.
+> **Spec rev 2026-06-28:** Run 4 adds generalized `work_split` path gates, repo-local git work-gating, and safe Dvandva-only retirement of replaced standalone user agents. The write helper applies `safe_rel_path` to `work_split.paths`, `work_split.read_paths`, and `work_split.write_paths`; for write-capable chunks, `write_paths` supplements rather than narrows `paths`, so the effective write set is their union; live write-capable chunks collide unless they share a `conflict_group` and an explicit `depends_on` serialization edge; `cross_review` remains read-only unless explicit `write_paths` are present. The git gate is local shell/git-hook enforcement (`DVANDVA_ROLE`, `core.hooksPath=.dvandva/githooks`, `Dvandva-Checkpoint`, drift lint), not a daemon or hidden central process; role preflight exports/asserts the role, installs a `.dvandva/githooks` delegating wrapper, preserves the prior hook chain, and records `dvandva.hooksAdoptedAt` as the local drift-lint baseline. Drift lint scans from the hook-adoption baseline floor when present so later stamped checkpoints cannot hide unstamped sandwich bypasses; `done`, `human_question`, `human_decision`, `clarifying_questions_answer`, and `clarifying_questions_followup_answer` batons are inactive for commit gating and active-baton drift detection. Retirement is limited to Dvandva-covered workflows: the five Claude symlink agents `adversarial-analyst`, `architect`, `developer`, `quality-reviewer`, and `sandbox-executor`; functional parity is justified by equivalent-or-better usage across Runs 1-4 plus 1.1.0 cache/roster parity and reversibility. Codex agent-axis retirement is a no-op, skills are out of scope, and the helper writes a backup manifest with restore support.
 >
 > **Spec rev 2026-06-29:** Accepted v2 run modes are now `development`, `research`, and `review`; `feature-pr` remains a legacy alias for `development`. Public docs now describe mode-conditional terminal artifact gates, later refined by the 2026-07-01 profile split: full-profile development requires `run_explainer_ref` plus completed approved `run_explainer_reviews` from both roles for that exact artifact, research requires `research_ref` and additionally `plan_ref` iff `research_outcome == seed_development`, and review requires `review_ref`. `termination_review` plus both final approvals are shared across all three modes.
 >
@@ -147,6 +147,17 @@ Status: rewritten 2026-05-14 for richer flow (spec phase + phased implementation
 > removed — the native Claude Code remote session is the sole human
 > notification surface; `wait --notify`/`DVANDVA_NOTIFY_URL` retired
 > (unknown-flag usage error).
+>
+> **Spec rev 2026-07-06:** Every v2 run now begins with a mandatory
+> clarifying-questions prefix before research:
+> `clarifying_questions_drafting -> clarifying_questions_answer ->
+> clarifying_questions_followup -> clarifying_questions_followup_answer ->
+> research_drafting`. The vadi asks round-1 feature/change questions, the
+> prativadi asks round-2 followups from a reviewer/adversarial lens, the
+> combined floor is at least five answered questions with at least one from each
+> role, and the Claude Code-hosted session owns surfacing both answer rounds to
+> the human. These four statuses use `phase: "clarifying"` and are required for
+> every mode and development profile.
 
 ## 1. What it is
 
@@ -241,9 +252,10 @@ If criterion #5 fails (any runaway loop observed during pilot), v1 does not ship
 
 ### 3.1a In v2 design
 
-- `dvandva.baton.v2` — run-scoped baton schema for `.dvandva/runs/<run_id>/baton.json`. Accepted public modes are `development`, `research`, and `review`; older batons may still serialize `feature-pr` as a legacy alias for `development`. Development runs add `profile`, `profile_floor`, `profile_decision`, and `profile_history` for the orthogonal `fast | standard | full` lifecycle-depth selector. Required v2 fields include safe `run_id`, `original_ask`, `research_ref`, `run_explainer_ref`, `work_split`, `subagent_tracks`, `verification_matrix`, `active_roles`, and `agent_instances`; full-profile development terminal `done` additionally requires `run_explainer_reviews` entries from both roles for the exact `run_explainer_ref`, while fast/standard development terminal `done` requires `profile_decision`, passing final verification, completed `verification_matrix` evidence, completed approved prativadi `phase-review` evidence with current-cycle `review_checkpoint`, and both role-owned final approvals without the explainer gate. Nullable v2 additions for accepted run modes are `research_outcome`, `review_ref`, and `review_intake`; `review_target` remains the existing selector field. v1 remains valid only for the legacy `.dvandva/baton.json` fallback. Run 3 adds `agent_instances` — a first-class baton array for generated run-scoped agent instances recording identity, parent role, seed agent, model/permission class, read/write paths, base checkpoint, lifecycle state, output refs, evidence refs, and close result. `agent_instances` is separate from the post-hoc `subagent_tracks` record and is validated by the Run 3 write helper for: safe ids, no duplicates or reserved owner-name collisions, supported model/permission classes, matching closed registry records for any dynamic `subagent_tracks` owner not in the seed roster, closure evidence plus non-empty `work_item_ids` before a track counts complete, and dynamic write-path disjointness among generated instances sharing the same `base_checkpoint` or among any two live (`planned`/`running`) instances regardless of base checkpoint. The live v2 write-helper enforcement covers v2-only fields, schema continuity for existing runs, v2 status-owner pairs, honest `subagent_tracks`, and v2 lifecycle transitions intentionally instead of by convention.
+- `dvandva.baton.v2` — run-scoped baton schema for `.dvandva/runs/<run_id>/baton.json`. Accepted public modes are `development`, `research`, and `review`; older batons may still serialize `feature-pr` as a legacy alias for `development`. Development runs add `profile`, `profile_floor`, `profile_decision`, and `profile_history` for the orthogonal `fast | standard | full` lifecycle-depth selector. Required v2 fields include safe `run_id`, `original_ask`, `research_ref`, `run_explainer_ref`, `work_split`, `subagent_tracks`, `verification_matrix`, `active_roles`, and `agent_instances`; full-profile development terminal `done` additionally requires `run_explainer_reviews` entries from both roles for the exact `run_explainer_ref`, while fast/standard development terminal `done` requires `profile_decision`, passing final verification, completed `verification_matrix` evidence, completed approved prativadi `phase-review` evidence with current-cycle `review_checkpoint`, and both role-owned final approvals without the explainer gate. Nullable v2 additions for accepted run modes are `research_outcome`, `review_ref`, and `review_intake`; `review_target` remains the existing selector field. New v2 run scaffolds enter `phase: "clarifying", status: "clarifying_questions_drafting"` before research. v1 remains valid only for the legacy `.dvandva/baton.json` fallback. Run 3 adds `agent_instances` — a first-class baton array for generated run-scoped agent instances recording identity, parent role, seed agent, model/permission class, read/write paths, base checkpoint, lifecycle state, output refs, evidence refs, and close result. `agent_instances` is separate from the post-hoc `subagent_tracks` record and is validated by the Run 3 write helper for: safe ids, no duplicates or reserved owner-name collisions, supported model/permission classes, matching closed registry records for any dynamic `subagent_tracks` owner not in the seed roster, closure evidence plus non-empty `work_item_ids` before a track counts complete, and dynamic write-path disjointness among generated instances sharing the same `base_checkpoint` or among any two live (`planned`/`running`) instances regardless of base checkpoint. The live v2 write-helper enforcement covers v2-only fields, schema continuity for existing runs, v2 status-owner pairs, honest `subagent_tracks`, and v2 lifecycle transitions intentionally instead of by convention.
 - Run 4 fields and conventions for `work_split`: write-capable chunks should declare `write_paths`; read-only review chunks may declare `read_paths`; overlapping writers require `conflict_group` plus `depends_on`; `cross_review` has no write intent unless explicit `write_paths` are present.
-- Research lifecycle states before spec lock: `phase: "research", status: "research_drafting"` for vadi research synthesis, `research_review` for prativadi independent review, and `research_revision` for vadi response to research findings. v2 scaffolds new named runs at `research_drafting`; legacy v1 scaffolds at `spec_drafting`.
+- Clarifying-question lifecycle states before research: `phase: "clarifying", status: "clarifying_questions_drafting"` for vadi round-1 questions, `clarifying_questions_answer` for the first human answer bundle, `clarifying_questions_followup` for prativadi round-2 followups, and `clarifying_questions_followup_answer` for the second human answer bundle. The combined `clarifying_questions` array must contain at least five answered questions before the run can enter research, with at least one question from each role.
+- Research lifecycle states before spec lock: `phase: "research", status: "research_drafting"` for vadi research synthesis, `research_review` for prativadi independent review, and `research_revision` for vadi response to research findings. v2 scaffolds new named runs at `clarifying_questions_drafting`; legacy v1 scaffolds at `spec_drafting`.
 - Test and review lifecycle states are separate in v2: `test_creation` records the doer's tests and coverage evidence, `deep_review` records independent prativadi review after tests exist, and `deslop` records cleanup loops for nits, low/minor bugs, stale wording, and unclear instructions. A phase does not advance while unresolved `deep_review` or `deslop` findings remain unless explicitly accepted in `deferred`.
 - Team-owned v2 states (`parallel_implementing`, `cross_review`, `cross_fixing`, `termination_review`) may write same-status sync checkpoints to record partial completion, task distribution, peer wait state, or shared stop-review evidence without pretending the phase is ready to advance. Scalar-owner states still reject same-status rewrites.
 - Phase convention: implementation-chunk tracks use the numeric implementation phase, while cross-review and deep-review gate tracks use the status-name phase such as `phase: "cross_review"` or `phase: "deep_review"`.
@@ -337,14 +349,29 @@ The existing `templates/prompts/claude-doer-goal.md` and `templates/prompts/code
 
 ## 6. Flow overview
 
-The full-profile v2 flow has eight segments and an end state: research, master planning, implementation, test_creation, cross_review, deep_review, deslop, and phase advancement/completion. Fast and standard profiles use the compact `implementing -> phase_review -> termination_review -> done` path after the optional research/spec prelude. Every arrow in the diagram is a baton write by the active agent. In default walkaway mode, the other persistent session is already blocked in `dvandva wait`; the helper returns when the baton assigns that role, and the agent re-enters preflight.
+The full-profile v2 flow has eight segments after a mandatory clarifying-questions prefix and an end state: research, master planning, implementation, test_creation, cross_review, deep_review, deslop, and phase advancement/completion. Fast and standard profiles use the compact `implementing -> phase_review -> termination_review -> done` path after the mandatory clarifying prefix and research/spec prelude. Every arrow in the diagram is a baton write by the active agent. In default walkaway mode, the other persistent session is already blocked in `dvandva wait`; the helper returns when the baton assigns that role, and the agent re-enters preflight.
 
 ```
+                  ┌──────────────────────────────────┐
+                  │ CLARIFYING QUESTIONS             │
+                  │  phase: "clarifying"             │
+                  │                                  │
+   start ───▶ Vadi (clarifying_questions_drafting)    │
+                  │   asks round-1 feature questions  │
+                  │   baton → human answer            │
+                  ▼                                  │
+              Prativadi (clarifying_questions_followup)│
+                  │   asks reviewer-lens followups    │
+                  │   >=5 total answered questions    │
+                  │   baton → research_drafting       │
+                  └──┬───────────────────────────────┘
+                     │
+                     ▼
                   ┌──────────────────────────────────┐
                   │ RESEARCH PHASE                   │
                   │  phase: "research"               │
                   │                                  │
-   start ───▶ Vadi (research_drafting)                │
+              Vadi (research_drafting)                │
                   │   Invoke dvandva:research         │
                   │   conditional parallelism         │
                   │   writes research_ref HTML        │
@@ -616,7 +643,7 @@ Consumer repos may check the plugin into their own tree or use project-scoped ma
 
 | Failure | Required behavior |
 |---|---|
-| No selected/resumable baton after discovery | Vadi creates a named v2 run at `phase: "research", status: "research_drafting"` unless the user explicitly selected legacy `.dvandva/baton.json`. Prativadi waits on the selected or would-be named-run baton with `--allow-missing` unless `DVANDVA_NO_WAIT=1`; it does not create the run. When no run path is knowable, prativadi uses `dvandva wait --role prativadi --discover` (adopt-and-continue; exit 14 `discover_ambiguous` on several new candidates) instead of stopping. |
+| No selected/resumable baton after discovery | Vadi creates a named v2 run at `phase: "clarifying", status: "clarifying_questions_drafting"` unless the user explicitly selected legacy `.dvandva/baton.json`. Prativadi waits on the selected or would-be named-run baton with `--allow-missing` unless `DVANDVA_NO_WAIT=1`; it does not create the run. When no run path is knowable, prativadi uses `dvandva wait --role prativadi --discover` (adopt-and-continue; exit 14 `discover_ambiguous` on several new candidates) instead of stopping. |
 | Baton present but malformed JSON | Both: do not overwrite. Surface parse error verbatim. Write `.dvandva/baton.broken.json` with the unparseable bytes preserved. Surface in-memory next state as `human_decision`. |
 | `schema` field is not `dvandva.baton.v1` or `dvandva.baton.v2` | Both: refuse to operate. Surface schema mismatch. Exit. |
 | `assignee` does not match this agent's role | In `run_mode: "walkaway"`, run the wait helper for this role. Outside walkaway, surface "wrong actor for this state" and exit. Never silently overwrite the assignee. |
@@ -684,7 +711,7 @@ Open questions to revisit after the pilot:
 
 - **Spec version:** this document is v1's source of truth. Changes to in-scope behavior require a spec rev with a `docs:` commit prefix and a section number reference.
 - **Schema version:** baton field is `dvandva.baton.v1` for legacy runs and `dvandva.baton.v2` for named runs. Breaking changes increment the schema version; both skills must update in lockstep. Skills refuse to operate on a schema string outside the supported set (section 12).
-- **Schema maintenance.** The v2 contract is copied across many hand-maintained files, all held in parity by `dvandva lint schema-parity` (S6-T1): the engine's own `dvandva.baton.v2` status enum and `v2_required_keys()` (`rust/dvandva/src/write.rs`); `plugins/dvandva/references/baton-schema-v2.json` (its `status_catalog`); the `Status catalog (22)` marker line in this spec (Appendix A) and in `plugins/dvandva/references/state-transition-table.md`; the inline `json` seed block in each of `plugins/dvandva/skills/vadi/SKILL.md` and `plugins/dvandva/skills/prativadi/SKILL.md` (top-level keys ≡ `v2_required_keys()`, one `json` fence per file); the byte-identical channel-doc copies `docs/protocol/local-baton-channel.md` and `plugins/dvandva/references/local-baton-channel.md`; and the HISTORICAL v1 references `plugins/dvandva/references/baton-schema.json` and `templates/channel/baton.json` (each carrying a `HISTORICAL: dvandva.baton.v1` marker). On a schema change, update the engine first, then every copy above, and run `dvandva lint schema-parity` and `dvandva lint skills` until green.
+- **Schema maintenance.** The v2 contract is copied across many hand-maintained files, all held in parity by `dvandva lint schema-parity` (S6-T1): the engine's own `dvandva.baton.v2` status enum and `v2_required_keys()` (`rust/dvandva/src/write.rs`); `plugins/dvandva/references/baton-schema-v2.json` (its `status_catalog`); the `Status catalog (26)` marker line in this spec (Appendix A) and in `plugins/dvandva/references/state-transition-table.md`; the inline `json` seed block in each of `plugins/dvandva/skills/vadi/SKILL.md` and `plugins/dvandva/skills/prativadi/SKILL.md` (top-level keys ≡ `v2_required_keys()`, one `json` fence per file); the byte-identical channel-doc copies `docs/protocol/local-baton-channel.md` and `plugins/dvandva/references/local-baton-channel.md`; and the HISTORICAL v1 references `plugins/dvandva/references/baton-schema.json` and `templates/channel/baton.json` (each carrying a `HISTORICAL: dvandva.baton.v1` marker). On a schema change, update the engine first, then every copy above, and run `dvandva lint schema-parity` and `dvandva lint skills` until green.
 - **Policy fields in baton.** `allow_commit`, `allow_push`, and `allow_pr` intentionally live in the baton for v1 so every agent and transcript sees the run authority in the same file as state. `allow_commit` authorizes regular local checkpoint commits after verified logical slices; `allow_push` is still final-ship only. A separate `.dvandva/policy.json` is a v2 option if policy grows beyond these booleans.
 - **Skill versions:** each SKILL.md may carry a `# Skill version: <semver>` comment in the body. Bumped on body changes that alter agent behavior.
 
@@ -724,10 +751,10 @@ This appendix is the spec-level authoritative reference for the schema (includin
   "profile_decision": "object recording selected_profile, floor, reason, decided_by, decided_at, risk_inputs, hard_triggers, allowlist_match, allowlist_refs, and evidence_refs",
   "profile_history": "append-only array of profile change records: from, to, floor, checkpoint, actor_role, reason, evidence_refs",
   "run_mode": "walkaway | supervised",
-  "phase": "research | spec | review | 1 | 2 | ... | done",
+  "phase": "clarifying | research | spec | review | 1 | 2 | ... | done",
   "total_phases": "integer, set during spec phase; engine-frozen once master_plan_locked is true (reason bad_amendment total_phases_frozen), changeable only inside an F7 amendment loop (amendment_from_phase non-null) or on a write into human_decision",
   "phase_profiles": "additive nullable object {\"<numeric phase>\": \"standard\" | \"full\"} (F9); effective profile of numeric phase N = phase_profiles[N] // run profile; set/changed only in spec states, and never below the per-phase hard-path floor (reason bad_phase_profiles); absent = every phase uses the run profile",
-  "status": "research_drafting | research_review | research_revision | spec_drafting | spec_review | spec_revision | human_question | implementing | parallel_implementing | test_creation | cross_review | cross_fixing | deep_review | deslop | termination_review | phase_review | phase_fixing | review_of_review | counter_review | human_decision | done | abandoned (22-token v2 catalog; see the Status catalog line above; abandoned is the S2-T1 terminal enterable only from human_question/human_decision)",
+  "status": "clarifying_questions_drafting | clarifying_questions_answer | clarifying_questions_followup | clarifying_questions_followup_answer | research_drafting | research_review | research_revision | spec_drafting | spec_review | spec_revision | human_question | implementing | parallel_implementing | test_creation | cross_review | cross_fixing | deep_review | deslop | termination_review | phase_review | phase_fixing | review_of_review | counter_review | human_decision | done | abandoned (26-token v2 catalog; see the Status catalog line above; abandoned is the S2-T1 terminal enterable only from human_question/human_decision)",
   "assignee": "non-empty string; v1 conventions are vadi | prativadi | human; v2 status-owner pairs include team for concurrent states",
   "active_roles": "v2 concurrent roles array, usually [] or [\"vadi\", \"prativadi\"]",
   "current_engine": "optional; \"claude\" | \"codex\" | null. Records which CLI wrote the most recent baton; for traceability only, not used for correctness.",
@@ -782,7 +809,7 @@ This spec is authoritative for the accepted v2 mode tables and the legacy v1
 fallback. The protocol doc and plugin-local transition table carry the same
 runtime contract.
 
-Status catalog (22): research_drafting, research_review, research_revision, spec_drafting, spec_review, spec_revision, implementing, parallel_implementing, test_creation, cross_review, cross_fixing, deep_review, review_of_review, counter_review, deslop, termination_review, phase_review, phase_fixing, human_question, human_decision, done, abandoned
+Status catalog (26): clarifying_questions_drafting, clarifying_questions_answer, clarifying_questions_followup, clarifying_questions_followup_answer, research_drafting, research_review, research_revision, spec_drafting, spec_review, spec_revision, implementing, parallel_implementing, test_creation, cross_review, cross_fixing, deep_review, review_of_review, counter_review, deslop, termination_review, phase_review, phase_fixing, human_question, human_decision, done, abandoned
 
 The engine's `dvandva.baton.v2` status enum, the `baton-schema-v2.json` `status_catalog`, the state-transition-table copy, and this line are held equal by `dvandva lint schema-parity` (S6-T1). `abandoned` (S2-T1) is the new terminal status; `done` and `abandoned` are the two terminal states.
 
@@ -790,6 +817,10 @@ The engine's `dvandva.baton.v2` status enum, the `baton-schema-v2.json` `status_
 
 | From | To | Trigger |
 |---|---|---|
+| `clarifying_questions_drafting` | `clarifying_questions_answer` | Vadi writes round-1 feature/change questions. |
+| `clarifying_questions_answer` | `clarifying_questions_followup` | The Claude Code-hosted session records the human's round-1 answers. |
+| `clarifying_questions_followup` | `clarifying_questions_followup_answer` | Prativadi writes reviewer-lens followup questions; total questions across both rounds is at least five. |
+| `clarifying_questions_followup_answer` | `research_drafting` | The Claude Code-hosted session records the human's round-2 answers and research can begin. |
 | `research_drafting` | `research_review` | Vadi writes `research_ref` and hands to prativadi. |
 | `research_review` | `research_revision` | Prativadi surfaces research findings back to vadi. |
 | `research_revision` | `research_review` | Vadi addresses research findings and hands back. |
@@ -829,6 +860,10 @@ forces `full`.
 
 | From | To | Trigger |
 |---|---|---|
+| `clarifying_questions_drafting` | `clarifying_questions_answer` | Vadi writes round-1 feature/change questions. |
+| `clarifying_questions_answer` | `clarifying_questions_followup` | The Claude Code-hosted session records the human's round-1 answers. |
+| `clarifying_questions_followup` | `clarifying_questions_followup_answer` | Prativadi writes reviewer-lens followup questions; total questions across both rounds is at least five. |
+| `clarifying_questions_followup_answer` | `research_drafting` | The Claude Code-hosted session records the human's round-2 answers and research can begin. |
 | `research_drafting` | `research_review` | Vadi writes `research_ref`, `profile_decision`, work split, and verification matrix. |
 | `research_review` | `research_revision` | Prativadi finds research/profile gaps. |
 | `research_revision` | `research_review` | Vadi addresses research/profile gaps. |
@@ -859,6 +894,10 @@ allowlist evidence, `profile_floor: "fast"`, and no hard-risk paths.
 
 | From | To | Trigger |
 |---|---|---|
+| `clarifying_questions_drafting` | `clarifying_questions_answer` | Vadi writes round-1 feature/change questions. |
+| `clarifying_questions_answer` | `clarifying_questions_followup` | The Claude Code-hosted session records the human's round-1 answers. |
+| `clarifying_questions_followup` | `clarifying_questions_followup_answer` | Prativadi writes reviewer-lens followup questions; total questions across both rounds is at least five. |
+| `clarifying_questions_followup_answer` | `research_drafting` | The Claude Code-hosted session records the human's round-2 answers and research can begin. |
 | `research_drafting` | `research_review` | Optional fast research prelude records `research_ref`, `profile_decision`, allowlist evidence, work split, and verification matrix before compact implementation. |
 | `research_review` | `research_revision` | Prativadi requests a research/evidence correction before fast implementation. |
 | `research_revision` | `research_review` | Vadi refreshes the fast research package and returns to prativadi. |
@@ -880,6 +919,10 @@ plan before termination; when it does, set `research_outcome:
 
 | From | To | Trigger |
 |---|---|---|
+| `clarifying_questions_drafting` | `clarifying_questions_answer` | Vadi writes round-1 research-scope questions. |
+| `clarifying_questions_answer` | `clarifying_questions_followup` | The Claude Code-hosted session records the human's round-1 answers. |
+| `clarifying_questions_followup` | `clarifying_questions_followup_answer` | Prativadi writes reviewer-lens followup questions; total questions across both rounds is at least five. |
+| `clarifying_questions_followup_answer` | `research_drafting` | The Claude Code-hosted session records the human's round-2 answers and research can begin. |
 | `research_drafting` | `research_review` | Vadi writes `research_ref` and hands to prativadi. |
 | `research_review` | `research_revision` | Prativadi surfaces research findings back to vadi. |
 | `research_revision` | `research_review` | Vadi addresses research findings and hands back. |
@@ -904,6 +947,10 @@ termination. Every review-mode status uses `phase: "review"`. S4-T7 adds the
 
 | From | To | Trigger |
 |---|---|---|
+| `clarifying_questions_drafting` | `clarifying_questions_answer` | Vadi writes round-1 review-intake questions. |
+| `clarifying_questions_answer` | `clarifying_questions_followup` | The Claude Code-hosted session records the human's round-1 answers. |
+| `clarifying_questions_followup` | `clarifying_questions_followup_answer` | Prativadi writes reviewer-lens followup questions about review scope and risks; total questions across both rounds is at least five. |
+| `clarifying_questions_followup_answer` | `research_drafting` | The Claude Code-hosted session records the human's round-2 answers and intake research can begin. |
 | `research_drafting` | `research_review` | Vadi writes review scope/intake research and hands to prativadi. |
 | `research_review` | `research_revision` | Prativadi finds intake gaps and routes back to vadi. |
 | `research_revision` | `research_review` | Vadi fixes intake gaps and hands back. |

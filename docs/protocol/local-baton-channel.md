@@ -362,7 +362,7 @@ Model classes are durable workload-routing classes, not a literal ranked model t
 
 - `development` — delivery run with research, planning, implementation, and
   review gates selected by its separate `profile` field. `full` keeps the
-  26-edge v2 table; `fast` and `standard` use compact profile tables below.
+  32-edge v2 table; `fast` and `standard` use compact profile tables below.
 - `research` — research-only run. It may optionally emit a seed-development
   plan when `research_outcome == seed_development`, but the run still terminates
   as research.
@@ -376,10 +376,21 @@ Model classes are durable workload-routing classes, not a literal ranked model t
 Development mode selects one profile through `profile`. This is independent
 from `mode`; `fast`, `standard`, and `full` are not accepted mode values.
 
-#### Full profile (v2, 28 edges)
+Every v2 mode/profile starts with the mandatory clarifying prefix:
+`clarifying_questions_drafting` -> `clarifying_questions_answer` ->
+`clarifying_questions_followup` -> `clarifying_questions_followup_answer` ->
+`research_drafting`. The prefix uses `phase: "clarifying"`, requires at least
+five answered questions across both rounds, and requires at least one question
+from each role.
+
+#### Full profile (v2, 32 edges)
 
 - v2: `deslop` → `phase: N+1, parallel_implementing` is the non-final
   phase-advance edge. Final phases route to `termination_review` instead.
+- `clarifying_questions_drafting` -> `clarifying_questions_answer`
+- `clarifying_questions_answer` -> `clarifying_questions_followup`
+- `clarifying_questions_followup` -> `clarifying_questions_followup_answer`
+- `clarifying_questions_followup_answer` -> `research_drafting`
 - `research_drafting` -> `research_review`
 - `research_review` -> `research_revision`
 - `research_revision` -> `research_review`
@@ -429,6 +440,10 @@ may change there); it exits via `spec_review -> parallel_implementing`, which nu
 Standard is the default for new development scaffolds when no hard-risk trigger
 forces `full`.
 
+- `clarifying_questions_drafting` -> `clarifying_questions_answer`
+- `clarifying_questions_answer` -> `clarifying_questions_followup`
+- `clarifying_questions_followup` -> `clarifying_questions_followup_answer`
+- `clarifying_questions_followup_answer` -> `research_drafting`
 - `research_drafting` -> `research_review`
 - `research_review` -> `research_revision`
 - `research_revision` -> `research_review`
@@ -452,6 +467,10 @@ forces `full`.
 Fast is valid only for allowlisted prose-only changes with positive evidence,
 `profile_floor: "fast"`, and no hard-risk paths.
 
+- `clarifying_questions_drafting` -> `clarifying_questions_answer`
+- `clarifying_questions_answer` -> `clarifying_questions_followup`
+- `clarifying_questions_followup` -> `clarifying_questions_followup_answer`
+- `clarifying_questions_followup_answer` -> `research_drafting`
 - `research_drafting` -> `research_review`
 - `research_review` -> `research_revision`
 - `research_revision` -> `research_review`
@@ -463,8 +482,12 @@ Fast is valid only for allowlisted prose-only changes with positive evidence,
 - `termination_review` -> `phase_fixing`
 - `termination_review` -> `done`
 
-### Research mode (v2, 12 edges)
+### Research mode (v2, 16 edges)
 
+- `clarifying_questions_drafting` -> `clarifying_questions_answer`
+- `clarifying_questions_answer` -> `clarifying_questions_followup`
+- `clarifying_questions_followup` -> `clarifying_questions_followup_answer`
+- `clarifying_questions_followup_answer` -> `research_drafting`
 - `research_drafting` -> `research_review`
 - `research_review` -> `research_revision`
 - `research_revision` -> `research_review`
@@ -484,8 +507,12 @@ Research mode requires `research_ref` after drafting and before terminal
 `research_*` statuses use `phase: "research"`; seed-plan statuses,
 `phase_fixing`, `termination_review`, and terminal `done` use `phase: "spec"`.
 
-### Review mode (v2, 9 edges)
+### Review mode (v2, 13 edges)
 
+- `clarifying_questions_drafting` -> `clarifying_questions_answer`
+- `clarifying_questions_answer` -> `clarifying_questions_followup`
+- `clarifying_questions_followup` -> `clarifying_questions_followup_answer`
+- `clarifying_questions_followup_answer` -> `research_drafting`
 - `research_drafting` -> `research_review`
 - `research_review` -> `research_revision`
 - `research_revision` -> `research_review`

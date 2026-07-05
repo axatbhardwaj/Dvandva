@@ -40,6 +40,7 @@ run_id field.
 original_ask field.
 research_ref field.
 run_explainer_reviews field.
+clarifying_questions_drafting clarifying_questions_answer clarifying_questions_followup clarifying_questions_followup_answer states.
 research_drafting research_review research_revision states.
 Persistent wait: dvandva wait --persist keeps polling.
 Continuous polling is the hard rule.
@@ -62,6 +63,7 @@ generated user-facing artifacts and HTML policy.
 run_explainer_reviews evidence.
 Continuous polling is the hard rule.
 Phase convention: implementation-chunk N of M.
+clarifying_questions_drafting -> clarifying_questions_followup_answer before research.
 Legacy v1: `spec_review` → `phase: 1, implementing`.
 v2: `deslop` → `phase: N+1, parallel_implementing`.
 Fast profile: `research_review` -> `implementing`.
@@ -79,6 +81,7 @@ Fast profile: `research_review` -> `implementing`.
   "schema": "dvandva.baton.v2",
   "run_id": "",
   "original_ask": "",
+  "status_catalog": ["clarifying_questions_drafting", "clarifying_questions_followup_answer"],
   "research_ref": "",
   "run_explainer_reviews": [],
   "turn_cap": 60
@@ -99,6 +102,7 @@ Fast profile: `research_review` -> `implementing`.
         root,
         "plugins/dvandva/references/state-transition-table.md",
         r#"dvandva.baton.v2 transitions.
+clarifying_questions_drafting clarifying_questions_answer clarifying_questions_followup clarifying_questions_followup_answer.
 research_drafting research_review research_revision.
 run_explainer_reviews gate.
 | `research_review` | `implementing` | Prativadi accepts the allowlisted fast research/evidence package; fast skips spec planning and enters compact implementation. |
@@ -189,6 +193,8 @@ Phase convention: implementation-chunk N of M.
 The Claude Code-hosted session owns surfacing human_question and human_decision to the human.
 A walkaway session never ends its turn mid-run without one of: a baton write, an active wait, or a surfaced human_decision.
 Scaffold candidates with dvandva next before dvandva write.
+Route clarifying with dvandva:clarifying-questions.
+clarifying_questions_drafting clarifying_questions_answer clarifying_questions_followup clarifying_questions_followup_answer.
 "#
     .to_string()
 }
@@ -202,7 +208,7 @@ Plans live at ./superpowers/plans/YYYY-MM-DD-<topic>.html
 Full-profile v2 writes `status: "test_creation"`; fast/standard-profile v2 writes `status: "phase_review"`.
 Development/full fixbacks keep the numeric implementation phase, set `status: "test_creation"`.
 Development/fast and development/standard fixbacks keep the numeric implementation phase, set `status: "phase_review"`.
-fast` is allowlisted prose-only work with a `research_drafting -> research_review -> implementing` prelude.
+fast` is allowlisted prose-only work with a mandatory `clarifying_questions_drafting -> clarifying_questions_answer -> clarifying_questions_followup -> clarifying_questions_followup_answer -> research_drafting -> research_review -> implementing` prelude.
 For full-profile v2, approval routes to `deslop`; do not advance directly to `implementing` or `done`.
 "#,
     );
@@ -307,6 +313,7 @@ fn skill_phase3_rejects_command_missing_explainer_reviews() {
 // ---------------------------------------------------------------------------
 
 const BIG_LIST: &str = r#"work_split verification_matrix 100% test coverage
+clarifying_questions_drafting
 test_creation deep_review deslop
 Regular checkpoint commits
 conditional parallelism
@@ -598,6 +605,7 @@ fn phase4_fixture(root: &Path) {
 fn phase4_role_skill() -> String {
     let mut s = String::new();
     s.push_str("Invoke `dvandva:research`.\n");
+    s.push_str("clarifying_questions_drafting before research.\n");
     s.push_str("research_drafting research_review research_revision.\n");
     s.push_str("work_split verification_matrix 100% test coverage\n");
     s.push_str("test_creation deep_review deslop\n");
@@ -961,7 +969,7 @@ fn pathgate_fixture(root: &Path) {
     w(
         root,
         "rust/dvandva/src/commit_gate.rs",
-        "// dvandva commit-gate enforces DVANDVA_ROLE.\n// scans .dvandva/runs/*/baton.json; terminal done human_question human_decision.\n// fail closed via read_json_lenient.\n",
+        "// dvandva commit-gate enforces DVANDVA_ROLE.\n// scans .dvandva/runs/*/baton.json; inactive done clarifying_questions_answer clarifying_questions_followup_answer human_question human_decision.\n// fail closed via read_json_lenient.\n",
     );
     w(
         root,
@@ -1047,7 +1055,7 @@ fn pathgate_rejects_commit_gate_without_role() {
     w(
         d.path(),
         "rust/dvandva/src/commit_gate.rs",
-        "// scans .dvandva/runs/*/baton.json; terminal done human_question human_decision.\n// fail closed via read_json_lenient.\n",
+        "// scans .dvandva/runs/*/baton.json; inactive done clarifying_questions_answer clarifying_questions_followup_answer human_question human_decision.\n// fail closed via read_json_lenient.\n",
     );
     let r = run4_path_gates::report(d.path());
     assert!(r.fails_with("commit-gate must enforce DVANDVA_ROLE"));
@@ -1078,7 +1086,7 @@ fn pathgate_rejects_resolver_without_run_scope() {
     w(
         d.path(),
         "rust/dvandva/src/commit_gate.rs",
-        "// dvandva commit-gate enforces DVANDVA_ROLE.\n// terminal done human_question human_decision.\n// fail closed via read_json_lenient.\n",
+        "// dvandva commit-gate enforces DVANDVA_ROLE.\n// inactive done clarifying_questions_answer clarifying_questions_followup_answer human_question human_decision.\n// fail closed via read_json_lenient.\n",
     );
     let r = run4_path_gates::report(d.path());
     assert!(r.fails_with("commit_gate.rs must scan run-scoped baton paths"));
@@ -1094,7 +1102,7 @@ fn pathgate_rejects_owner_without_terminal_statuses() {
         "// dvandva commit-gate enforces DVANDVA_ROLE.\n// scans .dvandva/runs/*/baton.json.\n// fail closed via read_json_lenient.\n",
     );
     let r = run4_path_gates::report(d.path());
-    assert!(r.fails_with("commit_gate.rs must share terminal baton statuses"));
+    assert!(r.fails_with("commit_gate.rs must share inactive baton statuses"));
 }
 
 #[test]
@@ -1134,7 +1142,7 @@ fn pathgate_rejects_resolver_without_fail_closed_json() {
     w(
         d.path(),
         "rust/dvandva/src/commit_gate.rs",
-        "// dvandva commit-gate enforces DVANDVA_ROLE.\n// scans .dvandva/runs/*/baton.json; terminal done human_question human_decision.\n",
+        "// dvandva commit-gate enforces DVANDVA_ROLE.\n// scans .dvandva/runs/*/baton.json; inactive done clarifying_questions_answer clarifying_questions_followup_answer human_question human_decision.\n",
     );
     let r = run4_path_gates::report(d.path());
     assert!(r.fails_with("must fail closed on malformed baton JSON"));
@@ -1386,6 +1394,10 @@ fn phase4_aggregator_scopes_artifacts_to_superpowers_dir() {
 // ---------------------------------------------------------------------------
 
 const PARITY_STATUS_TOKENS: &[&str] = &[
+    "clarifying_questions_drafting",
+    "clarifying_questions_answer",
+    "clarifying_questions_followup",
+    "clarifying_questions_followup_answer",
     "research_drafting",
     "research_review",
     "research_revision",
@@ -1458,10 +1470,10 @@ const PARITY_REQUIRED_KEYS: &[&str] = &[
     "verification_matrix",
 ];
 
-/// The `Status catalog (22):` marker line the lint parses out of `product.md`
+/// The `Status catalog (26):` marker line the lint parses out of `product.md`
 /// and `state-transition-table.md`.
 fn parity_catalog_line(tokens: &[&str]) -> String {
-    format!("Status catalog (22): {}\n", tokens.join(", "))
+    format!("Status catalog (26): {}\n", tokens.join(", "))
 }
 
 /// A `baton-schema-v2.json` body carrying `status_catalog` as a JSON array.
