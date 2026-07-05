@@ -3003,7 +3003,14 @@ fn agent_instance_entry_ok(inst: &Value) -> bool {
     let parent_ok = matches!(field(inst, "parent_role"), Some(Value::String(s)) if s == "vadi" || s == "prativadi");
     let valid_model = matches!(field(inst, "model_class"), Some(Value::String(s)) if matches!(
         s.as_str(),
-        "opus-class|gpt-5.5" | "sonnet-class|gpt-5.4" | "opus" | "sonnet" | "gpt-5.5" | "gpt-5.4"
+        "opus-class|gpt-5.5-xhigh"
+            | "sonnet-class|gpt-5.5-high"
+            | "opus-class|gpt-5.5"
+            | "sonnet-class|gpt-5.4"
+            | "gpt-5.5"
+            | "gpt-5.4"
+            | "opus"
+            | "sonnet"
     ));
     let valid_perm = matches!(field(inst, "permission_class"), Some(Value::String(s)) if matches!(
         s.as_str(),

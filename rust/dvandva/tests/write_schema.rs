@@ -730,6 +730,28 @@ fn v2_agent_instance_field_validation() {
 }
 
 #[test]
+fn v2_agent_instance_accepts_canonical_and_legacy_model_aliases() {
+    for model_class in [
+        "opus-class|gpt-5.5-xhigh",
+        "sonnet-class|gpt-5.5-high",
+        "opus",
+        "sonnet",
+        "opus-class|gpt-5.5",
+        "sonnet-class|gpt-5.4",
+        "gpt-5.5",
+        "gpt-5.4",
+    ] {
+        let d = tmp();
+        let (b, n) = paths(&d);
+        make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+            dynamic_agent_instances(b);
+            b["agent_instances"][0]["model_class"] = json!(model_class);
+        });
+        run(&b, &n).assert(model_class, 0);
+    }
+}
+
+#[test]
 fn v2_dynamic_owner_requires_output_refs() {
     let d = tmp();
     let (b, n) = paths(&d);

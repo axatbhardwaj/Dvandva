@@ -81,7 +81,7 @@ Subagents are read-only during research by default. The main agent synthesizes t
 
 Use the canonical Dvandva subagent roster under `plugins/dvandva/agents/` when the harness supports named subagents. These local roles are the source of truth for Dvandva; retired personal agent definitions from external skill repos should not be required.
 
-Dvandva model classes are vendor-neutral. Agent frontmatter uses `model: opus` and `model: sonnet` as class labels, not Anthropic-only product IDs. Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models. Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`. Codex should request `xhigh` reasoning effort where the active surface exposes it. Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work. Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop. Do not use `haiku` for Dvandva subagents.
+Dvandva model classes are vendor-neutral. Agent frontmatter uses `model: opus` and `model: sonnet` as class labels, not Anthropic-only product IDs. Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models. Codex maps `opus` to `gpt-5.5` with `xhigh` reasoning and `sonnet` to `gpt-5.5` with `high` reasoning. Codex should request `xhigh` reasoning effort for opus-class work and `high` reasoning effort for sonnet-class work where the active surface exposes it. Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work. Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop. Do not use `haiku` for Dvandva subagents.
 
 | Phase | Agent |
 |---|---|
@@ -106,7 +106,7 @@ Mandatory invariants:
 - Coordination invariant: no daemon, no hidden orchestrator — the baton is the only coordinator.
 - Single-writer: generated agents never own `assignee`, `active_roles`, phase transitions, or final approval.
 - Path invariant: dynamic write-path disjointness — generated instances with non-empty `write_paths` sharing the same `base_checkpoint`, or any two live (`planned`/`running`) instances regardless of base_checkpoint, must be pairwise disjoint unless explicitly serialized through `depends_on` within a shared `conflict_group`; closed instances from an earlier base_checkpoint do not block later sequential reuse.
-- Model-class mapping: use `opus-class|gpt-5.5` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit seeds; use `sonnet-class|gpt-5.4` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop seeds. Codex should request `xhigh` reasoning effort where the active surface exposes it. Never use `haiku`.
+- Model-class mapping: use `opus-class|gpt-5.5-xhigh` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit seeds; use `sonnet-class|gpt-5.5-high` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop seeds. Codex should request `xhigh` reasoning effort for opus-class work and `high` reasoning effort for sonnet-class work where the active surface exposes it. Never use `haiku`.
 
 ## Absorbed Dvandva skills
 

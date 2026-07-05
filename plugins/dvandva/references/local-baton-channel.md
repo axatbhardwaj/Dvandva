@@ -322,7 +322,7 @@ Run 3 turns the static 15-agent roster into a **seed roster** for run-scoped dyn
   "purpose": "Review generated-agent write-helper gates for bypasses.",
   "agent_kind": "generated",
   "seed_agent": "dvandva-security-auditor",
-  "model_class": "opus-class|gpt-5.5",
+  "model_class": "opus-class|gpt-5.5-xhigh",
   "permission_class": "verify-only",
   "status": "closed",
   "work_item_ids": ["r3-dynamic-schema-and-write-gates"],
@@ -338,7 +338,7 @@ Run 3 turns the static 15-agent roster into a **seed roster** for run-scoped dyn
 }
 ```
 
-Model classes are durable workload-routing classes, not a literal ranked model table. Accepted compatibility strings remain vendor-neutral: `opus-class|gpt-5.5` maps to `opus`, and `sonnet-class|gpt-5.4` maps to `sonnet`. Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models. Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`. Codex should request `xhigh` reasoning effort where the active surface exposes it. Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work. Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop. Permission classes are `readonly`, `verify-only`, `edit-scoped`, or `write-artifact-only`.
+Model classes are durable workload-routing classes, not a literal ranked model table. Canonical compatibility strings for new generated instances remain vendor-neutral: `opus-class|gpt-5.5-xhigh` maps to `opus`, and `sonnet-class|gpt-5.5-high` maps to `sonnet`. Legacy aliases `opus-class|gpt-5.5`, `sonnet-class|gpt-5.4`, `gpt-5.5`, and `gpt-5.4` remain validator-compatible for existing batons but should not be emitted by new generated instances. Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models. Codex maps `opus` to `gpt-5.5` with `xhigh` reasoning and `sonnet` to `gpt-5.5` with `high` reasoning. Codex should request `xhigh` reasoning effort for opus-class work and `high` reasoning effort for sonnet-class work where the active surface exposes it. Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work. Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop. Permission classes are `readonly`, `verify-only`, `edit-scoped`, or `write-artifact-only`.
 
 `spawned_by` is the executable provenance used for generated-instance validation. `seed_agent` is advisory human-readable metadata that records which seed-roster contract shaped the brief; the write helper does not currently validate that `seed_agent` equals `spawned_by` or belongs to the seed roster.
 

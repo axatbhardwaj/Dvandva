@@ -61,7 +61,7 @@
       "purpose": "Review generated-agent write-helper gates for bypasses.",
       "agent_kind": "generated",
       "seed_agent": "dvandva-security-auditor",
-      "model_class": "opus-class|gpt-5.5",
+      "model_class": "opus-class|gpt-5.5-xhigh",
       "permission_class": "verify-only",
       "status": "closed",
       "work_item_ids": ["r3-dynamic-schema-and-write-gates"],

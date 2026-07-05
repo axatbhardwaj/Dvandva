@@ -28,9 +28,9 @@ pub(crate) const MODEL_POLICY_VENDOR_NEUTRAL_COMMANDS: &str =
 pub(crate) const MODEL_POLICY_CLAUDE_MAPPING: &str =
     "Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models";
 pub(crate) const MODEL_POLICY_CODEX_MAPPING: &str =
-    "Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`";
-pub(crate) const MODEL_POLICY_CODEX_XHIGH: &str =
-    "Codex should request `xhigh` reasoning effort where the active surface exposes it";
+    "Codex maps `opus` to `gpt-5.5` with `xhigh` reasoning and `sonnet` to `gpt-5.5` with `high` reasoning";
+pub(crate) const MODEL_POLICY_CODEX_EFFORT: &str =
+    "Codex should request `xhigh` reasoning effort for opus-class work and `high` reasoning effort for sonnet-class work where the active surface exposes it";
 pub(crate) const MODEL_POLICY_OPUS_ROUTING: &str =
     "Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work";
 pub(crate) const MODEL_POLICY_SONNET_ROUTING: &str =
@@ -41,6 +41,10 @@ pub(crate) const MODEL_POLICY_STALE_OPUS_ROUTING: &str =
     "strongest available planning/review/architecture class";
 pub(crate) const MODEL_POLICY_STALE_SONNET_ROUTING: &str =
     "implementation/documentation workhorse class";
+pub(crate) const MODEL_POLICY_STALE_CODEX_MAPPING: &str =
+    "Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`";
+pub(crate) const MODEL_POLICY_STALE_CANONICAL_COMPAT_MAPPING: &str =
+    "Accepted compatibility strings remain vendor-neutral: `opus-class|gpt-5.5` maps to `opus`, and `sonnet-class|gpt-5.4` maps to `sonnet`";
 
 /// One PASS/FAIL assertion outcome.
 pub struct Finding {

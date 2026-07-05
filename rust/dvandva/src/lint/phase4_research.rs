@@ -18,11 +18,12 @@ use std::path::Path;
 
 use crate::lint::{
     count_lines_matching, file_contains, file_has_exact_line, output_contract_contains,
-    resolve_root, Report, MODEL_POLICY_CLAUDE_MAPPING, MODEL_POLICY_CODEX_MAPPING,
-    MODEL_POLICY_CODEX_XHIGH, MODEL_POLICY_NO_HAIKU_COMMANDS, MODEL_POLICY_NO_HAIKU_SUBAGENTS,
-    MODEL_POLICY_OPUS_ROUTING, MODEL_POLICY_SONNET_ROUTING, MODEL_POLICY_STALE_OPUS_ROUTING,
-    MODEL_POLICY_STALE_SONNET_ROUTING, MODEL_POLICY_VENDOR_NEUTRAL_COMMANDS,
-    MODEL_POLICY_VENDOR_NEUTRAL_DOCS,
+    resolve_root, Report, MODEL_POLICY_CLAUDE_MAPPING, MODEL_POLICY_CODEX_EFFORT,
+    MODEL_POLICY_CODEX_MAPPING, MODEL_POLICY_NO_HAIKU_COMMANDS, MODEL_POLICY_NO_HAIKU_SUBAGENTS,
+    MODEL_POLICY_OPUS_ROUTING, MODEL_POLICY_SONNET_ROUTING,
+    MODEL_POLICY_STALE_CANONICAL_COMPAT_MAPPING, MODEL_POLICY_STALE_CODEX_MAPPING,
+    MODEL_POLICY_STALE_OPUS_ROUTING, MODEL_POLICY_STALE_SONNET_ROUTING,
+    MODEL_POLICY_VENDOR_NEUTRAL_COMMANDS, MODEL_POLICY_VENDOR_NEUTRAL_DOCS,
 };
 
 const ALL_AGENTS: [&str; 15] = [
@@ -100,8 +101,8 @@ fn req_model_policy_routing(r: &mut Report, root: &Path, rel: &str) {
         r,
         root,
         rel,
-        MODEL_POLICY_CODEX_XHIGH,
-        format!("{rel} documents Codex xhigh effort guidance"),
+        MODEL_POLICY_CODEX_EFFORT,
+        format!("{rel} documents Codex effort-tier guidance"),
     );
     req(
         r,
@@ -130,6 +131,20 @@ fn req_model_policy_routing(r: &mut Report, root: &Path, rel: &str) {
         rel,
         MODEL_POLICY_STALE_SONNET_ROUTING,
         format!("{rel} avoids stale broad sonnet workload wording"),
+    );
+    rej(
+        r,
+        root,
+        rel,
+        MODEL_POLICY_STALE_CODEX_MAPPING,
+        format!("{rel} avoids retired Codex gpt-5.4 mapping"),
+    );
+    rej(
+        r,
+        root,
+        rel,
+        MODEL_POLICY_STALE_CANONICAL_COMPAT_MAPPING,
+        format!("{rel} avoids retired canonical compatibility mapping"),
     );
 }
 
