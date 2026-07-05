@@ -1830,3 +1830,47 @@ fn discovery_wait_recipe_pinned_in_join_surfaces() {
         );
     }
 }
+
+// ---------------------------------------------------------------------------
+// Reviewable-chunk commit discipline paragraph (Phase 2)
+//
+// This is a hand-written protocol rule spread across five human-facing
+// surfaces. The lint-engine fixtures do not own it, so pin the live repo tree
+// directly. RED-equivalence evidence: the primary needle is absent at 03d3048
+// (the deslop checkpoint immediately before the phase-2 implementation
+// commits), so reverting the phase-2 insertions makes this test fail.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn reviewable_chunk_commit_rule_pinned_in_commit_surfaces() {
+    let root = dvandva::lint::resolve_root(&[]);
+    let primary = "Reviewable-chunk commits are event-driven";
+    let supporting_needles = [
+        "Each `work_split` chunk produces at least one commit",
+        "400 changed lines",
+        "mechanically generated bulk",
+        "commit work is never delegated",
+    ];
+
+    for rel in [
+        "docs/protocol/local-baton-channel.md",
+        "plugins/dvandva/references/local-baton-channel.md",
+        "product.md",
+        "plugins/dvandva/skills/vadi/SKILL.md",
+        "plugins/dvandva/skills/prativadi/SKILL.md",
+    ] {
+        let text = dvandva::lint::read(&root, rel)
+            .unwrap_or_else(|| panic!("{rel} missing from live tree"));
+        assert_eq!(
+            text.matches(primary).count(),
+            1,
+            "{rel} must contain exactly one reviewable-chunk commit rule"
+        );
+        for needle in supporting_needles {
+            assert!(
+                text.contains(needle),
+                "{rel} is missing reviewable-chunk commit needle: {needle}"
+            );
+        }
+    }
+}
