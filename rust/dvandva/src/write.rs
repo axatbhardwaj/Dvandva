@@ -425,6 +425,10 @@ fn validate_candidate_shape(
             return Err((23, msg));
         }
         if new_status != "research_drafting"
+            && new_status != "clarifying_questions_drafting"
+            && new_status != "clarifying_questions_answer"
+            && new_status != "clarifying_questions_followup"
+            && new_status != "clarifying_questions_followup_answer"
             && new_status != "human_question"
             && new_status != "human_decision"
             && new_status != "abandoned"
@@ -737,6 +741,13 @@ pub(crate) fn expected_phase_for(mode: &str, status: &str, current_phase: &Value
     let effective = canonical_mode(mode);
     match (effective.as_deref(), status) {
         (_, "human_question") | (_, "human_decision") | (_, "abandoned") => current_phase.clone(),
+        (
+            Some("development") | Some("research") | Some("review"),
+            "clarifying_questions_drafting"
+            | "clarifying_questions_answer"
+            | "clarifying_questions_followup"
+            | "clarifying_questions_followup_answer",
+        ) => Value::from("clarifying"),
         (Some("development"), "research_drafting" | "research_review" | "research_revision") => {
             Value::from("research")
         }
@@ -790,6 +801,10 @@ fn whitelist_targets(
     cur_status: &str,
 ) -> Vec<String> {
     const V2: &[&str] = &[
+        "clarifying_questions_drafting",
+        "clarifying_questions_answer",
+        "clarifying_questions_followup",
+        "clarifying_questions_followup_answer",
         "research_drafting",
         "research_review",
         "research_revision",
@@ -1455,12 +1470,12 @@ fn decide_transition(
             // (rejected upstream with `schema_retired`), so only the v2 seed is
             // legal.
             let legal = cx.schema == "dvandva.baton.v2"
-                && cx.new_status == "research_drafting"
+                && cx.new_status == "clarifying_questions_drafting"
                 && cx.new_assignee == "vadi"
                 && cx.new_checkpoint == 0;
             if !legal {
                 return Err((24, format!(
-                    "DVANDVA_WRITE illegal_transition scaffold requires v2 status=research_drafting with assignee=vadi checkpoint=0, got schema={} status={} assignee={} checkpoint={}",
+                    "DVANDVA_WRITE illegal_transition scaffold requires v2 status=clarifying_questions_drafting with assignee=vadi checkpoint=0, got schema={} status={} assignee={} checkpoint={}",
                     cx.schema, cx.new_status, cx.new_assignee, cx.new_checkpoint
                 )));
             }
@@ -2092,6 +2107,52 @@ fn decide_transition(
         }
     }
 
+    // ---- P1: clarifying-questions per-state non-null gates -----------------
+    if legal
+        && cx.is_v2
+        && cur_status == "clarifying_questions_drafting"
+        && cx.new_status == "clarifying_questions_answer"
+        && !clarifying_round_questions_asked(cand, 1)
+    {
+        return Err((
+            23,
+            format!("DVANDVA_WRITE bad_clarifying_questions_round1 candidate={cf}"),
+        ));
+    }
+    if legal
+        && cx.is_v2
+        && cur_status == "clarifying_questions_answer"
+        && cx.new_status == "clarifying_questions_followup"
+        && !clarifying_round_answered(cand, 1)
+    {
+        return Err((
+            23,
+            format!("DVANDVA_WRITE bad_clarifying_questions_round1_answer candidate={cf}"),
+        ));
+    }
+    if legal
+        && cx.is_v2
+        && cur_status == "clarifying_questions_followup"
+        && cx.new_status == "clarifying_questions_followup_answer"
+        && (!clarifying_round_questions_asked(cand, 2) || !clarifying_total_ok(cand))
+    {
+        return Err((
+            23,
+            format!("DVANDVA_WRITE bad_clarifying_questions_round2 candidate={cf}"),
+        ));
+    }
+    if legal
+        && cx.is_v2
+        && cur_status == "clarifying_questions_followup_answer"
+        && cx.new_status == "research_drafting"
+        && !clarifying_round_answered(cand, 2)
+    {
+        return Err((
+            23,
+            format!("DVANDVA_WRITE bad_clarifying_questions_round2_answer candidate={cf}"),
+        ));
+    }
+
     // ---- F7 plan-amendment gates -------------------------------------------
     // total_phases is frozen once the master plan is locked, EXCEPT while a plan
     // amendment loop is active (amendment_from_phase non-null on either side).
@@ -2469,6 +2530,10 @@ pub(crate) fn v2_required_keys() -> Vec<&'static str> {
 /// acceptor; the code-side parity is asserted by the schema-parity lint's unit
 /// tests rather than by re-routing the acceptor through this slice.
 pub(crate) const V2_STATUS_CATALOG: &[&str] = &[
+    "clarifying_questions_drafting",
+    "clarifying_questions_answer",
+    "clarifying_questions_followup",
+    "clarifying_questions_followup_answer",
     "research_drafting",
     "research_review",
     "research_revision",
@@ -2523,6 +2588,9 @@ fn profile_rank(profile: &str) -> i32 {
 
 fn v2_expected_assignee(status: &str) -> &'static str {
     match status {
+        "clarifying_questions_drafting" => "vadi",
+        "clarifying_questions_followup" => "prativadi",
+        "clarifying_questions_answer" | "clarifying_questions_followup_answer" => "human",
         // F8: test_creation is team-owned in the v2 full profile (its only home).
         "research_drafting" | "research_revision" | "spec_drafting" | "spec_revision"
         | "implementing" | "deslop" | "phase_fixing" | "review_of_review" => "vadi",
@@ -2607,7 +2675,11 @@ fn is_amendment_exit_edge(profile: &str, cur_status: &str, new_status: &str) -> 
 pub(crate) fn status_enum_ok(status: &str) -> bool {
     matches!(
         status,
-        "research_drafting"
+        "clarifying_questions_drafting"
+            | "clarifying_questions_answer"
+            | "clarifying_questions_followup"
+            | "clarifying_questions_followup_answer"
+            | "research_drafting"
             | "research_review"
             | "research_revision"
             | "spec_drafting"
@@ -2683,6 +2755,13 @@ fn phase_status_ok(mode: &str, status: &str, cand: &Value) -> bool {
         // S2-T1: abandoned preserves whatever phase the human state carried, just
         // like the other human statuses.
         (_, "human_question") | (_, "human_decision") | (_, "abandoned") => true,
+        (
+            "development" | "research" | "review",
+            "clarifying_questions_drafting"
+            | "clarifying_questions_answer"
+            | "clarifying_questions_followup"
+            | "clarifying_questions_followup_answer",
+        ) => is_str("clarifying"),
         ("development", "research_drafting" | "research_review" | "research_revision") => {
             is_str("research")
         }
@@ -3410,6 +3489,51 @@ fn serialized_work(a: &Value, b: &Value) -> bool {
 // ===========================================================================
 // verification_matrix / subagent_tracks
 // ===========================================================================
+/// P1: every `clarifying_questions` entry for `round` has a non-empty
+/// `question` and a still-null `answer`, AND at least one such entry exists —
+/// the gate for leaving `clarifying_questions_drafting` (round 1) / entering
+/// `clarifying_questions_followup` (round 2).
+fn clarifying_round_questions_asked(cand: &Value, round: i64) -> bool {
+    let entries: Vec<&Value> = arr(field(cand, "clarifying_questions"))
+        .iter()
+        .filter(|q| field(q, "round").and_then(json_int) == Some(round))
+        .collect();
+    !entries.is_empty()
+        && entries.iter().all(|q| {
+            matches!(field(q, "question"), Some(Value::String(s)) if !s.is_empty())
+                && field(q, "answer") == Some(&Value::Null)
+        })
+}
+
+/// P1: every `clarifying_questions` entry for `round` has a non-empty
+/// `answer`, AND at least one such entry exists — the gate for leaving
+/// `clarifying_questions_answer` (round 1) / `clarifying_questions_followup_answer`
+/// (round 2).
+fn clarifying_round_answered(cand: &Value, round: i64) -> bool {
+    let entries: Vec<&Value> = arr(field(cand, "clarifying_questions"))
+        .iter()
+        .filter(|q| field(q, "round").and_then(json_int) == Some(round))
+        .collect();
+    !entries.is_empty()
+        && entries
+            .iter()
+            .all(|q| matches!(field(q, "answer"), Some(Value::String(s)) if !s.is_empty()))
+}
+
+/// P1: the combined round-1 + round-2 `clarifying_questions` total is >=5,
+/// with both rounds represented (>=1 question per role) — the gate for
+/// leaving `clarifying_questions_followup`.
+fn clarifying_total_ok(cand: &Value) -> bool {
+    let all = arr(field(cand, "clarifying_questions"));
+    let round1 = all
+        .iter()
+        .any(|q| field(q, "round").and_then(json_int) == Some(1));
+    let round2 = all
+        .iter()
+        .any(|q| field(q, "round").and_then(json_int) == Some(2));
+    all.len() >= 5 && round1 && round2
+}
+
 fn verification_matrix_nonempty(cand: &Value) -> bool {
     matches!(
         field(cand, "verification_matrix"),
@@ -3824,7 +3948,11 @@ fn edge_whitelist(
             "development" => match new_profile {
                 "fast" => matches!(
                     edge.as_str(),
-                    "research_drafting:research_review"
+                    "clarifying_questions_drafting:clarifying_questions_answer"
+                        | "clarifying_questions_answer:clarifying_questions_followup"
+                        | "clarifying_questions_followup:clarifying_questions_followup_answer"
+                        | "clarifying_questions_followup_answer:research_drafting"
+                        | "research_drafting:research_review"
                         | "research_review:research_revision"
                         | "research_revision:research_review"
                         | "research_review:implementing"
@@ -3837,7 +3965,11 @@ fn edge_whitelist(
                 ),
                 "standard" => matches!(
                     edge.as_str(),
-                    "research_drafting:research_review"
+                    "clarifying_questions_drafting:clarifying_questions_answer"
+                        | "clarifying_questions_answer:clarifying_questions_followup"
+                        | "clarifying_questions_followup:clarifying_questions_followup_answer"
+                        | "clarifying_questions_followup_answer:research_drafting"
+                        | "research_drafting:research_review"
                         | "research_review:research_revision"
                         | "research_revision:research_review"
                         | "research_review:spec_drafting"
@@ -3868,7 +4000,11 @@ fn edge_whitelist(
                 ),
                 "full" => matches!(
                     edge.as_str(),
-                    "research_drafting:research_review"
+                    "clarifying_questions_drafting:clarifying_questions_answer"
+                        | "clarifying_questions_answer:clarifying_questions_followup"
+                        | "clarifying_questions_followup:clarifying_questions_followup_answer"
+                        | "clarifying_questions_followup_answer:research_drafting"
+                        | "research_drafting:research_review"
                         | "research_review:research_revision"
                         | "research_revision:research_review"
                         | "research_review:spec_drafting"
@@ -3902,7 +4038,11 @@ fn edge_whitelist(
             },
             "research" => matches!(
                 edge.as_str(),
-                "research_drafting:research_review"
+                "clarifying_questions_drafting:clarifying_questions_answer"
+                    | "clarifying_questions_answer:clarifying_questions_followup"
+                    | "clarifying_questions_followup:clarifying_questions_followup_answer"
+                    | "clarifying_questions_followup_answer:research_drafting"
+                    | "research_drafting:research_review"
                     | "research_review:research_revision"
                     | "research_revision:research_review"
                     | "research_review:spec_drafting"
@@ -3917,7 +4057,11 @@ fn edge_whitelist(
             ),
             "review" => matches!(
                 edge.as_str(),
-                "research_drafting:research_review"
+                "clarifying_questions_drafting:clarifying_questions_answer"
+                    | "clarifying_questions_answer:clarifying_questions_followup"
+                    | "clarifying_questions_followup:clarifying_questions_followup_answer"
+                    | "clarifying_questions_followup_answer:research_drafting"
+                    | "research_drafting:research_review"
                     | "research_review:research_revision"
                     | "research_revision:research_review"
                     | "research_review:deep_review"

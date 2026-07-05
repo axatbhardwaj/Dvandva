@@ -101,6 +101,14 @@ impl std::error::Error for BatonError {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
+    /// The mandatory pre-research gate: vadi asks round-1 clarifying questions.
+    ClarifyingQuestionsDrafting,
+    /// The human answers vadi's round-1 clarifying questions.
+    ClarifyingQuestionsAnswer,
+    /// Prativadi asks round-2 clarifying questions (>=5 combined with round 1).
+    ClarifyingQuestionsFollowup,
+    /// The human answers prativadi's round-2 clarifying questions.
+    ClarifyingQuestionsFollowupAnswer,
     ResearchDrafting,
     ResearchReview,
     ResearchRevision,
@@ -130,6 +138,10 @@ impl Status {
     /// The canonical snake_case token for this status.
     pub fn as_str(&self) -> &'static str {
         match self {
+            Status::ClarifyingQuestionsDrafting => "clarifying_questions_drafting",
+            Status::ClarifyingQuestionsAnswer => "clarifying_questions_answer",
+            Status::ClarifyingQuestionsFollowup => "clarifying_questions_followup",
+            Status::ClarifyingQuestionsFollowupAnswer => "clarifying_questions_followup_answer",
             Status::ResearchDrafting => "research_drafting",
             Status::ResearchReview => "research_review",
             Status::ResearchRevision => "research_revision",
@@ -183,6 +195,10 @@ impl FromStr for Status {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
+            "clarifying_questions_drafting" => Ok(Status::ClarifyingQuestionsDrafting),
+            "clarifying_questions_answer" => Ok(Status::ClarifyingQuestionsAnswer),
+            "clarifying_questions_followup" => Ok(Status::ClarifyingQuestionsFollowup),
+            "clarifying_questions_followup_answer" => Ok(Status::ClarifyingQuestionsFollowupAnswer),
             "research_drafting" => Ok(Status::ResearchDrafting),
             "research_review" => Ok(Status::ResearchReview),
             "research_revision" => Ok(Status::ResearchRevision),
@@ -313,8 +329,12 @@ mod tests {
     }
 
     #[test]
-    fn status_covers_all_twenty_two_tokens() {
+    fn status_covers_all_twenty_six_tokens() {
         let catalog = [
+            "clarifying_questions_drafting",
+            "clarifying_questions_answer",
+            "clarifying_questions_followup",
+            "clarifying_questions_followup_answer",
             "research_drafting",
             "research_review",
             "research_revision",
@@ -338,7 +358,7 @@ mod tests {
             "done",
             "abandoned",
         ];
-        assert_eq!(catalog.len(), 22);
+        assert_eq!(catalog.len(), 26);
         for token in catalog {
             let parsed: Status = token
                 .parse()

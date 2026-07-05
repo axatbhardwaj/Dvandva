@@ -27,6 +27,10 @@ use crate::Role;
 /// test comparing this list to [`crate::write::V2_STATUS_CATALOG`] (hence the
 /// `pub(crate)` exposure).
 pub(crate) const V2_STATUS_TOKENS: &[&str] = &[
+    "clarifying_questions_drafting",
+    "clarifying_questions_answer",
+    "clarifying_questions_followup",
+    "clarifying_questions_followup_answer",
     "research_drafting",
     "research_review",
     "research_revision",

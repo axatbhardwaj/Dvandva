@@ -9,6 +9,7 @@ mod common;
 use common::*;
 use serde_json::{json, Value};
 use std::path::PathBuf;
+use std::process::Command;
 
 /// A named test-case mutator paired with its label, for tables of
 /// otherwise-identical cases that each apply a different override.
@@ -27,7 +28,8 @@ fn paths(dir: &tempfile::TempDir) -> (PathBuf, PathBuf) {
 // ===================== scaffold =====================
 // S5-T2 (D5): `scaffold_installs_and_snapshots` (v1 happy-path scaffold) was
 // REMOVED — v1 is retired from the write path. The v2 scaffold happy path is
-// `v2_scaffold_research_drafting_installs`; retirement is probed by `s5t2_*`.
+// `v2_scaffold_clarifying_questions_drafting_installs`; retirement is probed
+// by `s5t2_*`.
 
 #[test]
 fn run_isolation_two_named_runs() {
@@ -36,31 +38,35 @@ fn run_isolation_two_named_runs() {
     let beta = d.path().join(".dvandva/runs/beta");
     make_baton_v2(
         &alpha.join("baton.next.json"),
-        "research_drafting",
+        "clarifying_questions_drafting",
         "vadi",
         0,
         |b| {
             b["branch"] = json!("alpha-branch");
             b["run_id"] = json!("alpha");
+            b["phase"] = json!("clarifying");
         },
     );
     make_baton_v2(
         &beta.join("baton.next.json"),
-        "research_drafting",
+        "clarifying_questions_drafting",
         "vadi",
         0,
         |b| {
             b["branch"] = json!("beta-branch");
             b["run_id"] = json!("beta");
+            b["phase"] = json!("clarifying");
         },
     );
     run(&alpha.join("baton.json"), &alpha.join("baton.next.json"))
         .assert("run alpha v2 scaffold", 0);
     run(&beta.join("baton.json"), &beta.join("baton.next.json")).assert("run beta v2 scaffold", 0);
     assert!(alpha
-        .join("history/0-research_drafting-vadi.json")
+        .join("history/0-clarifying_questions_drafting-vadi.json")
         .is_file());
-    assert!(beta.join("history/0-research_drafting-vadi.json").is_file());
+    assert!(beta
+        .join("history/0-clarifying_questions_drafting-vadi.json")
+        .is_file());
     assert!(!d.path().join(".dvandva/history").exists());
 }
 
@@ -269,17 +275,37 @@ fn string_checkpoint_in_current_baton_exits_25() {
 // ===================== v2 candidate-level validation =====================
 
 #[test]
-fn v2_scaffold_research_drafting_installs() {
+fn v2_scaffold_clarifying_questions_drafting_installs() {
+    // P1/Task 1.2: the checkpoint-0 scaffold seed now requires
+    // clarifying_questions_drafting, the mandatory pre-research gate.
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "research_drafting", "vadi", 0, |_| {});
+    make_baton_v2(&n, "clarifying_questions_drafting", "vadi", 0, |b| {
+        b["phase"] = json!("clarifying");
+    });
     run(&b, &n).assert("v2 scaffold", 0);
     let installed: Value = serde_json::from_slice(&std::fs::read(&b).unwrap()).unwrap();
     assert_eq!(installed["run_id"], "run-a");
     assert!(d
         .path()
-        .join("history/0-research_drafting-vadi.json")
+        .join("history/0-clarifying_questions_drafting-vadi.json")
         .is_file());
+}
+
+#[test]
+fn v2_scaffold_research_drafting_rejected_as_seed() {
+    // P1/Task 1.2 regression: the OLD scaffold seed (research_drafting at
+    // checkpoint 0) is no longer legal now that clarifying_questions_drafting
+    // is the mandatory first state.
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "research_drafting", "vadi", 0, |_| {});
+    run(&b, &n).assert_contains(
+        "research_drafting is no longer a legal scaffold seed",
+        24,
+        "DVANDVA_WRITE illegal_transition",
+    );
+    assert!(!b.is_file(), "a rejected scaffold must not install a baton");
 }
 
 #[test]
@@ -516,7 +542,8 @@ fn v2_fake_parallel_subagent_track_exits_23() {
 fn v2_standalone_parallel_subagent_owner_accepted() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+    make_baton_v2(&n, "clarifying_questions_drafting", "vadi", 0, |b| {
+        b["phase"] = json!("clarifying");
         b["subagent_tracks"][0]["parallelized"] = json!(true);
         b["subagent_tracks"][0]["owner"] = json!("adversarial-analyst");
         b["subagent_tracks"][0]["outputs"] = json!(["Independent review completed."]);
@@ -529,7 +556,8 @@ fn v2_standalone_parallel_subagent_owner_accepted() {
 fn v2_bundled_adversarial_parallel_owner_accepted() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+    make_baton_v2(&n, "clarifying_questions_drafting", "vadi", 0, |b| {
+        b["phase"] = json!("clarifying");
         b["subagent_tracks"][0]["parallelized"] = json!(true);
         b["subagent_tracks"][0]["owner"] = json!("dvandva-adversarial-analyst");
         b["subagent_tracks"][0]["outputs"] = json!(["Bundled adversarial review completed."]);
@@ -549,7 +577,8 @@ fn v2_new_bundled_owners_accepted() {
     ] {
         let d = tmp();
         let (b, n) = paths(&d);
-        make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        make_baton_v2(&n, "clarifying_questions_drafting", "vadi", 0, |b| {
+            b["phase"] = json!("clarifying");
             b["subagent_tracks"][0]["parallelized"] = json!(true);
             b["subagent_tracks"][0]["owner"] = json!(owner);
             b["subagent_tracks"][0]["outputs"] =
@@ -614,7 +643,8 @@ fn v2_dynamic_owner_requires_closure_evidence() {
 fn v2_dynamic_owner_accepted() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+    make_baton_v2(&n, "clarifying_questions_drafting", "vadi", 0, |b| {
+        b["phase"] = json!("clarifying");
         dynamic_agent_instances(b);
         dynamic_parallel_track(b);
     });
@@ -625,7 +655,8 @@ fn v2_dynamic_owner_accepted() {
 fn v2_nonparallel_dynamic_owner_accepted() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+    make_baton_v2(&n, "clarifying_questions_drafting", "vadi", 0, |b| {
+        b["phase"] = json!("clarifying");
         dynamic_agent_instances(b);
         dynamic_parallel_track(b);
         b["subagent_tracks"][0]["parallelized"] = json!(false);
@@ -743,7 +774,8 @@ fn v2_agent_instance_accepts_canonical_and_legacy_model_aliases() {
     ] {
         let d = tmp();
         let (b, n) = paths(&d);
-        make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+        make_baton_v2(&n, "clarifying_questions_drafting", "vadi", 0, |b| {
+            b["phase"] = json!("clarifying");
             dynamic_agent_instances(b);
             b["agent_instances"][0]["model_class"] = json!(model_class);
         });
@@ -1493,7 +1525,8 @@ fn review_done_missing_review_ref_exits_23() {
 fn v2_backcompat_scaffold_missing_optional_fields() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+    make_baton_v2(&n, "clarifying_questions_drafting", "vadi", 0, |b| {
+        b["phase"] = json!("clarifying");
         let o = b.as_object_mut().unwrap();
         o.remove("research_outcome");
         o.remove("review_ref");
@@ -1677,4 +1710,437 @@ fn s2t1_abandoned_accepts_the_carried_human_phase() {
         v["phase"] = json!(2);
     });
     run(&b, &n).assert("s2t1 abandoned accepts the carried numeric phase", 0);
+}
+
+// ===========================================================================
+// P1: clarifying-questions phase (mandatory pre-research gate)
+// ===========================================================================
+
+/// `n` `clarifying_questions` entries for `round`, authored by `asked_by`;
+/// `answered` controls whether each entry already carries a non-empty answer.
+fn cq_entries(round: i64, n: usize, answered: bool, asked_by: &str) -> Vec<Value> {
+    (0..n)
+        .map(|i| {
+            json!({
+                "round": round,
+                "asked_by": asked_by,
+                "question": format!("Clarifying question r{round}.{i}?"),
+                "answer": if answered {
+                    json!(format!("Answer r{round}.{i}"))
+                } else {
+                    Value::Null
+                }
+            })
+        })
+        .collect()
+}
+
+/// Spawn `dvandva next --file <baton>`, clearing the selector env vars so the
+/// resolved baton is fully controlled by the fixture. Returns stdout.
+fn run_next_list(baton: &std::path::Path) -> String {
+    let output = Command::new(env!("CARGO_BIN_EXE_dvandva"))
+        .arg("next")
+        .arg("--file")
+        .arg(baton)
+        .env_remove("DVANDVA_ROLE")
+        .env_remove("DVANDVA_BATON_FILE")
+        .env_remove("DVANDVA_RUN_DIR")
+        .env_remove("DVANDVA_RUN_ID")
+        .output()
+        .expect("spawn dvandva next");
+    String::from_utf8_lossy(&output.stdout).into_owned()
+}
+
+/// A minimal current-baton JSON carrying only the fields `legal_transitions`
+/// consults (schema/status/mode/profile/phase/checkpoint/master_plan_locked).
+fn minimal_current_baton(mode: &str, profile: Option<&str>, status: &str, phase: &str) -> Value {
+    let mut b = json!({
+        "schema": "dvandva.baton.v2",
+        "status": status,
+        "mode": mode,
+        "phase": phase,
+        "checkpoint": 4,
+        "master_plan_locked": false,
+    });
+    if let Some(p) = profile {
+        b["profile"] = json!(p);
+    }
+    b
+}
+
+fn write_value(path: &std::path::Path, value: &Value) {
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, serde_json::to_string_pretty(value).unwrap()).unwrap();
+}
+
+// ----- Task 1.3: research_ref exemption ------------------------------------
+
+#[test]
+fn v2_clarifying_questions_drafting_research_ref_null_accepted() {
+    // clarifying_questions_drafting runs before research exists, so a null
+    // research_ref must not trip bad_research_ref (unlike every other status).
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "clarifying_questions_drafting", "vadi", 0, |b| {
+        b["phase"] = json!("clarifying");
+        b["research_ref"] = Value::Null;
+    });
+    run(&b, &n).assert("clarifying_questions_drafting exempt from research_ref", 0);
+}
+
+// ----- Task 1.4: phase mapping ----------------------------------------------
+
+#[test]
+fn v2_clarifying_questions_scaffold_wrong_phase_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&n, "clarifying_questions_drafting", "vadi", 0, |b| {
+        b["phase"] = json!("research");
+    });
+    run(&b, &n).assert_contains(
+        "clarifying_questions_drafting requires phase=clarifying, not research",
+        23,
+        "DVANDVA_WRITE bad_phase_status",
+    );
+}
+
+#[test]
+fn v2_clarifying_questions_research_mode_phase_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "clarifying_questions_drafting", "vadi", 4, |b| {
+        b["mode"] = json!("research");
+        b["phase"] = json!("clarifying");
+        b["research_ref"] = Value::Null;
+    });
+    make_baton_v2(&n, "clarifying_questions_answer", "human", 5, |b| {
+        b["mode"] = json!("research");
+        b["phase"] = json!("clarifying");
+        b["research_ref"] = Value::Null;
+        b["clarifying_questions"] = json!(cq_entries(1, 1, false, "vadi"));
+    });
+    run(&b, &n).assert("research-mode clarifying phase is accepted", 0);
+}
+
+#[test]
+fn v2_clarifying_questions_research_mode_phase_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "clarifying_questions_drafting", "vadi", 4, |b| {
+        b["mode"] = json!("research");
+        b["phase"] = json!("clarifying");
+        b["research_ref"] = Value::Null;
+    });
+    make_baton_v2(&n, "clarifying_questions_answer", "human", 5, |b| {
+        b["mode"] = json!("research");
+        // Pre-P1, research mode's catch-all would have demanded "spec" here.
+        b["phase"] = json!("spec");
+        b["research_ref"] = Value::Null;
+        b["clarifying_questions"] = json!(cq_entries(1, 1, false, "vadi"));
+    });
+    run(&b, &n).assert_contains(
+        "research-mode clarifying_questions_answer requires phase=clarifying, not spec",
+        23,
+        "DVANDVA_WRITE bad_phase_status",
+    );
+}
+
+#[test]
+fn v2_clarifying_questions_review_mode_phase_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "clarifying_questions_drafting", "vadi", 4, |b| {
+        b["mode"] = json!("review");
+        b["phase"] = json!("clarifying");
+        b["research_ref"] = Value::Null;
+    });
+    make_baton_v2(&n, "clarifying_questions_answer", "human", 5, |b| {
+        b["mode"] = json!("review");
+        b["phase"] = json!("clarifying");
+        b["research_ref"] = Value::Null;
+        b["clarifying_questions"] = json!(cq_entries(1, 1, false, "vadi"));
+    });
+    run(&b, &n).assert("review-mode clarifying phase is accepted", 0);
+}
+
+#[test]
+fn v2_clarifying_questions_review_mode_phase_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "clarifying_questions_drafting", "vadi", 4, |b| {
+        b["mode"] = json!("review");
+        b["phase"] = json!("clarifying");
+        b["research_ref"] = Value::Null;
+    });
+    make_baton_v2(&n, "clarifying_questions_answer", "human", 5, |b| {
+        b["mode"] = json!("review");
+        // Pre-P1, review mode's catch-all would have demanded "review" here.
+        b["phase"] = json!("review");
+        b["research_ref"] = Value::Null;
+        b["clarifying_questions"] = json!(cq_entries(1, 1, false, "vadi"));
+    });
+    run(&b, &n).assert_contains(
+        "review-mode clarifying_questions_answer requires phase=clarifying, not review",
+        23,
+        "DVANDVA_WRITE bad_phase_status",
+    );
+}
+
+// ----- Task 1.5: per-state non-null gates -----------------------------------
+
+#[test]
+fn v2_clarifying_questions_round1_zero_entries_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "clarifying_questions_drafting", "vadi", 4, |b| {
+        b["phase"] = json!("clarifying");
+        b["research_ref"] = Value::Null;
+    });
+    make_baton_v2(&n, "clarifying_questions_answer", "human", 5, |b| {
+        b["phase"] = json!("clarifying");
+        b["research_ref"] = Value::Null;
+        b["clarifying_questions"] = json!([]);
+    });
+    run(&b, &n).assert_contains(
+        "zero round-1 questions is rejected",
+        23,
+        "DVANDVA_WRITE bad_clarifying_questions_round1",
+    );
+}
+
+#[test]
+fn v2_clarifying_questions_round1_unanswered_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "clarifying_questions_answer", "human", 4, |b| {
+        b["phase"] = json!("clarifying");
+        b["research_ref"] = Value::Null;
+        b["clarifying_questions"] = json!(cq_entries(1, 3, false, "vadi"));
+    });
+    make_baton_v2(&n, "clarifying_questions_followup", "prativadi", 5, |b| {
+        b["phase"] = json!("clarifying");
+        b["research_ref"] = Value::Null;
+        // Round 1 questions asked but still unanswered -- must not skip ahead.
+        b["clarifying_questions"] = json!(cq_entries(1, 3, false, "vadi"));
+    });
+    run(&b, &n).assert_contains(
+        "unanswered round-1 questions is rejected",
+        23,
+        "DVANDVA_WRITE bad_clarifying_questions_round1_answer",
+    );
+}
+
+#[test]
+fn v2_clarifying_questions_round2_zero_entries_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "clarifying_questions_followup", "prativadi", 4, |b| {
+        b["phase"] = json!("clarifying");
+        b["research_ref"] = Value::Null;
+        b["clarifying_questions"] = json!(cq_entries(1, 3, true, "vadi"));
+    });
+    make_baton_v2(
+        &n,
+        "clarifying_questions_followup_answer",
+        "human",
+        5,
+        |b| {
+            b["phase"] = json!("clarifying");
+            b["research_ref"] = Value::Null;
+            // No prativadi (round-2) contribution at all.
+            b["clarifying_questions"] = json!(cq_entries(1, 3, true, "vadi"));
+        },
+    );
+    run(&b, &n).assert_contains(
+        "zero round-2 questions (no prativadi contribution) is rejected",
+        23,
+        "DVANDVA_WRITE bad_clarifying_questions_round2",
+    );
+}
+
+#[test]
+fn v2_clarifying_questions_combined_below_five_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "clarifying_questions_followup", "prativadi", 4, |b| {
+        b["phase"] = json!("clarifying");
+        b["research_ref"] = Value::Null;
+        b["clarifying_questions"] = json!(cq_entries(1, 3, true, "vadi"));
+    });
+    make_baton_v2(
+        &n,
+        "clarifying_questions_followup_answer",
+        "human",
+        5,
+        |b| {
+            b["phase"] = json!("clarifying");
+            b["research_ref"] = Value::Null;
+            // 3 round-1 + 1 round-2 = 4 combined, below the >=5 floor.
+            let mut qs = cq_entries(1, 3, true, "vadi");
+            qs.extend(cq_entries(2, 1, false, "prativadi"));
+            b["clarifying_questions"] = json!(qs);
+        },
+    );
+    run(&b, &n).assert_contains(
+        "4 combined questions is below the >=5 floor",
+        23,
+        "DVANDVA_WRITE bad_clarifying_questions_round2",
+    );
+}
+
+#[test]
+fn v2_clarifying_questions_round2_unanswered_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(
+        &b,
+        "clarifying_questions_followup_answer",
+        "human",
+        4,
+        |b| {
+            b["phase"] = json!("clarifying");
+            b["research_ref"] = Value::Null;
+            let mut qs = cq_entries(1, 3, true, "vadi");
+            qs.extend(cq_entries(2, 2, false, "prativadi"));
+            b["clarifying_questions"] = json!(qs);
+        },
+    );
+    make_baton_v2(&n, "research_drafting", "vadi", 5, |b| {
+        b["phase"] = json!("research");
+        b["research_ref"] = json!("./superpowers/research/run-a.html");
+        // Round 2 still unanswered -- must not hand off to research_drafting.
+        let mut qs = cq_entries(1, 3, true, "vadi");
+        qs.extend(cq_entries(2, 2, false, "prativadi"));
+        b["clarifying_questions"] = json!(qs);
+    });
+    run(&b, &n).assert_contains(
+        "unanswered round-2 questions is rejected",
+        23,
+        "DVANDVA_WRITE bad_clarifying_questions_round2_answer",
+    );
+}
+
+#[test]
+fn v2_clarifying_questions_full_sequence_accepted() {
+    // The valid 3 round-1 + 2 round-2 (5 combined, >=1 per role) sequence
+    // reaches research_drafting end to end.
+    let d = tmp();
+    let (b0, c1) = paths(&d);
+
+    make_baton_v2(&c1, "clarifying_questions_drafting", "vadi", 0, |b| {
+        b["phase"] = json!("clarifying");
+        b["research_ref"] = Value::Null;
+    });
+    run(&b0, &c1).assert("scaffold clarifying_questions_drafting", 0);
+
+    let c2 = d.path().join("c2.json");
+    make_baton_v2(&c2, "clarifying_questions_answer", "human", 1, |b| {
+        b["phase"] = json!("clarifying");
+        b["research_ref"] = Value::Null;
+        b["clarifying_questions"] = json!(cq_entries(1, 3, false, "vadi"));
+    });
+    run(&b0, &c2).assert("clarifying_questions_drafting -> answer", 0);
+
+    let c3 = d.path().join("c3.json");
+    make_baton_v2(&c3, "clarifying_questions_followup", "prativadi", 2, |b| {
+        b["phase"] = json!("clarifying");
+        b["research_ref"] = Value::Null;
+        b["clarifying_questions"] = json!(cq_entries(1, 3, true, "vadi"));
+    });
+    run(&b0, &c3).assert("clarifying_questions_answer -> followup", 0);
+
+    let c4 = d.path().join("c4.json");
+    make_baton_v2(
+        &c4,
+        "clarifying_questions_followup_answer",
+        "human",
+        3,
+        |b| {
+            b["phase"] = json!("clarifying");
+            b["research_ref"] = Value::Null;
+            let mut qs = cq_entries(1, 3, true, "vadi");
+            qs.extend(cq_entries(2, 2, false, "prativadi"));
+            b["clarifying_questions"] = json!(qs);
+        },
+    );
+    run(&b0, &c4).assert("clarifying_questions_followup -> followup_answer", 0);
+
+    let c5 = d.path().join("c5.json");
+    make_baton_v2(&c5, "research_drafting", "vadi", 4, |b| {
+        b["phase"] = json!("research");
+        b["research_ref"] = json!("./superpowers/research/run-a.html");
+        let mut qs = cq_entries(1, 3, true, "vadi");
+        qs.extend(cq_entries(2, 2, true, "prativadi"));
+        b["clarifying_questions"] = json!(qs);
+    });
+    run(&b0, &c5).assert(
+        "clarifying_questions_followup_answer -> research_drafting",
+        0,
+    );
+
+    let installed: Value = serde_json::from_slice(&std::fs::read(&b0).unwrap()).unwrap();
+    assert_eq!(installed["status"], "research_drafting");
+    assert_eq!(
+        installed["clarifying_questions"].as_array().unwrap().len(),
+        5
+    );
+}
+
+// ----- Task 1.6: edge whitelist across every mode/profile arm --------------
+
+#[test]
+fn v2_clarifying_questions_edges_legal_development_fast() {
+    assert_clarifying_edges_legal("development", Some("fast"));
+}
+
+#[test]
+fn v2_clarifying_questions_edges_legal_development_standard() {
+    assert_clarifying_edges_legal("development", Some("standard"));
+}
+
+#[test]
+fn v2_clarifying_questions_edges_legal_development_full() {
+    assert_clarifying_edges_legal("development", Some("full"));
+}
+
+#[test]
+fn v2_clarifying_questions_edges_legal_research_mode() {
+    assert_clarifying_edges_legal("research", None);
+}
+
+#[test]
+fn v2_clarifying_questions_edges_legal_review_mode() {
+    assert_clarifying_edges_legal("review", None);
+}
+
+/// For a given (mode, profile) arm, assert `dvandva next` LIST surfaces all 4
+/// new clarifying-questions edges from their respective source statuses.
+fn assert_clarifying_edges_legal(mode: &str, profile: Option<&str>) {
+    let d = tmp();
+    let hops: [(&str, &str); 4] = [
+        (
+            "clarifying_questions_drafting",
+            "clarifying_questions_answer",
+        ),
+        (
+            "clarifying_questions_answer",
+            "clarifying_questions_followup",
+        ),
+        (
+            "clarifying_questions_followup",
+            "clarifying_questions_followup_answer",
+        ),
+        ("clarifying_questions_followup_answer", "research_drafting"),
+    ];
+    for (from, to) in hops {
+        let baton = d.path().join(format!("{from}.json"));
+        let current = minimal_current_baton(mode, profile, from, "clarifying");
+        write_value(&baton, &current);
+        let out = run_next_list(&baton);
+        assert!(
+            out.lines()
+                .any(|l| l.starts_with(&format!("DVANDVA_NEXT {to} "))),
+            "mode={mode} profile={profile:?}: expected {from}->{to} to be legal, got:\n{out}"
+        );
+    }
 }
