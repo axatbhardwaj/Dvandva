@@ -482,7 +482,7 @@ fn phase4_fixture(root: &Path) {
     w(root, "product.md", &product);
 
     // channel docs
-    let channel = format!("{SUPERPOWERS}{BIG_LIST}");
+    let channel = format!("{SUPERPOWERS}{BIG_LIST}{MODEL_CLASSES}");
     w(root, "docs/protocol/local-baton-channel.md", &channel);
     w(
         root,
@@ -492,7 +492,7 @@ fn phase4_fixture(root: &Path) {
     w(
         root,
         "plugins/dvandva/references/state-transition-table.md",
-        BIG_LIST,
+        &format!("{BIG_LIST}{MODEL_CLASSES}"),
     );
 
     // vadi skill
@@ -535,7 +535,7 @@ fn phase4_fixture(root: &Path) {
 
     // commands
     let command = format!(
-        "{SUPERPOWERS}research_ref work_split verification_matrix test_creation deep_review deslop\nparallel subagents\nconditional parallelism\nsubagent_tracks\nInvoke `dvandva:research`.\nregular local checkpoint commits\nModel-class mapping is vendor-neutral.\n{MODEL_CLASSES}"
+        "{SUPERPOWERS}research_ref work_split verification_matrix test_creation deep_review deslop\nparallel subagents\nconditional parallelism\nsubagent_tracks\nInvoke `dvandva:research`.\nregular local checkpoint commits\nModel-class mapping is vendor-neutral.\nNever use `haiku`.\n{MODEL_CLASSES}"
     );
     w(root, "plugins/dvandva/commands/vadi.md", &command);
     w(root, "plugins/dvandva/commands/prativadi.md", &command);
@@ -670,6 +670,24 @@ fn phase4_research_rejects_command_missing_model_policy() {
     fs::write(&p, text).unwrap();
     let r = phase4_research::report(d.path());
     assert!(r.fails_with("plugins/dvandva/commands/vadi.md documents Codex xhigh effort guidance"));
+}
+
+#[test]
+fn phase4_research_rejects_transition_table_missing_model_policy() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d
+        .path()
+        .join("plugins/dvandva/references/state-transition-table.md");
+    let text = fs::read_to_string(&p).unwrap().replace(
+        "Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.\n",
+        "",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with(
+        "plugins/dvandva/references/state-transition-table.md documents opus workload routing"
+    ));
 }
 
 #[test]

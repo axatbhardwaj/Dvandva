@@ -18,7 +18,11 @@ use std::path::Path;
 
 use crate::lint::{
     count_lines_matching, file_contains, file_has_exact_line, output_contract_contains,
-    resolve_root, Report,
+    resolve_root, Report, MODEL_POLICY_CLAUDE_MAPPING, MODEL_POLICY_CODEX_MAPPING,
+    MODEL_POLICY_CODEX_XHIGH, MODEL_POLICY_NO_HAIKU_COMMANDS, MODEL_POLICY_NO_HAIKU_SUBAGENTS,
+    MODEL_POLICY_OPUS_ROUTING, MODEL_POLICY_SONNET_ROUTING, MODEL_POLICY_STALE_OPUS_ROUTING,
+    MODEL_POLICY_STALE_SONNET_ROUTING, MODEL_POLICY_VENDOR_NEUTRAL_COMMANDS,
+    MODEL_POLICY_VENDOR_NEUTRAL_DOCS,
 };
 
 const ALL_AGENTS: [&str; 15] = [
@@ -89,6 +93,69 @@ fn req(r: &mut Report, root: &Path, rel: &str, needle: &str, msg: impl Into<Stri
 
 fn rej(r: &mut Report, root: &Path, rel: &str, needle: &str, msg: impl Into<String>) {
     r.add(!file_contains(root, rel, needle), msg);
+}
+
+fn req_model_policy_routing(r: &mut Report, root: &Path, rel: &str) {
+    req(
+        r,
+        root,
+        rel,
+        MODEL_POLICY_CODEX_XHIGH,
+        format!("{rel} documents Codex xhigh effort guidance"),
+    );
+    req(
+        r,
+        root,
+        rel,
+        MODEL_POLICY_OPUS_ROUTING,
+        format!("{rel} documents opus workload routing"),
+    );
+    req(
+        r,
+        root,
+        rel,
+        MODEL_POLICY_SONNET_ROUTING,
+        format!("{rel} documents sonnet workload routing"),
+    );
+    rej(
+        r,
+        root,
+        rel,
+        MODEL_POLICY_STALE_OPUS_ROUTING,
+        format!("{rel} avoids stale broad opus workload wording"),
+    );
+    rej(
+        r,
+        root,
+        rel,
+        MODEL_POLICY_STALE_SONNET_ROUTING,
+        format!("{rel} avoids stale broad sonnet workload wording"),
+    );
+}
+
+fn req_model_policy_common(r: &mut Report, root: &Path, rel: &str, vendor_neutral_needle: &str) {
+    req(
+        r,
+        root,
+        rel,
+        vendor_neutral_needle,
+        format!("{rel} documents vendor-neutral model classes"),
+    );
+    req(
+        r,
+        root,
+        rel,
+        MODEL_POLICY_CLAUDE_MAPPING,
+        format!("{rel} documents Claude model-class mapping"),
+    );
+    req(
+        r,
+        root,
+        rel,
+        MODEL_POLICY_CODEX_MAPPING,
+        format!("{rel} documents Codex model-class mapping"),
+    );
+    req_model_policy_routing(r, root, rel);
 }
 
 fn require_agent_model(
@@ -1474,134 +1541,47 @@ pub fn report(root: &Path) -> Report {
         "plugins/dvandva/skills/prativadi/SKILL.md",
         research,
     ] {
+        req_model_policy_common(&mut r, root, file, MODEL_POLICY_VENDOR_NEUTRAL_DOCS);
         req(
             &mut r,
             root,
             file,
-            "Dvandva model classes are vendor-neutral",
-            format!("{file} documents vendor-neutral model classes"),
-        );
-        req(
-            &mut r,
-            root,
-            file,
-            "Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models",
-            format!("{file} documents Claude model-class mapping"),
-        );
-        req(
-            &mut r,
-            root,
-            file,
-            "Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`",
-            format!("{file} documents Codex model-class mapping"),
-        );
-        req(
-            &mut r,
-            root,
-            file,
-            "Codex should request `xhigh` reasoning effort where the active surface exposes it",
-            format!("{file} documents Codex xhigh effort guidance"),
-        );
-        req(
-            &mut r,
-            root,
-            file,
-            "Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work",
-            format!("{file} documents opus workload routing"),
-        );
-        req(
-            &mut r,
-            root,
-            file,
-            "Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop",
-            format!("{file} documents sonnet workload routing"),
-        );
-        req(
-            &mut r,
-            root,
-            file,
-            "Do not use `haiku` for Dvandva subagents",
+            MODEL_POLICY_NO_HAIKU_SUBAGENTS,
             format!("{file} forbids haiku-class Dvandva subagents"),
-        );
-        rej(
-            &mut r,
-            root,
-            file,
-            "strongest available planning/review/architecture class",
-            format!("{file} avoids stale broad opus workload wording"),
-        );
-        rej(
-            &mut r,
-            root,
-            file,
-            "implementation/documentation workhorse class",
-            format!("{file} avoids stale broad sonnet workload wording"),
         );
     }
     for file in [
-        "plugins/dvandva/commands/vadi.md",
-        "plugins/dvandva/commands/prativadi.md",
+        "docs/protocol/local-baton-channel.md",
+        "plugins/dvandva/references/local-baton-channel.md",
+        "plugins/dvandva/references/state-transition-table.md",
     ] {
         req(
             &mut r,
             root,
             file,
-            "Model-class mapping is vendor-neutral",
-            format!("{file} documents vendor-neutral model-class mapping"),
-        );
-        req(
-            &mut r,
-            root,
-            file,
-            "Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models",
+            MODEL_POLICY_CLAUDE_MAPPING,
             format!("{file} documents Claude model-class mapping"),
         );
         req(
             &mut r,
             root,
             file,
-            "Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`",
+            MODEL_POLICY_CODEX_MAPPING,
             format!("{file} documents Codex model-class mapping"),
         );
+        req_model_policy_routing(&mut r, root, file);
+    }
+    for file in [
+        "plugins/dvandva/commands/vadi.md",
+        "plugins/dvandva/commands/prativadi.md",
+    ] {
+        req_model_policy_common(&mut r, root, file, MODEL_POLICY_VENDOR_NEUTRAL_COMMANDS);
         req(
             &mut r,
             root,
             file,
-            "Codex should request `xhigh` reasoning effort where the active surface exposes it",
-            format!("{file} documents Codex xhigh effort guidance"),
-        );
-        req(
-            &mut r,
-            root,
-            file,
-            "Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work",
-            format!("{file} documents opus workload routing"),
-        );
-        req(
-            &mut r,
-            root,
-            file,
-            "Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop",
-            format!("{file} documents sonnet workload routing"),
-        );
-        r.add(
-            file_contains(root, file, "Never use `haiku`")
-                || file_contains(root, file, "Do not use `haiku` for Dvandva subagents"),
+            MODEL_POLICY_NO_HAIKU_COMMANDS,
             format!("{file} forbids haiku-class Dvandva subagents"),
-        );
-        rej(
-            &mut r,
-            root,
-            file,
-            "strongest available planning/review/architecture class",
-            format!("{file} avoids stale broad opus workload wording"),
-        );
-        rej(
-            &mut r,
-            root,
-            file,
-            "implementation/documentation workhorse class",
-            format!("{file} avoids stale broad sonnet workload wording"),
         );
     }
     req(

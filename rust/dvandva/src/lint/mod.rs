@@ -21,6 +21,27 @@ pub mod schema_parity;
 pub mod skill_phase3;
 pub mod skills;
 
+pub(crate) const MODEL_POLICY_VENDOR_NEUTRAL_DOCS: &str =
+    "Dvandva model classes are vendor-neutral";
+pub(crate) const MODEL_POLICY_VENDOR_NEUTRAL_COMMANDS: &str =
+    "Model-class mapping is vendor-neutral";
+pub(crate) const MODEL_POLICY_CLAUDE_MAPPING: &str =
+    "Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models";
+pub(crate) const MODEL_POLICY_CODEX_MAPPING: &str =
+    "Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`";
+pub(crate) const MODEL_POLICY_CODEX_XHIGH: &str =
+    "Codex should request `xhigh` reasoning effort where the active surface exposes it";
+pub(crate) const MODEL_POLICY_OPUS_ROUTING: &str =
+    "Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work";
+pub(crate) const MODEL_POLICY_SONNET_ROUTING: &str =
+    "Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop";
+pub(crate) const MODEL_POLICY_NO_HAIKU_SUBAGENTS: &str = "Do not use `haiku` for Dvandva subagents";
+pub(crate) const MODEL_POLICY_NO_HAIKU_COMMANDS: &str = "Never use `haiku`";
+pub(crate) const MODEL_POLICY_STALE_OPUS_ROUTING: &str =
+    "strongest available planning/review/architecture class";
+pub(crate) const MODEL_POLICY_STALE_SONNET_ROUTING: &str =
+    "implementation/documentation workhorse class";
+
 /// One PASS/FAIL assertion outcome.
 pub struct Finding {
     pub ok: bool,
