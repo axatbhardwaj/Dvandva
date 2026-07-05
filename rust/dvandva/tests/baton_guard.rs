@@ -8,19 +8,34 @@
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::{json, Value};
 
-/// Spawn `dvandva baton-guard`, write `stdin_bytes` to its stdin, and return
-/// the completed `Output`.
+/// Spawn `dvandva baton-guard` in a fresh, non-git-repo temp directory (so
+/// the SLA lookup fails open — "can't tell" — and the direct-edit-guard
+/// tests below stay deterministic regardless of this repo's own real
+/// baton), write `stdin_bytes` to its stdin, and return the completed
+/// `Output`.
 fn run_guard(stdin_bytes: &[u8]) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_dvandva"))
-        .arg("baton-guard")
+    let dir = tempfile::tempdir().expect("tempdir");
+    run_guard_in(dir.path(), &[], stdin_bytes)
+}
+
+/// Spawn `dvandva baton-guard` with `cwd` as its working directory and
+/// `envs` applied, write `stdin_bytes` to its stdin, and return the
+/// completed `Output`.
+fn run_guard_in(cwd: &Path, envs: &[(&str, &str)], stdin_bytes: &[u8]) -> Output {
+    let mut cmd = Command::new(env!("CARGO_BIN_EXE_dvandva"));
+    cmd.arg("baton-guard")
+        .current_dir(cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .expect("failed to spawn dvandva baton-guard");
+        .stderr(Stdio::piped());
+    for (key, value) in envs {
+        cmd.env(key, value);
+    }
+    let mut child = cmd.spawn().expect("failed to spawn dvandva baton-guard");
     child
         .stdin
         .take()
@@ -30,6 +45,35 @@ fn run_guard(stdin_bytes: &[u8]) -> Output {
     child
         .wait_with_output()
         .expect("failed to wait on dvandva baton-guard")
+}
+
+/// Initialize an empty git repo at `dir` (so `git rev-parse --show-toplevel`
+/// resolves and the SLA lookup can actually run against it).
+fn init_git_repo(dir: &Path) {
+    let ok = Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(dir)
+        .status()
+        .expect("git init")
+        .success();
+    assert!(ok, "git init failed for {dir:?}");
+}
+
+/// Write the per-role SLA-pending marker at `dir`/.dvandva/.session-baton-pending.<role>
+/// with a stored timestamp `age_secs` in the past, so the marker reads as
+/// already aged without any real sleep.
+fn write_aged_marker(dir: &Path, role: &str, age_secs: u64) {
+    let marker_dir = dir.join(".dvandva");
+    std::fs::create_dir_all(&marker_dir).expect("create .dvandva");
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_secs();
+    std::fs::write(
+        marker_dir.join(format!(".session-baton-pending.{role}")),
+        (now.saturating_sub(age_secs)).to_string(),
+    )
+    .expect("write marker");
 }
 
 /// A minimal PreToolUse payload for a file-path-taking tool.
@@ -264,12 +308,10 @@ fn hooks_json_registers_pretooluse_matcher_and_command() {
     let matcher = entry["matcher"]
         .as_str()
         .expect("matcher should be a string");
-    for tool in ["Write", "Edit", "MultiEdit", "NotebookEdit"] {
-        assert!(
-            matcher.contains(tool),
-            "matcher {matcher:?} should cover {tool}"
-        );
-    }
+    assert_eq!(
+        matcher, "*",
+        "matcher should widen to all tools for the baton-creation SLA"
+    );
 
     let hook_handlers = entry["hooks"]
         .as_array()
@@ -280,4 +322,94 @@ fn hooks_json_registers_pretooluse_matcher_and_command() {
             .any(|h| h["type"] == "command" && h["command"] == "dvandva baton-guard"),
         "expected a command-type hook running `dvandva baton-guard`, got: {hook_handlers:?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// Baton-creation SLA (real I/O: marker file + active-run resolution)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn sla_blocks_a_tool_call_once_marker_ages_past_threshold_with_no_baton() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_git_repo(dir.path());
+    write_aged_marker(dir.path(), "vadi", 500);
+
+    let out = run_guard_in(
+        dir.path(),
+        &[],
+        payload("Write", "some/other/file.txt").as_bytes(),
+    );
+    assert_blocked(&out);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("dvandva resolve") || stderr.contains("dvandva write"),
+        "SLA block message should name the way out, got: {stderr}"
+    );
+}
+
+#[test]
+fn sla_allows_dvandva_write_command_even_past_threshold() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_git_repo(dir.path());
+    write_aged_marker(dir.path(), "vadi", 500);
+
+    let out = run_guard_in(
+        dir.path(),
+        &[],
+        json!({
+            "tool_name": "Bash",
+            "tool_input": { "command": "dvandva write --candidate x" }
+        })
+        .to_string()
+        .as_bytes(),
+    );
+    assert_allowed(&out);
+}
+
+#[test]
+fn sla_marker_is_removed_once_a_real_baton_exists() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_git_repo(dir.path());
+    write_aged_marker(dir.path(), "vadi", 500);
+
+    let run_dir = dir.path().join(".dvandva/runs/r1");
+    std::fs::create_dir_all(&run_dir).expect("create run dir");
+    std::fs::write(
+        run_dir.join("baton.json"),
+        json!({
+            "run_id": "r1",
+            "status": "research_drafting",
+            "assignee": "vadi",
+            "updated_at": "2026-01-01T00:00:00Z"
+        })
+        .to_string(),
+    )
+    .expect("write baton.json");
+
+    let out = run_guard_in(
+        dir.path(),
+        &[],
+        payload("Write", "some/other/file.txt").as_bytes(),
+    );
+    assert_allowed(&out);
+    assert!(
+        !dir.path()
+            .join(".dvandva/.session-baton-pending.vadi")
+            .exists(),
+        "marker should be removed once a real baton is resolvable"
+    );
+}
+
+#[test]
+fn sla_not_yet_breached_below_threshold_allows() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_git_repo(dir.path());
+    write_aged_marker(dir.path(), "vadi", 5);
+
+    let out = run_guard_in(
+        dir.path(),
+        &[("DVANDVA_BATON_SLA_SECONDS", "120")],
+        payload("Write", "some/other/file.txt").as_bytes(),
+    );
+    assert_allowed(&out);
 }
