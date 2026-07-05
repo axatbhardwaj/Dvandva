@@ -2021,6 +2021,60 @@ fn v2_clarifying_questions_round2_unanswered_rejected() {
 }
 
 #[test]
+fn v2_clarifying_questions_round1_wrong_asked_by_rejected() {
+    // Round-1 questions must be asked_by vadi -- prativadi asking in round 1
+    // must not satisfy the drafting-round gate, even though question/answer
+    // shape is otherwise valid.
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "clarifying_questions_drafting", "vadi", 0, |b| {
+        b["phase"] = json!("clarifying");
+        b["research_ref"] = Value::Null;
+    });
+    make_baton_v2(&n, "clarifying_questions_answer", "human", 1, |b| {
+        b["phase"] = json!("clarifying");
+        b["research_ref"] = Value::Null;
+        b["clarifying_questions"] = json!(cq_entries(1, 3, false, "prativadi"));
+    });
+    run(&b, &n).assert_contains(
+        "round-1 questions asked by prativadi is rejected",
+        23,
+        "DVANDVA_WRITE bad_clarifying_questions_round1",
+    );
+}
+
+#[test]
+fn v2_clarifying_questions_round2_wrong_asked_by_rejected() {
+    // Round-2 questions must be asked_by prativadi -- vadi asking in round 2
+    // must not satisfy the followup gate, even with a combined total >=5.
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v2(&b, "clarifying_questions_followup", "prativadi", 2, |b| {
+        b["phase"] = json!("clarifying");
+        b["research_ref"] = Value::Null;
+        b["clarifying_questions"] = json!(cq_entries(1, 3, true, "vadi"));
+    });
+    make_baton_v2(
+        &n,
+        "clarifying_questions_followup_answer",
+        "human",
+        3,
+        |b| {
+            b["phase"] = json!("clarifying");
+            b["research_ref"] = Value::Null;
+            let mut qs = cq_entries(1, 3, true, "vadi");
+            qs.extend(cq_entries(2, 2, false, "vadi"));
+            b["clarifying_questions"] = json!(qs);
+        },
+    );
+    run(&b, &n).assert_contains(
+        "round-2 questions asked by vadi is rejected",
+        23,
+        "DVANDVA_WRITE bad_clarifying_questions_round2",
+    );
+}
+
+#[test]
 fn v2_clarifying_questions_full_sequence_accepted() {
     // The valid 3 round-1 + 2 round-2 (5 combined, >=1 per role) sequence
     // reaches research_drafting end to end.

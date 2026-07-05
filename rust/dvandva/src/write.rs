@@ -3489,48 +3489,68 @@ fn serialized_work(a: &Value, b: &Value) -> bool {
 // ===========================================================================
 // verification_matrix / subagent_tracks
 // ===========================================================================
+/// The role required to have asked every `clarifying_questions` entry for
+/// `round`: round 1 is vadi's planner/feasibility/scope lens, round 2 is
+/// prativadi's reviewer/adversarial lens informed by round 1's answers.
+/// Enforcing this (not just round membership/count) is what makes the
+/// design's ">=1 question per role" requirement actually load-bearing.
+fn clarifying_round_asked_by(round: i64) -> &'static str {
+    if round == 1 {
+        "vadi"
+    } else {
+        "prativadi"
+    }
+}
+
 /// P1: every `clarifying_questions` entry for `round` has a non-empty
-/// `question` and a still-null `answer`, AND at least one such entry exists —
-/// the gate for leaving `clarifying_questions_drafting` (round 1) / entering
+/// `question`, a still-null `answer`, and the correct `asked_by` role for
+/// that round, AND at least one such entry exists — the gate for leaving
+/// `clarifying_questions_drafting` (round 1) / entering
 /// `clarifying_questions_followup` (round 2).
 fn clarifying_round_questions_asked(cand: &Value, round: i64) -> bool {
     let entries: Vec<&Value> = arr(field(cand, "clarifying_questions"))
         .iter()
         .filter(|q| field(q, "round").and_then(json_int) == Some(round))
         .collect();
+    let expected_asked_by = clarifying_round_asked_by(round);
     !entries.is_empty()
         && entries.iter().all(|q| {
             matches!(field(q, "question"), Some(Value::String(s)) if !s.is_empty())
                 && field(q, "answer") == Some(&Value::Null)
+                && str_field(q, "asked_by") == expected_asked_by
         })
 }
 
 /// P1: every `clarifying_questions` entry for `round` has a non-empty
-/// `answer`, AND at least one such entry exists — the gate for leaving
-/// `clarifying_questions_answer` (round 1) / `clarifying_questions_followup_answer`
-/// (round 2).
+/// `answer` and the correct `asked_by` role for that round, AND at least one
+/// such entry exists — the gate for leaving `clarifying_questions_answer`
+/// (round 1) / `clarifying_questions_followup_answer` (round 2).
 fn clarifying_round_answered(cand: &Value, round: i64) -> bool {
     let entries: Vec<&Value> = arr(field(cand, "clarifying_questions"))
         .iter()
         .filter(|q| field(q, "round").and_then(json_int) == Some(round))
         .collect();
+    let expected_asked_by = clarifying_round_asked_by(round);
     !entries.is_empty()
-        && entries
-            .iter()
-            .all(|q| matches!(field(q, "answer"), Some(Value::String(s)) if !s.is_empty()))
+        && entries.iter().all(|q| {
+            matches!(field(q, "answer"), Some(Value::String(s)) if !s.is_empty())
+                && str_field(q, "asked_by") == expected_asked_by
+        })
 }
 
 /// P1: the combined round-1 + round-2 `clarifying_questions` total is >=5,
-/// with both rounds represented (>=1 question per role) — the gate for
-/// leaving `clarifying_questions_followup`.
+/// with both rounds represented by their correct `asked_by` role (>=1
+/// question per role) — the gate for leaving `clarifying_questions_followup`.
 fn clarifying_total_ok(cand: &Value) -> bool {
     let all = arr(field(cand, "clarifying_questions"));
-    let round1 = all
-        .iter()
-        .any(|q| field(q, "round").and_then(json_int) == Some(1));
-    let round2 = all
-        .iter()
-        .any(|q| field(q, "round").and_then(json_int) == Some(2));
+    let round1 = all.iter().any(|q| {
+        field(q, "round").and_then(json_int) == Some(1)
+            && str_field(q, "asked_by") == clarifying_round_asked_by(1)
+    });
+    let round2 = all.iter().any(|q| {
+        field(q, "round").and_then(json_int) == Some(2)
+            && str_field(q, "asked_by") == clarifying_round_asked_by(2)
+    });
     all.len() >= 5 && round1 && round2
 }
 
