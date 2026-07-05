@@ -423,7 +423,7 @@ fn role_matches_absent_env_role_proceeds() {
     let repo = tmp.path();
     init_repo(repo);
 
-    let out = preflight(repo, None, &["--role", "prativadi"]);
+    let out = preflight(repo, None, &["--role", "vadi"]);
     assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
     assert!(
         stdout(&out).contains("result=create"),

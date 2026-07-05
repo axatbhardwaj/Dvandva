@@ -204,6 +204,119 @@ mod matcher_engine {
     }
 }
 
+/// Real preflight behavior for the no-active-baton Create outcome. These live
+/// here because this suite owns the role-skill preflight contract for the
+/// current Dvandva plan.
+mod preflight_create_behavior {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::process::{Command, Output};
+
+    fn bin() -> PathBuf {
+        PathBuf::from(env!("CARGO_BIN_EXE_dvandva"))
+    }
+
+    fn base_cmd<P: AsRef<std::ffi::OsStr>>(program: P) -> Command {
+        let mut cmd = Command::new(program);
+        cmd.env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("GIT_CONFIG_SYSTEM", "/dev/null")
+            .env_remove("DVANDVA_ROLE")
+            .env_remove("DVANDVA_HOOK_SELFCHECK")
+            .env_remove("DVANDVA_HOOK_PREFLIGHT")
+            .env_remove("DVANDVA_BATON_FILE")
+            .env_remove("DVANDVA_RUN_DIR")
+            .env_remove("DVANDVA_RUN_ID");
+        cmd
+    }
+
+    fn git(repo: &Path, args: &[&str]) -> Output {
+        base_cmd("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .expect("git invocation")
+    }
+
+    fn init_repo(dir: &Path) {
+        fs::create_dir_all(dir).unwrap();
+        assert!(git(dir, &["init", "-q"]).status.success(), "git init");
+        git(dir, &["config", "user.email", "test@dvandva.test"]);
+        git(dir, &["config", "user.name", "Dvandva Test"]);
+        git(dir, &["config", "commit.gpgsign", "false"]);
+        fs::write(dir.join(".gitkeep"), "").unwrap();
+        git(dir, &["add", ".gitkeep"]);
+        assert!(
+            git(dir, &["commit", "-q", "-m", "initial"])
+                .status
+                .success(),
+            "initial commit"
+        );
+    }
+
+    fn preflight(repo: &Path, role: &str) -> Output {
+        base_cmd(bin())
+            .arg("preflight")
+            .args(["--role", role])
+            .current_dir(repo)
+            .env("DVANDVA_ROLE", role)
+            .output()
+            .expect("dvandva preflight")
+    }
+
+    fn code(out: &Output) -> i32 {
+        out.status.code().unwrap_or(-1)
+    }
+
+    fn stdout(out: &Output) -> String {
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    fn stderr(out: &Output) -> String {
+        String::from_utf8_lossy(&out.stderr).into_owned()
+    }
+
+    #[test]
+    fn preflight_prativadi_create_becomes_wait() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path();
+        init_repo(repo);
+
+        let out = preflight(repo, "prativadi");
+        assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+        let text = stdout(&out);
+        assert!(text.contains("role=prativadi"), "stdout: {text}");
+        assert!(text.contains("result=wait"), "stdout: {text}");
+        assert!(text.contains("selected_by=discovery"), "stdout: {text}");
+        assert!(
+            text.contains(
+                "recommend=\"dvandva wait --role prativadi --discover --interval 60 --max-wait 540 --stall-max 1800 --until-actionable\""
+            ),
+            "stdout: {text}"
+        );
+        assert!(!text.contains("result=create"), "stdout: {text}");
+        assert!(!text.contains("scaffold="), "stdout: {text}");
+        assert!(!text.contains("run_id="), "stdout: {text}");
+    }
+
+    #[test]
+    fn preflight_vadi_create_unchanged() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path();
+        init_repo(repo);
+
+        let out = preflight(repo, "vadi");
+        assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+        let text = stdout(&out);
+        assert!(text.contains("role=vadi"), "stdout: {text}");
+        assert!(text.contains("result=create"), "stdout: {text}");
+        assert!(text.contains("scaffold="), "stdout: {text}");
+        assert!(text.contains("run_id=run"), "stdout: {text}");
+        assert!(!text.contains("result=wait"), "stdout: {text}");
+        assert!(!text.contains("--discover"), "stdout: {text}");
+    }
+}
+
 /// Role SKILL.md contract (`plugins/dvandva/skills/{vadi,prativadi}/SKILL.md`).
 /// Source: shell lines 47-121 (`for file in "$VADI" "$PRATIVADI"`).
 mod role_skill_contract {

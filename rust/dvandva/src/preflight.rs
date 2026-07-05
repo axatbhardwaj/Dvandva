@@ -167,6 +167,12 @@ pub fn run_preflight(role: Role, mode: HookMode) -> i32 {
             12
         }
         Ok(ResolveOutcome::Create(rel_path)) => {
+            if role == Role::Prativadi {
+                println!(
+                    "DVANDVA_PREFLIGHT role={role_str} result=wait selected_by={chosen_by} recommend=\"dvandva wait --role prativadi --discover --interval 60 --max-wait 540 --stall-max 1800 --until-actionable\""
+                );
+                return 0;
+            }
             let scaffold = canonical_path(&root, &rel_path);
             let run_id = run_id_for_path(&scaffold);
             println!(
