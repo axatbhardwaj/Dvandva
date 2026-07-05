@@ -73,7 +73,7 @@ The `/dvandva:vadi` and `/dvandva:prativadi` slash commands start a walkaway run
 
 The baton is a single JSON file the two roles pass back and forth. Each turn a role runs `dvandva preflight --role <role>` (which asserts `DVANDVA_ROLE` and adopts the git hooks), reads the baton with `dvandva state` / `dvandva resolve`, does its bounded work, scaffolds the next baton with `dvandva next`, installs it atomically with `dvandva write` (which snapshots history), and blocks in `dvandva wait --until-actionable` until the baton assigns its role again. The assigned-away session is not model-polling — it is foreground-blocked in the wait helper, which wakes the instant the baton changes.
 
-The full state machine, the 22-status catalog, and every legal transition live in `plugins/dvandva/references/state-transition-table.md`, with the acceptance spec in `product.md`. `done` and `abandoned` are the two terminal states; `abandoned` is a human bailout enterable only from `human_question` / `human_decision`, and `dvandva wait` exits 13 on it.
+The full state machine, the 26-status catalog, and every legal transition live in `plugins/dvandva/references/state-transition-table.md`, with the acceptance spec in `product.md`. `done` and `abandoned` are the two terminal states; `abandoned` is a human bailout enterable only from `human_question` / `human_decision`, and `dvandva wait` exits 13 on it.
 
 The v1 baton schema is **retired on the write path**: a `dvandva.baton.v1` write candidate (or a current baton still on v1) is rejected with `schema_retired` plus a migration hint to `dvandva.baton.v2`, while the read path (`state` / `resolve` / `wait` / `brief`) stays lenient so old v1 batons remain observable and resumable-for-read.
 

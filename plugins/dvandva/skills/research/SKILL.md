@@ -120,7 +120,7 @@ These skills are available within the Dvandva run context. Use each only when it
 
 ### research_drafting
 
-The vadi runs first for any named v2 run that is still in the research statuses:
+Development-mode runs pass through the mandatory `clarifying_questions_drafting` → `clarifying_questions_followup_answer` prefix before ever reaching `research_drafting` (see `dvandva:clarifying-questions`). Once a run is in the research statuses, the vadi runs first:
 
 1. Re-read `original_ask` and repo instructions, then identify whether the run is in `development`, `research`, or `review` mode. Development-mode research is mandatory and is not replaced by the lightweight research/review run modes.
 2. Dispatch parallel subagents or perform the same tracks directly.
