@@ -413,3 +413,74 @@ fn sla_not_yet_breached_below_threshold_allows() {
     );
     assert_allowed(&out);
 }
+
+#[test]
+fn sla_writes_a_fresh_marker_on_first_no_baton_call() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_git_repo(dir.path());
+    let marker = dir.path().join(".dvandva/.session-baton-pending.vadi");
+    assert!(!marker.exists(), "marker must not pre-exist");
+
+    let out = run_guard_in(
+        dir.path(),
+        &[],
+        payload("Write", "some/other/file.txt").as_bytes(),
+    );
+    assert_allowed(&out);
+    assert!(
+        marker.exists(),
+        "first no-baton call should write a fresh pending marker"
+    );
+    let stamp: u64 = std::fs::read_to_string(&marker)
+        .expect("read marker")
+        .trim()
+        .parse()
+        .expect("marker holds an epoch timestamp");
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("system time")
+        .as_secs();
+    assert!(
+        now.saturating_sub(stamp) < 5,
+        "marker timestamp should be freshly written (within 5s of now)"
+    );
+}
+
+#[test]
+fn sla_marker_path_is_keyed_per_role() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_git_repo(dir.path());
+
+    let out = run_guard_in(
+        dir.path(),
+        &[("DVANDVA_ROLE", "prativadi")],
+        payload("Write", "some/other/file.txt").as_bytes(),
+    );
+    assert_allowed(&out);
+    assert!(
+        dir.path()
+            .join(".dvandva/.session-baton-pending.prativadi")
+            .exists(),
+        "marker should be keyed by DVANDVA_ROLE, not hardcoded to vadi"
+    );
+    assert!(
+        !dir.path()
+            .join(".dvandva/.session-baton-pending.vadi")
+            .exists(),
+        "a prativadi call must not also write a vadi marker"
+    );
+}
+
+#[test]
+fn sla_custom_threshold_env_var_actually_breaches_at_the_cli_level() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_git_repo(dir.path());
+    write_aged_marker(dir.path(), "vadi", 6);
+
+    let out = run_guard_in(
+        dir.path(),
+        &[("DVANDVA_BATON_SLA_SECONDS", "5")],
+        payload("Write", "some/other/file.txt").as_bytes(),
+    );
+    assert_blocked(&out);
+}
