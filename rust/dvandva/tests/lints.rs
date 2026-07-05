@@ -1765,3 +1765,68 @@ fn parity_live_tree_passes() {
     let r = schema_parity::report(&root);
     assert!(r.passed(), "live-tree parity failures: {}", r.failures());
 }
+
+// ---------------------------------------------------------------------------
+// discovery-wait join-bootstrap recipe (Phase 1, commits 2b1bc7d/43d173e)
+//
+// This prose is new, hand-written protocol text, not lint-engine output, so
+// there is no dedicated `lint::` module fixture to drive it through. It is
+// pinned directly against the live repo tree instead, reusing the same
+// `resolve_root`/`read` helpers `parity_live_tree_passes` uses above, so a
+// future edit can't silently drop the "a joining role with no resumable
+// baton enters discovery wait instead of stopping or scaffolding" contract
+// from any of the seven surfaces it was copied into. The needle text was
+// confirmed absent at HEAD~2 (before the recipe commits landed), which is
+// the revert-equivalence evidence for this test.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn discovery_wait_recipe_pinned_in_join_surfaces() {
+    let root = dvandva::lint::resolve_root(&[]);
+
+    // prativadi's imperative form: "do not stop and do not scaffold".
+    let prativadi_needle = "do not stop and do not scaffold: enter discovery wait with `dvandva wait --role prativadi --discover --interval 60 --max-wait 540 --stall-max 1800 --until-actionable`";
+    for rel in [
+        "product.md",
+        "plugins/dvandva/skills/prativadi/SKILL.md",
+        "plugins/dvandva/commands/prativadi.md",
+    ] {
+        let text = dvandva::lint::read(&root, rel)
+            .unwrap_or_else(|| panic!("{rel} missing from live tree"));
+        assert!(
+            text.contains(prativadi_needle),
+            "{rel} is missing the discovery-wait join-bootstrap recipe"
+        );
+    }
+
+    // vadi's shorter symmetric form: "use discovery wait" (an affirmative
+    // statement rather than prativadi's "do not ..." double negative, but the
+    // same join-bootstrap recipe).
+    let vadi_needle = "use discovery wait with `dvandva wait --role vadi --discover --interval 60 --max-wait 540 --stall-max 1800 --until-actionable`";
+    for rel in [
+        "plugins/dvandva/skills/vadi/SKILL.md",
+        "plugins/dvandva/commands/vadi.md",
+    ] {
+        let text = dvandva::lint::read(&root, rel)
+            .unwrap_or_else(|| panic!("{rel} missing from live tree"));
+        assert!(
+            text.contains(vadi_needle),
+            "{rel} is missing the discovery-wait join-bootstrap recipe"
+        );
+    }
+
+    // Channel doc pair: byte-identical copies, third-person "does not" form,
+    // role-neutral `<vadi|prativadi>` placeholder.
+    let channel_needle = "does not stop and does not scaffold: it enters discovery wait with `dvandva wait --role <vadi|prativadi> --discover --interval 60 --max-wait 540 --stall-max 1800 --until-actionable`";
+    for rel in [
+        "docs/protocol/local-baton-channel.md",
+        "plugins/dvandva/references/local-baton-channel.md",
+    ] {
+        let text = dvandva::lint::read(&root, rel)
+            .unwrap_or_else(|| panic!("{rel} missing from live tree"));
+        assert!(
+            text.contains(channel_needle),
+            "{rel} is missing the discovery-wait join-bootstrap recipe"
+        );
+    }
+}
