@@ -583,6 +583,17 @@ logical change per commit, semantic prefix, and a subject of 50 characters or
 fewer. Record the commit hash in `verification` or `summary` as
 `checkpoint_commit=<hash>`.
 
+Reviewable-chunk commits are event-driven: commit at the moment a slice's
+motivating verification passes — never on a timer, and never by batching a
+phase into one commit. Each `work_split` chunk produces at least one commit,
+and one commit never spans multiple chunks. If a staged diff exceeds roughly
+400 changed lines and is not mechanically generated, split it into reviewable
+commits before committing; mechanically generated bulk (codegen, lockfiles,
+mass renames, ports) is exempt but must be committed alone with the mechanical
+nature named in the commit subject. Only the role that produced a change
+commits it — commit work is never delegated to a separate agent. Reviewers may
+file a finding against a commit that batches unrelated chunks.
+
 Checkpoint commits are local. Do not push until final ship, the
 `termination_review` handoff has converged with both final approvals true on the
 installed baton, and `allow_push == true`. If a later review rejects a
