@@ -51,7 +51,12 @@ impl GateResult {
 pub fn is_gate_terminal(status: &str) -> bool {
     matches!(
         status,
-        "done" | "human_question" | "human_decision" | "abandoned"
+        "done"
+            | "clarifying_questions_answer"
+            | "clarifying_questions_followup_answer"
+            | "human_question"
+            | "human_decision"
+            | "abandoned"
     )
 }
 
@@ -463,6 +468,8 @@ mod tests {
     #[test]
     fn gate_terminal_covers_broader_set_than_baton_status() {
         assert!(is_gate_terminal("done"));
+        assert!(is_gate_terminal("clarifying_questions_answer"));
+        assert!(is_gate_terminal("clarifying_questions_followup_answer"));
         assert!(is_gate_terminal("human_question"));
         assert!(is_gate_terminal("human_decision"));
         assert!(is_gate_terminal("abandoned"));
