@@ -235,6 +235,7 @@ fn skill_command_block() -> String {
 DVANDVA_RUN_ID names the run.
 turn_cap is the active cap; do not count wait heartbeats as turns.
 continuous polling is the hard rule.
+wait on the resolved baton with dvandva wait --until-actionable (Codex-hosted sessions append --through-human); after writing any handoff checkpoint, include --since-checkpoint.
 run_explainer_reviews are required at the end.
 "#
     .to_string()
@@ -306,6 +307,20 @@ fn skill_phase3_rejects_command_missing_explainer_reviews() {
     w(d.path(), "plugins/dvandva/commands/prativadi.md", "Goal: drive the resolved Dvandva baton. DVANDVA_RUN_ID turn_cap do not count wait heartbeats as turns. continuous polling is the hard rule.\n");
     let r = skill_phase3::report(d.path());
     assert!(r.fails_with("goal requires final explainer reviews"));
+}
+
+#[test]
+fn skill_phase3_rejects_command_missing_through_human_on_general_wait() {
+    let d = tmp();
+    skill_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/commands/vadi.md");
+    let text = fs::read_to_string(&p).unwrap().replace(
+        "wait on the resolved baton with dvandva wait --until-actionable (Codex-hosted sessions append --through-human); after writing any handoff checkpoint, include --since-checkpoint.",
+        "wait on the resolved baton with dvandva wait --until-actionable; after writing any handoff checkpoint, include --since-checkpoint.",
+    );
+    fs::write(&p, text).unwrap();
+    let r = skill_phase3::report(d.path());
+    assert!(r.fails_with("goal keeps Codex through-human on the general wait"));
 }
 
 // ---------------------------------------------------------------------------

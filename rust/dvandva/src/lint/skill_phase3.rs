@@ -359,6 +359,20 @@ pub fn report(root: &Path) -> Report {
             file_contains(root, &path, "continuous polling is the hard rule"),
             format!("{name} goal makes continuous polling mandatory"),
         );
+        // The general "wait on the resolved baton" instruction (distinct from
+        // the discovery-wait sentence, which already carries this same
+        // parenthetical) must also tell Codex-hosted sessions to append
+        // --through-human -- otherwise Codex fully exits on every
+        // human_question/human_decision pause instead of resuming
+        // automatically once the human answers.
+        r.add(
+            file_contains(
+                root,
+                &path,
+                "--until-actionable (Codex-hosted sessions append --through-human); after writing any handoff checkpoint",
+            ),
+            format!("{name} goal keeps Codex through-human on the general wait"),
+        );
         r.add(
             file_contains(root, &path, "run_explainer_reviews"),
             format!("{name} goal requires final explainer reviews"),
