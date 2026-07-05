@@ -15,9 +15,9 @@
 //!
 //! Exit codes (protocol surface, never unified with sibling helpers):
 //! `0` assigned/actionable · `10` done · `11` human_decision · `12`
-//! human_question · `13` abandoned · `20` finite timeout · `21` baton missing
-//! · `22` invalid JSON · `23` persist-max · `24` stall-max · `29` split-brain
-//! · `2` usage.
+//! human_question · `13` abandoned · `14` discover_ambiguous · `20` finite
+//! timeout · `21` baton missing · `22` invalid JSON · `23` persist-max · `24`
+//! stall-max · `29` split-brain · `2` usage.
 
 use std::path::Path;
 use std::sync::mpsc;
@@ -57,6 +57,11 @@ pub struct WaitConfig {
     /// Each pause episode prints one note line, then normal wait logic
     /// resumes as soon as the pause clears.
     pub through_human: bool,
+    /// `--discover`: run the adopt-and-continue discovery preamble (see
+    /// [`run_discovery`]) before the normal wait loop instead of requiring a
+    /// resolved baton path up front. Mutually exclusive with `--file`
+    /// (enforced by the `cmd::wait` wrapper).
+    pub discover: bool,
 }
 
 /// Drive the wait loop to a terminal exit code.
@@ -79,6 +84,28 @@ pub fn run(cfg: &WaitConfig) -> i32 {
     // re-entry.
     let mut through_human_selected_episode: Option<(String, String)> = None;
     let mut through_human_sibling_episode: Option<(String, String, String)> = None;
+
+    // `--discover`: adopt-and-continue bootstrap. Runs before the baton is
+    // known at all, so it cannot reuse `cfg.baton_file`; the stall/persist
+    // clocks above already started at wait entry, so they cover this period
+    // too. `discovered_cfg` outlives the `if` so the reborrow below can point
+    // at it for the rest of the function.
+    let discovered_cfg;
+    let cfg: &WaitConfig = if cfg.discover {
+        match run_discovery(cfg, persist_started, stall_started) {
+            DiscoverOutcome::Adopted { file, run_id } => {
+                println!("DVANDVA_WAIT discovered file={file} run_id={run_id}");
+                discovered_cfg = WaitConfig {
+                    baton_file: file,
+                    ..cfg.clone()
+                };
+                &discovered_cfg
+            }
+            DiscoverOutcome::Exit(code) => return code,
+        }
+    } else {
+        cfg
+    };
 
     loop {
         let mut wait_detail = String::new();
@@ -404,6 +431,102 @@ pub fn run(cfg: &WaitConfig) -> i32 {
     }
 }
 
+// ── `--discover` (adopt-and-continue) ───────────────────────────────────────
+
+/// Result of the `--discover` preamble: either exactly one non-terminal baton
+/// was found (adopt it and fall through to the normal wait loop) or the loop
+/// hit a terminal outcome of its own (an exit code — ambiguous discovery, or
+/// a persist-max/stall-max cap firing while still empty-handed).
+enum DiscoverOutcome {
+    Adopted { file: String, run_id: String },
+    Exit(i32),
+}
+
+/// A candidate baton seen by the discovery scan, with just enough surfaced
+/// to print a `candidate` line if discovery turns out ambiguous.
+struct DiscoveryCandidate {
+    file: String,
+    run_id: String,
+    status: String,
+    assignee: String,
+}
+
+/// Every non-terminal (not `done`/`abandoned`) managed baton under the
+/// repo-root `.dvandva` layout — the legacy baton plus `runs/*/baton.json` —
+/// via the same file listing [`scan_sibling_runs`] uses. `human_question` /
+/// `human_decision` count as active/resumable here, unlike the sibling-scan's
+/// separate pause-propagation bucket, because discovery has no "selected"
+/// baton yet to propagate a pause *to*.
+fn scan_discovery_candidates() -> Vec<DiscoveryCandidate> {
+    let mut candidates = Vec::new();
+    for file in list_managed_batons(".dvandva") {
+        let Ok(value) = read_json_lenient(Path::new(&file)) else {
+            continue;
+        };
+        let status = field_str(&value, "status");
+        if matches!(status.as_str(), "done" | "abandoned") {
+            continue;
+        }
+        let run_id = derive_run_id(&file, &field_str(&value, "run_id"));
+        let assignee = field_str(&value, "assignee");
+        candidates.push(DiscoveryCandidate {
+            file,
+            run_id,
+            status,
+            assignee,
+        });
+    }
+    candidates
+}
+
+/// Drive the discovery loop: heartbeat (`waiting_on=discovery`) on the
+/// `--max-wait` cadence while zero candidates exist, adopt the sole candidate
+/// the instant exactly one appears, or exit `14` the instant two or more
+/// appear. `persist_started`/`stall_started` are the same clocks the normal
+/// loop uses (started at wait entry, before this preamble runs), reused via
+/// [`record_wait_elapsed`] so persist-max and stall-max apply across the
+/// discovery period exactly like the rest of the wait.
+fn run_discovery(cfg: &WaitConfig, persist_started: u64, stall_started: u64) -> DiscoverOutcome {
+    let mut elapsed: u64 = 0;
+    loop {
+        let mut candidates = scan_discovery_candidates();
+        match candidates.len() {
+            0 => {
+                if elapsed >= cfg.max_wait {
+                    println!(
+                        "DVANDVA_WAIT heartbeat role={} waiting_on=discovery elapsed={elapsed}s",
+                        cfg.role
+                    );
+                    elapsed = 0;
+                }
+                wait_discovery_interval(cfg);
+                if let Some(code) =
+                    record_wait_elapsed(cfg, &mut elapsed, persist_started, stall_started, false)
+                {
+                    return DiscoverOutcome::Exit(code);
+                }
+            }
+            1 => {
+                let candidate = candidates.remove(0);
+                return DiscoverOutcome::Adopted {
+                    file: candidate.file,
+                    run_id: candidate.run_id,
+                };
+            }
+            _ => {
+                for candidate in &candidates {
+                    println!(
+                        "DVANDVA_WAIT candidate file={} run_id={} status={} assignee={}",
+                        candidate.file, candidate.run_id, candidate.status, candidate.assignee
+                    );
+                }
+                println!("DVANDVA_WAIT discover_ambiguous count={}", candidates.len());
+                return DiscoverOutcome::Exit(14);
+            }
+        }
+    }
+}
+
 /// Increment the interval accounting, then enforce persist-max and stall-max
 /// (both wall-clock). Returns `Some(exit_code)` when a cap fires.
 /// `suspend_stall` skips the stall-max check for this call: under
@@ -578,6 +701,34 @@ struct SplitBrainCandidate {
     updated_at: Option<OffsetDateTime>,
 }
 
+/// The active legacy baton plus every `runs/*/baton.json` under `root`,
+/// existence-guarded and sorted the way a bash glob expands (`runs/*` sorted;
+/// the legacy path is a literal, always first when present). Shared by
+/// [`scan_sibling_runs`] and the `--discover` preamble
+/// ([`scan_discovery_candidates`]) — the one place this repo lists managed
+/// baton files.
+fn list_managed_batons(root: &str) -> Vec<String> {
+    let mut files: Vec<String> = Vec::new();
+    let legacy = format!("{root}/baton.json");
+    if Path::new(&legacy).is_file() {
+        files.push(legacy);
+    }
+    let runs_dir = format!("{root}/runs");
+    if let Ok(entries) = std::fs::read_dir(&runs_dir) {
+        let mut run_batons: Vec<String> = Vec::new();
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let candidate = format!("{root}/runs/{}/baton.json", name.to_string_lossy());
+            if Path::new(&candidate).is_file() {
+                run_batons.push(candidate);
+            }
+        }
+        run_batons.sort(); // bash glob expands sorted
+        files.extend(run_batons);
+    }
+    files
+}
+
 /// Scan sibling runs under the selected run's `.dvandva` root. `selected_assignee`
 /// is who the selected baton waits on; split-brain only matters when that is the
 /// peer. The selected file is skipped by device+inode identity, never by run id,
@@ -600,26 +751,7 @@ fn scan_sibling_runs(
         return scan;
     }
 
-    // The active legacy baton is a supported layout, so it competes for my role
-    // like any named sibling. It is a literal (not a glob) — existence-guarded.
-    let mut files: Vec<String> = Vec::new();
-    let legacy = format!("{root}/baton.json");
-    if Path::new(&legacy).is_file() {
-        files.push(legacy);
-    }
-    let runs_dir = format!("{root}/runs");
-    if let Ok(entries) = std::fs::read_dir(&runs_dir) {
-        let mut run_batons: Vec<String> = Vec::new();
-        for entry in entries.flatten() {
-            let name = entry.file_name();
-            let candidate = format!("{root}/runs/{}/baton.json", name.to_string_lossy());
-            if Path::new(&candidate).is_file() {
-                run_batons.push(candidate);
-            }
-        }
-        run_batons.sort(); // bash glob expands sorted
-        files.extend(run_batons);
-    }
+    let files = list_managed_batons(&root);
 
     let selected_id = file_identity(&cfg.baton_file);
     let mut human_candidates: Vec<HumanCandidate> = Vec::new();
@@ -1031,7 +1163,28 @@ fn wait_one_interval(cfg: &WaitConfig) {
     if cfg.interval == 0 {
         return;
     }
-    let dirs = watch_dirs(&cfg.baton_file);
+    wait_watching_dirs(cfg.interval, &watch_dirs(&cfg.baton_file));
+}
+
+/// Same wake-on-event sleep as [`wait_one_interval`], but for the
+/// `--discover` preamble: no baton path is known yet, so the directories to
+/// watch are the fixed `.dvandva` layout roots instead of [`watch_dirs`].
+fn wait_discovery_interval(cfg: &WaitConfig) {
+    if cfg.interval == 0 {
+        return;
+    }
+    let mut dirs: Vec<String> = Vec::new();
+    for candidate in [".dvandva", ".dvandva/runs"] {
+        if Path::new(candidate).is_dir() {
+            dirs.push(candidate.to_string());
+        }
+    }
+    wait_watching_dirs(cfg.interval, &dirs);
+}
+
+/// Sleep `interval` seconds, waking early on an event in any of `dirs` when a
+/// `notify` watcher can start on at least one of them.
+fn wait_watching_dirs(interval: u64, dirs: &[String]) {
     let (tx, rx) = mpsc::channel::<()>();
     let handler = move |result: notify::Result<notify::Event>| {
         if result.is_ok() {
@@ -1041,7 +1194,7 @@ fn wait_one_interval(cfg: &WaitConfig) {
     match notify::recommended_watcher(handler) {
         Ok(mut watcher) => {
             let mut watched = 0;
-            for dir in &dirs {
+            for dir in dirs {
                 if watcher
                     .watch(Path::new(dir), RecursiveMode::NonRecursive)
                     .is_ok()
@@ -1050,12 +1203,12 @@ fn wait_one_interval(cfg: &WaitConfig) {
                 }
             }
             if watched > 0 {
-                let _ = rx.recv_timeout(Duration::from_secs(cfg.interval));
+                let _ = rx.recv_timeout(Duration::from_secs(interval));
             } else {
-                std::thread::sleep(Duration::from_secs(cfg.interval));
+                std::thread::sleep(Duration::from_secs(interval));
             }
         }
-        Err(_) => std::thread::sleep(Duration::from_secs(cfg.interval)),
+        Err(_) => std::thread::sleep(Duration::from_secs(interval)),
     }
 }
 

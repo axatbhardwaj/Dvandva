@@ -13,7 +13,7 @@ use dvandva::wait::{self, WaitConfig};
 use dvandva::Role;
 
 const USAGE: &str = "\
-Usage: dvandva wait --role <vadi|prativadi> [--file .dvandva/baton.json] [--interval seconds] [--max-wait seconds] [--allow-missing] [--persist] [--persist-max seconds] [--stall-max seconds] [--since-checkpoint checkpoint] [--until-actionable] [--finite] [--through-human]
+Usage: dvandva wait --role <vadi|prativadi> [--file .dvandva/baton.json] [--interval seconds] [--max-wait seconds] [--allow-missing] [--persist] [--persist-max seconds] [--stall-max seconds] [--since-checkpoint checkpoint] [--until-actionable] [--finite] [--through-human] [--discover]
 
 Defaults: --interval 60 --max-wait 540
 Default file resolution: --file wins; otherwise DVANDVA_BATON_FILE,
@@ -51,7 +51,18 @@ note human_pause line — including once across a wait re-invocation after a
 persist-max/shell-budget exit, via a small marker file next to the baton —
 then normal wait logic (including --until-actionable) resumes as soon as the
 pause clears. The stall watchdog is suspended for the duration of the pause.
-done and abandoned still exit immediately; split-brain is unaffected.";
+done and abandoned still exit immediately; split-brain is unaffected.
+
+Use --discover for the join bootstrap when no baton file is known yet:
+mutually exclusive with --file (exit 2 if both are given). Before the normal
+wait loop, it scans .dvandva/runs/*/baton.json plus the legacy
+.dvandva/baton.json for non-terminal batons (done/abandoned are terminal;
+human_question/human_decision are active/resumable). While none exist it
+heartbeats waiting_on=discovery on the --max-wait cadence; the stall-max clock
+covers this period too. Exactly one non-terminal baton is adopted (prints
+DVANDVA_WAIT discovered file=... run_id=...) and the helper falls through to
+the normal wait loop unchanged. Two or more prints one DVANDVA_WAIT candidate
+line per baton, then DVANDVA_WAIT discover_ambiguous count=<n>, and exits 14.";
 
 const RUN_ID_UNSAFE: &str =
     "DVANDVA_RUN_ID must be one safe path segment (letters, numbers, dot, underscore, dash; no slash or '..')";
@@ -69,6 +80,7 @@ struct RawArgs {
     since_checkpoint: Option<String>,
     until_actionable: bool,
     through_human: bool,
+    discover: bool,
 }
 
 impl Default for RawArgs {
@@ -85,6 +97,7 @@ impl Default for RawArgs {
             since_checkpoint: None,
             until_actionable: false,
             through_human: false,
+            discover: false,
         }
     }
 }
@@ -118,6 +131,12 @@ pub fn run(args: &[String]) -> i32 {
             return 2;
         }
     };
+
+    if raw.discover && raw.file.is_some() {
+        eprintln!("ERROR: --discover and --file are mutually exclusive");
+        eprintln!("{USAGE}");
+        return 2;
+    }
 
     // Numeric validation, in the shell's grouping/order.
     if !is_all_digits(&raw.interval)
@@ -186,7 +205,9 @@ pub fn run(args: &[String]) -> i32 {
     // Legacy default only: delegate discovery to the resolver, replicating the
     // shell's translation of RESOLVED/CREATE/ASK. No selector is set in this
     // branch, so an empty ResolveEnv forces discovery (cwd from the process).
-    if source == "legacy" {
+    // Skipped entirely under --discover: no baton file is required up front,
+    // and `wait::run`'s discovery preamble handles the "no run yet" case.
+    if source == "legacy" && !raw.discover {
         let role_enum = Role::parse(&role).unwrap_or(Role::Vadi);
         match resolve_active_run(role_enum, None, ResolveEnv::default()) {
             Ok(ResolveOutcome::Resolved(path)) => {
@@ -233,6 +254,7 @@ pub fn run(args: &[String]) -> i32 {
         until_actionable: raw.until_actionable,
         concurrent,
         through_human: raw.through_human,
+        discover: raw.discover,
     };
     wait::run(&cfg)
 }
@@ -288,6 +310,10 @@ fn parse_args(args: &[String]) -> Result<RawArgs, ParseError> {
             }
             "--through-human" => {
                 raw.through_human = true;
+                index += 1;
+            }
+            "--discover" => {
+                raw.discover = true;
                 index += 1;
             }
             "-h" | "--help" => return Err(ParseError::Help),

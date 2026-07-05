@@ -2848,3 +2848,207 @@ fn s6th_flag_cross_process_new_episode_after_rekey() {
         second.out
     );
 }
+
+// ── `--discover` (p1-wait-discover): adopt-and-continue discovery ──────────
+
+const BUDGET_DISCOVER: Duration = Duration::from_secs(8);
+
+#[test]
+fn discover_empty_runs_dir_heartbeats_then_adopts_new_baton() {
+    let d = tmp();
+    std::fs::create_dir_all(d.path().join(".dvandva/runs")).unwrap();
+    let target = d.path().join(".dvandva/runs/x/baton.json");
+    let write_target = target.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(2500));
+        write_named_observed_baton(
+            &write_target,
+            "x",
+            "prativadi",
+            "implementing",
+            "2026-07-05T10:00:00Z",
+            "codex",
+        );
+    });
+    let o = run_wait(
+        Some(d.path()),
+        &[],
+        &[
+            "--role",
+            "prativadi",
+            "--discover",
+            "--interval",
+            "1",
+            "--max-wait",
+            "2",
+        ],
+        BUDGET_DISCOVER,
+    );
+    assert!(o.contains("waiting_on=discovery"), "{}", o.out);
+    assert!(o.contains("discovered file="), "{}", o.out);
+    assert_eq!(o.code, Some(0), "{}", o.out);
+}
+
+#[test]
+fn discover_ignores_terminal_batons() {
+    let d = tmp();
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/old/baton.json"),
+        "old",
+        "human",
+        "done",
+        "2026-07-05T09:00:00Z",
+        "codex",
+    );
+    let terminal_only = run_wait(
+        Some(d.path()),
+        &[],
+        &[
+            "--role",
+            "prativadi",
+            "--discover",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_POLL,
+    );
+    assert!(
+        terminal_only.kept_polling(),
+        "expected keeps-polling with only a terminal baton, got {:?}\n{}",
+        terminal_only.code,
+        terminal_only.out
+    );
+    assert!(
+        !terminal_only.contains("discovered"),
+        "{}",
+        terminal_only.out
+    );
+
+    write_baton(
+        &d.path().join(".dvandva/runs/new/baton.json"),
+        "prativadi",
+        "implementing",
+    );
+    let adopted = run_wait(
+        Some(d.path()),
+        &[],
+        &[
+            "--role",
+            "prativadi",
+            "--discover",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_FAST,
+    );
+    assert!(adopted.contains("discovered file="), "{}", adopted.out);
+    assert_eq!(adopted.code, Some(0), "{}", adopted.out);
+}
+
+#[test]
+fn discover_two_actives_exits_14() {
+    let d = tmp();
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/a/baton.json"),
+        "a",
+        "vadi",
+        "implementing",
+        "2026-07-05T09:00:00Z",
+        "codex",
+    );
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/b/baton.json"),
+        "b",
+        "prativadi",
+        "phase_review",
+        "2026-07-05T09:01:00Z",
+        "claude",
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--discover",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(14), "{}", o.out);
+    assert_eq!(
+        o.out.matches("DVANDVA_WAIT candidate ").count(),
+        2,
+        "{}",
+        o.out
+    );
+    assert_eq!(
+        o.out
+            .matches("DVANDVA_WAIT discover_ambiguous count=2")
+            .count(),
+        1,
+        "{}",
+        o.out
+    );
+}
+
+#[test]
+fn discover_with_file_is_usage_error() {
+    let d = tmp();
+    let f = d.path().join("some-baton.json");
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--discover",
+            "--file",
+            f.to_str().unwrap(),
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(2), "{}", o.out);
+}
+
+#[test]
+fn discover_adopted_baton_honors_until_actionable() {
+    let d = tmp();
+    write_named_parallel_work_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        80,
+        "2026-07-05T09:00:00Z",
+        "vadi",
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[],
+        &[
+            "--role",
+            "prativadi",
+            "--discover",
+            "--until-actionable",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_POLL,
+    );
+    assert!(
+        o.kept_polling(),
+        "expected keeps-polling, got {:?}\n{}",
+        o.code,
+        o.out
+    );
+    assert!(o.contains("discovered file="), "{}", o.out);
+    assert!(o.contains("no_actionable_work"), "{}", o.out);
+}
