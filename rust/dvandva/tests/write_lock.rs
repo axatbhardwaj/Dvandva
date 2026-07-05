@@ -89,7 +89,7 @@ fn install_fail_on_read_only_dir() {
     use std::os::unix::fs::PermissionsExt;
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "research_drafting", "vadi", 0, |_| {});
+    make_baton_v2(&n, "clarifying_questions_drafting", "vadi", 0, |_| {});
     std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
     let result = run(&b, &n);
     std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -109,12 +109,12 @@ fn snapshot_failure_via_history_file_collision_exits_30() {
     // `schema_retired`); the snapshot-collision path is engine-wide.
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "research_drafting", "vadi", 0, |_| {});
+    make_baton_v2(&n, "clarifying_questions_drafting", "vadi", 0, |_| {});
     std::fs::write(d.path().join("history"), b"x").unwrap();
     run(&b, &n).assert("snapshot failure via history collision exits 30", 30);
     let installed: Value = serde_json::from_slice(&std::fs::read(&b).unwrap()).unwrap();
     assert_eq!(
-        installed["status"], "research_drafting",
+        installed["status"], "clarifying_questions_drafting",
         "baton must be installed despite the snapshot failure"
     );
 }

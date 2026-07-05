@@ -106,7 +106,7 @@ fn v2_agent_instance_write_path_prefix_collision_exits_23() {
 fn v2_agent_instance_sibling_prefix_paths_accepted() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+    make_baton_v2(&n, "clarifying_questions_drafting", "vadi", 0, |b| {
         dynamic_agent_instances(b);
         b["agent_instances"][0]["status"] = json!("running");
         b["agent_instances"][0]["write_paths"] = json!(["src/a"]);
@@ -125,7 +125,13 @@ fn v2_agent_instance_sibling_prefix_paths_accepted() {
 fn v2_six_agent_instances_accepted() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "research_drafting", "vadi", 0, many_agent_instances);
+    make_baton_v2(
+        &n,
+        "clarifying_questions_drafting",
+        "vadi",
+        0,
+        many_agent_instances,
+    );
     run(&b, &n).assert(
         "v2 six generated agent_instances with collapsed mix are accepted",
         0,
@@ -206,7 +212,7 @@ fn v2_running_agent_instances_prior_base_collision_exits_23() {
 fn v2_closed_agent_instances_prior_base_reuse_paths_accepted() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+    make_baton_v2(&n, "clarifying_questions_drafting", "vadi", 0, |b| {
         dynamic_agent_instances(b);
         b["agent_instances"][0]["base_checkpoint"] = json!(5);
         b["agent_instances"][0]["spawned_at_checkpoint"] = json!(5);
@@ -233,7 +239,7 @@ fn v2_closed_agent_instances_prior_base_reuse_paths_accepted() {
 fn v2_agent_instance_serialized_conflict_accepted() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+    make_baton_v2(&n, "clarifying_questions_drafting", "vadi", 0, |b| {
         dynamic_agent_instances(b);
         b["agent_instances"][0]["status"] = json!("running");
         b["agent_instances"][0]["write_paths"] = json!(["scripts/test-dvandva-write.sh"]);
@@ -655,7 +661,8 @@ fn profile_default_scaffold_candidate() -> Value {
     b["research_ref"] = json!("./superpowers/research/run-a.html");
     b["current_engine"] = json!("codex");
     b["branch"] = json!("test-branch");
-    b["status"] = json!("research_drafting");
+    b["status"] = json!("clarifying_questions_drafting");
+    b["phase"] = json!("clarifying");
     b["assignee"] = json!("vadi");
     b["checkpoint"] = json!(0);
     b

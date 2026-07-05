@@ -69,6 +69,10 @@ pub fn make_baton_v2(
     mutate: impl FnOnce(&mut Value),
 ) {
     let phase: Value = match status {
+        "clarifying_questions_drafting"
+        | "clarifying_questions_answer"
+        | "clarifying_questions_followup"
+        | "clarifying_questions_followup_answer" => json!("clarifying"),
         "spec_drafting" | "spec_review" | "spec_revision" => json!("spec"),
         "implementing"
         | "parallel_implementing"
