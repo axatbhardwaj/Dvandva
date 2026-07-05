@@ -10,6 +10,9 @@ use regex::Regex;
 
 use crate::lint::{
     gather_surface, list_md, resolve_root, surface_contains, surface_matches, Report,
+    MODEL_POLICY_CLAUDE_MAPPING, MODEL_POLICY_CODEX_MAPPING, MODEL_POLICY_CODEX_XHIGH,
+    MODEL_POLICY_OPUS_ROUTING, MODEL_POLICY_SONNET_ROUTING, MODEL_POLICY_STALE_OPUS_ROUTING,
+    MODEL_POLICY_STALE_SONNET_ROUTING,
 };
 
 const SURFACE: &[&str] = &[
@@ -88,18 +91,32 @@ pub fn report(root: &Path) -> Report {
         "surface rejects a hidden scheduler or central owner",
     );
     r.add(
-        surface_contains(
-            &surface,
-            "Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models",
-        ),
+        surface_contains(&surface, MODEL_POLICY_CLAUDE_MAPPING),
         "surface documents Anthropic opus/sonnet model-class mapping",
     );
     r.add(
-        surface_contains(
-            &surface,
-            "Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`",
-        ),
+        surface_contains(&surface, MODEL_POLICY_CODEX_MAPPING),
         "surface documents Codex gpt-5.5/gpt-5.4 model-class mapping",
+    );
+    r.add(
+        surface_contains(&surface, MODEL_POLICY_CODEX_XHIGH),
+        "surface documents Codex xhigh effort guidance",
+    );
+    r.add(
+        surface_contains(&surface, MODEL_POLICY_OPUS_ROUTING),
+        "surface documents opus workload routing",
+    );
+    r.add(
+        surface_contains(&surface, MODEL_POLICY_SONNET_ROUTING),
+        "surface documents sonnet workload routing",
+    );
+    r.add(
+        !surface_contains(&surface, MODEL_POLICY_STALE_OPUS_ROUTING),
+        "surface avoids stale broad opus workload wording",
+    );
+    r.add(
+        !surface_contains(&surface, MODEL_POLICY_STALE_SONNET_ROUTING),
+        "surface avoids stale broad sonnet workload wording",
     );
     r.add(
         surface_matches(

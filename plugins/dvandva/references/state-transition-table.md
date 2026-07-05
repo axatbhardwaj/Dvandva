@@ -583,14 +583,16 @@ agent.
 
 The 15-agent roster is the **seed roster**. Run 3 enables run-scoped dynamic agent generation via `agent_instances` on the baton — a first-class registry separate from `subagent_tracks`.
 
-### Model classes (vendor-neutral)
+### Model classes (durable workload routing)
 
-| Class label | Use | Claude Code | Codex |
+Model classes are durable workload-routing classes, not a literal ranked model table. Accepted compatibility strings remain vendor-neutral and must keep validating existing batons.
+
+| Routing class | Accepted class string | Claude Code mapping | Codex mapping |
 |---|---|---|---|
-| `opus-class\|gpt-5.5` | Architecture, planning, review | Opus-class | gpt-5.5 |
-| `sonnet-class\|gpt-5.4` | Implementation, documentation | Sonnet-class | gpt-5.4 |
+| `opus` | `opus-class\|gpt-5.5` | Opus-class | gpt-5.5 |
+| `sonnet` | `sonnet-class\|gpt-5.4` | Sonnet-class | gpt-5.4 |
 
-Do not use `haiku` for Dvandva dynamic agents.
+Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models. Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`. Codex should request `xhigh` reasoning effort where the active surface exposes it. Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work. Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop. Do not use `haiku` for Dvandva dynamic agents.
 
 ### Permission classes
 

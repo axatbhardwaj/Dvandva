@@ -1,7 +1,7 @@
 ---
 name: dvandva-cross-reviewer
 description: Use for Dvandva cross-review of another role's implementation chunk before holistic deep_review.
-model: opus
+model: sonnet
 color: yellow
 phase: cross_review
 tools: Read, Glob, Grep, Bash

@@ -324,6 +324,9 @@ write-helper validation exit 23
 const MODEL_CLASSES: &str = r#"Dvandva model classes are vendor-neutral.
 Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models.
 Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`.
+Codex should request `xhigh` reasoning effort where the active surface exposes it.
+Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.
+Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
 Do not use `haiku` for Dvandva subagents.
 "#;
 
@@ -354,13 +357,9 @@ fn phase4_agent(name: &str) -> String {
         "adversarial-analyst",
         "architect",
         "baton-auditor",
-        "cross-reviewer",
         "deep-reviewer",
         "doc-verifier",
         "integration-checker",
-        "pattern-mapper",
-        "researcher",
-        "sandbox-verifier",
         "security-auditor",
     ];
     let model = if opus.contains(&name) {
@@ -483,7 +482,7 @@ fn phase4_fixture(root: &Path) {
     w(root, "product.md", &product);
 
     // channel docs
-    let channel = format!("{SUPERPOWERS}{BIG_LIST}");
+    let channel = format!("{SUPERPOWERS}{BIG_LIST}{MODEL_CLASSES}");
     w(root, "docs/protocol/local-baton-channel.md", &channel);
     w(
         root,
@@ -493,7 +492,7 @@ fn phase4_fixture(root: &Path) {
     w(
         root,
         "plugins/dvandva/references/state-transition-table.md",
-        BIG_LIST,
+        &format!("{BIG_LIST}{MODEL_CLASSES}"),
     );
 
     // vadi skill
@@ -536,7 +535,7 @@ fn phase4_fixture(root: &Path) {
 
     // commands
     let command = format!(
-        "{SUPERPOWERS}research_ref work_split verification_matrix test_creation deep_review deslop\nparallel subagents\nconditional parallelism\nsubagent_tracks\nInvoke `dvandva:research`.\nregular local checkpoint commits\n"
+        "{SUPERPOWERS}research_ref work_split verification_matrix test_creation deep_review deslop\nparallel subagents\nconditional parallelism\nsubagent_tracks\nInvoke `dvandva:research`.\nregular local checkpoint commits\nModel-class mapping is vendor-neutral.\nNever use `haiku`.\n{MODEL_CLASSES}"
     );
     w(root, "plugins/dvandva/commands/vadi.md", &command);
     w(root, "plugins/dvandva/commands/prativadi.md", &command);
@@ -649,14 +648,46 @@ fn phase4_research_rejects_haiku_agent() {
 fn phase4_research_rejects_wrong_model_class() {
     let d = tmp();
     phase4_fixture(d.path());
-    // implementer must be sonnet; flip to opus.
-    let p = d.path().join("plugins/dvandva/agents/implementer.md");
+    // Researcher is bounded read-only research, so it must stay sonnet.
+    let p = d.path().join("plugins/dvandva/agents/researcher.md");
     let text = fs::read_to_string(&p)
         .unwrap()
         .replace("model: sonnet", "model: opus");
     fs::write(&p, text).unwrap();
     let r = phase4_research::report(d.path());
     assert!(r.fails_with("uses sonnet-class model"));
+}
+
+#[test]
+fn phase4_research_rejects_command_missing_model_policy() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/commands/vadi.md");
+    let text = fs::read_to_string(&p).unwrap().replace(
+        "Codex should request `xhigh` reasoning effort where the active surface exposes it.\n",
+        "",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("plugins/dvandva/commands/vadi.md documents Codex xhigh effort guidance"));
+}
+
+#[test]
+fn phase4_research_rejects_transition_table_missing_model_policy() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d
+        .path()
+        .join("plugins/dvandva/references/state-transition-table.md");
+    let text = fs::read_to_string(&p).unwrap().replace(
+        "Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.\n",
+        "",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with(
+        "plugins/dvandva/references/state-transition-table.md documents opus workload routing"
+    ));
 }
 
 #[test]
@@ -694,6 +725,9 @@ There is no daemon and no mailbox.
 There is no hidden scheduler or hidden central process.
 Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models.
 Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`.
+Codex should request `xhigh` reasoning effort where the active surface exposes it.
+Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.
+Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
 generated agents never own assignee, active_roles, or transitions.
 "#;
 
@@ -707,6 +741,9 @@ There is no daemon and no mailbox.
 There is no hidden scheduler or hidden central process.
 Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models.
 Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`.
+Codex should request `xhigh` reasoning effort where the active surface exposes it.
+Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.
+Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
 generated agents never own assignee, active_roles, or transitions.
 "#;
 
@@ -783,6 +820,24 @@ fn run3_rejects_missing_no_daemon() {
     );
     let r = run3_dynamic_agents::report(d.path());
     assert!(r.fails_with("surface rejects a runtime daemon"));
+}
+
+#[test]
+fn run3_rejects_stale_broad_model_policy() {
+    let d = tmp();
+    run3_base(d.path());
+    w(
+        d.path(),
+        "plugins/dvandva/skills/research/SKILL.md",
+        RUN3_SURFACE,
+    );
+    w(
+        d.path(),
+        "plugins/dvandva/commands/vadi.md",
+        "Agent files say opus means the strongest available planning/review/architecture class.\n",
+    );
+    let r = run3_dynamic_agents::report(d.path());
+    assert!(r.fails_with("surface avoids stale broad opus workload wording"));
 }
 
 #[test]
