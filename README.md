@@ -1,10 +1,11 @@
 # Dvandva
 
-Dvandva is a coordination protocol and protocol-level orchestrator for **paired** AI coding agents. There is no daemon, no launcher, and no hidden process that owns the control loop — two independently running agent sessions follow a shared state machine through a local baton file. One role, `vadi`, proposes plans and implements phases; the other, `prativadi`, adversarially reviews, applies narrow fixups from a strict allowlist, and hands control back through the baton. Because the protocol is just files plus the `dvandva` binary, it needs zero infrastructure and is crash-tolerant by construction: all state lives on disk, so either session can be killed and rejoin at preflight. The canonical dogfood pairing is Claude Code as `vadi` and Codex as `prativadi` — the cross-vendor split is the point, because different models have systematically different blind spots.
+Dvandva is **a governed-loop protocol for adversarial AI pairs** — orchestration for paired AI coding agents without an orchestrator. There is no daemon, no launcher, and no hidden process that owns the control loop — two independently running agent sessions follow a shared state machine through a local baton file. One role, `vadi`, proposes plans and implements phases; the other, `prativadi`, adversarially reviews, applies narrow fixups from a strict allowlist, and hands control back through the baton. Because the protocol is just files plus the `dvandva` binary, it needs zero infrastructure and is crash-tolerant by construction: all state lives on disk, so either session can be killed and rejoin at preflight. The canonical dogfood pairing is Claude Code as `vadi` and Codex as `prativadi` — the cross-vendor split is the point, because different models have systematically different blind spots.
 
 **At a glance**
 
 - **Never solo** — every run has two decorrelated roles, and the reviewer is never the engine that produced the work.
+- **Governed loops** — every review→fix cycle is a typed, capped state-machine edge; the validator mandates counter increments, and a loop that hits its cap routes to the human instead of spinning.
 - **Walkaway or supervised** — two autonomous sessions polling the baton, or one human invoking each role in turn.
 - **3 modes × 3 profiles** — `development` / `research` / `review` runs, each development run tuned `fast` / `standard` / `full`.
 - **Evidence-gated `done`** — no run reaches post-handshake `done` until both roles independently approve with recorded verification evidence.
