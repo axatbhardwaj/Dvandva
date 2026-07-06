@@ -26,7 +26,7 @@
 //! selects the exit: `Terminal` -> 10/13, `Pause` -> 11/12, `HumanGate` -> 15,
 //! `Work`/`ReviewGate` -> the generic heartbeat path.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -783,17 +783,31 @@ fn scan_sibling_runs(
 
     let files = list_managed_batons(&root);
 
+    // Robust self-identity, captured once. All three axes are stable across the
+    // *one* thing that used to defeat the self-skip: an atomic temp-file+rename
+    // replace of the selected baton mid-scan, which swaps its (dev, ino) between
+    // this pre-loop capture and the per-file check below (finding
+    // vadi-wait-split-brain-false-positive — the run was scanned as its own
+    // split-brain sibling).
     let selected_id = file_identity(&cfg.baton_file);
+    let selected_canonical = canonical_path(&cfg.baton_file);
+    // Path-authoritative id (empty field fallback): never spoofable by a stale
+    // `.run_id`, and — unlike inode/canonical — immune to inode churn entirely.
+    let selected_run_id = derive_run_id(&cfg.baton_file, "");
     let mut human_candidates: Vec<HumanCandidate> = Vec::new();
     let mut split_brain_candidates: Vec<SplitBrainCandidate> = Vec::new();
 
     for sibling_file in files {
-        if let (Some(sel), Some(sib)) = (selected_id, file_identity(&sibling_file)) {
-            if sel == sib {
-                continue; // self-skip by (dev, ino), never by run id
-            }
-        }
         let sibling_run_id = derive_run_id(&sibling_file, "");
+        if is_selected_self(
+            selected_id.as_ref(),
+            selected_canonical.as_deref(),
+            &selected_run_id,
+            &sibling_file,
+            &sibling_run_id,
+        ) {
+            continue;
+        }
         let Ok(sibling) = read_json_lenient(Path::new(&sibling_file)) else {
             continue;
         };
@@ -1002,6 +1016,55 @@ fn file_identity(path: &str) -> Option<(u64, u64)> {
 fn file_identity(path: &str) -> Option<std::path::PathBuf> {
     std::fs::canonicalize(path).ok()
 }
+
+/// Absolute, symlink-resolved path. Stable across an atomic temp-file+rename
+/// replace of the target (the directory entry is what's swapped, not the path),
+/// so it identifies the selected run even after its inode churns mid-scan.
+fn canonical_path(path: &str) -> Option<PathBuf> {
+    std::fs::canonicalize(path).ok()
+}
+
+/// Whether `sibling_file` IS the selected run and so must be excluded from its
+/// own sibling set. Three independent identity axes, any one sufficient, so no
+/// single filesystem event can make the run masquerade as its own sibling:
+///   1. Path-derived run id — a pure lexical id from the on-disk layout, immune
+///      to inode churn. Restricted to concretely named runs: the generic
+///      `legacy`/`unknown` fallbacks can name genuinely distinct batons (e.g. a
+///      run literally named `legacy` vs. the legacy baton), so they defer to the
+///      path/inode axes rather than risk hiding a real peer.
+///   2. Canonical path — stable across an atomic rename replace.
+///   3. (dev, ino) — the original check, kept for hardlink/bind-mount layouts
+///      whose path strings differ.
+fn is_selected_self(
+    selected_id: Option<&FileId>,
+    selected_canonical: Option<&Path>,
+    selected_run_id: &str,
+    sibling_file: &str,
+    sibling_run_id: &str,
+) -> bool {
+    if sibling_run_id == selected_run_id
+        && selected_run_id != "legacy"
+        && selected_run_id != "unknown"
+    {
+        return true;
+    }
+    if let (Some(a), Some(b)) = (selected_canonical, canonical_path(sibling_file)) {
+        if a == b {
+            return true;
+        }
+    }
+    if let (Some(a), Some(b)) = (selected_id, file_identity(sibling_file).as_ref()) {
+        if a == b {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(unix)]
+type FileId = (u64, u64);
+#[cfg(not(unix))]
+type FileId = std::path::PathBuf;
 
 /// Whether this role has dependency-unblocked, non-terminal work to do.
 ///

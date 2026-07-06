@@ -14,6 +14,8 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering}; // p3-split-brain
+use std::sync::Arc; // p3-split-brain
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -3372,4 +3374,218 @@ fn p3_v2_review_status_keeps_polling() {
     );
     assert_eq!(o.code, Some(20), "{}", o.out);
     assert!(!o.contains("DVANDVA_WAIT human_gate"), "{}", o.out);
+}
+
+// ── p3-split-brain ───────────────────────────────────────────────────────────
+// Regression for finding vadi-wait-split-brain-false-positive: a run must never
+// report ITSELF as a split-brain sibling. Live, a vadi wait exited 29 with
+// sibling_run_id == its own selected_run_id when the selected baton was
+// atomically rewritten (temp-file + rename) mid-scan — the pre-loop (dev, ino)
+// self-skip capture no longer matched the freshly-renamed file's inode, so the
+// selected run was scanned as its own sibling that happened to name the waiting
+// role as assignee.
+
+/// Atomically publish a named-run baton (write a sibling temp file, then rename
+/// over the target) so a concurrent reader only ever sees a complete document —
+/// exactly the replace shape production advances use, and the one that churns
+/// the inode the buggy self-skip relied on. // p3-split-brain
+fn atomic_write_named_baton(
+    baton: &Path,
+    run_id: &str,
+    assignee: &str,
+    status: &str,
+    checkpoint: u64,
+) {
+    let dir = baton.parent().unwrap();
+    std::fs::create_dir_all(dir).unwrap();
+    let tmp = dir.join(".baton.json.p3tmp");
+    std::fs::write(
+        &tmp,
+        format!(
+            r#"{{
+  "schema": "dvandva.baton.v2",
+  "run_id": "{run_id}",
+  "assignee": "{assignee}",
+  "status": "{status}",
+  "phase": 2,
+  "checkpoint": {checkpoint},
+  "question": null,
+  "resume_assignee": null,
+  "resume_status": null,
+  "updated_at": "2026-06-29T15:00:00Z",
+  "current_engine": "codex"
+}}"#
+        ),
+    )
+    .unwrap();
+    std::fs::rename(&tmp, baton).unwrap();
+}
+
+// The selected run advances (atomic rename) to a vadi-owned checkpoint while a
+// vadi `--file`/`--since-checkpoint`/`--until-actionable` wait polls it. It must
+// exit 0 (checkpoint_advanced), never 29 with itself as the sibling. // p3-split-brain
+#[test]
+fn p3_self_run_never_reported_as_its_own_split_brain_sibling() {
+    let d = tmp();
+    // Widen the sibling scan's window between its one-shot self-identity capture
+    // and the per-file check by seeding many terminal (`done`) sibling runs that
+    // sort BEFORE the selected run: the scan reads them all before reaching the
+    // selected file, so an atomic rename landing in that span reliably churns the
+    // selected file's inode out from under the pre-loop (dev, ino) capture. Done
+    // siblings never count as active or split-brain, so they add no false peers.
+    for i in 0..150 {
+        atomic_write_named_baton(
+            &d.path().join(format!(".dvandva/runs/run{i:04}/baton.json")),
+            &format!("run{i:04}"),
+            "prativadi",
+            "done",
+            8,
+        );
+    }
+    let baton = d.path().join(".dvandva/runs/zz/baton.json");
+    // Base: the peer (prativadi) owns checkpoint 8; vadi waits since 8.
+    atomic_write_named_baton(&baton, "zz", "prativadi", "implementing", 8);
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let baton_w = baton.clone();
+    let stop_w = Arc::clone(&stop);
+    let writer = thread::spawn(move || {
+        // Churn phase: flip assignee prativadi<->vadi at a FIXED checkpoint 8.
+        // Holding the checkpoint at the --since-checkpoint value means a clean
+        // caller read never legitimately exits 0 here, so any exit during the
+        // churn is the buggy self-as-sibling scan (29). Each rename wakes the
+        // wait's directory watcher, re-running the self-skip against an
+        // ever-changing inode hundreds of times.
+        let start = Instant::now();
+        let mut vadi = false;
+        while start.elapsed() < Duration::from_millis(2000) && !stop_w.load(Ordering::Relaxed) {
+            let assignee = if vadi { "vadi" } else { "prativadi" };
+            atomic_write_named_baton(&baton_w, "zz", assignee, "implementing", 8);
+            vadi = !vadi;
+        }
+        // Final advance: vadi owns checkpoint 9. The fixed binary, which never
+        // self-reports, reads this on its next poll and exits 0 promptly.
+        atomic_write_named_baton(&baton_w, "zz", "vadi", "implementing", 9);
+    });
+
+    let o = run_wait(
+        Some(d.path()),
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            ".dvandva/runs/zz/baton.json",
+            "--since-checkpoint",
+            "8",
+            "--until-actionable",
+            "--persist",
+            "--interval",
+            "1",
+            "--max-wait",
+            "5",
+        ],
+        Duration::from_secs(12),
+    );
+    stop.store(true, Ordering::Relaxed);
+    writer.join().unwrap();
+
+    assert_ne!(
+        o.code,
+        Some(29),
+        "selected run reported itself as a split-brain sibling: {}",
+        o.out
+    );
+    assert!(
+        !(o.contains("split_brain") && o.contains("sibling_run_id=zz")),
+        "self-as-sibling split_brain line present: {}",
+        o.out
+    );
+    assert_eq!(
+        o.code,
+        Some(0),
+        "expected checkpoint_advanced exit 0: {}",
+        o.out
+    );
+}
+
+// A genuinely different active sibling run (beta) assigned to the waiting role
+// MUST still exit 29 — the self-skip fix excludes only the selected run, never a
+// real peer run. // p3-split-brain
+#[test]
+fn p3_real_sibling_assigned_to_my_role_still_exits_29() {
+    let d = tmp();
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "prativadi",
+        "implementing",
+        "2026-06-29T15:00:00Z",
+        "codex",
+    );
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/beta/baton.json"),
+        "beta",
+        "vadi",
+        "implementing",
+        "2026-06-29T15:01:00Z",
+        "claude",
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            ".dvandva/runs/alpha/baton.json",
+            "--persist",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(29), "{}", o.out);
+    assert!(o.contains("split_brain"), "{}", o.out);
+    assert!(o.contains("selected_run_id=alpha"), "{}", o.out);
+    assert!(o.contains("sibling_run_id=beta"), "{}", o.out);
+}
+
+// A static selected-run advance with no sibling exits 0 without any split-brain
+// line — the plain fixed-scenario regression. // p3-split-brain
+#[test]
+fn p3_selected_run_advanced_to_my_role_exits_0_no_self_sibling() {
+    let d = tmp();
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/zz/baton.json"),
+        "zz",
+        "vadi",
+        "implementing",
+        "2026-06-29T15:00:00Z",
+        "claude",
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            ".dvandva/runs/zz/baton.json",
+            "--since-checkpoint",
+            "7",
+            "--until-actionable",
+            "--persist",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(0), "{}", o.out);
+    assert!(o.contains("checkpoint_advanced"), "{}", o.out);
+    assert!(!o.contains("split_brain"), "{}", o.out);
 }
