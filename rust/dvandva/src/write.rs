@@ -823,6 +823,7 @@ pub(crate) fn validate_candidate(
 /// enumerated by probing [`edge_whitelist`] over the full status universe.
 #[allow(dead_code)]
 fn whitelist_targets(
+    graph: &EffectiveGraph,
     schema: &str,
     cur_mode: &str,
     edge_profile: &str,
@@ -874,7 +875,7 @@ fn whitelist_targets(
         .filter(|new_status| {
             let mut sink = String::new();
             edge_whitelist(
-                schema,
+                graph,
                 cur_mode,
                 edge_profile,
                 cur_status,
@@ -905,6 +906,9 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
         return Vec::new();
     }
     let is_v2 = matches!(schema.as_str(), "dvandva.baton.v2" | "dvandva.baton.v3");
+    // The run's declared graph (v3) or its `(mode, profile)` preset (v2) — the
+    // single legality/loop-cap authority the LIST surface probes.
+    let graph = resolve_effective_graph(current);
     let cur_status = str_field(current, "status");
     let cur_mode = str_field(current, "mode");
     let cur_eff_mode = canonical_mode(&cur_mode).unwrap_or_else(|| "development".to_string());
@@ -949,15 +953,15 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
     // both whitelists and let the per-entry-state reachability filter below decide
     // which entry states surface. Every other source uses its single edge profile.
     let targets: Vec<String> = if at_spec_entry {
-        let mut t = whitelist_targets(&schema, &cur_eff_mode, "full", &cur_status);
-        for s in whitelist_targets(&schema, &cur_eff_mode, "standard", &cur_status) {
+        let mut t = whitelist_targets(&graph, &schema, &cur_eff_mode, "full", &cur_status);
+        for s in whitelist_targets(&graph, &schema, &cur_eff_mode, "standard", &cur_status) {
             if !t.contains(&s) {
                 t.push(s);
             }
         }
         t
     } else {
-        whitelist_targets(&schema, &cur_eff_mode, &edge_profile, &cur_status)
+        whitelist_targets(&graph, &schema, &cur_eff_mode, &edge_profile, &cur_status)
     };
 
     for new_status in targets {
@@ -987,7 +991,7 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
         let (loop_key, drop) = if is_enter {
             let edge = format!("plan_amendment:{cur_phase}");
             build_loop_key(current, &edge)
-        } else if is_loop_edge(&loop_edge) {
+        } else if edge_is_loop_capped(&graph, &loop_edge) {
             build_loop_key(current, &loop_edge)
         } else {
             (None, false)
@@ -1583,6 +1587,11 @@ fn decide_transition(
         ));
     }
 
+    // The transition-legality authority: the current run's own declared graph
+    // (a v3 `run_workflow`) or, for a preset-source/v2 run, the `(mode, profile)`
+    // preset. Every edge/loop-cap decision below reads from this one resolution.
+    let eff_graph = resolve_effective_graph(cur_doc);
+
     let mut cur_effective_mode = String::new();
     let mut cur_effective_profile = String::new();
     let mut cur_profile_floor = String::new();
@@ -1719,15 +1728,10 @@ fn decide_transition(
     let mut loop_reason = String::new();
     if cx.is_v2 && cx.new_status != "human_decision" {
         let edge = format!("{cur_status}:{}", cx.new_status);
-        let is_loop_edge = matches!(
-            edge.as_str(),
-            "deep_review:phase_fixing"
-                | "cross_review:cross_fixing"
-                | "termination_review:phase_fixing"
-                | "phase_review:phase_fixing"
-                | "review_of_review:counter_review"
-                | "counter_review:review_of_review"
-        );
+        // Loop-cap membership follows the resolved graph: a custom v3 graph
+        // consults its declared edge's loop_cap_key/amendment_capped; every
+        // preset/v2 graph falls back to the static six-edge set.
+        let is_loop_edge = edge_is_loop_capped(&eff_graph, &edge);
         let amendment_enter = cur_effective_mode == "development"
             && cx.new_effective_mode == "development"
             && is_amendment_enter_edge(&cur_phase_eff, &cur_status, cx.new_status);
@@ -1996,7 +2000,7 @@ fn decide_transition(
             cx.new_effective_profile.to_string()
         };
         legal = edge_whitelist(
-            cx.schema,
+            &eff_graph,
             &cur_effective_mode,
             &edge_profile,
             &cur_status,
@@ -3989,153 +3993,142 @@ fn profile_escalation_entry_ok(
 }
 
 // ===========================================================================
+// declared-graph interpreter
+// ===========================================================================
+
+/// A single legal edge parsed from a v3 `run_workflow.edges` entry.
+struct DeclaredEdge {
+    from: String,
+    to: String,
+    /// `true` when the entry carries a non-null `loop_cap_key` (the custom
+    /// analog of `is_loop_edge`'s static six-edge set) or is `amendment_capped`.
+    loop_capped: bool,
+}
+
+/// The effective transition graph a baton's edges are legalized against.
+///
+/// The transition-legality authority is the baton's own declared workflow, not
+/// a hardcoded profile match:
+/// * a v3 baton whose `run_workflow.source` is `"custom"` is legalized by its
+///   OWN declared edges — nothing else;
+/// * a v3 baton with a `preset:<name>` source, and every v2 baton, resolve to
+///   the `(mode, profile)` preset (identical selection to the pre-cutover
+///   match; F9 cross-profile advancement stays param-driven, and a `research`/
+///   `review` run keeps selecting its mode preset even though its stub source
+///   reads `preset:full`);
+/// * a v1 baton, or a v3 baton whose `run_workflow` is absent, has no legal
+///   edges. v3 REQUIRES a shape-valid run_workflow — the write path shape-gates
+///   it upstream, so an absent/malformed one only reaches here on the read/LIST
+///   path, where surfacing zero edges is the honest answer, never a silent
+///   preset fallback.
+enum EffectiveGraph {
+    /// v3 `source:custom` — the declared edges are the whole authority.
+    Declared(Vec<DeclaredEdge>),
+    /// v2, or v3 `source:preset:<name>` — select the preset by `(mode, profile)`.
+    Preset,
+    /// v1, or a v3 with an absent run_workflow — no legal edges.
+    None,
+}
+
+/// Resolve the effective transition graph for a (current) baton document. This
+/// is the single source item 5 mandates: v3 → its own `run_workflow`
+/// (custom → declared edges), v2 → the `(mode, profile)` preset, everything
+/// else → no edges.
+fn resolve_effective_graph(doc: &Value) -> EffectiveGraph {
+    match str_field(doc, "schema").as_str() {
+        "dvandva.baton.v3" => {
+            let Some(rw) = field(doc, "run_workflow") else {
+                return EffectiveGraph::None;
+            };
+            if str_field(rw, "source") == "custom" {
+                let edges = arr(field(rw, "edges"))
+                    .iter()
+                    .filter_map(|e| {
+                        let from = str_field(e, "from");
+                        let to = str_field(e, "to");
+                        if from.is_empty() || to.is_empty() {
+                            return None;
+                        }
+                        let loop_capped =
+                            present(field(e, "loop_cap_key")) || bool_field(e, "amendment_capped");
+                        Some(DeclaredEdge {
+                            from,
+                            to,
+                            loop_capped,
+                        })
+                    })
+                    .collect();
+                EffectiveGraph::Declared(edges)
+            } else {
+                // A shape-valid non-custom source is `preset:<name>`; the run
+                // adopts a standard preset and legality stays `(mode, profile)`-
+                // selected, exactly like v2.
+                EffectiveGraph::Preset
+            }
+        }
+        "dvandva.baton.v2" => EffectiveGraph::Preset,
+        _ => EffectiveGraph::None,
+    }
+}
+
+/// The preset name a `(mode, profile)` pair selects, mirroring the pre-cutover
+/// `edge_whitelist` match arms: development picks `fast`/`standard`/`full` by
+/// profile; `research`/`review` pick their eponymous preset; anything else
+/// selects nothing (the old `_ => false`).
+fn preset_name_for(mode: &str, profile: &str) -> Option<&'static str> {
+    match mode {
+        "development" => match profile {
+            "fast" => Some("fast"),
+            "standard" => Some("standard"),
+            "full" => Some("full"),
+            _ => None,
+        },
+        "research" => Some("research"),
+        "review" => Some("review"),
+        _ => None,
+    }
+}
+
+/// `true` when `(from, to)` is a legal edge of the `(mode, profile)` preset.
+fn preset_edge_legal(mode: &str, profile: &str, from: &str, to: &str) -> bool {
+    preset_name_for(mode, profile)
+        .and_then(crate::workflow::preset)
+        .map(|g| g.edges.iter().any(|e| e.from == from && e.to == to))
+        .unwrap_or(false)
+}
+
+/// `true` when `edge` (`"from:to"`) is loop-capped under `graph`: a custom
+/// graph consults its declared edge's `loop_cap_key`/`amendment_capped`; every
+/// preset/v2 graph falls back to `is_loop_edge`'s static six-edge set.
+fn edge_is_loop_capped(graph: &EffectiveGraph, edge: &str) -> bool {
+    match graph {
+        EffectiveGraph::Declared(edges) => edges
+            .iter()
+            .any(|e| e.loop_capped && format!("{}:{}", e.from, e.to) == edge),
+        _ => is_loop_edge(edge),
+    }
+}
+
+// ===========================================================================
 // edge whitelist
 // ===========================================================================
 fn edge_whitelist(
-    schema: &str,
+    graph: &EffectiveGraph,
     cur_mode: &str,
     new_profile: &str,
     cur_status: &str,
     new_status: &str,
     reason: &mut String,
 ) -> bool {
-    let edge = format!("{cur_status}:{new_status}");
-    // v3 starts by preserving the v2 preset graph. The declared-graph
-    // interpreter replaces this table in the follow-on workflow chunk.
-    let legal = match schema {
-        "dvandva.baton.v2" | "dvandva.baton.v3" => match cur_mode {
-            "development" => match new_profile {
-                "fast" => matches!(
-                    edge.as_str(),
-                    "clarifying_questions_drafting:clarifying_questions_answer"
-                        | "clarifying_questions_answer:clarifying_questions_followup"
-                        | "clarifying_questions_followup:clarifying_questions_followup_answer"
-                        | "clarifying_questions_followup_answer:research_drafting"
-                        | "research_drafting:research_review"
-                        | "research_review:research_revision"
-                        | "research_revision:research_review"
-                        | "research_review:implementing"
-                        | "implementing:phase_review"
-                        | "phase_review:phase_fixing"
-                        | "phase_fixing:phase_review"
-                        | "phase_review:termination_review"
-                        | "termination_review:phase_fixing"
-                        | "termination_review:done"
-                ),
-                "standard" => matches!(
-                    edge.as_str(),
-                    "clarifying_questions_drafting:clarifying_questions_answer"
-                        | "clarifying_questions_answer:clarifying_questions_followup"
-                        | "clarifying_questions_followup:clarifying_questions_followup_answer"
-                        | "clarifying_questions_followup_answer:research_drafting"
-                        | "research_drafting:research_review"
-                        | "research_review:research_revision"
-                        | "research_revision:research_review"
-                        | "research_review:spec_drafting"
-                        | "spec_drafting:spec_review"
-                        | "spec_review:spec_revision"
-                        | "spec_revision:spec_review"
-                        | "spec_review:implementing"
-                        | "implementing:phase_review"
-                        | "phase_review:phase_fixing"
-                        | "phase_review:implementing"
-                        | "phase_review:spec_revision"
-                        | "phase_fixing:phase_review"
-                        | "phase_review:termination_review"
-                        | "termination_review:phase_fixing"
-                        | "termination_review:done"
-                        // F9: standard phase advancing into a full next phase.
-                        | "phase_review:parallel_implementing"
-                        // S5-T1 (D4): the capped mutual-review safety valve, the
-                        // same one full already offers. Entry requires narrow_fixups
-                        // (enforced profile-agnostically post-legality); the
-                        // review_of_review<->counter_review loop is loop-capped; both
-                        // exit back to phase_review (standard's review state).
-                        | "phase_review:review_of_review"
-                        | "review_of_review:counter_review"
-                        | "review_of_review:phase_review"
-                        | "counter_review:review_of_review"
-                        | "counter_review:phase_review"
-                ),
-                "full" => matches!(
-                    edge.as_str(),
-                    "clarifying_questions_drafting:clarifying_questions_answer"
-                        | "clarifying_questions_answer:clarifying_questions_followup"
-                        | "clarifying_questions_followup:clarifying_questions_followup_answer"
-                        | "clarifying_questions_followup_answer:research_drafting"
-                        | "research_drafting:research_review"
-                        | "research_review:research_revision"
-                        | "research_revision:research_review"
-                        | "research_review:spec_drafting"
-                        | "spec_drafting:spec_review"
-                        | "spec_review:spec_revision"
-                        | "spec_review:parallel_implementing"
-                        | "spec_revision:spec_review"
-                        | "parallel_implementing:test_creation"
-                        | "test_creation:cross_review"
-                        | "cross_review:cross_fixing"
-                        | "cross_fixing:test_creation"
-                        | "cross_review:deep_review"
-                        | "deep_review:phase_fixing"
-                        | "deep_review:review_of_review"
-                        | "deep_review:deslop"
-                        | "review_of_review:counter_review"
-                        | "review_of_review:deslop"
-                        | "counter_review:review_of_review"
-                        | "counter_review:deslop"
-                        | "phase_fixing:test_creation"
-                        | "deslop:phase_fixing"
-                        | "deslop:parallel_implementing"
-                        // F9: full phase advancing into a standard next phase.
-                        | "deslop:implementing"
-                        | "deslop:spec_revision"
-                        | "deslop:termination_review"
-                        | "termination_review:phase_fixing"
-                        | "termination_review:done"
-                ),
-                _ => false,
-            },
-            "research" => matches!(
-                edge.as_str(),
-                "clarifying_questions_drafting:clarifying_questions_answer"
-                    | "clarifying_questions_answer:clarifying_questions_followup"
-                    | "clarifying_questions_followup:clarifying_questions_followup_answer"
-                    | "clarifying_questions_followup_answer:research_drafting"
-                    | "research_drafting:research_review"
-                    | "research_review:research_revision"
-                    | "research_revision:research_review"
-                    | "research_review:spec_drafting"
-                    | "spec_drafting:spec_review"
-                    | "spec_review:spec_revision"
-                    | "spec_revision:spec_review"
-                    | "research_review:termination_review"
-                    | "spec_review:termination_review"
-                    | "termination_review:phase_fixing"
-                    | "phase_fixing:research_review"
-                    | "termination_review:done"
-            ),
-            "review" => matches!(
-                edge.as_str(),
-                "clarifying_questions_drafting:clarifying_questions_answer"
-                    | "clarifying_questions_answer:clarifying_questions_followup"
-                    | "clarifying_questions_followup:clarifying_questions_followup_answer"
-                    | "clarifying_questions_followup_answer:research_drafting"
-                    | "research_drafting:research_review"
-                    | "research_review:research_revision"
-                    | "research_revision:research_review"
-                    | "research_review:deep_review"
-                    | "deep_review:deslop"
-                    // S4-T7: prativadi hands substantive fixes back to vadi without
-                    // lapping the stop gate (loop-capped like every :phase_fixing).
-                    | "deep_review:phase_fixing"
-                    | "deslop:termination_review"
-                    | "termination_review:phase_fixing"
-                    | "phase_fixing:deep_review"
-                    | "termination_review:done"
-            ),
-            _ => false,
-        },
-        _ => false,
+    // Legality is drawn from the resolved graph, not a hardcoded profile match:
+    // a custom v3 graph legalizes exactly its declared edges; a preset/v2 graph
+    // legalizes the `(mode, profile)` preset (presets.rs is the single source).
+    let legal = match graph {
+        EffectiveGraph::Declared(edges) => edges
+            .iter()
+            .any(|e| e.from == cur_status && e.to == new_status),
+        EffectiveGraph::Preset => preset_edge_legal(cur_mode, new_profile, cur_status, new_status),
+        EffectiveGraph::None => false,
     };
     if !legal {
         *reason = format!("no legal edge {cur_status}->{new_status}");
