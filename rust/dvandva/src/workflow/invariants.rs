@@ -264,7 +264,7 @@ fn check_escape_reachability(
         if !states.contains_key(escape) {
             continue;
         }
-        let reachable = reverse_reachable(*escape, &reverse);
+        let reachable = reverse_reachable(escape, &reverse);
         for state in states.values() {
             if state.class == StateClass::Terminal {
                 continue;
