@@ -3350,6 +3350,43 @@ fn p3_through_human_human_gate_notes_once_no_exit() {
     );
 }
 
+#[test]
+fn p3_through_human_human_gate_auto_wakes_on_resume() {
+    let d = tmp();
+    let f = d.path().join("cqa_th_resume.json");
+    p3_write_v2_baton(&f, "clarifying_questions_answer"); // checkpoint 8
+    let resume = f.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(700));
+        write_baton(&resume, "vadi", "implementing");
+    });
+
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "1",
+            "--max-wait",
+            "540",
+            "--through-human",
+        ],
+        BUDGET_SLOW,
+    );
+    assert_eq!(o.code, Some(0), "{}", o.out);
+    assert!(o.contains("DVANDVA_WAIT ready role=vadi"), "{}", o.out);
+    assert!(
+        o.contains("DVANDVA_WAIT note human_pause status=clarifying_questions_answer checkpoint=8"),
+        "{}",
+        o.out
+    );
+    assert!(!o.contains("DVANDVA_WAIT human_gate"), "{}", o.out);
+}
+
 // Behavior 6: a v1/v2 ReviewGate-mapped status keeps the generic heartbeat.
 #[test]
 fn p3_v2_review_status_keeps_polling() {
