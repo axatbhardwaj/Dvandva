@@ -279,15 +279,16 @@ fn amendment_resume_rejected_when_writer_is_not_the_stamped_approver() {
     );
 }
 
-/// Sweep item 7: nothing validates `amendments[]` on the reject/revise
-/// (`workflow_review<->workflow_revision`) edges — only the entry
-/// (`amendment_entry_added_ok`) and resume (`amendment_resume_ok`) edges
-/// touch the array. A second pending entry appended while the first is still
-/// unresolved is silently accepted on the reject edge today. This test pins
-/// that (unenforced) current behavior; FINDING for deep_review: consider a
-/// single-pending-amendment invariant on the reject/revise edges.
+/// tc-p2-double-pending-amendment / P2 deep_review: `amendments[]` must be
+/// stable across the reject (`workflow_review -> workflow_revision`) and
+/// revise (`workflow_revision -> workflow_review`) edges — no new pending
+/// entries may be appended (closing the double-pending gap), and the current
+/// pending entry's bookkeeping (`proposed_by`, `at_checkpoint`,
+/// `resume_status`, and the still-null `approved_by`/`approved_at_checkpoint`)
+/// may not be mutated. This flips the formerly-pinned permissive test: a
+/// second pending entry appended on the reject edge is now rejected.
 #[test]
-fn workflow_revision_reject_silently_accepts_a_second_pending_amendment() {
+fn workflow_revision_reject_rejects_a_second_pending_amendment() {
     let d = tmp();
     let (b, n) = paths(&d);
     make_baton_v3(&b, "workflow_review", "prativadi", 5, |b| {
@@ -308,10 +309,99 @@ fn workflow_revision_reject_silently_accepts_a_second_pending_amendment() {
             pending_amendment("test_creation")
         ]);
     });
-    run_env(&b, &n, &[("DVANDVA_ROLE", "prativadi")]).assert(
-        "double-pending amendment on reject edge is currently unchecked",
-        0,
+    run_env(&b, &n, &[("DVANDVA_ROLE", "prativadi")]).assert_contains(
+        "double-pending amendment on reject edge is now rejected",
+        24,
+        "amendments immutable during reject/revise",
     );
+}
+
+/// Rule 2: the reject edge may not mutate the pending entry's `resume_status`
+/// (only the entry's bookkeeping the peer/writer control — `reason`, see
+/// below — is a legitimate revision surface).
+#[test]
+fn workflow_review_reject_rejected_when_pending_amendment_resume_status_mutated() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "workflow_review", "prativadi", 5, |b| {
+        b["phase"] = json!("spec");
+        b["total_phases"] = json!(1);
+        b["master_plan_locked"] = json!(true);
+        b["run_workflow"]["amendments"] = json!([pending_amendment("parallel_implementing")]);
+    });
+    make_baton_v3(&n, "workflow_revision", "vadi", 6, |b| {
+        b["phase"] = json!("spec");
+        b["total_phases"] = json!(1);
+        b["master_plan_locked"] = json!(true);
+        b["findings"] = json!(["mutating the pending amendment's resume target"]);
+        b["loop_counts"] = json!({"workflow_revision": 1});
+        // resume_status mutated from "parallel_implementing" to "test_creation".
+        b["run_workflow"]["amendments"] = json!([pending_amendment("test_creation")]);
+    });
+    run_env(&b, &n, &[("DVANDVA_ROLE", "prativadi")]).assert_contains(
+        "reject edge must not mutate pending amendment resume_status",
+        24,
+        "amendments immutable during reject/revise",
+    );
+}
+
+/// Rule 2, revise edge: same immutability, mirrored on `workflow_revision ->
+/// workflow_review` — the resubmission may not mutate the pending entry's
+/// `resume_status` either.
+#[test]
+fn workflow_revision_revise_rejected_when_pending_amendment_resume_status_mutated() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "workflow_revision", "vadi", 5, |b| {
+        b["phase"] = json!("spec");
+        b["total_phases"] = json!(1);
+        b["master_plan_locked"] = json!(true);
+        b["loop_counts"] = json!({"workflow_revision": 1});
+        b["run_workflow"]["amendments"] = json!([pending_amendment("parallel_implementing")]);
+    });
+    make_baton_v3(&n, "workflow_review", "prativadi", 6, |b| {
+        b["phase"] = json!("spec");
+        b["total_phases"] = json!(1);
+        b["master_plan_locked"] = json!(true);
+        b["loop_counts"] = json!({"workflow_revision": 1});
+        // resume_status mutated from "parallel_implementing" to "test_creation".
+        b["run_workflow"]["amendments"] = json!([pending_amendment("test_creation")]);
+    });
+    run_env(&b, &n, &[("DVANDVA_ROLE", "vadi")]).assert_contains(
+        "revise edge must not mutate pending amendment resume_status",
+        24,
+        "amendments immutable during reject/revise",
+    );
+}
+
+/// Rule 2's carve-out: an amendment entry's `reason` field (free-form, not
+/// part of the bookkeeping the immutability rule pins) MAY change on the
+/// revise edge — that is the legitimate revision surface for amendment
+/// content itself, distinct from the bookkeeping fields above.
+#[test]
+fn workflow_revision_revise_accepted_when_only_amendment_reason_changes() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "workflow_revision", "vadi", 5, |b| {
+        b["phase"] = json!("spec");
+        b["total_phases"] = json!(1);
+        b["master_plan_locked"] = json!(true);
+        b["loop_counts"] = json!({"workflow_revision": 1});
+        let mut a = pending_amendment("parallel_implementing");
+        a["reason"] = json!("original reason");
+        b["run_workflow"]["amendments"] = json!([a]);
+    });
+    make_baton_v3(&n, "workflow_review", "prativadi", 6, |b| {
+        b["phase"] = json!("spec");
+        b["total_phases"] = json!(1);
+        b["master_plan_locked"] = json!(true);
+        b["loop_counts"] = json!({"workflow_revision": 1});
+        let mut a = pending_amendment("parallel_implementing");
+        a["reason"] = json!("revised reason after addressing findings");
+        b["run_workflow"]["amendments"] = json!([a]);
+    });
+    run_env(&b, &n, &[("DVANDVA_ROLE", "vadi")])
+        .assert("revise edge changing only amendment reason", 0);
 }
 
 /// Sweep item 6, FINDING: an amendment's `resume_status` is only checked

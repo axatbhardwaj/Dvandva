@@ -2049,12 +2049,23 @@ fn decide_transition(
         }
     } else if dev_dev && cur_status == "workflow_revision" && cx.new_status == "workflow_review" {
         // P2: the vadi resubmits a revised declaration (loop-capped above).
-        legal = true;
+        // tc-p2-double-pending-amendment: the resubmission must not touch
+        // amendments[] bookkeeping (only its free-form `reason` may change).
+        if amendments_stable_ok(cur_doc, cand) {
+            legal = true;
+        } else {
+            reason = "workflow_revision->workflow_review requires amendments[] unchanged: amendments immutable during reject/revise".to_string();
+        }
     } else if dev_dev && cur_status == "workflow_review" && cx.new_status == "workflow_revision" {
         // P2: the prativadi rejects the declaration with findings (loop-capped
         // above); non-empty findings are required to name the objection.
+        // tc-p2-double-pending-amendment: the rejection must not touch
+        // amendments[] bookkeeping either (only its free-form `reason` may
+        // change) — this closes the double-pending-amendment gap.
         if count_len(field(cand, "findings")) == 0 {
             reason = "workflow_review->workflow_revision requires non-empty findings".to_string();
+        } else if !amendments_stable_ok(cur_doc, cand) {
+            reason = "workflow_review->workflow_revision requires amendments[] unchanged: amendments immutable during reject/revise".to_string();
         } else {
             legal = true;
         }
@@ -4486,6 +4497,43 @@ fn build_custom_graph(rw: &Value) -> crate::workflow::WorkflowGraph {
         states,
         edges,
     }
+}
+
+/// True when `amendments[]` is stable across the reject
+/// (`workflow_review->workflow_revision`) and revise
+/// (`workflow_revision->workflow_review`) edges (tc-p2-double-pending-
+/// amendment): no entry may be appended or removed, every non-latest entry is
+/// fully byte-identical, and the latest entry — when still pending
+/// (`approved_by` null) — keeps its `proposed_by`, `at_checkpoint`, and
+/// `resume_status` unchanged with `approved_by`/`approved_at_checkpoint`
+/// still null (approval only happens on the `workflow_review->resume_status`
+/// edge, never here). A latest entry that is already approved is treated the
+/// same as a non-latest one (fully immutable) — these edges never touch an
+/// approval stamp. Any other field on the latest entry (e.g. a free-form
+/// `reason`) is not compared here and so may legitimately change; that is the
+/// revision surface for amendment content itself. A run with no amendments
+/// at all (the common declaration-only case) trivially passes.
+fn amendments_stable_ok(cur_doc: &Value, cand: &Value) -> bool {
+    let cur_am = rw_amendments(cur_doc);
+    let cand_am = rw_amendments(cand);
+    if cur_am.len() != cand_am.len() {
+        return false; // no new/removed entries
+    }
+    let Some(last) = cur_am.len().checked_sub(1) else {
+        return true; // no amendments to protect
+    };
+    if cur_am[..last] != cand_am[..last] {
+        return false; // non-latest entries are fully immutable
+    }
+    let (c, n) = (&cur_am[last], &cand_am[last]);
+    if !is_null_field(c, "approved_by") {
+        return c == n; // already-approved latest entry: fully immutable too
+    }
+    str_field(c, "proposed_by") == str_field(n, "proposed_by")
+        && field(c, "at_checkpoint") == field(n, "at_checkpoint")
+        && str_field(c, "resume_status") == str_field(n, "resume_status")
+        && is_null_field(n, "approved_by")
+        && is_null_field(n, "approved_at_checkpoint")
 }
 
 /// True when a candidate legitimately RAISES a new amendment: from an active
