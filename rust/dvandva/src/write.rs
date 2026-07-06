@@ -843,6 +843,9 @@ fn whitelist_targets(
         "spec_drafting",
         "spec_review",
         "spec_revision",
+        "workflow_declaring",
+        "workflow_review",
+        "workflow_revision",
         "implementing",
         "parallel_implementing",
         "test_creation",
@@ -955,7 +958,7 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
     // profile, and the reachable re-entry phases can span both profiles, so union
     // both whitelists and let the per-entry-state reachability filter below decide
     // which entry states surface. Every other source uses its single edge profile.
-    let targets: Vec<String> = if at_spec_entry {
+    let mut targets: Vec<String> = if at_spec_entry {
         let mut t = whitelist_targets(&graph, &schema, &cur_eff_mode, "full", &cur_status);
         for s in whitelist_targets(&graph, &schema, &cur_eff_mode, "standard", &cur_status) {
             if !t.contains(&s) {
@@ -966,6 +969,25 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
     } else {
         whitelist_targets(&graph, &schema, &cur_eff_mode, &edge_profile, &cur_status)
     };
+    let mut add_target = |status: &str| {
+        if !targets.iter().any(|s| s == status) {
+            targets.push(status.to_string());
+        }
+    };
+    if is_v2 && cur_eff_mode == "development" {
+        match cur_status.as_str() {
+            "research_review" if rw_approved_by(current).is_none() => {
+                add_target("workflow_declaring");
+            }
+            "workflow_declaring" => add_target("workflow_review"),
+            "workflow_revision" => add_target("workflow_review"),
+            "workflow_review" => {
+                add_target("spec_drafting");
+                add_target("workflow_revision");
+            }
+            _ => {}
+        }
+    }
 
     for new_status in targets {
         if new_status == cur_status {
@@ -1223,7 +1245,8 @@ fn classify_phase_move(cur_status: &str, new_status: &str, is_enter: bool) -> Ph
     }
     match new_status {
         "spec_drafting" | "spec_review" | "spec_revision" | "research_drafting"
-        | "research_review" | "research_revision" => PhaseMove::Spec,
+        | "research_review" | "research_revision" | "workflow_declaring" | "workflow_review"
+        | "workflow_revision" => PhaseMove::Spec,
         "implementing" | "parallel_implementing" => {
             // Entry from spec, or advancement from a prior phase's exit state.
             if matches!(cur_status, "spec_review" | "deslop" | "phase_review") {

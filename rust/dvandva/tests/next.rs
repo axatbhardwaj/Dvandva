@@ -147,6 +147,20 @@ fn custom_graph_list_uses_declared_edges_not_selected_preset() {
     );
 }
 
+#[test]
+fn list_research_review_offers_workflow_declaring_gate() {
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    make_baton_v3(&baton, "research_review", "prativadi", 4, |_| {});
+
+    let (code, stdout, stderr) = run_next(&["--file", baton.to_str().unwrap()]);
+    assert_eq!(code, 0, "research_review list exits 0\nstderr:\n{stderr}");
+    assert!(
+        stdout.contains("DVANDVA_NEXT workflow_declaring owner=vadi phase=spec"),
+        "LIST includes the declaration gate after research_review\n{stdout}"
+    );
+}
+
 // ===================== GENERATE mode =====================
 
 #[test]
@@ -224,6 +238,43 @@ fn custom_graph_generate_declared_edge_and_write_accepts_it() {
     assert_v3_candidate(&cand, "custom");
 
     run(&baton, &candidate).assert("write accepts the generated custom-graph candidate", 0);
+    assert_eq!(read_json(&baton)["checkpoint"], 5);
+}
+
+#[test]
+fn generate_workflow_declaring_candidate_and_write_accepts_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    let candidate = dir.path().join("baton.next.json");
+    make_baton_v3(&baton, "research_review", "prativadi", 4, |_| {});
+
+    let (code, stdout, stderr) = run_next(&[
+        "--file",
+        baton.to_str().unwrap(),
+        "--to",
+        "workflow_declaring",
+        "--summary",
+        "Research accepted; vadi will declare the per-run workflow before spec drafting.",
+        "--next-action",
+        "vadi: declare the run workflow and hand to prativadi for workflow_review.",
+    ]);
+    assert_eq!(
+        code, 0,
+        "workflow_declaring generate exits 0\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("to=workflow_declaring checkpoint=5"),
+        "ok line names the declaration target + checkpoint\n{stdout}"
+    );
+
+    let cand = read_json(&candidate);
+    assert_eq!(cand["status"], "workflow_declaring");
+    assert_eq!(cand["assignee"], "vadi");
+    assert_eq!(cand["phase"], "spec");
+    assert_eq!(cand["checkpoint"], 5);
+    assert_v3_candidate(&cand, "preset:full");
+
+    run(&baton, &candidate).assert("write accepts the workflow_declaring candidate", 0);
     assert_eq!(read_json(&baton)["checkpoint"], 5);
 }
 
