@@ -16,6 +16,8 @@
 //! `states`, then `edges`, then the declare/approve stamps, then
 //! `amendments`.
 
+use std::collections::HashSet;
+
 use serde_json::Value;
 
 /// The four legal state/role owners.
@@ -33,6 +35,8 @@ pub enum ShapeError {
     /// A `states[].name` (or `amendments[].resume_status`) outside the
     /// caller-supplied catalog.
     UnknownStateToken(String),
+    /// A `states[].name` appeared more than once in the declaration.
+    DuplicateStateToken(String),
     /// A `states[].owner` outside the 4-value owner set.
     BadOwner(String),
     /// A `states[].class` outside the 5-value class set.
@@ -112,6 +116,7 @@ fn validate_source(source: &str) -> Result<(), ShapeError> {
 /// order) for the subsequent edge-reference check.
 fn validate_states(states: &[Value], catalog: &[&str]) -> Result<Vec<String>, ShapeError> {
     let mut names = Vec::with_capacity(states.len());
+    let mut seen = HashSet::with_capacity(states.len());
     for s in states {
         let name = s
             .get("name")
@@ -133,6 +138,9 @@ fn validate_states(states: &[Value], catalog: &[&str]) -> Result<Vec<String>, Sh
         }
         if !CLASSES.contains(&class) {
             return Err(ShapeError::BadClass(class.to_string()));
+        }
+        if !seen.insert(name) {
+            return Err(ShapeError::DuplicateStateToken(name.to_string()));
         }
         names.push(name.to_string());
     }
@@ -218,7 +226,8 @@ fn validate_amendments(amendments: &[Value], catalog: &[&str]) -> Result<(), Sha
             .get("proposed_by")
             .and_then(Value::as_str)
             .ok_or_else(|| ShapeError::MissingField("amendments[].proposed_by".to_string()))?;
-        a.get("at_checkpoint")
+        let at_checkpoint = a
+            .get("at_checkpoint")
             .and_then(Value::as_i64)
             .ok_or_else(|| ShapeError::MissingField("amendments[].at_checkpoint".to_string()))?;
         let resume_status = a
@@ -228,10 +237,19 @@ fn validate_amendments(amendments: &[Value], catalog: &[&str]) -> Result<(), Sha
         let approved_by_val = a
             .get("approved_by")
             .ok_or_else(|| ShapeError::MissingField("amendments[].approved_by".to_string()))?;
+        let approved_at_checkpoint =
+            require_nullable_i64(a, "approved_at_checkpoint").map_err(|_| {
+                ShapeError::MissingField("amendments[].approved_at_checkpoint".to_string())
+            })?;
 
         if !ROLES.contains(&proposed_by) {
             return Err(ShapeError::BadAmendment(format!(
                 "proposed_by={proposed_by}"
+            )));
+        }
+        if at_checkpoint < 0 {
+            return Err(ShapeError::BadAmendment(format!(
+                "at_checkpoint={at_checkpoint} must be non-negative"
             )));
         }
         if !catalog.contains(&resume_status) {
@@ -239,19 +257,46 @@ fn validate_amendments(amendments: &[Value], catalog: &[&str]) -> Result<(), Sha
                 "resume_status={resume_status} not in catalog"
             )));
         }
-        if !approved_by_val.is_null() {
-            let approved_by = approved_by_val
-                .as_str()
-                .ok_or_else(|| ShapeError::MissingField("amendments[].approved_by".to_string()))?;
-            if !ROLES.contains(&approved_by) {
+
+        let approved_by =
+            if approved_by_val.is_null() {
+                None
+            } else {
+                Some(approved_by_val.as_str().ok_or_else(|| {
+                    ShapeError::MissingField("amendments[].approved_by".to_string())
+                })?)
+            };
+        match (approved_by, approved_at_checkpoint) {
+            (None, None) => {}
+            (None, Some(cp)) => {
                 return Err(ShapeError::BadAmendment(format!(
-                    "approved_by={approved_by}"
+                    "approved_at_checkpoint={cp} set without approved_by"
                 )));
             }
-            if approved_by == proposed_by {
+            (Some(role), None) => {
                 return Err(ShapeError::BadAmendment(format!(
-                    "approved_by={approved_by} matches proposed_by (self-approval)"
+                    "approved_by={role} set without approved_at_checkpoint"
                 )));
+            }
+            (Some(role), Some(cp)) => {
+                if !ROLES.contains(&role) {
+                    return Err(ShapeError::BadAmendment(format!("approved_by={role}")));
+                }
+                if role == proposed_by {
+                    return Err(ShapeError::BadAmendment(format!(
+                        "approved_by={role} matches proposed_by (self-approval)"
+                    )));
+                }
+                if cp < 0 {
+                    return Err(ShapeError::BadAmendment(format!(
+                        "approved_at_checkpoint={cp} must be non-negative"
+                    )));
+                }
+                if cp < at_checkpoint {
+                    return Err(ShapeError::BadAmendment(format!(
+                        "approved_at_checkpoint={cp} precedes at_checkpoint={at_checkpoint}"
+                    )));
+                }
             }
         }
     }

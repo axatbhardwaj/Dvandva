@@ -15,6 +15,35 @@ use common::{make_baton_v2, make_baton_v3, v2_status_owner};
 use dvandva::workflow::preset;
 use serde_json::{json, Value};
 
+const V2_STATUS_CATALOG: &[&str] = &[
+    "clarifying_questions_drafting",
+    "clarifying_questions_answer",
+    "clarifying_questions_followup",
+    "clarifying_questions_followup_answer",
+    "research_drafting",
+    "research_review",
+    "research_revision",
+    "spec_drafting",
+    "spec_review",
+    "spec_revision",
+    "implementing",
+    "parallel_implementing",
+    "test_creation",
+    "cross_review",
+    "cross_fixing",
+    "deep_review",
+    "review_of_review",
+    "counter_review",
+    "deslop",
+    "termination_review",
+    "phase_review",
+    "phase_fixing",
+    "human_question",
+    "human_decision",
+    "done",
+    "abandoned",
+];
+
 fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_dvandva"))
 }
@@ -131,6 +160,9 @@ fn write_probe_baton(dir: &Path, from: &str, variant: &ProbeVariant) -> PathBuf 
 fn expected_by_from(preset_name: &str) -> BTreeMap<&'static str, BTreeSet<&'static str>> {
     let graph = preset(preset_name).expect("known preset");
     let mut by_from = BTreeMap::new();
+    for status in V2_STATUS_CATALOG {
+        by_from.entry(*status).or_insert_with(BTreeSet::new);
+    }
     for edge in graph.edges {
         by_from
             .entry(edge.from)
@@ -388,22 +420,11 @@ fn clarifying_questions_drafting_owner_matches_write_engine_want_token() {
 // string — see the source-literal check below).
 // ===========================================================================
 
-/// Edges where the `next` oracle's `loop=` token is a REAL FINDING, not a
-/// transcription bug: `write::is_amendment_enter_edge` (full
-/// `deslop:spec_revision`, standard `phase_review:spec_revision`) is a
-/// SEPARATE loop-capped mechanism from `write::is_loop_edge` — its key is the
-/// dynamic `"plan_amendment:<phase>"` (see `write.rs`'s `legal_transitions`,
-/// which attaches a loop key to an amendment-enter edge via that format,
-/// independently of `is_loop_edge`), not a static `"from:to"` string, so it
-/// cannot be represented as `WfEdge::loop_cap_key: Some("from:to")` in a
-/// phase-agnostic preset graph at all. presets.rs's module doc is accurate as
-/// written ("transcribed from `write::is_loop_edge`" — it never claimed to
-/// cover this second mechanism), but `WfEdge::loop_cap_key` as a TYPE doesn't
-/// currently have any way to say "this edge is loop-capped, but by a phase-
-/// keyed cap, not a fixed one" — a caller reading `loop_cap_key: None` off
-/// either of these two edges would wrongly conclude they're uncapped. Flagged
-/// in the test-creation report; not fixed here (would touch `src/workflow`).
-const AMENDMENT_ENTER_EDGES_WITH_UNMODELED_LOOP_CAP: &[(&str, &str, &str)] = &[
+/// Edges whose loop cap is dynamic rather than a static `"from:to"` key:
+/// `write::is_amendment_enter_edge` caps full `deslop:spec_revision` and
+/// standard `phase_review:spec_revision` with `plan_amendment:<phase>`.
+/// Presets model that with `amendment_capped: true` and `loop_cap_key: None`.
+const AMENDMENT_ENTER_EDGES_WITH_DYNAMIC_LOOP_CAP: &[(&str, &str, &str)] = &[
     ("full", "deslop", "spec_revision"),
     ("standard", "phase_review", "spec_revision"),
 ];
@@ -413,10 +434,9 @@ const AMENDMENT_ENTER_EDGES_WITH_UNMODELED_LOOP_CAP: &[(&str, &str, &str)] = &[
 /// token. `next` emits `loop=` both when `write::is_loop_edge` accepts the
 /// `"from:to"` edge string (see `write.rs`'s `legal_transitions`, which gates
 /// `build_loop_key` on `is_loop_edge`) AND, independently, on a plan-
-/// amendment-enter edge (see `AMENDMENT_ENTER_EDGES_WITH_UNMODELED_LOOP_CAP`)
-/// — so those two specific edges are carved out with an explicit assertion
-/// of their (documented, real) divergence instead of the generic equality
-/// check. For every other edge this equality covers BOTH directions the
+/// amendment-enter edge (see `AMENDMENT_ENTER_EDGES_WITH_DYNAMIC_LOOP_CAP`)
+/// — so those two specific edges assert `amendment_capped` instead of static
+/// key equality. For every other edge this equality covers BOTH directions the
 /// task requires in one assertion: a preset edge that carries `Some(k)` but
 /// that `is_loop_edge` doesn't recognise would show `loop_cap_key.is_some()
 /// == true, has_loop == false` (fails); an `is_loop_edge`-recognised edge
@@ -447,33 +467,38 @@ fn preset_loop_keys_match_legacy_next_oracle() {
                         e.to
                     )
                 });
-                if AMENDMENT_ENTER_EDGES_WITH_UNMODELED_LOOP_CAP.contains(&(
+                if AMENDMENT_ENTER_EDGES_WITH_DYNAMIC_LOOP_CAP.contains(&(
                     preset_name,
                     e.from,
                     e.to,
                 )) {
-                    // Documented real finding (see the const's doc comment):
-                    // the oracle IS loop-capped here, but through the
-                    // amendment-enter mechanism, not `is_loop_edge` — pin the
-                    // actual divergence rather than asserting equality.
+                    // Dynamic amendment-enter cap: the oracle prints loop=,
+                    // while presets use amendment_capped instead of a static
+                    // loop_cap_key.
+                    assert!(
+                        e.amendment_capped,
+                        "{preset_name}: {}:{} must be marked amendment_capped",
+                        e.from, e.to
+                    );
                     assert!(
                         e.loop_cap_key.is_none(),
-                        "{preset_name}: {}:{} was expected to stay untranscribed by \
-                         loop_cap_key (its cap is the amendment-enter mechanism); \
-                         update AMENDMENT_ENTER_EDGES_WITH_UNMODELED_LOOP_CAP if \
-                         presets.rs now models it",
+                        "{preset_name}: {}:{} must not carry a static loop_cap_key",
                         e.from,
                         e.to
                     );
                     assert!(
                         has_loop,
                         "{preset_name}: {}:{} no longer shows a loop= token from the \
-                         amendment-enter mechanism — the documented finding may be stale; \
-                         re-check AMENDMENT_ENTER_EDGES_WITH_UNMODELED_LOOP_CAP",
+                         amendment-enter mechanism; re-check dynamic loop-cap modeling",
                         e.from, e.to
                     );
                     continue;
                 }
+                assert!(
+                    !e.amendment_capped,
+                    "{preset_name}: {from}:{} unexpectedly marked amendment_capped",
+                    e.to
+                );
                 assert_eq!(
                     e.loop_cap_key.is_some(),
                     has_loop,

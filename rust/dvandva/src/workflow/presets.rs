@@ -8,8 +8,9 @@
 //! (~write.rs:2589-2610), with `done` set to `"team"` per the `owner_for`
 //! wrapper's explicit special case (`v2_expected_assignee` alone returns `""`
 //! for `done`, since it is a same-status handshake, not a role-assigned
-//! status). Loop-capped edges (`loop_cap_key: Some("from:to")`) are
-//! transcribed from `write::is_loop_edge` (~write.rs:1154-1164).
+//! status). Static loop-capped edges (`loop_cap_key: Some("from:to")`) are
+//! transcribed from `write::is_loop_edge` (~write.rs:1154-1164); the two
+//! dynamic plan-amendment entry caps are marked with `amendment_capped`.
 
 use super::{StateClass, WfEdge, WfState, WorkflowGraph};
 
@@ -33,6 +34,19 @@ fn edge(from: &'static str, to: &'static str) -> WfEdge {
         from,
         to,
         loop_cap_key: key,
+        amendment_capped: false,
+    }
+}
+
+/// Builds a plan-amendment-enter edge (`write::is_amendment_enter_edge`):
+/// `amendment_capped: true`, `loop_cap_key: None` (it is capped by the
+/// amendment mechanism, not the static loop-edge set).
+fn amendment_edge(from: &'static str, to: &'static str) -> WfEdge {
+    WfEdge {
+        from,
+        to,
+        loop_cap_key: None,
+        amendment_capped: true,
     }
 }
 
@@ -171,7 +185,7 @@ pub fn standard() -> WorkflowGraph {
         edge("implementing", "phase_review"),
         edge("phase_review", "phase_fixing"),
         edge("phase_review", "implementing"),
-        edge("phase_review", "spec_revision"),
+        amendment_edge("phase_review", "spec_revision"),
         edge("phase_fixing", "phase_review"),
         edge("phase_review", "termination_review"),
         edge("termination_review", "phase_fixing"),
@@ -231,7 +245,7 @@ pub fn full() -> WorkflowGraph {
         edge("deslop", "phase_fixing"),
         edge("deslop", "parallel_implementing"),
         edge("deslop", "implementing"),
-        edge("deslop", "spec_revision"),
+        amendment_edge("deslop", "spec_revision"),
         edge("deslop", "termination_review"),
         edge("termination_review", "phase_fixing"),
         edge("termination_review", "done"),
@@ -420,6 +434,47 @@ mod tests {
             .find(|e| e.from == "implementing" && e.to == "phase_review")
             .expect("implementing:phase_review must exist in fast");
         assert_eq!(e.loop_cap_key, None);
+    }
+
+    #[test]
+    fn amendment_capped_edges_are_marked() {
+        let g = full();
+        let e = g
+            .edges
+            .iter()
+            .find(|e| e.from == "deslop" && e.to == "spec_revision")
+            .expect("full: deslop->spec_revision must exist");
+        assert!(e.amendment_capped, "full: deslop->spec_revision");
+        assert_eq!(e.loop_cap_key, None, "full: deslop->spec_revision");
+
+        let g = standard();
+        let e = g
+            .edges
+            .iter()
+            .find(|e| e.from == "phase_review" && e.to == "spec_revision")
+            .expect("standard: phase_review->spec_revision must exist");
+        assert!(e.amendment_capped, "standard: phase_review->spec_revision");
+        assert_eq!(
+            e.loop_cap_key, None,
+            "standard: phase_review->spec_revision"
+        );
+    }
+
+    #[test]
+    fn no_other_edge_is_amendment_capped() {
+        for g in all_graphs() {
+            for e in &g.edges {
+                let expected = (g.name == "full" && e.from == "deslop" && e.to == "spec_revision")
+                    || (g.name == "standard"
+                        && e.from == "phase_review"
+                        && e.to == "spec_revision");
+                assert_eq!(
+                    e.amendment_capped, expected,
+                    "{}: {}->{} amendment_capped mismatch",
+                    g.name, e.from, e.to
+                );
+            }
+        }
     }
 
     #[test]

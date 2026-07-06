@@ -40,9 +40,16 @@ pub struct WfState {
 pub struct WfEdge {
     pub from: &'static str,
     pub to: &'static str,
-    /// `Some("from:to")` when this edge is loop-capped (per
-    /// `write::is_loop_edge`); `None` otherwise.
+    /// `Some("from:to")` when this edge has a static loop cap (per
+    /// `write::is_loop_edge`); `None` otherwise. Dynamic plan-amendment caps
+    /// are represented by `amendment_capped`.
     pub loop_cap_key: Option<&'static str>,
+    /// `true` for the two `write::is_amendment_enter_edge` edges (`full`'s
+    /// `deslop:spec_revision`, `standard`'s `phase_review:spec_revision`):
+    /// these are capped by the plan-amendment mechanism rather than by
+    /// `loop_cap_key`'s static set, so `loop_cap_key` is `None` on them even
+    /// though they are, in fact, loop-capped. `false` for every other edge.
+    pub amendment_capped: bool,
 }
 
 /// A named phase graph: its states and legal edges.

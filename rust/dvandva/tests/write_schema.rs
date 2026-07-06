@@ -263,6 +263,35 @@ fn v3_candidate_bad_run_workflow_shape_exits_23() {
 }
 
 #[test]
+fn v3_in_flight_candidate_bad_run_workflow_shape_exits_23() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "research_drafting", "vadi", 4, |_| {});
+    make_baton_v3(&n, "research_review", "prativadi", 5, |b| {
+        b["run_workflow"] = minimal_run_workflow();
+        b["run_workflow"]["source"] = json!("preset:bogus");
+    });
+    run(&b, &n).assert_contains(
+        "v3 in-flight bad run_workflow shape",
+        23,
+        "DVANDVA_WRITE bad_run_workflow",
+    );
+}
+
+#[test]
+fn v3_in_flight_unapproved_run_workflow_is_allowed_in_p1() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "research_drafting", "vadi", 4, |_| {});
+    make_baton_v3(&n, "research_review", "prativadi", 5, |b| {
+        b["run_workflow"] = minimal_run_workflow();
+        b["run_workflow"]["approved_by"] = json!(null);
+        b["run_workflow"]["approved_at_checkpoint"] = json!(null);
+    });
+    run(&b, &n).assert("v3 in-flight unapproved run_workflow stays P1-allowed", 0);
+}
+
+#[test]
 fn v2_candidate_schema_retired_to_v3() {
     let d = tmp();
     let (b, n) = paths(&d);

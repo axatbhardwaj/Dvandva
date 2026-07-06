@@ -402,27 +402,31 @@ fn a_fixture_violating_two_rules_reports_the_earlier_check() {
 // ===================== residual coverage: shape edge cases =====================
 
 #[test]
-fn duplicate_state_names_are_currently_accepted() {
-    // DOCUMENTED CURRENT BEHAVIOR (not asserted as correct): `validate_states`
-    // only checks each entry's OWN name/owner/class against the
-    // catalog/enum sets — it never checks the `states[]` array for
-    // duplicate names. Two entries sharing a name, even with CONFLICTING
-    // owner/class, currently pass shape validation. Flagged in the
-    // test-creation report as a possible real gap for phase_fixing /
-    // deep_review to weigh in on; this test pins the CURRENT behavior so a
-    // future tightening shows up here as a deliberate diff, not a silent
-    // behavior change.
+fn duplicate_state_names_are_rejected() {
     let catalog = full_catalog();
     let mut rw = valid_workflow("fast");
     let mut conflicting = rw["states"][0].clone();
     assert_ne!(conflicting["owner"], json!("human"));
     conflicting["owner"] = json!("human"); // deliberately conflicts with the original entry
+    let duplicated = conflicting["name"].as_str().unwrap().to_string();
     rw["states"].as_array_mut().unwrap().push(conflicting);
     assert_eq!(
         dvandva::workflow::validate_run_workflow(&rw, &catalog),
-        Ok(()),
-        "current shape validator accepts a duplicate/conflicting state name"
+        Err(ShapeError::DuplicateStateToken(duplicated))
     );
+}
+
+#[test]
+fn amendment_enter_edges_are_marked_as_dynamic_loop_capped() {
+    let g = preset("full").unwrap();
+    let edge = g
+        .edges
+        .iter()
+        .find(|e| e.from == "deslop" && e.to == "spec_revision")
+        .expect("full preset must include deslop -> spec_revision amendment entry");
+
+    assert!(edge.amendment_capped);
+    assert_eq!(edge.loop_cap_key, None);
 }
 
 #[test]
@@ -466,17 +470,7 @@ fn self_loop_edge_is_currently_accepted() {
 }
 
 #[test]
-fn amendment_approved_at_checkpoint_without_approved_by_is_currently_accepted() {
-    // REAL FINDING (asymmetry, not a documented design choice):
-    // `validate_amendments` never reads `approved_at_checkpoint` at all —
-    // contrast `validate_stamps`, which rejects a top-level
-    // `approved_at_checkpoint` set without `approved_by` as
-    // `BadApprovalStamp("approved_at_checkpoint=... set without
-    // approved_by")` (see `approved_by_without_approved_at_checkpoint_is_bad_approval_stamp`
-    // above for the mirror-image top-level case). The amendment path has NO
-    // equivalent symmetry check: an entry with `approved_by: null` and a
-    // nonnull `approved_at_checkpoint` passes shape validation unchanged.
-    // Flagged for phase_fixing/deep_review.
+fn amendment_approved_at_checkpoint_without_approved_by_is_bad_amendment() {
     let catalog = full_catalog();
     let mut rw = valid_workflow("fast");
     rw["amendments"] = json!([{
@@ -487,11 +481,56 @@ fn amendment_approved_at_checkpoint_without_approved_by_is_currently_accepted() 
         "approved_by": null,
         "approved_at_checkpoint": 5,
     }]);
-    assert_eq!(
-        dvandva::workflow::validate_run_workflow(&rw, &catalog),
-        Ok(()),
-        "amendment stamp asymmetry currently passes shape validation unrejected"
-    );
+    let err = dvandva::workflow::validate_run_workflow(&rw, &catalog).unwrap_err();
+    assert!(matches!(err, ShapeError::BadAmendment(_)));
+}
+
+#[test]
+fn amendment_approved_by_without_approved_at_checkpoint_is_bad_amendment() {
+    let catalog = full_catalog();
+    let mut rw = valid_workflow("fast");
+    rw["amendments"] = json!([{
+        "proposed_by": "vadi",
+        "at_checkpoint": 1,
+        "resume_status": "implementing",
+        "reason": "test",
+        "approved_by": "prativadi",
+        "approved_at_checkpoint": null
+    }]);
+    let err = dvandva::workflow::validate_run_workflow(&rw, &catalog).unwrap_err();
+    assert!(matches!(err, ShapeError::BadAmendment(_)));
+}
+
+#[test]
+fn amendment_negative_at_checkpoint_is_bad_amendment() {
+    let catalog = full_catalog();
+    let mut rw = valid_workflow("fast");
+    rw["amendments"] = json!([{
+        "proposed_by": "vadi",
+        "at_checkpoint": -1,
+        "resume_status": "implementing",
+        "reason": "test",
+        "approved_by": null,
+        "approved_at_checkpoint": null,
+    }]);
+    let err = dvandva::workflow::validate_run_workflow(&rw, &catalog).unwrap_err();
+    assert!(matches!(err, ShapeError::BadAmendment(_)));
+}
+
+#[test]
+fn amendment_approved_before_proposed_checkpoint_is_bad_amendment() {
+    let catalog = full_catalog();
+    let mut rw = valid_workflow("fast");
+    rw["amendments"] = json!([{
+        "proposed_by": "vadi",
+        "at_checkpoint": 5,
+        "resume_status": "implementing",
+        "reason": "test",
+        "approved_by": "prativadi",
+        "approved_at_checkpoint": 4,
+    }]);
+    let err = dvandva::workflow::validate_run_workflow(&rw, &catalog).unwrap_err();
+    assert!(matches!(err, ShapeError::BadAmendment(_)));
 }
 
 #[test]
