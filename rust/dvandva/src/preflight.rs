@@ -14,8 +14,11 @@ use serde_json::Value;
 
 use crate::emit;
 use crate::hook_preflight::{run_hook_preflight, HookMode};
-use crate::resolve::{resolve_active_run, ResolveEnv, ResolveError, ResolveOutcome};
-use crate::util::{coalesce, read_json_lenient, JsonReadError};
+use crate::resolve::{
+    resolve_active_run, selector_bootstrap_state, ResolveEnv, ResolveError, ResolveOutcome,
+    SelectorBootstrap,
+};
+use crate::util::{coalesce, read_json_lenient};
 use crate::write::expected_owner;
 use crate::Role;
 
@@ -71,12 +74,6 @@ enum SanityCheck {
     Invalid(String),
 }
 
-enum SelectorBootstrap {
-    ValidBaton,
-    MissingClean,
-    StaleRunDir(&'static str),
-}
-
 /// Read-only sanity check (S2-T3) on a RESOLVED baton: does its assignee
 /// match the v2 engine's expected owner for its status, does a team-owned
 /// status carry non-empty `active_roles`, and is its status token part of
@@ -121,27 +118,6 @@ fn sanity_check(baton_path: &Path) -> SanityCheck {
 fn print_deadline_if_armed(root: &Path) {
     if let Some(line) = crate::sla_marker::deadline_line_if_armed(root) {
         println!("{line}");
-    }
-}
-
-fn selector_bootstrap_state(root: &Path, baton_path: &Path) -> SelectorBootstrap {
-    match read_json_lenient(baton_path) {
-        Ok(_) => SelectorBootstrap::ValidBaton,
-        Err(JsonReadError::Invalid) => SelectorBootstrap::StaleRunDir("invalid_baton"),
-        Err(JsonReadError::Missing) => {
-            let run_dir = baton_path.parent().unwrap_or(root);
-            match read_json_lenient(&run_dir.join("baton.next.json")) {
-                Err(JsonReadError::Invalid) => {
-                    return SelectorBootstrap::StaleRunDir("invalid_candidate");
-                }
-                Ok(_) | Err(JsonReadError::Missing) => {}
-            }
-            let marker = crate::sla_marker::marker_path(root);
-            if marker.exists() && crate::sla_marker::read(root).is_none() {
-                return SelectorBootstrap::StaleRunDir("garbage_marker");
-            }
-            SelectorBootstrap::MissingClean
-        }
     }
 }
 

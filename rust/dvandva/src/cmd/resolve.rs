@@ -5,8 +5,10 @@ use std::path::{Path, PathBuf};
 
 use dvandva::emit;
 use dvandva::gitcfg::repo_toplevel;
-use dvandva::resolve::{resolve_active_run, ResolveEnv, ResolveError, ResolveOutcome};
-use dvandva::util::{read_json_lenient, JsonReadError};
+use dvandva::resolve::{
+    resolve_active_run, selector_bootstrap_state, ResolveEnv, ResolveError, ResolveOutcome,
+    SelectorBootstrap,
+};
 use dvandva::{sla_marker, Role};
 
 const USAGE: &str = "\
@@ -71,12 +73,6 @@ pub fn run(args: &[String]) -> i32 {
     }
 }
 
-enum SelectorBootstrap {
-    ValidBaton,
-    MissingClean,
-    StaleRunDir(&'static str),
-}
-
 fn has_explicit_selector(env: &ResolveEnv) -> bool {
     env.baton_file.as_deref().is_some_and(|v| !v.is_empty())
         || env.run_dir.as_deref().is_some_and(|v| !v.is_empty())
@@ -131,27 +127,6 @@ fn print_deadline_if_armed(cwd: Option<&Path>) {
     if let Some(root) = command_root(cwd) {
         if let Some(line) = sla_marker::deadline_line_if_armed(&root) {
             println!("{line}");
-        }
-    }
-}
-
-fn selector_bootstrap_state(root: &Path, baton_path: &Path) -> SelectorBootstrap {
-    match read_json_lenient(baton_path) {
-        Ok(_) => SelectorBootstrap::ValidBaton,
-        Err(JsonReadError::Invalid) => SelectorBootstrap::StaleRunDir("invalid_baton"),
-        Err(JsonReadError::Missing) => {
-            let run_dir = baton_path.parent().unwrap_or(root);
-            match read_json_lenient(&run_dir.join("baton.next.json")) {
-                Err(JsonReadError::Invalid) => {
-                    return SelectorBootstrap::StaleRunDir("invalid_candidate");
-                }
-                Ok(_) | Err(JsonReadError::Missing) => {}
-            }
-            let marker = sla_marker::marker_path(root);
-            if marker.exists() && sla_marker::read(root).is_none() {
-                return SelectorBootstrap::StaleRunDir("garbage_marker");
-            }
-            SelectorBootstrap::MissingClean
         }
     }
 }

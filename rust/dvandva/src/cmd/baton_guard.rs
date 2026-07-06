@@ -53,14 +53,17 @@ pub fn run(args: &[String]) -> i32 {
 }
 
 fn warn_hook_response(reason: &str) -> String {
-    let context = format!("{SLA_WARN_MESSAGE} ({reason})");
     serde_json::json!({
         "hookSpecificOutput": {
             "hookEventName": "PreToolUse",
             "permissionDecision": "allow",
-            "additionalContext": context,
+            "additionalContext": format!("{SLA_WARN_MESSAGE} ({reason})"),
         },
-        "systemMessage": context,
+        // Short user-facing line; the full recovery text lives in the
+        // model-visible additionalContext above.
+        "systemMessage": format!(
+            "dvandva baton-guard: baton-creation SLA breached ({reason}) — warning only, work continues"
+        ),
     })
     .to_string()
 }

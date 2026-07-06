@@ -306,6 +306,44 @@ fn derive_create_slug(root: &Path) -> String {
     }
 }
 
+/// Bootstrap state of a selector-targeted run directory, shared by the
+/// `preflight` and `resolve` command layers (deslop: previously duplicated
+/// byte-identically in both). Lives here — not in `resolve_active_run` —
+/// so the resolver itself keeps its no-filesystem-checks contract.
+pub enum SelectorBootstrap {
+    /// The selected baton file parses as JSON: normal resolution.
+    ValidBaton,
+    /// The selected baton file is missing and the run dir carries no stale
+    /// leftovers: a clean bootstrap (arm for vadi, wait for prativadi).
+    MissingClean,
+    /// The run dir holds stale state a human must clear first; the payload
+    /// is the `detail=` token (`invalid_baton` | `invalid_candidate` |
+    /// `garbage_marker`).
+    StaleRunDir(&'static str),
+}
+
+/// Classify a selector-targeted `baton_path` for bootstrap handling.
+pub fn selector_bootstrap_state(root: &Path, baton_path: &Path) -> SelectorBootstrap {
+    match util::read_json_lenient(baton_path) {
+        Ok(_) => SelectorBootstrap::ValidBaton,
+        Err(util::JsonReadError::Invalid) => SelectorBootstrap::StaleRunDir("invalid_baton"),
+        Err(util::JsonReadError::Missing) => {
+            let run_dir = baton_path.parent().unwrap_or(root);
+            match util::read_json_lenient(&run_dir.join("baton.next.json")) {
+                Err(util::JsonReadError::Invalid) => {
+                    return SelectorBootstrap::StaleRunDir("invalid_candidate");
+                }
+                Ok(_) | Err(util::JsonReadError::Missing) => {}
+            }
+            let marker = crate::sla_marker::marker_path(root);
+            if marker.exists() && crate::sla_marker::read(root).is_none() {
+                return SelectorBootstrap::StaleRunDir("garbage_marker");
+            }
+            SelectorBootstrap::MissingClean
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
