@@ -28,6 +28,48 @@ pub enum StateClass {
     Terminal,
 }
 
+impl StateClass {
+    /// Parse the lowercase snake_case class token used in a v3 baton's
+    /// `run_workflow.states[].class` field (the same 5-token vocabulary
+    /// `shape::validate_run_workflow` accepts). `None` for anything else.
+    pub fn from_token(token: &str) -> Option<StateClass> {
+        match token {
+            "work" => Some(StateClass::Work),
+            "review_gate" => Some(StateClass::ReviewGate),
+            "human_gate" => Some(StateClass::HumanGate),
+            "pause" => Some(StateClass::Pause),
+            "terminal" => Some(StateClass::Terminal),
+            _ => None,
+        }
+    }
+}
+
+/// The static (v1/v2 read-path) class of a status token.
+///
+/// Replicates the pre-class-model `wait` semantics exactly — `done`/`abandoned`
+/// are [`StateClass::Terminal`], `human_question`/`human_decision` are
+/// [`StateClass::Pause`], everything else is [`StateClass::Work`] (the generic
+/// heartbeat path) — with one retroactive addition: the F5 fix maps the two
+/// human-assigned clarifying-answer states to [`StateClass::HumanGate`] so a
+/// v2 baton parked on them still wakes the role that must surface them to the
+/// human. This is a read-path-only reinterpretation; it never changes what the
+/// write path accepts.
+///
+/// The `Work`/`ReviewGate` split is behaviorally irrelevant to `wait` (both
+/// take the generic heartbeat path), so review states are left as `Work` here
+/// rather than duplicating the preset `ReviewGate` map: the exact-replication
+/// contract is about exit codes, and these tokens exit nowhere.
+pub fn static_class(status: &str) -> StateClass {
+    match status {
+        "clarifying_questions_answer" | "clarifying_questions_followup_answer" => {
+            StateClass::HumanGate
+        }
+        "human_question" | "human_decision" => StateClass::Pause,
+        "done" | "abandoned" => StateClass::Terminal,
+        _ => StateClass::Work,
+    }
+}
+
 /// A single state in a workflow graph: its name, owning role, and class.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct WfState {

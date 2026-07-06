@@ -3052,3 +3052,324 @@ fn discover_adopted_baton_honors_until_actionable() {
     assert!(o.contains("discovered file="), "{}", o.out);
     assert!(o.contains("no_actionable_work"), "{}", o.out);
 }
+
+// ── p3-wait-classes (StateClass-driven wait classification) ──────────────────
+//
+// The waiting baton's current status is classified by its StateClass rather
+// than by a closed status token match: v3 batons resolve the class from their
+// `run_workflow` (custom -> states[], preset:* -> the resolved preset), v1/v2
+// batons from the static token map. New exit 15 (`human_gate`) wakes the role
+// that must surface a HumanGate to the human (F5 fix). These tests are owned by
+// p3-wait-classes; a later peer pass owns the comprehensive wait suite.
+
+/// Immediate-exit arg set: `--file <f> --role <role> --interval 0 --max-wait 0`.
+fn p3_now_args<'a>(role: &'a str, file: &'a str) -> [&'a str; 8] {
+    [
+        "--role",
+        role,
+        "--file",
+        file,
+        "--interval",
+        "0",
+        "--max-wait",
+        "0",
+    ]
+}
+
+/// A v1/v2 baton whose status is `status` (checkpoint 8), assigned to `human`.
+fn p3_write_v2_baton(file: &Path, status: &str) {
+    mkparent(file);
+    std::fs::write(
+        file,
+        format!(
+            r#"{{
+  "schema": "dvandva.baton.v2",
+  "assignee": "human",
+  "status": "{status}",
+  "phase": "spec",
+  "checkpoint": 8
+}}"#
+        ),
+    )
+    .unwrap();
+}
+
+/// A v3 baton with a `source:custom` run_workflow that declares exactly one
+/// state (`status` with `class`); the top-level status is that same token.
+/// `assignee` controls whether a Work-class status would otherwise go ready.
+fn p3_write_v3_custom_baton(file: &Path, status: &str, class: &str, assignee: &str) {
+    mkparent(file);
+    std::fs::write(
+        file,
+        format!(
+            r#"{{
+  "schema": "dvandva.baton.v3",
+  "assignee": "{assignee}",
+  "status": "{status}",
+  "phase": "spec",
+  "checkpoint": 8,
+  "run_workflow": {{
+    "source": "custom",
+    "declared_by": "vadi",
+    "declared_at_checkpoint": 1,
+    "approved_by": "prativadi",
+    "approved_at_checkpoint": 2,
+    "revision_round": 0,
+    "states": [
+      {{ "name": "{status}", "owner": "human", "class": "{class}" }}
+    ],
+    "edges": [],
+    "amendments": []
+  }}
+}}"#
+        ),
+    )
+    .unwrap();
+}
+
+/// A v3 baton whose run_workflow `source` is `preset:<name>`; the class of
+/// `status` is resolved from the named preset, not from any states[] entry.
+fn p3_write_v3_preset_baton(file: &Path, preset: &str, status: &str) {
+    mkparent(file);
+    std::fs::write(
+        file,
+        format!(
+            r#"{{
+  "schema": "dvandva.baton.v3",
+  "assignee": "human",
+  "status": "{status}",
+  "phase": "spec",
+  "checkpoint": 8,
+  "run_workflow": {{
+    "source": "preset:{preset}",
+    "declared_by": "vadi",
+    "declared_at_checkpoint": 1,
+    "approved_by": "prativadi",
+    "approved_at_checkpoint": 2,
+    "revision_round": 0,
+    "states": [],
+    "edges": [],
+    "amendments": []
+  }}
+}}"#
+        ),
+    )
+    .unwrap();
+}
+
+// Behavior 1+2: v1/v2 static map — clarifying-answer states are HumanGate (F5).
+#[test]
+fn p3_v2_clarifying_answer_exits_15_human_gate() {
+    let d = tmp();
+    let f = d.path().join("cqa.json");
+    p3_write_v2_baton(&f, "clarifying_questions_answer");
+    let o = run_wait(
+        None,
+        &[],
+        &p3_now_args("vadi", f.to_str().unwrap()),
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(15), "{}", o.out);
+    assert!(
+        o.contains("DVANDVA_WAIT human_gate status=clarifying_questions_answer checkpoint=8"),
+        "{}",
+        o.out
+    );
+}
+
+#[test]
+fn p3_v2_clarifying_followup_answer_exits_15() {
+    let d = tmp();
+    let f = d.path().join("cqfa.json");
+    p3_write_v2_baton(&f, "clarifying_questions_followup_answer");
+    let o = run_wait(
+        None,
+        &[],
+        &p3_now_args("vadi", f.to_str().unwrap()),
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(15), "{}", o.out);
+    assert!(
+        o.contains(
+            "DVANDVA_WAIT human_gate status=clarifying_questions_followup_answer checkpoint=8"
+        ),
+        "{}",
+        o.out
+    );
+}
+
+// Behavior 1: v3 custom — class read straight from states[].
+#[test]
+fn p3_v3_custom_human_gate_status_exits_15() {
+    let d = tmp();
+    let f = d.path().join("v3hg.json");
+    p3_write_v3_custom_baton(&f, "await_human_input", "human_gate", "human");
+    let o = run_wait(
+        None,
+        &[],
+        &p3_now_args("vadi", f.to_str().unwrap()),
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(15), "{}", o.out);
+    assert!(
+        o.contains("DVANDVA_WAIT human_gate status=await_human_input checkpoint=8"),
+        "{}",
+        o.out
+    );
+}
+
+#[test]
+fn p3_v3_custom_work_class_keeps_polling() {
+    // A Work-class status assigned to the peer -> generic heartbeat, never a
+    // class exit. Finite so it terminates on the budget with the timeout code.
+    let d = tmp();
+    let f = d.path().join("v3work.json");
+    p3_write_v3_custom_baton(&f, "drafting_pass", "work", "prativadi");
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "0",
+            "--max-wait",
+            "0",
+            "--finite",
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(20), "{}", o.out);
+    assert!(!o.contains("DVANDVA_WAIT human_gate"), "{}", o.out);
+}
+
+// Behavior 1: v3 preset:* — class resolved from the named preset's states.
+#[test]
+fn p3_v3_preset_clarifying_answer_exits_15() {
+    let d = tmp();
+    let f = d.path().join("v3preset.json");
+    p3_write_v3_preset_baton(&f, "standard", "clarifying_questions_answer");
+    let o = run_wait(
+        None,
+        &[],
+        &p3_now_args("vadi", f.to_str().unwrap()),
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(15), "{}", o.out);
+    assert!(
+        o.contains("DVANDVA_WAIT human_gate status=clarifying_questions_answer checkpoint=8"),
+        "{}",
+        o.out
+    );
+}
+
+// Behavior 3: declared v3 pause state that is not a legacy token -> exit 11.
+#[test]
+fn p3_v3_custom_nonlegacy_pause_exits_11() {
+    let d = tmp();
+    let f = d.path().join("v3pause.json");
+    p3_write_v3_custom_baton(&f, "await_human_ruling", "pause", "human");
+    let o = run_wait(
+        None,
+        &[],
+        &p3_now_args("vadi", f.to_str().unwrap()),
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(11), "{}", o.out);
+}
+
+// Behavior 4: declared v3 terminal that is not a legacy token -> exit 13;
+// a declared terminal named `done` still exits 10.
+#[test]
+fn p3_v3_custom_nonlegacy_terminal_exits_13() {
+    let d = tmp();
+    let f = d.path().join("v3term.json");
+    p3_write_v3_custom_baton(&f, "shipped", "terminal", "human");
+    let o = run_wait(
+        None,
+        &[],
+        &p3_now_args("vadi", f.to_str().unwrap()),
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(13), "{}", o.out);
+}
+
+#[test]
+fn p3_v3_custom_done_terminal_exits_10() {
+    let d = tmp();
+    let f = d.path().join("v3done.json");
+    p3_write_v3_custom_baton(&f, "done", "terminal", "team");
+    let o = run_wait(
+        None,
+        &[],
+        &p3_now_args("vadi", f.to_str().unwrap()),
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(10), "{}", o.out);
+}
+
+// Behavior 5: --through-human passive-watches a HumanGate the same way it does
+// human_question — one note per episode, no exit 15, auto-resumes.
+#[test]
+fn p3_through_human_human_gate_notes_once_no_exit() {
+    let d = tmp();
+    let f = d.path().join("cqa_th.json");
+    p3_write_v2_baton(&f, "clarifying_questions_answer"); // checkpoint 8
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "1",
+            "--max-wait",
+            "2",
+            "--finite",
+            "--through-human",
+        ],
+        BUDGET_SLOW,
+    );
+    // Never exits 15 under --through-human; runs out the finite budget.
+    assert_eq!(o.code, Some(20), "{}", o.out);
+    assert_eq!(
+        o.out
+            .matches(
+                "DVANDVA_WAIT note human_pause status=clarifying_questions_answer checkpoint=8"
+            )
+            .count(),
+        1,
+        "{}",
+        o.out
+    );
+}
+
+// Behavior 6: a v1/v2 ReviewGate-mapped status keeps the generic heartbeat.
+#[test]
+fn p3_v2_review_status_keeps_polling() {
+    let d = tmp();
+    let f = d.path().join("cross.json");
+    p3_write_v2_baton(&f, "cross_review");
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "0",
+            "--max-wait",
+            "0",
+            "--finite",
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(20), "{}", o.out);
+    assert!(!o.contains("DVANDVA_WAIT human_gate"), "{}", o.out);
+}
