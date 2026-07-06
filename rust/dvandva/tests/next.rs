@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use common::{make_baton_v3, run};
-use serde_json::Value;
+use serde_json::{json, Value};
 
 fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_dvandva"))
@@ -52,6 +52,30 @@ fn assert_v3_candidate(cand: &Value, workflow_source: &str) {
     assert!(cand["run_workflow"]["states"].is_array());
     assert!(cand["run_workflow"]["edges"].is_array());
     assert!(cand["run_workflow"]["amendments"].is_array());
+}
+
+fn custom_rewired_workflow() -> Value {
+    json!({
+        "source": "custom",
+        "declared_by": "vadi",
+        "declared_at_checkpoint": 0,
+        "approved_by": "prativadi",
+        "approved_at_checkpoint": 1,
+        "revision_round": 0,
+        "states": [
+            {"name": "research_drafting", "owner": "vadi", "class": "work"},
+            {"name": "research_review", "owner": "prativadi", "class": "review_gate"},
+            {"name": "deep_review", "owner": "prativadi", "class": "review_gate"},
+            {"name": "termination_review", "owner": "team", "class": "review_gate"},
+            {"name": "done", "owner": "team", "class": "terminal"}
+        ],
+        "edges": [
+            {"from": "research_drafting", "to": "deep_review"},
+            {"from": "deep_review", "to": "termination_review"},
+            {"from": "termination_review", "to": "done"}
+        ],
+        "amendments": []
+    })
 }
 
 // ===================== LIST mode =====================
@@ -99,6 +123,30 @@ fn list_role_filter_keeps_only_that_role() {
     );
 }
 
+#[test]
+fn custom_graph_list_uses_declared_edges_not_selected_preset() {
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    make_baton_v3(&baton, "research_drafting", "vadi", 4, |b| {
+        b["mode"] = Value::from("review");
+        b["phase"] = Value::from("review");
+        b["run_workflow"] = custom_rewired_workflow();
+    });
+
+    let (code, stdout, stderr) = run_next(&["--file", baton.to_str().unwrap()]);
+    assert_eq!(code, 0, "custom graph list exits 0\nstderr:\n{stderr}");
+    assert!(
+        stdout.contains(
+            "DVANDVA_NEXT deep_review owner=prativadi phase=same review_target=implementation"
+        ),
+        "LIST follows the declared custom edge research_drafting->deep_review\n{stdout}"
+    );
+    assert!(
+        !stdout.contains("DVANDVA_NEXT research_review "),
+        "LIST must not leak the review preset's omitted research_drafting->research_review edge\n{stdout}"
+    );
+}
+
 // ===================== GENERATE mode =====================
 
 #[test]
@@ -139,6 +187,44 @@ fn generate_research_review_happy_path_and_write_accepts_it() {
     run(&baton, &candidate).assert("write accepts the generated research_review candidate", 0);
     // ...and the baton is now installed at checkpoint 1.
     assert_eq!(read_json(&baton)["checkpoint"], 1);
+}
+
+#[test]
+fn custom_graph_generate_declared_edge_and_write_accepts_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    let candidate = dir.path().join("baton.next.json");
+    make_baton_v3(&baton, "research_drafting", "vadi", 4, |b| {
+        b["mode"] = Value::from("review");
+        b["phase"] = Value::from("review");
+        b["run_workflow"] = custom_rewired_workflow();
+    });
+
+    let (code, stdout, stderr) = run_next(&[
+        "--file",
+        baton.to_str().unwrap(),
+        "--to",
+        "deep_review",
+        "--summary",
+        "Custom graph skips research_review and sends the work straight to deep_review.",
+        "--next-action",
+        "prativadi: run deep_review on the custom declared graph path.",
+    ]);
+    assert_eq!(code, 0, "custom graph generate exits 0\nstderr:\n{stderr}");
+    assert!(
+        stdout.contains("to=deep_review checkpoint=5"),
+        "ok line names the custom target + checkpoint\n{stdout}"
+    );
+
+    let cand = read_json(&candidate);
+    assert_eq!(cand["status"], "deep_review");
+    assert_eq!(cand["assignee"], "prativadi");
+    assert_eq!(cand["phase"], "review");
+    assert_eq!(cand["review_target"], "implementation");
+    assert_v3_candidate(&cand, "custom");
+
+    run(&baton, &candidate).assert("write accepts the generated custom-graph candidate", 0);
+    assert_eq!(read_json(&baton)["checkpoint"], 5);
 }
 
 #[test]
