@@ -103,10 +103,21 @@ fn sla_state(payload: &[u8]) -> SlaState {
     };
 
     let parsed_role = Role::parse(&role).unwrap_or(Role::Vadi);
-    let has_baton = matches!(
-        resolve_active_run(parsed_role, Some(repo_root.as_path()), ResolveEnv::from_process_env()),
-        Ok(ResolveOutcome::Resolved(path)) if is_valid_baton(&repo_root.join(&path))
-    );
+    // A run counts as baton-present when the resolver finds one valid baton
+    // OR several (AskMultiple): ambiguity between valid batons still means
+    // baton creation succeeded — warning then would be false recovery
+    // guidance (cross-review finding, checkpoint 20).
+    let has_baton = match resolve_active_run(
+        parsed_role,
+        Some(repo_root.as_path()),
+        ResolveEnv::from_process_env(),
+    ) {
+        Ok(ResolveOutcome::Resolved(path)) => is_valid_baton(&repo_root.join(&path)),
+        Ok(ResolveOutcome::AskMultiple(candidates)) => candidates
+            .iter()
+            .any(|c| is_valid_baton(&repo_root.join(&c.path))),
+        _ => false,
+    };
     if has_baton {
         sla_marker::clear(&repo_root);
         return SlaState {

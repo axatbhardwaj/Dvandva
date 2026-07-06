@@ -1228,6 +1228,45 @@ fn no_sla_line_when_a_valid_baton_resolves() {
 }
 
 #[test]
+fn ambiguous_valid_batons_satisfy_the_sla_and_clear_the_marker() {
+    // Cross-review finding (prativadi, checkpoint 20): two valid active
+    // batons resolve as AskMultiple, which must count as baton-present for
+    // the SLA — warning after successful baton creation is false recovery
+    // guidance. The marker clears instead of restamping.
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_git_repo(dir.path());
+    write_aged_marker(dir.path(), "vadi", 500);
+
+    for run in ["r1", "r2"] {
+        let run_dir = dir.path().join(".dvandva/runs").join(run);
+        std::fs::create_dir_all(&run_dir).expect("create run dir");
+        std::fs::write(
+            run_dir.join("baton.json"),
+            json!({
+                "schema": "dvandva.baton.v2",
+                "run_id": run,
+                "status": "research_drafting",
+                "assignee": "vadi",
+                "updated_at": "2026-01-01T00:00:00Z"
+            })
+            .to_string(),
+        )
+        .expect("write baton.json");
+    }
+
+    let out = run_guard_in(
+        dir.path(),
+        &[],
+        payload("Write", "some/other/file.txt").as_bytes(),
+    );
+    assert_allowed(&out);
+    assert!(
+        read_marker(dir.path(), "vadi").is_none(),
+        "valid batons (even ambiguous ones) satisfy the SLA; the marker must clear"
+    );
+}
+
+#[test]
 fn warn_sequence_composes_warn_silent_rewarn() {
     // The composed lifecycle in one repo: first breached call warns, the
     // next is silent under the throttle, and once the recorded warn ages
