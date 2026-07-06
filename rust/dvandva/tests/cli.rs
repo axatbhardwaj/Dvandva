@@ -22,7 +22,8 @@ fn version_flag_prints_exact_line() {
     );
     assert_eq!(
         String::from_utf8_lossy(&out.stdout),
-        "dvandva 2.0.0-beta.3\n",
+        format!("dvandva {}\n", env!("CARGO_PKG_VERSION")),
+        "--version must track Cargo.toml so releases can never misreport"
     );
 }
 
