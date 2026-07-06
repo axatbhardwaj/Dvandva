@@ -994,8 +994,8 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
         let (loop_key, drop) = if is_enter {
             let edge = format!("plan_amendment:{cur_phase}");
             build_loop_key(current, &edge)
-        } else if edge_is_loop_capped(&graph, &loop_edge) {
-            build_loop_key(current, &loop_edge)
+        } else if let Some(loop_key) = loop_key_for_edge(&graph, &loop_edge) {
+            build_loop_key(current, &loop_key)
         } else {
             (None, false)
         };
@@ -1734,7 +1734,7 @@ fn decide_transition(
         // Loop-cap membership follows the resolved graph: a custom v3 graph
         // consults its declared edge's loop_cap_key/amendment_capped; every
         // preset/v2 graph falls back to the static six-edge set.
-        let is_loop_edge = edge_is_loop_capped(&eff_graph, &edge);
+        let loop_key = loop_key_for_edge(&eff_graph, &edge);
         let amendment_enter = cur_effective_mode == "development"
             && cx.new_effective_mode == "development"
             && is_amendment_enter_edge(&cur_phase_eff, &cur_status, cx.new_status);
@@ -1762,8 +1762,8 @@ fn decide_transition(
                 "bad_loop_counts phase_advanced current={cur_phase} candidate={} must_reset=true",
                 cx.new_phase
             );
-        } else if is_loop_edge {
-            loop_reason = loop_edge_reason(cur_doc, cand, &edge);
+        } else if let Some(loop_key) = loop_key {
+            loop_reason = loop_edge_reason(cur_doc, cand, &loop_key);
         }
     }
 
@@ -2059,20 +2059,45 @@ fn decide_transition(
         } else {
             reason = "workflow_review amendment entry requires a new pending amendments[] entry (proposed_by=writer, at_checkpoint=current, resume_status=interrupted status)".to_string();
         }
-    } else if dev_dev
-        && cur_status == "workflow_review"
-        && cx.new_status != "workflow_revision"
-        && amendment_resume_ok(
+    } else if dev_dev && cur_status == "workflow_review" && cx.new_status != "workflow_revision" {
+        match amendment_resume_ok(
             cur_doc,
             cand,
             &writer_role,
             cx.new_status,
             cx.new_checkpoint,
-        )
-    {
-        // P2 amendment approve/resume: the peer stamps the pending amendment
-        // approved and the run resumes to the recorded resume_status.
-        legal = true;
+        ) {
+            Ok(true) => {
+                // P2 amendment approve/resume: the peer stamps the pending amendment
+                // approved and the run resumes to the recorded resume_status.
+                legal = true;
+            }
+            Ok(false) => {
+                // F9 edge selection: numeric-source states select by the current phase's
+                // effective profile; the spec→implementation entry (and amendment exit)
+                // selects by the target phase's effective profile; everything else uses
+                // the run profile. When phase_profiles is absent every branch collapses
+                // to cx.new_effective_profile — the pre-F9 behaviour.
+                let edge_profile: String = if cur_status == "spec_review"
+                    && matches!(cx.new_status, "implementing" | "parallel_implementing")
+                {
+                    new_phase_eff.clone()
+                } else if is_numeric_phase_status(&cur_status) {
+                    cur_phase_eff.clone()
+                } else {
+                    cx.new_effective_profile.to_string()
+                };
+                legal = edge_whitelist(
+                    &eff_graph,
+                    &cur_effective_mode,
+                    &edge_profile,
+                    &cur_status,
+                    cx.new_status,
+                    &mut reason,
+                );
+            }
+            Err(msg) => return Err((23, format!("DVANDVA_WRITE {msg} candidate={cf}"))),
+        }
     } else {
         // F9 edge selection: numeric-source states select by the current phase's
         // effective profile; the spec→implementation entry (and amendment exit)
@@ -4140,9 +4165,11 @@ fn profile_escalation_entry_ok(
 struct DeclaredEdge {
     from: String,
     to: String,
-    /// `true` when the entry carries a non-null `loop_cap_key` (the custom
-    /// analog of `is_loop_edge`'s static six-edge set) or is `amendment_capped`.
-    loop_capped: bool,
+    /// Declared loop counter key for this edge, when the workflow author marks
+    /// it as capped.
+    loop_cap_key: Option<String>,
+    /// Dynamic amendment cap marker for custom graphs.
+    amendment_capped: bool,
 }
 
 /// The effective transition graph a baton's edges are legalized against.
@@ -4189,12 +4216,15 @@ fn resolve_effective_graph(doc: &Value) -> EffectiveGraph {
                         if from.is_empty() || to.is_empty() {
                             return None;
                         }
-                        let loop_capped =
-                            present(field(e, "loop_cap_key")) || bool_field(e, "amendment_capped");
+                        let loop_cap_key = match field(e, "loop_cap_key") {
+                            Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+                            _ => None,
+                        };
                         Some(DeclaredEdge {
                             from,
                             to,
-                            loop_capped,
+                            loop_cap_key,
+                            amendment_capped: bool_field(e, "amendment_capped"),
                         })
                     })
                     .collect();
@@ -4237,15 +4267,24 @@ fn preset_edge_legal(mode: &str, profile: &str, from: &str, to: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// `true` when `edge` (`"from:to"`) is loop-capped under `graph`: a custom
-/// graph consults its declared edge's `loop_cap_key`/`amendment_capped`; every
-/// preset/v2 graph falls back to `is_loop_edge`'s static six-edge set.
-fn edge_is_loop_capped(graph: &EffectiveGraph, edge: &str) -> bool {
+/// The loop-count key for `edge` (`"from:to"`) under `graph`: a custom graph
+/// uses its declared `loop_cap_key`; every preset/v2 graph falls back to the
+/// static loop-edge key, which is the edge string itself.
+fn loop_key_for_edge(graph: &EffectiveGraph, edge: &str) -> Option<String> {
     match graph {
-        EffectiveGraph::Declared(edges) => edges
-            .iter()
-            .any(|e| e.loop_capped && format!("{}:{}", e.from, e.to) == edge),
-        _ => is_loop_edge(edge),
+        EffectiveGraph::Declared(edges) => {
+            let (from, to) = edge.split_once(':')?;
+            edges.iter().find_map(|e| {
+                if e.from == from && e.to == to {
+                    e.loop_cap_key
+                        .clone()
+                        .or_else(|| e.amendment_capped.then(|| edge.to_string()))
+                } else {
+                    None
+                }
+            })
+        }
+        _ => is_loop_edge(edge).then(|| edge.to_string()),
     }
 }
 
@@ -4427,11 +4466,11 @@ fn amendment_resume_ok(
     writer_role: &str,
     new_status: &str,
     checkpoint: u64,
-) -> bool {
+) -> Result<bool, String> {
     let cur_am = rw_amendments(cur_doc);
     let cand_am = rw_amendments(cand);
     if cand_am.len() != cur_am.len() || cur_am.is_empty() {
-        return false;
+        return Ok(false);
     }
     let mut flipped = 0;
     for (c, n) in cur_am.iter().zip(cand_am.iter()) {
@@ -4448,10 +4487,14 @@ fn amendment_resume_ok(
         if same_entry && newly_approved {
             flipped += 1;
         } else {
-            return false;
+            return Ok(false);
         }
     }
-    flipped == 1 && custom_invariants_ok(cand).is_ok()
+    if flipped == 1 {
+        custom_invariants_ok(cand).map(|()| true)
+    } else {
+        Ok(false)
+    }
 }
 
 // ===========================================================================
