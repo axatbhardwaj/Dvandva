@@ -1,10 +1,11 @@
 //! `lint schema-parity` — cross-copy schema/enum parity (hardening S6-T1).
 //!
-//! Guards the many hand-maintained copies of the `dvandva.baton.v2` contract
+//! Guards the many hand-maintained copies of the `dvandva.baton.v3` contract
 //! against silent drift. Two axes are covered:
 //!
 //! * **Code side** (unit tests in this module): the engine's own status catalog
-//!   ([`crate::write::V2_STATUS_CATALOG`]) is asserted equal to
+//!   ([`crate::write::V2_STATUS_CATALOG`], reused by v3 until custom workflow
+//!   tokens land) is asserted equal to
 //!   [`crate::baton::Status`]'s catalog and to
 //!   [`crate::preflight::V2_STATUS_TOKENS`], and the run-terminal set is asserted
 //!   to be exactly `{done, abandoned}`. These are the cheapest checks and never
@@ -14,10 +15,12 @@
 //!
 //! ## What [`report`] asserts (and the exact doc-wave contract each expects)
 //!
-//! 1. **Status-enum parity.** Three doc copies must enumerate exactly the 26
+//! 1. **Status-enum parity.** Four doc copies must enumerate exactly the 26
 //!    engine status tokens:
-//!    * `plugins/dvandva/references/baton-schema-v2.json` — its `status_catalog`
-//!      JSON array of strings.
+//!    * `plugins/dvandva/references/baton-schema-v3.json` — its `status_catalog`
+//!      JSON array of strings (the live write-schema reference).
+//!    * `plugins/dvandva/references/baton-schema-v2.json` — its historical
+//!      read-path `status_catalog` JSON array of strings.
 //!    * `product.md` — a single line of the form
 //!      `Status catalog (26): clarifying_questions_drafting, … abandoned`.
 //!      Everything after the literal marker `Status catalog (26):` is tokenised
@@ -39,7 +42,8 @@
 //!    `plugins/dvandva/references/local-baton-channel.md` must be byte-identical.
 //! 4. **Historical markers.** `plugins/dvandva/references/baton-schema.json` and
 //!    `templates/channel/baton.json` must each contain a line with the
-//!    case-sensitive token `HISTORICAL: dvandva.baton.v1`.
+//!    case-sensitive token `HISTORICAL: dvandva.baton.v1`; the v2 reference must
+//!    contain `HISTORICAL: dvandva.baton.v2`.
 //! 5. **Local-list drift guard (source-scan).** Every literal token in
 //!    [`crate::commit_gate::REMINDER_HARD_PATH_TOKENS`] must appear in
 //!    `rust/dvandva/src/write.rs` — a documented approximation of "the
@@ -62,11 +66,13 @@ use crate::lint::{file_contains, read, resolve_root, Report};
 use crate::write::{v2_required_keys, V2_STATUS_CATALOG};
 
 const CATALOG_MARKER: &str = "Status catalog (26):";
-const HISTORICAL_MARKER: &str = "HISTORICAL: dvandva.baton.v1";
+const HISTORICAL_V1_MARKER: &str = "HISTORICAL: dvandva.baton.v1";
+const HISTORICAL_V2_MARKER: &str = "HISTORICAL: dvandva.baton.v2";
 const WRITE_SRC: &str = "rust/dvandva/src/write.rs";
 const CHANNEL_A: &str = "docs/protocol/local-baton-channel.md";
 const CHANNEL_B: &str = "plugins/dvandva/references/local-baton-channel.md";
 const SCHEMA_V2: &str = "plugins/dvandva/references/baton-schema-v2.json";
+const SCHEMA_V3: &str = "plugins/dvandva/references/baton-schema-v3.json";
 const STATE_TABLE: &str = "plugins/dvandva/references/state-transition-table.md";
 
 /// Build the schema-parity findings for a repo root.
@@ -95,10 +101,16 @@ pub fn run(args: &[String]) -> i32 {
 fn status_enum_parity(root: &Path, r: &mut Report) {
     let want = canonical_status_catalog();
 
-    let schema_ok = json_status_catalog(root).as_deref() == Some(&want[..]);
+    let schema_v3_ok = json_status_catalog(root, SCHEMA_V3).as_deref() == Some(&want[..]);
     r.add(
-        schema_ok,
-        "baton-schema-v2.json status_catalog equals the engine v2 status catalog",
+        schema_v3_ok,
+        "baton-schema-v3.json status_catalog equals the engine v3 status catalog",
+    );
+
+    let schema_v2_ok = json_status_catalog(root, SCHEMA_V2).as_deref() == Some(&want[..]);
+    r.add(
+        schema_v2_ok,
+        "historical baton-schema-v2.json status_catalog equals the engine v2 status catalog",
     );
 
     let product_ok = marked_catalog(root, "product.md").as_deref() == Some(&want[..]);
@@ -121,12 +133,12 @@ fn canonical_status_catalog() -> Vec<String> {
     v
 }
 
-/// `.status_catalog` from `baton-schema-v2.json` as a sorted token list. `None`
+/// `.status_catalog` from a baton-schema reference as a sorted token list. `None`
 /// when the file is absent/unparseable, `status_catalog` is missing or not an
 /// array, or any element is not a string. Duplicates are NOT collapsed, so a
 /// repeated token fails the exact-equality comparison as drift.
-fn json_status_catalog(root: &Path) -> Option<Vec<String>> {
-    let text = read(root, SCHEMA_V2)?;
+fn json_status_catalog(root: &Path, rel: &str) -> Option<Vec<String>> {
+    let text = read(root, rel)?;
     let value: Value = serde_json::from_str(&text).ok()?;
     let arr = value.get("status_catalog")?.as_array()?;
     let mut tokens: Vec<String> = arr
@@ -232,10 +244,14 @@ fn historical_markers(root: &Path, r: &mut Report) {
         "templates/channel/baton.json",
     ] {
         r.add(
-            file_contains(root, rel, HISTORICAL_MARKER),
+            file_contains(root, rel, HISTORICAL_V1_MARKER),
             format!("{rel} carries the HISTORICAL: dvandva.baton.v1 marker"),
         );
     }
+    r.add(
+        file_contains(root, SCHEMA_V2, HISTORICAL_V2_MARKER),
+        "baton-schema-v2.json carries the HISTORICAL: dvandva.baton.v2 marker",
+    );
 }
 
 // ---------------------------------------------------------------------------

@@ -1491,11 +1491,14 @@ fn parity_catalog_line(tokens: &[&str]) -> String {
     format!("Status catalog (26): {}\n", tokens.join(", "))
 }
 
-/// A `baton-schema-v2.json` body carrying `status_catalog` as a JSON array.
-fn parity_status_catalog_json(tokens: &[&str]) -> String {
+/// A baton-schema reference body carrying `status_catalog` as a JSON array.
+fn parity_status_catalog_json(schema: &str, tokens: &[&str], note: Option<&str>) -> String {
     let items: Vec<String> = tokens.iter().map(|t| format!("    \"{t}\"")).collect();
+    let note_line = note
+        .map(|note| format!("  \"_note\": \"{note}\",\n"))
+        .unwrap_or_default();
     format!(
-        "{{\n  \"schema\": \"dvandva.baton.v2\",\n  \"status_catalog\": [\n{}\n  ]\n}}\n",
+        "{{\n{note_line}  \"schema\": \"{schema}\",\n  \"status_catalog\": [\n{}\n  ]\n}}\n",
         items.join(",\n")
     )
 }
@@ -1547,8 +1550,17 @@ fn parity_fixture(root: &Path) {
     // A1 — status-enum doc copies.
     w(
         root,
+        "plugins/dvandva/references/baton-schema-v3.json",
+        &parity_status_catalog_json("dvandva.baton.v3", PARITY_STATUS_TOKENS, None),
+    );
+    w(
+        root,
         "plugins/dvandva/references/baton-schema-v2.json",
-        &parity_status_catalog_json(PARITY_STATUS_TOKENS),
+        &parity_status_catalog_json(
+            "dvandva.baton.v2",
+            PARITY_STATUS_TOKENS,
+            Some("HISTORICAL: dvandva.baton.v2 read-path reference"),
+        ),
     );
     w(
         root,
@@ -1622,7 +1634,11 @@ fn parity_rejects_schema_catalog_missing_token() {
     w(
         d.path(),
         "plugins/dvandva/references/baton-schema-v2.json",
-        &parity_status_catalog_json(short),
+        &parity_status_catalog_json(
+            "dvandva.baton.v2",
+            short,
+            Some("HISTORICAL: dvandva.baton.v2 read-path reference"),
+        ),
     );
     let r = schema_parity::report(d.path());
     assert!(r.fails_with("baton-schema-v2.json status_catalog"));

@@ -64,14 +64,14 @@ fn create_live_foreign_lock(box_dir: &Path) {
 
 #[test]
 fn broken_current_baton_never_clobbered() {
-    // S5-T2: CONVERTED to a v2 candidate so the write reaches the current-baton
+    // v3 candidate so the write reaches the current-baton
     // read (a v1 candidate would short-circuit to `schema_retired`). The current
     // is truncated JSON -> unparseable -> exit 25, bytes preserved.
     let d = tmp();
     let (b, n) = paths(&d);
-    let raw: &[u8] = b"{\"schema\": \"dvandva.baton.v2\", \"assignee\": ";
+    let raw: &[u8] = b"{\"schema\": \"dvandva.baton.v3\", \"assignee\": ";
     std::fs::write(&b, raw).unwrap();
-    make_baton_v2(&n, "research_review", "prativadi", 5, |_| {});
+    make_baton_v3(&n, "research_review", "prativadi", 5, |_| {});
     run(&b, &n).assert("unparseable current baton exits 25", 25);
     let bytes = std::fs::read(&b).unwrap();
     assert_eq!(
@@ -84,12 +84,12 @@ fn broken_current_baton_never_clobbered() {
 
 #[test]
 fn install_fail_on_read_only_dir() {
-    // S5-T2: CONVERTED to a v2 research scaffold (a v1 scaffold is now
+    // v3 research scaffold (a v1 scaffold is now
     // `schema_retired`); the read-only install failure path is engine-wide.
     use std::os::unix::fs::PermissionsExt;
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "clarifying_questions_drafting", "vadi", 0, |_| {});
+    make_baton_v3(&n, "clarifying_questions_drafting", "vadi", 0, |_| {});
     std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
     let result = run(&b, &n);
     std::fs::set_permissions(d.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -105,11 +105,11 @@ fn snapshot_failure_via_history_file_collision_exits_30() {
     // mechanism does not exist. Instead we force the snapshot's
     // `create_dir_all(<dir>/history)` to fail natively by pre-creating
     // `history` as a regular file in the baton dir.
-    // S5-T2: CONVERTED to a v2 research scaffold (a v1 scaffold is now
+    // v3 research scaffold (a v1 scaffold is now
     // `schema_retired`); the snapshot-collision path is engine-wide.
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "clarifying_questions_drafting", "vadi", 0, |_| {});
+    make_baton_v3(&n, "clarifying_questions_drafting", "vadi", 0, |_| {});
     std::fs::write(d.path().join("history"), b"x").unwrap();
     run(&b, &n).assert("snapshot failure via history collision exits 30", 30);
     let installed: Value = serde_json::from_slice(&std::fs::read(&b).unwrap()).unwrap();
@@ -123,14 +123,14 @@ fn snapshot_failure_via_history_file_collision_exits_30() {
 
 #[test]
 fn dvandva_lock_timeout_rejects_bad_values() {
-    // S5-T2: CONVERTED to v2 batons — the DVANDVA_LOCK_TIMEOUT gate is
+    // v3 batons — the DVANDVA_LOCK_TIMEOUT gate is
     // engine-wide, but a v1 candidate would now short-circuit to `schema_retired`
     // before the timeout check.
     for bad in ["abc", "-5", "08", "09", "07", "0", "00"] {
         let d = tmp();
         let (b, n) = paths(&d);
-        make_baton_v2(&b, "implementing", "vadi", 4, |_| {});
-        make_baton_v2(&n, "phase_review", "prativadi", 5, |_| {});
+        make_baton_v3(&b, "implementing", "vadi", 4, |_| {});
+        make_baton_v3(&n, "phase_review", "prativadi", 5, |_| {});
         create_live_foreign_lock(d.path());
         run_env(&b, &n, &[("DVANDVA_LOCK_TIMEOUT", bad)]).assert_contains(
             &format!("DVANDVA_LOCK_TIMEOUT={bad} rejected"),
@@ -149,12 +149,11 @@ fn dvandva_lock_timeout_rejects_bad_values() {
 
 #[test]
 fn dvandva_lock_timeout_valid_value_accepted() {
-    // S5-T2: CONVERTED to a v2 standard-profile implementing->phase_review edge
-    // (the legal v2 analogue of the retired v1 edge).
+    // v3 standard-profile implementing->phase_review edge.
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "implementing", "vadi", 4, standard_profile);
-    make_baton_v2(&n, "phase_review", "prativadi", 5, standard_profile);
+    make_baton_v3(&b, "implementing", "vadi", 4, standard_profile);
+    make_baton_v3(&n, "phase_review", "prativadi", 5, standard_profile);
     run_env(&b, &n, &[("DVANDVA_LOCK_TIMEOUT", "5")]).assert("valid DVANDVA_LOCK_TIMEOUT=5", 0);
 }
 
@@ -167,7 +166,7 @@ fn lock_path_non_directory_exits_28() {
     std::fs::create_dir_all(&run_dir).unwrap();
     let baton = run_dir.join("baton.json");
     let candidate = run_dir.join("baton.next.json");
-    make_baton_v2(&candidate, "research_drafting", "vadi", 0, |b| {
+    make_baton_v3(&candidate, "research_drafting", "vadi", 0, |b| {
         b["run_id"] = json!("alpha");
         b["branch"] = json!("alpha-branch");
     });
@@ -186,11 +185,11 @@ fn lock_path_non_directory_exits_28() {
 fn single_uncontended_writer_passes_fencing() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "cross_review", "team", 4, |b| {
+    make_baton_v3(&b, "cross_review", "team", 4, |b| {
         cross_review_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
     });
-    make_baton_v2(&n, "cross_review", "team", 5, |b| {
+    make_baton_v3(&n, "cross_review", "team", 5, |b| {
         cross_review_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["summary"] = json!("Single writer keeps its own fencing token.");
@@ -203,11 +202,11 @@ fn single_uncontended_writer_passes_fencing() {
 fn stale_lock_recovery() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "cross_review", "team", 4, |b| {
+    make_baton_v3(&b, "cross_review", "team", 4, |b| {
         cross_review_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
     });
-    make_baton_v2(&n, "cross_review", "team", 5, |b| {
+    make_baton_v3(&n, "cross_review", "team", 5, |b| {
         cross_review_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["summary"] = json!("Stale-lock recovery: new writer steals an abandoned lock.");
@@ -233,17 +232,17 @@ fn fencing_stolen_lock_exits_29() {
     let cand_a = box_dir.join("cand-a.json");
     let cand_b = box_dir.join("cand-b.json");
 
-    make_baton_v2(&baton, "cross_review", "team", 4, |b| {
+    make_baton_v3(&baton, "cross_review", "team", 4, |b| {
         cross_review_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
     });
-    make_baton_v2(&cand_a, "cross_review", "team", 5, |b| {
+    make_baton_v3(&cand_a, "cross_review", "team", 5, |b| {
         cross_review_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["summary"] = json!("Fencing: slow writer A whose lock is stolen.");
         b["next_action"] = json!("Team: A must abort after losing the lock.");
     });
-    make_baton_v2(&cand_b, "cross_review", "team", 5, |b| {
+    make_baton_v3(&cand_b, "cross_review", "team", 5, |b| {
         cross_review_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["summary"] = json!("Fencing: peer writer B steals the lock and installs.");
@@ -316,17 +315,17 @@ fn concurrent_write_race() {
     let cand_a = box_dir.join("cand-a.json");
     let cand_b = box_dir.join("cand-b.json");
 
-    make_baton_v2(&baton, "cross_review", "team", 4, |b| {
+    make_baton_v3(&baton, "cross_review", "team", 4, |b| {
         cross_review_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
     });
-    make_baton_v2(&cand_a, "cross_review", "team", 5, |b| {
+    make_baton_v3(&cand_a, "cross_review", "team", 5, |b| {
         cross_review_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["summary"] = json!("Concurrent writer A team sync.");
         b["next_action"] = json!("Team: continue after writer A wins the race.");
     });
-    make_baton_v2(&cand_b, "cross_review", "team", 5, |b| {
+    make_baton_v3(&cand_b, "cross_review", "team", 5, |b| {
         cross_review_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["summary"] = json!("Concurrent writer B team sync.");
@@ -377,11 +376,11 @@ fn s4t10_post_mv_theft_detected_exits_29() {
     let baton = box_dir.join("baton.json");
     let cand = box_dir.join("cand.json");
 
-    make_baton_v2(&baton, "cross_review", "team", 4, |b| {
+    make_baton_v3(&baton, "cross_review", "team", 4, |b| {
         cross_review_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
     });
-    make_baton_v2(&cand, "cross_review", "team", 5, |b| {
+    make_baton_v3(&cand, "cross_review", "team", 5, |b| {
         cross_review_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["summary"] = json!("Post-mv fence: writer parked after the fence check.");

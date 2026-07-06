@@ -2,8 +2,8 @@
 //! superpowers/specs/2026-07-02-flow-patches-design.html).
 //!
 //! Each test spawns the real `dvandva` binary against a fixture baton written
-//! into a tempdir. Current batons are built with the shared `make_baton_v2`
-//! fixture so a generated candidate inherits a fully-valid v2 field set; the
+//! into a tempdir. Current batons are built with the shared `make_baton_v3`
+//! fixture so a generated candidate inherits a fully-valid v3 field set; the
 //! strongest property — `dvandva write` ACCEPTS the generated candidate — is
 //! proven by spawning `write` (via `common::run`) on the emitted file.
 
@@ -12,7 +12,7 @@ mod common;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use common::{make_baton_v2, run};
+use common::{make_baton_v3, run};
 use serde_json::Value;
 
 fn bin() -> PathBuf {
@@ -46,13 +46,21 @@ fn lines(text: &str) -> Vec<&str> {
     text.lines().collect()
 }
 
+fn assert_v3_candidate(cand: &Value, workflow_source: &str) {
+    assert_eq!(cand["schema"], "dvandva.baton.v3");
+    assert_eq!(cand["run_workflow"]["source"], workflow_source);
+    assert!(cand["run_workflow"]["states"].is_array());
+    assert!(cand["run_workflow"]["edges"].is_array());
+    assert!(cand["run_workflow"]["amendments"].is_array());
+}
+
 // ===================== LIST mode =====================
 
 #[test]
 fn list_research_drafting_option_set() {
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
-    make_baton_v2(&baton, "research_drafting", "vadi", 0, |_| {});
+    make_baton_v3(&baton, "research_drafting", "vadi", 0, |_| {});
 
     let (code, stdout, stderr) = run_next(&["--file", baton.to_str().unwrap()]);
     assert_eq!(code, 0, "list exits 0\nstderr:\n{stderr}");
@@ -72,7 +80,7 @@ fn list_research_drafting_option_set() {
 fn list_role_filter_keeps_only_that_role() {
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
-    make_baton_v2(&baton, "research_drafting", "vadi", 0, |_| {});
+    make_baton_v3(&baton, "research_drafting", "vadi", 0, |_| {});
 
     let (code, stdout, _stderr) =
         run_next(&["--file", baton.to_str().unwrap(), "--role", "prativadi"]);
@@ -98,7 +106,7 @@ fn generate_research_review_happy_path_and_write_accepts_it() {
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
     let candidate = dir.path().join("baton.next.json");
-    make_baton_v2(&baton, "research_drafting", "vadi", 0, |_| {});
+    make_baton_v3(&baton, "research_drafting", "vadi", 0, |_| {});
 
     let (code, stdout, stderr) = run_next(&[
         "--file",
@@ -125,6 +133,7 @@ fn generate_research_review_happy_path_and_write_accepts_it() {
     assert_eq!(cand["phase"], "research");
     assert_eq!(cand["checkpoint"], 1);
     assert_eq!(cand["review_target"], "research");
+    assert_v3_candidate(&cand, "preset:full");
 
     // Strongest property: the SAME binary's `write` accepts the generated file.
     run(&baton, &candidate).assert("write accepts the generated research_review candidate", 0);
@@ -143,9 +152,10 @@ fn review_mode_list_and_generate_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
     let candidate = dir.path().join("baton.next.json");
-    make_baton_v2(&baton, "research_drafting", "vadi", 0, |b| {
+    make_baton_v3(&baton, "research_drafting", "vadi", 0, |b| {
         b["mode"] = Value::from("review");
         b["phase"] = Value::from("review");
+        b["run_workflow"]["source"] = Value::from("preset:review");
     });
 
     // LIST shows research_review is legal from a review-mode research_drafting.
@@ -181,6 +191,7 @@ fn review_mode_list_and_generate_roundtrip() {
         cand["phase"], "review",
         "review-mode candidate carries phase=review, matching phase_status_ok"
     );
+    assert_v3_candidate(&cand, "preset:review");
 
     // Strongest property: the SAME binary's `write` accepts the generated file.
     run(&baton, &candidate).assert("write accepts the review-mode research_review candidate", 0);
@@ -195,9 +206,10 @@ fn research_mode_generate_keeps_research_phase() {
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
     let candidate = dir.path().join("baton.next.json");
-    make_baton_v2(&baton, "research_drafting", "vadi", 0, |b| {
+    make_baton_v3(&baton, "research_drafting", "vadi", 0, |b| {
         b["mode"] = Value::from("research");
         b["phase"] = Value::from("research");
+        b["run_workflow"]["source"] = Value::from("preset:research");
     });
 
     let (code, _stdout, stderr) = run_next(&[
@@ -218,6 +230,7 @@ fn research_mode_generate_keeps_research_phase() {
         cand["phase"], "research",
         "research-mode research_review keeps phase=research"
     );
+    assert_v3_candidate(&cand, "preset:research");
 
     run(&baton, &candidate).assert(
         "write accepts the research-mode research_review candidate",
@@ -237,9 +250,10 @@ fn research_mode_termination_review_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
     let candidate = dir.path().join("baton.next.json");
-    make_baton_v2(&baton, "research_review", "prativadi", 0, |b| {
+    make_baton_v3(&baton, "research_review", "prativadi", 0, |b| {
         b["mode"] = Value::from("research");
         b["phase"] = Value::from("research");
+        b["run_workflow"]["source"] = Value::from("preset:research");
     });
 
     // LIST shows termination_review is legal from a research-mode research_review.
@@ -289,7 +303,7 @@ fn generate_loop_edge_increments_loop_counts() {
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
     let candidate = dir.path().join("baton.next.json");
-    make_baton_v2(&baton, "deep_review", "prativadi", 4, |b| {
+    make_baton_v3(&baton, "deep_review", "prativadi", 4, |b| {
         b["master_plan_locked"] = Value::Bool(true);
         b["loop_counts"] = serde_json::json!({"deep_review:phase_fixing": 1});
     });
@@ -324,8 +338,8 @@ fn generate_amendment_entry_sets_amendment_from_phase() {
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
     let candidate = dir.path().join("baton.next.json");
-    // Full-profile deslop fixture (make_baton_v2 defaults to full profile).
-    make_baton_v2(&baton, "deslop", "vadi", 6, |b| {
+    // Full-profile deslop fixture (make_baton_v3 defaults to full profile).
+    make_baton_v3(&baton, "deslop", "vadi", 6, |b| {
         b["master_plan_locked"] = Value::Bool(true);
     });
 
@@ -365,7 +379,7 @@ fn generate_human_question_requires_resume_flags() {
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
     let candidate = dir.path().join("baton.next.json");
-    make_baton_v2(&baton, "research_drafting", "vadi", 0, |_| {});
+    make_baton_v3(&baton, "research_drafting", "vadi", 0, |_| {});
 
     // Missing the resume triple -> usage error (2).
     let (missing, _out, _err) = run_next(&[
@@ -422,7 +436,7 @@ fn generate_human_question_requires_resume_flags() {
 fn generate_illegal_target_exits_2_and_lists_legal() {
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
-    make_baton_v2(&baton, "research_drafting", "vadi", 0, |_| {});
+    make_baton_v3(&baton, "research_drafting", "vadi", 0, |_| {});
 
     let (code, _stdout, stderr) = run_next(&[
         "--file",
@@ -445,7 +459,7 @@ fn generate_illegal_target_exits_2_and_lists_legal() {
 fn generate_missing_summary_exits_2() {
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
-    make_baton_v2(&baton, "research_drafting", "vadi", 0, |_| {});
+    make_baton_v3(&baton, "research_drafting", "vadi", 0, |_| {});
 
     let (code, _stdout, _stderr) = run_next(&[
         "--file",
@@ -462,7 +476,7 @@ fn generate_missing_summary_exits_2() {
 fn generate_default_out_path_is_baton_next_json() {
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
-    make_baton_v2(&baton, "research_drafting", "vadi", 0, |_| {});
+    make_baton_v3(&baton, "research_drafting", "vadi", 0, |_| {});
 
     let (code, _stdout, stderr) = run_next(&[
         "--file",
@@ -486,7 +500,7 @@ fn generate_never_overwrites_the_baton() {
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
     let candidate = dir.path().join("baton.next.json");
-    make_baton_v2(&baton, "research_drafting", "vadi", 0, |_| {});
+    make_baton_v3(&baton, "research_drafting", "vadi", 0, |_| {});
 
     let (code, _stdout, _stderr) = run_next(&[
         "--file",
@@ -523,8 +537,9 @@ fn f1_amendment_reprofile_exit_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
     let candidate = dir.path().join("baton.next.json");
-    make_baton_v2(&baton, "spec_review", "prativadi", 4, |b| {
+    make_baton_v3(&baton, "spec_review", "prativadi", 4, |b| {
         common::standard_profile(b);
+        b["run_workflow"]["source"] = Value::from("preset:standard");
         b["master_plan_locked"] = Value::Bool(true);
         b["total_phases"] = Value::from(3);
         b["amendment_from_phase"] = Value::from(2);
@@ -595,8 +610,9 @@ fn spec_entry_non_amendment_phase1_single_state() {
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
     let candidate = dir.path().join("baton.next.json");
-    make_baton_v2(&baton, "spec_review", "prativadi", 4, |b| {
+    make_baton_v3(&baton, "spec_review", "prativadi", 4, |b| {
         common::standard_profile(b);
+        b["run_workflow"]["source"] = Value::from("preset:standard");
         b["master_plan_locked"] = Value::Bool(true);
         b["total_phases"] = Value::from(1);
     });
@@ -645,7 +661,7 @@ fn human_question_resume_roundtrip() {
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
     let candidate = dir.path().join("baton.next.json");
-    make_baton_v2(&baton, "human_question", "human", 4, |b| {
+    make_baton_v3(&baton, "human_question", "human", 4, |b| {
         b["phase"] = Value::from("spec");
         b["question"] = Value::from("Should feature X be in scope?");
         b["resume_assignee"] = Value::from("prativadi");
@@ -705,7 +721,7 @@ fn human_decision_lists_human_resume_marker_hand_authored() {
     // edge is honest, and generate rejects it with hand-authoring guidance.
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
-    make_baton_v2(&baton, "human_decision", "human", 4, |b| {
+    make_baton_v3(&baton, "human_decision", "human", 4, |b| {
         b["phase"] = Value::from("spec");
     });
 
@@ -742,7 +758,7 @@ fn s2t1_list_human_states_offer_abandoned() {
     let dir = tempfile::tempdir().unwrap();
 
     let hq = dir.path().join("hq.json");
-    make_baton_v2(&hq, "human_question", "human", 4, |b| {
+    make_baton_v3(&hq, "human_question", "human", 4, |b| {
         b["phase"] = Value::from(1);
         b["question"] = Value::from("Continue?");
         b["resume_assignee"] = Value::from("vadi");
@@ -756,7 +772,7 @@ fn s2t1_list_human_states_offer_abandoned() {
     );
 
     let hd = dir.path().join("hd.json");
-    make_baton_v2(&hd, "human_decision", "human", 4, |b| {
+    make_baton_v3(&hd, "human_decision", "human", 4, |b| {
         b["phase"] = Value::from(1);
     });
     let (code2, out2, err2) = run_next(&["--file", hd.to_str().unwrap()]);
@@ -773,7 +789,7 @@ fn s2t1_list_abandoned_is_terminal_no_options() {
     // fixed over-approximation note) — abandoned is terminal like done.
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
-    make_baton_v2(&baton, "abandoned", "human", 4, |b| {
+    make_baton_v3(&baton, "abandoned", "human", 4, |b| {
         b["phase"] = Value::from(1);
     });
     let (code, out, err) = run_next(&["--file", baton.to_str().unwrap()]);
@@ -794,7 +810,7 @@ fn s4t5_list_working_state_offers_human_question() {
     // a post-lock working state offers human_question (owner human, same phase).
     let dir = tempfile::tempdir().unwrap();
     let baton = dir.path().join("baton.json");
-    make_baton_v2(&baton, "implementing", "vadi", 4, |b| {
+    make_baton_v3(&baton, "implementing", "vadi", 4, |b| {
         b["phase"] = Value::from(1);
         b["master_plan_locked"] = Value::Bool(true);
     });

@@ -35,6 +35,7 @@ use crate::gitcfg;
 use crate::lock::{self, Acquire};
 use crate::snapshot::snapshot_baton;
 use crate::util;
+use crate::workflow::validate_run_workflow;
 
 /// Run `dvandva write <baton> <candidate>`, returning the process exit code.
 ///
@@ -195,15 +196,15 @@ fn validate_candidate_shape(
     baton_exists: bool,
     cand: &Value,
 ) -> Result<CandidateShape, (i32, String)> {
-    // ---- schema ∈ {v1, v2} -------------------------------------------------
+    // ---- schema ∈ {v1, v2, v3} --------------------------------------------
     let schema = str_field(cand, "schema");
-    if schema != "dvandva.baton.v1" && schema != "dvandva.baton.v2" {
+    if schema != "dvandva.baton.v1" && schema != "dvandva.baton.v2" && schema != "dvandva.baton.v3"
+    {
         return Err((
             23,
-            format!("DVANDVA_WRITE schema_mismatch candidate={cf} want=dvandva.baton.v2"),
+            format!("DVANDVA_WRITE schema_mismatch candidate={cf} want=dvandva.baton.v3"),
         ));
     }
-    let is_v2 = schema == "dvandva.baton.v2";
 
     // ---- S5-T2 (D5): v1 is retired from the WRITE path ---------------------
     // A `dvandva.baton.v1` candidate can no longer be written (scaffold OR
@@ -217,6 +218,17 @@ fn validate_candidate_shape(
             ),
         ));
     }
+    if schema == "dvandva.baton.v2" {
+        return Err((
+            23,
+            format!(
+                "DVANDVA_WRITE schema_retired candidate={cf} schema=dvandva.baton.v2 hint=migrate to dvandva.baton.v3"
+            ),
+        ));
+    }
+    // v3 begins as the v2 validation contract plus the required run_workflow
+    // field; later workflow chunks add shape and graph semantics behind it.
+    let is_v2 = schema == "dvandva.baton.v3";
 
     // ---- run-dir / run_id consistency (bad_run_id_dir) ---------------------
     if let Some(named) = named_run_dir_id(baton_file) {
@@ -237,13 +249,27 @@ fn validate_candidate_shape(
     }
 
     // ---- required keys -----------------------------------------------------
-    for key in required_keys(is_v2) {
+    let mut required = required_keys(is_v2);
+    if schema == "dvandva.baton.v3" {
+        required.push("run_workflow");
+    }
+    for key in required {
         if field(cand, key).is_none() {
             return Err((
                 23,
                 format!("DVANDVA_WRITE missing_key key={key} candidate={cf}"),
             ));
         }
+    }
+
+    if schema == "dvandva.baton.v3" {
+        let run_workflow = field(cand, "run_workflow").expect("required key checked above");
+        validate_run_workflow(run_workflow, V2_STATUS_CATALOG).map_err(|err| {
+            (
+                23,
+                format!("DVANDVA_WRITE bad_run_workflow candidate={cf} reason={err:?}"),
+            )
+        })?;
     }
 
     // ---- review_target enum ------------------------------------------------
@@ -262,7 +288,7 @@ fn validate_candidate_shape(
     let mut new_effective_profile = String::new();
     let mut new_profile_floor = String::new();
 
-    // ---- v2 block ----------------------------------------------------------
+    // ---- v2-compatible block ----------------------------------------------
     if is_v2 {
         new_effective_mode = match canonical_mode(&new_mode) {
             Some(mode) => mode,
@@ -705,7 +731,9 @@ pub(crate) fn expected_owner(
 ) -> (String, Vec<String>) {
     let _ = (mode, effective_profile);
     let assignee = v2_expected_assignee(status).to_string();
-    let active_roles = if schema == "dvandva.baton.v2" && is_team_sync_status(status) {
+    let active_roles = if matches!(schema, "dvandva.baton.v2" | "dvandva.baton.v3")
+        && is_team_sync_status(status)
+    {
         vec!["prativadi".to_string(), "vadi".to_string()]
     } else {
         Vec::new()
@@ -836,7 +864,11 @@ fn whitelist_targets(
         "counter_review",
         "done",
     ];
-    let universe = if schema == "dvandva.baton.v2" { V2 } else { V1 };
+    let universe = if matches!(schema, "dvandva.baton.v2" | "dvandva.baton.v3") {
+        V2
+    } else {
+        V1
+    };
     universe
         .iter()
         .filter(|new_status| {
@@ -868,10 +900,11 @@ fn whitelist_targets(
 #[allow(dead_code)]
 pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
     let schema = str_field(current, "schema");
-    if schema != "dvandva.baton.v1" && schema != "dvandva.baton.v2" {
+    if schema != "dvandva.baton.v1" && schema != "dvandva.baton.v2" && schema != "dvandva.baton.v3"
+    {
         return Vec::new();
     }
-    let is_v2 = schema == "dvandva.baton.v2";
+    let is_v2 = matches!(schema.as_str(), "dvandva.baton.v2" | "dvandva.baton.v3");
     let cur_status = str_field(current, "status");
     let cur_mode = str_field(current, "mode");
     let cur_eff_mode = canonical_mode(&cur_mode).unwrap_or_else(|| "development".to_string());
@@ -1465,17 +1498,16 @@ fn decide_transition(
 
     let cur_doc = match cur_doc_opt {
         None => {
-            // Scaffold: only the vadi may create the very first baton. S5-T2
-            // retired the v1 scaffold branch — a v1 candidate never reaches here
-            // (rejected upstream with `schema_retired`), so only the v2 seed is
-            // legal.
-            let legal = cx.schema == "dvandva.baton.v2"
+            // Scaffold: only the vadi may create the very first baton. v1/v2
+            // candidates never reach here (rejected upstream with
+            // `schema_retired`), so only the v3 seed is legal.
+            let legal = cx.schema == "dvandva.baton.v3"
                 && cx.new_status == "clarifying_questions_drafting"
                 && cx.new_assignee == "vadi"
                 && cx.new_checkpoint == 0;
             if !legal {
                 return Err((24, format!(
-                    "DVANDVA_WRITE illegal_transition scaffold requires v2 status=clarifying_questions_drafting with assignee=vadi checkpoint=0, got schema={} status={} assignee={} checkpoint={}",
+                    "DVANDVA_WRITE illegal_transition scaffold requires v3 status=clarifying_questions_drafting with assignee=vadi checkpoint=0, got schema={} status={} assignee={} checkpoint={}",
                     cx.schema, cx.new_status, cx.new_assignee, cx.new_checkpoint
                 )));
             }
@@ -1530,13 +1562,21 @@ fn decide_transition(
             ),
         ));
     }
-    if cur_schema != "dvandva.baton.v2" {
+    if cur_schema == "dvandva.baton.v2" {
+        return Err((
+            23,
+            format!(
+                "DVANDVA_WRITE schema_retired file={bf} schema=dvandva.baton.v2 hint=migrate to dvandva.baton.v3"
+            ),
+        ));
+    }
+    if cur_schema != "dvandva.baton.v3" {
         return Err((
             25,
             format!("DVANDVA_WRITE current_baton_unparseable file={bf} bad_schema={cur_schema}"),
         ));
     }
-    if cur_schema == "dvandva.baton.v2" && !util::is_safe_run_id(&cur_run_id) {
+    if cur_schema == "dvandva.baton.v3" && !util::is_safe_run_id(&cur_run_id) {
         return Err((
             25,
             format!("DVANDVA_WRITE current_baton_unparseable file={bf} bad_run_id={cur_run_id}"),
@@ -1546,7 +1586,7 @@ fn decide_transition(
     let mut cur_effective_mode = String::new();
     let mut cur_effective_profile = String::new();
     let mut cur_profile_floor = String::new();
-    if cur_schema == "dvandva.baton.v2" {
+    if cur_schema == "dvandva.baton.v3" {
         cur_effective_mode = match canonical_mode(&cur_mode) {
             Some(mode) => mode,
             None => {
@@ -3960,11 +4000,10 @@ fn edge_whitelist(
     reason: &mut String,
 ) -> bool {
     let edge = format!("{cur_status}:{new_status}");
-    // S5-T2 (D5): v1 is retired from the WRITE path; only the v2 arm survives.
-    // v1 candidates/current batons are rejected upstream with `schema_retired`,
-    // so this whitelist is never consulted for a v1 baton.
+    // v3 starts by preserving the v2 preset graph. The declared-graph
+    // interpreter replaces this table in the follow-on workflow chunk.
     let legal = match schema {
-        "dvandva.baton.v2" => match cur_mode {
+        "dvandva.baton.v2" | "dvandva.baton.v3" => match cur_mode {
             "development" => match new_profile {
                 "fast" => matches!(
                     edge.as_str(),
@@ -4670,6 +4709,27 @@ mod surface_tests {
         b
     }
 
+    fn minimal_run_workflow() -> Value {
+        json!({
+            "source": "preset:full",
+            "declared_by": "vadi",
+            "declared_at_checkpoint": 0,
+            "approved_by": null,
+            "approved_at_checkpoint": null,
+            "revision_round": 0,
+            "states": [],
+            "edges": [],
+            "amendments": []
+        })
+    }
+
+    fn seed_v3(status: &str, assignee: &str, checkpoint: i64, phase: Value) -> Value {
+        let mut b = seed_v2(status, assignee, checkpoint, phase);
+        b["schema"] = json!("dvandva.baton.v3");
+        b["run_workflow"] = minimal_run_workflow();
+        b
+    }
+
     #[test]
     fn legal_transitions_deep_review_full_option_set() {
         let cur = json!({
@@ -4794,18 +4854,17 @@ mod surface_tests {
         assert!(!opts2.iter().any(|o| o.to_status == "implementing"));
     }
 
-    /// Reject-parity for a schema-mismatch candidate (23): validate_candidate and
-    /// the spawned binary agree on the exit code.
+    /// Reject-parity for a retired v2 candidate (23): validate_candidate and the
+    /// spawned binary agree on the schema_retired exit code.
     #[test]
-    fn validate_candidate_parity_rejects_bad_schema_23() {
+    fn validate_candidate_parity_rejects_v2_candidate_schema_retired_23() {
         let dir = tempfile::tempdir().unwrap();
         let baton_dir = dir.path();
         let baton_file = baton_dir.join("baton.json");
         let cand_file = baton_dir.join("baton.next.json");
 
-        let cur = seed_v2("spec_drafting", "vadi", 4, json!("spec"));
-        let mut cand = seed_v2("spec_review", "prativadi", 5, json!("spec"));
-        cand["schema"] = json!("dvandva.baton.v3");
+        let cur = seed_v3("spec_drafting", "vadi", 4, json!("spec"));
+        let cand = seed_v2("spec_review", "prativadi", 5, json!("spec"));
         std::fs::write(&baton_file, serde_json::to_string(&cur).unwrap()).unwrap();
         std::fs::write(&cand_file, serde_json::to_string(&cand).unwrap()).unwrap();
 
@@ -4824,9 +4883,9 @@ mod surface_tests {
         let baton_file = baton_dir.join("baton.json");
         let cand_file = baton_dir.join("baton.next.json");
 
-        let mut cur = seed_v2("spec_drafting", "vadi", 4, json!("spec"));
+        let mut cur = seed_v3("spec_drafting", "vadi", 4, json!("spec"));
         cur["checkpoint"] = json!("not-a-number");
-        let cand = seed_v2("spec_review", "prativadi", 5, json!("spec"));
+        let cand = seed_v3("spec_review", "prativadi", 5, json!("spec"));
         std::fs::write(&baton_file, serde_json::to_string(&cur).unwrap()).unwrap();
         std::fs::write(&cand_file, serde_json::to_string(&cand).unwrap()).unwrap();
 
@@ -4844,8 +4903,8 @@ mod surface_tests {
         let baton_file = baton_dir.join("baton.json");
         let cand_file = baton_dir.join("baton.next.json");
 
-        let cur = seed_v2("spec_drafting", "vadi", 5, json!("spec"));
-        let cand = seed_v2("spec_review", "prativadi", 5, json!("spec"));
+        let cur = seed_v3("spec_drafting", "vadi", 5, json!("spec"));
+        let cand = seed_v3("spec_review", "prativadi", 5, json!("spec"));
         std::fs::write(&baton_file, serde_json::to_string(&cur).unwrap()).unwrap();
         std::fs::write(&cand_file, serde_json::to_string(&cand).unwrap()).unwrap();
 
@@ -4861,8 +4920,8 @@ mod surface_tests {
         let baton_file = baton_dir.join("baton.json");
         let cand_file = baton_dir.join("baton.next.json");
 
-        let cur = seed_v2("spec_drafting", "vadi", 4, json!("spec"));
-        let cand = seed_v2("spec_review", "prativadi", 5, json!("spec"));
+        let cur = seed_v3("spec_drafting", "vadi", 4, json!("spec"));
+        let cand = seed_v3("spec_review", "prativadi", 5, json!("spec"));
         std::fs::write(&baton_file, serde_json::to_string(&cur).unwrap()).unwrap();
         std::fs::write(&cand_file, serde_json::to_string(&cand).unwrap()).unwrap();
 
@@ -4882,9 +4941,9 @@ mod surface_tests {
         let baton_file = baton_dir.join("baton.json");
         let cand_file = baton_dir.join("baton.next.json");
 
-        let cur = seed_v2("spec_drafting", "vadi", 4, json!("spec"));
+        let cur = seed_v3("spec_drafting", "vadi", 4, json!("spec"));
         // spec_drafting -> implementing is not a legal edge (24).
-        let cand = seed_v2("implementing", "vadi", 5, json!(1));
+        let cand = seed_v3("implementing", "vadi", 5, json!(1));
         std::fs::write(&baton_file, serde_json::to_string(&cur).unwrap()).unwrap();
         std::fs::write(&cand_file, serde_json::to_string(&cand).unwrap()).unwrap();
 
