@@ -436,17 +436,14 @@ fn workflow_revision_revise_rejected_when_approved_latest_amendment_reason_mutat
     );
 }
 
-/// Sweep item 6, FINDING: an amendment's `resume_status` is only checked
-/// against the *global* `V3_STATUS_CATALOG` (shape level) — never against
-/// the run's own declared custom-graph `states[]`. `amendment_resume_ok`
-/// grants legality from the amendment bookkeeping + `custom_invariants_ok`
-/// alone, without checking that `cur_status->new_status` is even an edge (or
-/// that `new_status` is a declared state) of the graph. Here the declared
-/// graph (`invariant_states`/`invariant_edges`) never mentions
-/// `test_creation`, yet an amendment resuming into it is accepted.
-/// FINDING for deep_review/phase_fixing: amendment resume should re-check
-/// declared-graph membership (state + edge), not just global catalog
-/// membership + whole-graph invariants.
+/// Sweep item 6: an amendment's `resume_status` must be checked against the
+/// run's own declared custom-graph `states[]`, not just the *global*
+/// `V3_STATUS_CATALOG` (shape level). `amendment_resume_ok` grants
+/// bookkeeping legality, but for a `source=custom` graph the resume target
+/// must also name a declared state — checked separately at the call site in
+/// write.rs. Here the declared graph (`invariant_states`/`invariant_edges`)
+/// never mentions `test_creation`, so an amendment resuming into it must be
+/// rejected.
 #[test]
 fn amendment_resume_rejected_when_status_outside_declared_graph_states() {
     let d = tmp();

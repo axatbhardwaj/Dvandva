@@ -226,8 +226,9 @@ fn validate_candidate_shape(
             ),
         ));
     }
-    // v3 begins as the v2 validation contract plus the required run_workflow
-    // field; later workflow chunks add shape and graph semantics behind it.
+    // v3 is the v2 validation contract plus a required run_workflow field,
+    // shape-checked below (`validate_run_workflow`) and used to resolve the
+    // run's own transition graph (`resolve_effective_graph`).
     let is_v2 = schema == "dvandva.baton.v3";
 
     // ---- run-dir / run_id consistency (bad_run_id_dir) ---------------------
@@ -681,8 +682,9 @@ struct Ctx<'a> {
 // ===========================================================================
 
 /// How a transition moves the baton `phase` relative to the current phase.
-// The surface below is consumed by the B1 `next` module (not yet wired up);
-// `allow(dead_code)` keeps the transitional lib build warning-free.
+// The surface below is consumed by the B1 `next` module.
+// `allow(dead_code)` keeps `cargo build` (without the binary/tests that wire
+// it up) warning-free.
 #[allow(dead_code)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum PhaseMove {
