@@ -564,6 +564,59 @@ fn run_id_selector_valid_baton_resolves_without_stale_gate() {
     );
 }
 
+#[test]
+fn run_dir_selector_missing_baton_creates_and_arms_for_vadi() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    let run_dir = repo.join(".dvandva/runs/from-dir");
+    fs::create_dir_all(&run_dir).unwrap();
+
+    let mut cmd = base_cmd(bin());
+    cmd.arg("preflight")
+        .args(["--role", "vadi", "--mode", "off"])
+        .current_dir(repo)
+        .env("DVANDVA_ROLE", "vadi")
+        .env("DVANDVA_RUN_DIR", &run_dir);
+    let out = cmd.output().expect("dvandva preflight");
+
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("result=create"), "stdout: {text}");
+    assert!(
+        text.contains("selected_by=DVANDVA_RUN_DIR"),
+        "stdout: {text}"
+    );
+    assert!(
+        read_sla_marker(repo).is_some(),
+        "run-dir selector bootstrap for vadi should arm the SLA marker"
+    );
+}
+
+#[test]
+fn baton_file_selector_invalid_baton_stops_as_stale_run_dir() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    let baton = repo.join(".dvandva/runs/from-file/baton.json");
+    fs::create_dir_all(baton.parent().unwrap()).unwrap();
+    fs::write(&baton, "{ not json\n").unwrap();
+
+    let mut cmd = base_cmd(bin());
+    cmd.arg("preflight")
+        .args(["--role", "vadi", "--mode", "off"])
+        .current_dir(repo)
+        .env("DVANDVA_ROLE", "vadi")
+        .env("DVANDVA_BATON_FILE", &baton);
+    let out = cmd.output().expect("dvandva preflight");
+
+    assert_eq!(code(&out), 1, "stdout: {}", stdout(&out));
+    let text = stdout(&out);
+    assert!(text.contains("result=error"), "stdout: {text}");
+    assert!(text.contains("reason=stale_run_dir"), "stdout: {text}");
+    assert!(text.contains("detail=invalid_baton"), "stdout: {text}");
+}
+
 // ===========================================================================
 // Role mismatch: DVANDVA_ROLE set and different from --role. The hook stage
 // must never run. (re-key of the stubbed "role-mismatch" case, lines

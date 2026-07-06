@@ -978,6 +978,52 @@ fn resolve_run_id_selector_invalid_baton_stops_as_stale_run_dir() {
 }
 
 #[test]
+fn resolve_run_dir_selector_missing_arms_for_vadi() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_git_repo(dir.path());
+    let run_dir = dir.path().join(".dvandva/runs/from-dir");
+    std::fs::create_dir_all(&run_dir).expect("create run dir");
+
+    let out = run_cli_with_env(
+        dir.path(),
+        &["resolve", "--role", "vadi"],
+        &[("DVANDVA_RUN_DIR", run_dir.to_str().expect("utf8 path"))],
+    );
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.starts_with(&format!("CREATE {}/baton.json", run_dir.display())),
+        "expected CREATE for missing run-dir selector baton, got: {stdout}"
+    );
+    assert!(
+        read_marker(dir.path(), "vadi").is_some(),
+        "missing selected run-dir baton should arm the vadi SLA marker"
+    );
+}
+
+#[test]
+fn resolve_baton_file_selector_invalid_baton_stops_as_stale_run_dir() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_git_repo(dir.path());
+    let baton = dir.path().join(".dvandva/runs/from-file/baton.json");
+    std::fs::create_dir_all(baton.parent().expect("parent")).expect("create run dir");
+    std::fs::write(&baton, "{ not json\n").expect("write baton");
+
+    let out = run_cli_with_env(
+        dir.path(),
+        &["resolve", "--role", "vadi"],
+        &[("DVANDVA_BATON_FILE", baton.to_str().expect("utf8 path"))],
+    );
+    assert_eq!(out.status.code(), Some(12));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("DVANDVA_RESOLVE stale_run_dir"),
+        "stderr: {stderr}"
+    );
+    assert!(stderr.contains("reason=invalid_baton"), "stderr: {stderr}");
+}
+
+#[test]
 fn resolve_does_not_reset_an_existing_marker_epoch() {
     // Re-running resolve must not restart the SLA clock — otherwise a
     // drifting agent could reset its own deadline indefinitely.
