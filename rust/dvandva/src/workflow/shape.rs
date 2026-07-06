@@ -13,7 +13,8 @@
 //!
 //! Checks run in a fixed order so a fixture violating multiple rules always
 //! reports the earliest one: field presence/typing, then `source`, then
-//! `states`, then `edges`, then the declare/approve stamps, then
+//! `states` (catalog membership, then owner/class enums, then duplicate-name
+//! detection last), then `edges`, then the declare/approve stamps, then
 //! `amendments`.
 
 use std::collections::HashSet;
@@ -113,7 +114,11 @@ fn validate_source(source: &str) -> Result<(), ShapeError> {
 }
 
 /// Validates `states[]`, returning the declared state names (in declaration
-/// order) for the subsequent edge-reference check.
+/// order) for the subsequent edge-reference check. Per entry, checks catalog
+/// membership, then the owner/class enums, then (last) whether the name has
+/// already appeared earlier in `states[]` — so a duplicate name is only
+/// reported once every earlier-checked rule on that entry, and every
+/// preceding entry, has already passed.
 fn validate_states(states: &[Value], catalog: &[&str]) -> Result<Vec<String>, ShapeError> {
     let mut names = Vec::with_capacity(states.len());
     let mut seen = HashSet::with_capacity(states.len());
@@ -220,6 +225,14 @@ fn validate_stamps(
     }
 }
 
+/// Validates `amendments[]` entries: `proposed_by` must be a role,
+/// `at_checkpoint` non-negative, `resume_status` in the caller-supplied
+/// catalog; when `approved_by` is non-null it must be a *different* role
+/// (peer approval, never self-approval) and `approved_at_checkpoint` must be
+/// non-null, non-negative, and at or after `at_checkpoint`. This mirrors the
+/// stamp-symmetry rule `validate_stamps` enforces at the top level —
+/// `approved_by` and `approved_at_checkpoint` must be set together or not at
+/// all — applied per amendment entry.
 fn validate_amendments(amendments: &[Value], catalog: &[&str]) -> Result<(), ShapeError> {
     for a in amendments {
         let proposed_by = a
@@ -306,7 +319,8 @@ fn validate_amendments(amendments: &[Value], catalog: &[&str]) -> Result<(), Sha
 /// Validates the shape of a `run_workflow` (v3 baton field) value against a
 /// caller-supplied state-token catalog.
 ///
-/// Checks run in a fixed order — field presence/typing, `source`, `states`,
+/// Checks run in a fixed order — field presence/typing, `source`, `states`
+/// (catalog membership, owner/class enums, duplicate-name detection last),
 /// `edges`, the declare/approve stamps, then `amendments` — so a fixture
 /// violating multiple rules always surfaces the earliest one.
 ///

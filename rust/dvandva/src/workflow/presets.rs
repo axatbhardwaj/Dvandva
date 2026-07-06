@@ -65,7 +65,9 @@ fn loop_cap_key_for(from: &'static str, to: &'static str) -> Option<&'static str
 }
 
 /// The owner for a state name, per `write::v2_expected_assignee`, with
-/// `done` special-cased to `"team"` (see module doc comment).
+/// `done` special-cased to `"team"` (see module doc comment; the golden
+/// test `done_owner_matches_owner_for_special_case` pins this judgment
+/// call against the legacy `next` oracle).
 fn owner(name: &str) -> &'static str {
     match name {
         "clarifying_questions_drafting" => "vadi",

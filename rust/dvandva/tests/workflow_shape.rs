@@ -3,10 +3,11 @@
 //!
 //! Covers, in the fixed check order the validator itself documents: field
 //! presence/typing (`MissingField`), `source` (`BadSource`), state-token
-//! catalog membership + owner/class enums (`UnknownStateToken` /
-//! `BadOwner` / `BadClass`), edge endpoint references (`DanglingEdge`), the
-//! declare/approve stamps (`BadApprovalStamp`), `amendments`
-//! (`BadAmendment`), and the five-preset acceptance case.
+//! catalog membership + owner/class enums + duplicate-name detection
+//! (`UnknownStateToken` / `BadOwner` / `BadClass` / `DuplicateStateToken`),
+//! edge endpoint references (`DanglingEdge`), the declare/approve stamps
+//! (`BadApprovalStamp`), `amendments` (`BadAmendment`), and the five-preset
+//! acceptance case.
 //!
 //! Does NOT cover graph topology semantics (reachability, review-gate cuts,
 //! absorbing states) — that is a separate P2 invariants module layered on
