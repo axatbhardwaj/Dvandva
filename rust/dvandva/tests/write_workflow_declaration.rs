@@ -508,3 +508,152 @@ fn workflow_declaring_wrong_phase_is_rejected() {
         "bad_phase_status status=workflow_declaring",
     );
 }
+
+#[test]
+fn workflow_review_wrong_owner_is_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "workflow_declaring", "vadi", 4, spec_phase);
+    // workflow_review is prativadi-owned; assigning it to vadi must be
+    // rejected by the assignee-owner map, before any declaration-loop-specific
+    // (declared_by/writer) checks even run.
+    make_baton_v3(&n, "workflow_review", "vadi", 5, |b| {
+        spec_phase(b);
+        b["run_workflow"]["declared_by"] = json!("vadi");
+    });
+    run(&b, &n).assert_contains(
+        "workflow_review is prativadi-owned",
+        23,
+        "bad_assignee_owner status=workflow_review want=prativadi got=vadi",
+    );
+}
+
+// ===========================================================================
+// 7. Residual sweep (P2 phase-2 coverage)
+// ===========================================================================
+
+/// Sweep item 1, cap BOUNDARY exactness: at `loop_count == disagreement_cap -
+/// 1` (2, cap=3) the reject edge is still legal — only `== cap` blocks it (see
+/// `workflow_revision_cap_exhaustion_blocks_reject_but_allows_human_decision`
+/// above for the `== cap` boundary). Off-by-one on caps is a historical bug
+/// class here, so both edges of the boundary get their own test.
+#[test]
+fn workflow_revision_reject_allowed_at_cap_minus_one_boundary() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "workflow_review", "prativadi", 4, |b| {
+        spec_phase(b);
+        b["loop_counts"] = json!({"workflow_revision": 2});
+    });
+    make_baton_v3(&n, "workflow_revision", "vadi", 5, |b| {
+        spec_phase(b);
+        b["findings"] = json!(["objection raised at the cap-minus-one boundary"]);
+        b["loop_counts"] = json!({"workflow_revision": 3});
+    });
+    run(&b, &n).assert("reject allowed at loop_count=cap-1 (2->3, cap=3)", 0);
+}
+
+/// Sweep item 2 (declared-at-approval half): the shape layer already requires
+/// `approved_at_checkpoint >= declared_at_checkpoint` (never approve before
+/// the declaration happened) — pinning that end to end through `dvandva
+/// write`, not just the `workflow::shape` unit tests.
+#[test]
+fn workflow_review_approve_rejected_when_approval_precedes_declaration() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "workflow_review", "prativadi", 4, |b| {
+        spec_phase(b);
+        b["run_workflow"]["declared_at_checkpoint"] = json!(10);
+    });
+    make_baton_v3(&n, "spec_drafting", "vadi", 5, |b| {
+        b["run_workflow"]["declared_at_checkpoint"] = json!(10);
+        b["run_workflow"]["approved_by"] = json!("prativadi");
+        b["run_workflow"]["approved_at_checkpoint"] = json!(5); // precedes declared_at_checkpoint=10
+    });
+    run_env(&b, &n, &[("DVANDVA_ROLE", "prativadi")]).assert_contains(
+        "approval stamp cannot precede the declaration stamp",
+        23,
+        "bad_run_workflow",
+    );
+}
+
+/// Sweep item 2 (declared-in-the-future half), FINDING: nothing in
+/// `write.rs`'s `workflow_declaring->workflow_review` submit branch (or
+/// anywhere else) checks `declared_at_checkpoint` against the checkpoint the
+/// declaration is actually being submitted at — only `declared_by` is
+/// checked for coherence. A vadi can stamp `declared_at_checkpoint` from the
+/// future (or any arbitrary value) relative to the current checkpoint and the
+/// submit still succeeds. `workflow::shape::validate_stamps` only enforces
+/// non-negative + `approved_at_checkpoint >= declared_at_checkpoint`; it never
+/// compares `declared_at_checkpoint` against the submitting checkpoint.
+/// FINDING for deep_review/phase_fixing: pin `declared_at_checkpoint` to the
+/// submitting checkpoint (mirroring how `approved_at_checkpoint` is pinned to
+/// `cx.new_checkpoint` in `workflow_declaration_approve_ok`).
+#[test]
+#[ignore = "FINDING: declared_at_checkpoint is never checked against the submitting checkpoint (only declared_by is); a future/incoherent declared_at_checkpoint is silently accepted on workflow_declaring->workflow_review. See the submit branch in write.rs (dev_dev && cur_status==\"workflow_declaring\") and workflow::shape::validate_stamps."]
+fn workflow_declaring_submit_rejected_when_declared_at_checkpoint_is_in_the_future() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "workflow_declaring", "vadi", 4, spec_phase);
+    make_baton_v3(&n, "workflow_review", "prativadi", 5, |b| {
+        spec_phase(b);
+        b["run_workflow"]["declared_at_checkpoint"] = json!(999); // checkpoint is only 5
+    });
+    let out = run_env(&b, &n, &[("DVANDVA_ROLE", "vadi")]);
+    assert_ne!(
+        out.code, 0,
+        "declared_at_checkpoint=999 at checkpoint=5 must be rejected as an incoherent \
+         declaration stamp; got exit 0 (accepted):\n{}",
+        out.text
+    );
+}
+
+/// Sweep item 5: a `source=custom` graph that omits ALL review-gate states
+/// entirely (not merely one with a bypass edge around an existing gate, as
+/// `custom_declaration_approve_rejected_when_invariants_violated` above
+/// covers) must still be rejected by the invariants checker at approval —
+/// end to end through `dvandva write`, not just the `workflow::invariants`
+/// unit tests.
+#[test]
+fn custom_declaration_approve_rejected_when_no_review_gate_exists_at_all() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    let no_gate_states = json!([
+        {"name": "workflow_declaring", "owner": "vadi", "class": "work"},
+        {"name": "implementing", "owner": "vadi", "class": "work"},
+        {"name": "phase_fixing", "owner": "vadi", "class": "work"},
+        {"name": "human_question", "owner": "human", "class": "pause"},
+        {"name": "human_decision", "owner": "human", "class": "pause"},
+        {"name": "abandoned", "owner": "human", "class": "terminal"},
+        {"name": "done", "owner": "team", "class": "terminal"}
+    ]);
+    let no_gate_edges = json!([
+        {"from": "workflow_declaring", "to": "implementing"},
+        {"from": "implementing", "to": "phase_fixing"},
+        {"from": "phase_fixing", "to": "done"},
+        {"from": "phase_fixing", "to": "human_question"},
+        {"from": "phase_fixing", "to": "human_decision"},
+        {"from": "human_question", "to": "human_decision"},
+        {"from": "human_question", "to": "abandoned"},
+        {"from": "human_decision", "to": "human_question"},
+        {"from": "human_decision", "to": "abandoned"}
+    ]);
+    make_baton_v3(&b, "workflow_review", "prativadi", 4, |b| {
+        spec_phase(b);
+        b["run_workflow"]["source"] = json!("custom");
+        b["run_workflow"]["states"] = no_gate_states.clone();
+        b["run_workflow"]["edges"] = no_gate_edges.clone();
+    });
+    make_baton_v3(&n, "spec_drafting", "vadi", 5, move |b| {
+        b["run_workflow"]["source"] = json!("custom");
+        b["run_workflow"]["states"] = no_gate_states;
+        b["run_workflow"]["edges"] = no_gate_edges;
+        b["run_workflow"]["approved_by"] = json!("prativadi");
+        b["run_workflow"]["approved_at_checkpoint"] = json!(5);
+    });
+    run_env(&b, &n, &[("DVANDVA_ROLE", "prativadi")]).assert_contains(
+        "custom approve with no review gate declared at all",
+        23,
+        "bad_workflow_invariants",
+    );
+}

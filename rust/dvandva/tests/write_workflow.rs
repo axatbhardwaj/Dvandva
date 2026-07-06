@@ -235,3 +235,121 @@ fn custom_loop_cap_key_blocks_at_declared_cap() {
         "loop_cap edge=custom_fix_loop count=3 cap=3",
     );
 }
+
+// ===========================================================================
+// 7. Residual sweep (P2 phase-2 coverage): amendment writer-identity peer
+// rule, declared-graph membership of an amendment's resume_status, and
+// double-pending amendments.
+// ===========================================================================
+
+/// Sweep item 3: the peer rule must hold for amendments too — a shape-valid
+/// amendment stamp (`approved_by` != `proposed_by`) is not enough; the
+/// *actual writer* (`DVANDVA_ROLE`) must match the stamped `approved_by`, or
+/// the proposer could impersonate the peer's approval. Here `vadi` (the
+/// proposer) writes the resume transition itself, stamping `approved_by:
+/// "prativadi"` without prativadi ever running the command; `amendment_
+/// resume_ok`'s `newly_approved` check requires `approved_by == writer_role`,
+/// so this falls through to the plain edge whitelist, which has no
+/// `workflow_review->parallel_implementing` edge outside the amendment path.
+#[test]
+fn amendment_resume_rejected_when_writer_is_not_the_stamped_approver() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "workflow_review", "prativadi", 5, |b| {
+        b["phase"] = json!("spec");
+        b["total_phases"] = json!(1);
+        b["master_plan_locked"] = json!(true);
+        b["run_workflow"]["amendments"] = json!([pending_amendment("parallel_implementing")]);
+    });
+    make_baton_v3(&n, "parallel_implementing", "team", 6, |b| {
+        locked_numeric(b, 1);
+        b["run_workflow"]["amendments"] = json!([{
+            "proposed_by": "vadi",
+            "at_checkpoint": 5,
+            "resume_status": "parallel_implementing",
+            "approved_by": "prativadi",
+            "approved_at_checkpoint": 6
+        }]);
+    });
+    // The writer is vadi (the proposer) impersonating prativadi's approval.
+    run_env(&b, &n, &[("DVANDVA_ROLE", "vadi")]).assert_contains(
+        "amendment resume writer must match the stamped approver",
+        24,
+        "illegal_transition",
+    );
+}
+
+/// Sweep item 7: nothing validates `amendments[]` on the reject/revise
+/// (`workflow_review<->workflow_revision`) edges — only the entry
+/// (`amendment_entry_added_ok`) and resume (`amendment_resume_ok`) edges
+/// touch the array. A second pending entry appended while the first is still
+/// unresolved is silently accepted on the reject edge today. This test pins
+/// that (unenforced) current behavior; FINDING for deep_review: consider a
+/// single-pending-amendment invariant on the reject/revise edges.
+#[test]
+fn workflow_revision_reject_silently_accepts_a_second_pending_amendment() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "workflow_review", "prativadi", 5, |b| {
+        b["phase"] = json!("spec");
+        b["total_phases"] = json!(1);
+        b["master_plan_locked"] = json!(true);
+        b["run_workflow"]["amendments"] = json!([pending_amendment("parallel_implementing")]);
+    });
+    make_baton_v3(&n, "workflow_revision", "vadi", 6, |b| {
+        b["phase"] = json!("spec");
+        b["total_phases"] = json!(1);
+        b["master_plan_locked"] = json!(true);
+        b["findings"] =
+            json!(["second objection raised while the first amendment is still pending"]);
+        b["loop_counts"] = json!({"workflow_revision": 1});
+        b["run_workflow"]["amendments"] = json!([
+            pending_amendment("parallel_implementing"),
+            pending_amendment("test_creation")
+        ]);
+    });
+    run_env(&b, &n, &[("DVANDVA_ROLE", "prativadi")]).assert(
+        "double-pending amendment on reject edge is currently unchecked",
+        0,
+    );
+}
+
+/// Sweep item 6, FINDING: an amendment's `resume_status` is only checked
+/// against the *global* `V3_STATUS_CATALOG` (shape level) — never against
+/// the run's own declared custom-graph `states[]`. `amendment_resume_ok`
+/// grants legality from the amendment bookkeeping + `custom_invariants_ok`
+/// alone, without checking that `cur_status->new_status` is even an edge (or
+/// that `new_status` is a declared state) of the graph. Here the declared
+/// graph (`invariant_states`/`invariant_edges`) never mentions
+/// `test_creation`, yet an amendment resuming into it is accepted.
+/// FINDING for deep_review/phase_fixing: amendment resume should re-check
+/// declared-graph membership (state + edge), not just global catalog
+/// membership + whole-graph invariants.
+#[test]
+#[ignore = "FINDING: amendment resume_status is never checked against the declared custom graph's states/edges, only the global V3_STATUS_CATALOG + whole-graph invariants; resuming into a status entirely absent from the declared graph (test_creation) is silently accepted. See amendment_resume_ok / custom_invariants_ok in write.rs."]
+fn amendment_resume_rejected_when_status_outside_declared_graph_states() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "workflow_review", "prativadi", 5, |b| {
+        b["phase"] = json!("spec");
+        b["total_phases"] = json!(1);
+        b["master_plan_locked"] = json!(true);
+        set_custom_workflow(b, invariant_edges());
+        b["run_workflow"]["amendments"] = json!([pending_amendment("test_creation")]);
+    });
+    make_baton_v3(&n, "test_creation", "team", 6, |b| {
+        b["phase"] = json!(1);
+        b["total_phases"] = json!(1);
+        b["master_plan_locked"] = json!(true);
+        b["active_roles"] = json!(["vadi", "prativadi"]);
+        set_custom_workflow(b, invariant_edges());
+        b["run_workflow"]["amendments"] = json!([approved_amendment("test_creation", 6)]);
+    });
+    // "test_creation" is not a state in `invariant_states()` at all — the
+    // declared graph never mentions it — so the resume must be rejected.
+    run_env(&b, &n, &[("DVANDVA_ROLE", "prativadi")]).assert_contains(
+        "amendment resume target must be a declared-graph state",
+        24,
+        "illegal_transition",
+    );
+}
