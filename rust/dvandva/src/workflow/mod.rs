@@ -7,6 +7,9 @@
 //! preset data lives in [`presets`].
 
 pub mod presets;
+pub mod shape;
+
+pub use shape::{validate_run_workflow, ShapeError};
 
 /// The behavioral class of a workflow state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
