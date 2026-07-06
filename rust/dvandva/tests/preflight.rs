@@ -100,6 +100,26 @@ fn write_baton_v2(
     .unwrap();
 }
 
+/// A schema-v3 baton with the live `run_workflow` envelope, for the P3 sanity
+/// cases that close the v3 skip hole without depending on write-path fixtures.
+fn write_baton_v3(
+    path: &Path,
+    run_id: &str,
+    status: &str,
+    assignee: &str,
+    active_roles: &str,
+    updated_at: &str,
+) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(
+        path,
+        format!(
+            r#"{{"schema":"dvandva.baton.v3","run_id":"{run_id}","status":"{status}","assignee":"{assignee}","active_roles":{active_roles},"mode":"development","profile":"full","updated_at":"{updated_at}","run_workflow":{{"source":"preset:full","declared_by":"vadi","declared_at_checkpoint":0,"approved_by":null,"approved_at_checkpoint":null,"revision_round":0,"states":[],"edges":[],"amendments":[]}}}}"#
+        ),
+    )
+    .unwrap();
+}
+
 /// A schema-v1 baton, for the S2-T3 legacy-skip case.
 fn write_baton_v1(path: &Path, run_id: &str, status: &str, assignee: &str, updated_at: &str) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -804,6 +824,61 @@ fn sanity_check_abandoned_v2_baton_resolves_via_run_id() {
         "stdout: {text}"
     );
     assert!(!text.contains("reason=invalid_baton"), "stdout: {text}");
+}
+
+// P3: v3 batons must run the same pre-hook sanity check, but against the live
+// 29-token v3 catalog instead of silently taking the legacy skip path.
+#[test]
+fn sanity_check_v3_unknown_status_is_invalid_baton() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    write_baton_v3(
+        &repo.join(".dvandva/runs/accuracy/baton.json"),
+        "accuracy",
+        "bogus_status",
+        "vadi",
+        "[]",
+        "2026-06-29T00:00:00Z",
+    );
+
+    let out = preflight(repo, Some("vadi"), &["--role", "vadi"]);
+    assert_eq!(code(&out), 1, "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("result=error"), "stdout: {text}");
+    assert!(text.contains("reason=invalid_baton"), "stdout: {text}");
+    assert!(
+        text.contains("unknown_status status=bogus_status"),
+        "stdout: {text}"
+    );
+    assert!(
+        !repo.join(".dvandva/githooks").exists(),
+        "invalid v3 baton must not run the hook stage"
+    );
+}
+
+#[test]
+fn sanity_check_v3_workflow_status_uses_v3_owner_table() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    write_baton_v3(
+        &repo.join(".dvandva/runs/accuracy/baton.json"),
+        "accuracy",
+        "workflow_declaring",
+        "prativadi",
+        "[]",
+        "2026-06-29T00:00:00Z",
+    );
+
+    let out = preflight(repo, Some("vadi"), &["--role", "vadi"]);
+    assert_eq!(code(&out), 1, "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("reason=invalid_baton"), "stdout: {text}");
+    assert!(
+        text.contains("owner_mismatch status=workflow_declaring expected=vadi actual=prativadi"),
+        "stdout: {text}"
+    );
 }
 
 // (v1 legacy) A v1-schema baton skips the sanity check entirely and notes the

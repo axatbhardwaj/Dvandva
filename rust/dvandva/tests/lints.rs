@@ -984,7 +984,7 @@ fn pathgate_fixture(root: &Path) {
     w(
         root,
         "rust/dvandva/src/commit_gate.rs",
-        "// dvandva commit-gate enforces DVANDVA_ROLE.\n// scans .dvandva/runs/*/baton.json; inactive done clarifying_questions_answer clarifying_questions_followup_answer human_question human_decision.\n// fail closed via read_json_lenient.\n",
+        "// dvandva commit-gate enforces DVANDVA_ROLE.\n// scans .dvandva/runs/*/baton.json; v3 inactive classes use StateClass::HumanGate StateClass::Pause StateClass::Terminal with is_gate_terminal token fallback.\n// fail closed via read_json_lenient.\n",
     );
     w(
         root,
@@ -1070,7 +1070,7 @@ fn pathgate_rejects_commit_gate_without_role() {
     w(
         d.path(),
         "rust/dvandva/src/commit_gate.rs",
-        "// scans .dvandva/runs/*/baton.json; inactive done clarifying_questions_answer clarifying_questions_followup_answer human_question human_decision.\n// fail closed via read_json_lenient.\n",
+        "// scans .dvandva/runs/*/baton.json; v3 inactive classes use StateClass::HumanGate StateClass::Pause StateClass::Terminal with is_gate_terminal token fallback.\n// fail closed via read_json_lenient.\n",
     );
     let r = run4_path_gates::report(d.path());
     assert!(r.fails_with("commit-gate must enforce DVANDVA_ROLE"));
@@ -1101,7 +1101,7 @@ fn pathgate_rejects_resolver_without_run_scope() {
     w(
         d.path(),
         "rust/dvandva/src/commit_gate.rs",
-        "// dvandva commit-gate enforces DVANDVA_ROLE.\n// inactive done clarifying_questions_answer clarifying_questions_followup_answer human_question human_decision.\n// fail closed via read_json_lenient.\n",
+        "// dvandva commit-gate enforces DVANDVA_ROLE.\n// v3 inactive classes use StateClass::HumanGate StateClass::Pause StateClass::Terminal with is_gate_terminal token fallback.\n// fail closed via read_json_lenient.\n",
     );
     let r = run4_path_gates::report(d.path());
     assert!(r.fails_with("commit_gate.rs must scan run-scoped baton paths"));
@@ -1117,7 +1117,7 @@ fn pathgate_rejects_owner_without_terminal_statuses() {
         "// dvandva commit-gate enforces DVANDVA_ROLE.\n// scans .dvandva/runs/*/baton.json.\n// fail closed via read_json_lenient.\n",
     );
     let r = run4_path_gates::report(d.path());
-    assert!(r.fails_with("commit_gate.rs must share inactive baton statuses"));
+    assert!(r.fails_with("commit_gate.rs must share inactive baton class semantics"));
 }
 
 #[test]
@@ -1157,7 +1157,7 @@ fn pathgate_rejects_resolver_without_fail_closed_json() {
     w(
         d.path(),
         "rust/dvandva/src/commit_gate.rs",
-        "// dvandva commit-gate enforces DVANDVA_ROLE.\n// scans .dvandva/runs/*/baton.json; inactive done clarifying_questions_answer clarifying_questions_followup_answer human_question human_decision.\n",
+        "// dvandva commit-gate enforces DVANDVA_ROLE.\n// scans .dvandva/runs/*/baton.json; v3 inactive classes use StateClass::HumanGate StateClass::Pause StateClass::Terminal with is_gate_terminal token fallback.\n",
     );
     let r = run4_path_gates::report(d.path());
     assert!(r.fails_with("must fail closed on malformed baton JSON"));

@@ -65,6 +65,28 @@ fn make_baton(path: &Path, status: &str, assignee: &str, checkpoint: i64, active
     fs::write(path, json).unwrap();
 }
 
+fn make_v3_baton_with_state_class(
+    path: &Path,
+    status: &str,
+    assignee: &str,
+    checkpoint: i64,
+    active_roles: &str,
+    class: &str,
+) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    let json = format!(
+        "{{\n  \"schema\": \"dvandva.baton.v3\",\n  \"status\": \"{status}\",\n  \
+         \"assignee\": \"{assignee}\",\n  \"checkpoint\": {checkpoint},\n  \
+         \"active_roles\": {active_roles},\n  \"run_workflow\": {{\n    \
+         \"source\": \"custom\",\n    \"declared_by\": \"vadi\",\n    \
+         \"declared_at_checkpoint\": 0,\n    \"approved_by\": \"prativadi\",\n    \
+         \"approved_at_checkpoint\": 1,\n    \"revision_round\": 0,\n    \
+         \"states\": [{{\"name\":\"{status}\",\"owner\":\"{assignee}\",\"class\":\"{class}\"}}],\n    \
+         \"edges\": [],\n    \"amendments\": []\n  }}\n}}\n"
+    );
+    fs::write(path, json).unwrap();
+}
+
 /// A v2 baton declaring a `changed_paths` scope plus an optional `profile`,
 /// for the S4-T9 staged-path crosscheck tests.
 fn make_baton_with_paths(
@@ -314,6 +336,31 @@ fn gate_terminal_abandoned_exits_0() {
         "[]",
     );
     assert_eq!(code(&run_gate(repo, Some("vadi"))), 0);
+}
+
+#[test]
+fn gate_v3_human_pause_and_terminal_classes_are_inactive() {
+    for class in ["human_gate", "pause", "terminal"] {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path();
+        init_repo(repo);
+        make_v3_baton_with_state_class(
+            &repo.join(".dvandva/runs/run-class/baton.json"),
+            "research_review",
+            "prativadi",
+            7,
+            "[]",
+            class,
+        );
+
+        let out = run_gate(repo, None);
+        assert_eq!(
+            code(&out),
+            0,
+            "v3 class {class} should make the baton inactive; stderr: {}",
+            stderr(&out)
+        );
+    }
 }
 
 // (f) Two active batons -> gate exits 1 (ambiguous).

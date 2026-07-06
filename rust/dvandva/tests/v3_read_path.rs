@@ -217,6 +217,48 @@ fn read_subcommands_accept_v2_and_v3_batons() {
 }
 
 #[test]
+fn resolve_excludes_v3_statuses_declared_terminal_by_class() {
+    let dir = tempfile::tempdir().unwrap();
+    let run_id = "class-terminal";
+    let baton = dir
+        .path()
+        .join(format!(".dvandva/runs/{run_id}/baton.json"));
+    let mut value = read_path_baton("dvandva.baton.v3", run_id);
+    value["status"] = json!("research_review");
+    value["assignee"] = json!("prativadi");
+    value["run_workflow"] = json!({
+        "source": "custom",
+        "declared_by": "vadi",
+        "declared_at_checkpoint": 0,
+        "approved_by": "prativadi",
+        "approved_at_checkpoint": 1,
+        "revision_round": 0,
+        "states": [
+            {"name": "research_review", "owner": "prativadi", "class": "terminal"}
+        ],
+        "edges": [],
+        "amendments": []
+    });
+    write_json(&baton, &value);
+
+    let (code, out, err) = run(
+        &[
+            "resolve",
+            "--role",
+            "vadi",
+            "--cwd",
+            dir.path().to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(code, 0, "resolve stderr:\n{err}");
+    assert!(
+        out.contains("CREATE .dvandva/runs/run/baton.json"),
+        "terminal-class v3 baton should be excluded from resumable discovery:\n{out}"
+    );
+}
+
+#[test]
 fn live_references_expose_v3_and_mark_v2_historical() {
     let root = repo_root();
 
