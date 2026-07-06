@@ -399,6 +399,101 @@ fn a_fixture_violating_two_rules_reports_the_earlier_check() {
     );
 }
 
+// ===================== residual coverage: shape edge cases =====================
+
+#[test]
+fn duplicate_state_names_are_currently_accepted() {
+    // DOCUMENTED CURRENT BEHAVIOR (not asserted as correct): `validate_states`
+    // only checks each entry's OWN name/owner/class against the
+    // catalog/enum sets — it never checks the `states[]` array for
+    // duplicate names. Two entries sharing a name, even with CONFLICTING
+    // owner/class, currently pass shape validation. Flagged in the
+    // test-creation report as a possible real gap for phase_fixing /
+    // deep_review to weigh in on; this test pins the CURRENT behavior so a
+    // future tightening shows up here as a deliberate diff, not a silent
+    // behavior change.
+    let catalog = full_catalog();
+    let mut rw = valid_workflow("fast");
+    let mut conflicting = rw["states"][0].clone();
+    assert_ne!(conflicting["owner"], json!("human"));
+    conflicting["owner"] = json!("human"); // deliberately conflicts with the original entry
+    rw["states"].as_array_mut().unwrap().push(conflicting);
+    assert_eq!(
+        dvandva::workflow::validate_run_workflow(&rw, &catalog),
+        Ok(()),
+        "current shape validator accepts a duplicate/conflicting state name"
+    );
+}
+
+#[test]
+fn empty_states_and_edges_with_custom_source_is_currently_accepted() {
+    // DOCUMENTED CURRENT BEHAVIOR: `validate_states`/`validate_edges` both
+    // no-op successfully on empty arrays, and there is no minimum-size /
+    // "states must be non-empty" rule tied to `source: "custom"`. A custom
+    // run_workflow declaring zero states and zero edges is shape-valid.
+    let catalog = full_catalog();
+    let mut rw = valid_workflow("fast");
+    rw["source"] = json!("custom");
+    rw["states"] = json!([]);
+    rw["edges"] = json!([]);
+    assert_eq!(
+        dvandva::workflow::validate_run_workflow(&rw, &catalog),
+        Ok(())
+    );
+}
+
+#[test]
+fn self_loop_edge_is_currently_accepted() {
+    // DOCUMENTED CURRENT BEHAVIOR: `validate_edges` only checks that
+    // `from`/`to` each resolve to a declared state — it never rejects
+    // `from == to`. The module doc explicitly scopes graph SEMANTICS
+    // (reachability, absorbing states, review-gate cuts) out of shape
+    // validation, so a self-loop being accepted here may be intentional;
+    // flagged so a future semantics layer has this pinned as its "before"
+    // state rather than discovering it undocumented.
+    let catalog = full_catalog();
+    let mut rw = valid_workflow("fast");
+    let state_name = rw["states"][0]["name"].clone();
+    rw["edges"].as_array_mut().unwrap().push(json!({
+        "from": state_name,
+        "to": state_name,
+        "loop_cap_key": null,
+    }));
+    assert_eq!(
+        dvandva::workflow::validate_run_workflow(&rw, &catalog),
+        Ok(())
+    );
+}
+
+#[test]
+fn amendment_approved_at_checkpoint_without_approved_by_is_currently_accepted() {
+    // REAL FINDING (asymmetry, not a documented design choice):
+    // `validate_amendments` never reads `approved_at_checkpoint` at all —
+    // contrast `validate_stamps`, which rejects a top-level
+    // `approved_at_checkpoint` set without `approved_by` as
+    // `BadApprovalStamp("approved_at_checkpoint=... set without
+    // approved_by")` (see `approved_by_without_approved_at_checkpoint_is_bad_approval_stamp`
+    // above for the mirror-image top-level case). The amendment path has NO
+    // equivalent symmetry check: an entry with `approved_by: null` and a
+    // nonnull `approved_at_checkpoint` passes shape validation unchanged.
+    // Flagged for phase_fixing/deep_review.
+    let catalog = full_catalog();
+    let mut rw = valid_workflow("fast");
+    rw["amendments"] = json!([{
+        "proposed_by": "vadi",
+        "at_checkpoint": 1,
+        "resume_status": "implementing",
+        "reason": "test",
+        "approved_by": null,
+        "approved_at_checkpoint": 5,
+    }]);
+    assert_eq!(
+        dvandva::workflow::validate_run_workflow(&rw, &catalog),
+        Ok(()),
+        "amendment stamp asymmetry currently passes shape validation unrejected"
+    );
+}
+
 #[test]
 fn missing_field_outranks_source_and_states_violations() {
     // Missing `declared_by` (checked 1st) AND a bad `source` (checked 2nd)
