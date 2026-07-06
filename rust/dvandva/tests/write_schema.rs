@@ -279,16 +279,32 @@ fn v3_in_flight_candidate_bad_run_workflow_shape_exits_23() {
 }
 
 #[test]
-fn v3_in_flight_unapproved_run_workflow_is_allowed_in_p1() {
+fn v3_custom_unapproved_run_workflow_blocks_research_review_to_spec_drafting() {
+    // P2 flips the P1 pin: an unapproved *custom* run_workflow can no longer
+    // slide from research_review straight into spec-drafting — the declaration
+    // must be approved (via the workflow_declaring loop) first. Preset sources
+    // are the engine's own pre-approved workflows and keep the direct edge
+    // (`preset_unapproved_research_review_to_spec_drafting_stays_legal` in
+    // `write_workflow_declaration.rs`).
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v3(&b, "research_drafting", "vadi", 4, |_| {});
-    make_baton_v3(&n, "research_review", "prativadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, |b| {
         b["run_workflow"] = minimal_run_workflow();
+        b["run_workflow"]["source"] = json!("custom");
         b["run_workflow"]["approved_by"] = json!(null);
         b["run_workflow"]["approved_at_checkpoint"] = json!(null);
     });
-    run(&b, &n).assert("v3 in-flight unapproved run_workflow stays P1-allowed", 0);
+    make_baton_v3(&n, "spec_drafting", "vadi", 5, |b| {
+        b["run_workflow"] = minimal_run_workflow();
+        b["run_workflow"]["source"] = json!("custom");
+        b["run_workflow"]["approved_by"] = json!(null);
+        b["run_workflow"]["approved_at_checkpoint"] = json!(null);
+    });
+    run(&b, &n).assert_contains(
+        "v3 custom unapproved run_workflow must declare before spec_drafting",
+        24,
+        "requires an approved run_workflow",
+    );
 }
 
 #[test]

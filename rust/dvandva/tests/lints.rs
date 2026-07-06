@@ -1437,6 +1437,41 @@ const PARITY_STATUS_TOKENS: &[&str] = &[
     "abandoned",
 ];
 
+/// The live 29-token v3 engine catalog (`PARITY_STATUS_TOKENS` plus the three
+/// v3-only per-run-workflow declaration states) that `baton-schema-v3.json` is
+/// pinned to; mirrors `write::V3_STATUS_CATALOG`.
+const PARITY_STATUS_TOKENS_V3: &[&str] = &[
+    "clarifying_questions_drafting",
+    "clarifying_questions_answer",
+    "clarifying_questions_followup",
+    "clarifying_questions_followup_answer",
+    "research_drafting",
+    "research_review",
+    "research_revision",
+    "spec_drafting",
+    "spec_review",
+    "spec_revision",
+    "workflow_declaring",
+    "workflow_review",
+    "workflow_revision",
+    "implementing",
+    "parallel_implementing",
+    "test_creation",
+    "cross_review",
+    "cross_fixing",
+    "deep_review",
+    "review_of_review",
+    "counter_review",
+    "deslop",
+    "termination_review",
+    "phase_review",
+    "phase_fixing",
+    "human_question",
+    "human_decision",
+    "done",
+    "abandoned",
+];
+
 const PARITY_REQUIRED_KEYS: &[&str] = &[
     "schema",
     "updated_at",
@@ -1551,7 +1586,7 @@ fn parity_fixture(root: &Path) {
     w(
         root,
         "plugins/dvandva/references/baton-schema-v3.json",
-        &parity_status_catalog_json("dvandva.baton.v3", PARITY_STATUS_TOKENS, None),
+        &parity_status_catalog_json("dvandva.baton.v3", PARITY_STATUS_TOKENS_V3, None),
     );
     w(
         root,

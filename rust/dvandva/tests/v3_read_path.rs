@@ -235,8 +235,16 @@ fn live_references_expose_v3_and_mark_v2_historical() {
     let catalog = v3["status_catalog"]
         .as_array()
         .expect("v3 status_catalog array");
-    assert_eq!(catalog.len(), 26);
+    // v3 adds the three per-run-workflow declaration states to the 26-token
+    // lifecycle base.
+    assert_eq!(catalog.len(), 29);
     assert!(catalog.iter().any(|v| v == "abandoned"));
+    for tok in ["workflow_declaring", "workflow_review", "workflow_revision"] {
+        assert!(
+            catalog.iter().any(|v| v == tok),
+            "v3 status_catalog must contain {tok}"
+        );
+    }
 
     let report = dvandva::lint::schema_parity::report(&root);
     assert!(

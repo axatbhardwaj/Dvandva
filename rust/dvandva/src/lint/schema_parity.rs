@@ -15,14 +15,18 @@
 //!
 //! ## What [`report`] asserts (and the exact doc-wave contract each expects)
 //!
-//! 1. **Status-enum parity.** Four doc copies must enumerate exactly the 26
-//!    engine status tokens:
+//! 1. **Status-enum parity.** Four doc copies are pinned to an engine catalog:
 //!    * `plugins/dvandva/references/baton-schema-v3.json` — its `status_catalog`
-//!      JSON array of strings (the live write-schema reference).
+//!      JSON array of strings (the live write-schema reference) must equal the
+//!      29-token v3 engine catalog (the 26-token lifecycle base plus the three
+//!      v3-only `workflow_declaring`/`workflow_review`/`workflow_revision`
+//!      declaration states).
 //!    * `plugins/dvandva/references/baton-schema-v2.json` — its historical
-//!      read-path `status_catalog` JSON array of strings.
+//!      read-path `status_catalog` JSON array of strings must equal the frozen
+//!      26-token v2 catalog (v2 never had the workflow-declaration states).
 //!    * `product.md` — a single line of the form
-//!      `Status catalog (26): clarifying_questions_drafting, … abandoned`.
+//!      `Status catalog (26): clarifying_questions_drafting, … abandoned`
+//!      pinned to the frozen 26-token v2 catalog.
 //!      Everything after the literal marker `Status catalog (26):` is tokenised
 //!      (`[a-z][a-z0-9_]*`) and must equal the engine catalog exactly, so the
 //!      marker line must carry ONLY the 26 tokens (any stray lowercase word is
@@ -63,7 +67,7 @@ use serde_json::Value;
 use crate::commit_gate::REMINDER_HARD_PATH_TOKENS;
 use crate::lint::skills;
 use crate::lint::{file_contains, read, resolve_root, Report};
-use crate::write::{v2_required_keys, V2_STATUS_CATALOG};
+use crate::write::{v2_required_keys, V2_STATUS_CATALOG, V3_STATUS_CATALOG};
 
 const CATALOG_MARKER: &str = "Status catalog (26):";
 const HISTORICAL_V1_MARKER: &str = "HISTORICAL: dvandva.baton.v1";
@@ -99,36 +103,40 @@ pub fn run(args: &[String]) -> i32 {
 // ---------------------------------------------------------------------------
 
 fn status_enum_parity(root: &Path, r: &mut Report) {
-    let want = canonical_status_catalog();
+    // The LIVE v3 engine catalog (29 tokens) pins the v3 write-schema reference;
+    // the retired v2 copies stay frozen at the historical 26-token lifecycle
+    // catalog (v2 never had the three per-run-workflow declaration states).
+    let want_v3 = canonical_catalog(V3_STATUS_CATALOG);
+    let want_v2 = canonical_catalog(V2_STATUS_CATALOG);
 
-    let schema_v3_ok = json_status_catalog(root, SCHEMA_V3).as_deref() == Some(&want[..]);
+    let schema_v3_ok = json_status_catalog(root, SCHEMA_V3).as_deref() == Some(&want_v3[..]);
     r.add(
         schema_v3_ok,
         "baton-schema-v3.json status_catalog equals the engine v3 status catalog",
     );
 
-    let schema_v2_ok = json_status_catalog(root, SCHEMA_V2).as_deref() == Some(&want[..]);
+    let schema_v2_ok = json_status_catalog(root, SCHEMA_V2).as_deref() == Some(&want_v2[..]);
     r.add(
         schema_v2_ok,
         "historical baton-schema-v2.json status_catalog equals the engine v2 status catalog",
     );
 
-    let product_ok = marked_catalog(root, "product.md").as_deref() == Some(&want[..]);
+    let product_ok = marked_catalog(root, "product.md").as_deref() == Some(&want_v2[..]);
     r.add(
         product_ok,
         "product.md status catalog line equals the engine v2 status catalog",
     );
 
-    let stt_ok = marked_catalog(root, STATE_TABLE).as_deref() == Some(&want[..]);
+    let stt_ok = marked_catalog(root, STATE_TABLE).as_deref() == Some(&want_v2[..]);
     r.add(
         stt_ok,
         "state-transition-table.md status catalog equals the engine v2 status catalog",
     );
 }
 
-/// The engine's status catalog, sorted for order-insensitive comparison.
-fn canonical_status_catalog() -> Vec<String> {
-    let mut v: Vec<String> = V2_STATUS_CATALOG.iter().map(|s| s.to_string()).collect();
+/// A status catalog sorted for order-insensitive comparison.
+fn canonical_catalog(catalog: &[&str]) -> Vec<String> {
+    let mut v: Vec<String> = catalog.iter().map(|s| s.to_string()).collect();
     v.sort();
     v
 }
@@ -277,27 +285,62 @@ mod tests {
     use crate::baton::Status;
     use crate::commit_gate::{matches_reminder_hard_path, REMINDER_HARD_PATH_TOKENS};
     use crate::preflight::V2_STATUS_TOKENS;
-    use crate::write::{status_enum_ok, v2_required_keys, V2_STATUS_CATALOG};
+    use crate::write::{status_enum_ok, v2_required_keys, V2_STATUS_CATALOG, V3_STATUS_CATALOG};
 
     #[test]
     fn engine_catalog_has_26_unique_tokens() {
         let mut sorted = V2_STATUS_CATALOG.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
-        assert_eq!(sorted.len(), 26, "engine catalog must be 26 unique tokens");
+        assert_eq!(
+            sorted.len(),
+            26,
+            "v2 engine catalog must be 26 unique tokens"
+        );
         assert_eq!(
             sorted.len(),
             V2_STATUS_CATALOG.len(),
-            "engine catalog must have no duplicates"
+            "v2 engine catalog must have no duplicates"
         );
+    }
+
+    #[test]
+    fn v3_engine_catalog_has_29_unique_tokens_superset_of_v2() {
+        let mut sorted = V3_STATUS_CATALOG.to_vec();
+        sorted.sort_unstable();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            29,
+            "v3 engine catalog must be 29 unique tokens"
+        );
+        assert_eq!(
+            sorted.len(),
+            V3_STATUS_CATALOG.len(),
+            "v3 engine catalog must have no duplicates"
+        );
+        // The v3 catalog is the v2 catalog plus exactly the three declaration
+        // states.
+        for tok in V2_STATUS_CATALOG {
+            assert!(
+                V3_STATUS_CATALOG.contains(tok),
+                "v3 catalog must contain every v2 token, missing {tok}"
+            );
+        }
+        for tok in ["workflow_declaring", "workflow_review", "workflow_revision"] {
+            assert!(
+                V3_STATUS_CATALOG.contains(&tok) && !V2_STATUS_CATALOG.contains(&tok),
+                "{tok} must be v3-only"
+            );
+        }
     }
 
     #[test]
     fn baton_status_matches_engine_catalog() {
         // Each engine token maps bijectively onto a `Status` (FromStr + as_str
-        // round-trip). With `baton`'s own 26-variant enforcement, the bijection
+        // round-trip). With `baton`'s own 29-variant enforcement, the bijection
         // pins the two catalogs equal in both directions.
-        for tok in V2_STATUS_CATALOG {
+        for tok in V3_STATUS_CATALOG {
             let s =
                 Status::from_str(tok).unwrap_or_else(|_| panic!("engine token must parse: {tok}"));
             assert_eq!(s.as_str(), *tok, "as_str must round-trip {tok}");
@@ -347,8 +390,8 @@ mod tests {
     #[test]
     fn status_enum_ok_accepts_every_catalog_token() {
         // Pins the hot-path acceptor (`write.rs`'s match arm) equal to the
-        // canonical catalog list, so the two can never silently diverge.
-        for tok in V2_STATUS_CATALOG {
+        // canonical v3 catalog list, so the two can never silently diverge.
+        for tok in V3_STATUS_CATALOG {
             assert!(
                 status_enum_ok(tok),
                 "status_enum_ok must accept catalog token {tok}"

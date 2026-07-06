@@ -264,7 +264,7 @@ fn validate_candidate_shape(
 
     if schema == "dvandva.baton.v3" {
         let run_workflow = field(cand, "run_workflow").expect("required key checked above");
-        validate_run_workflow(run_workflow, V2_STATUS_CATALOG).map_err(|err| {
+        validate_run_workflow(run_workflow, V3_STATUS_CATALOG).map_err(|err| {
             (
                 23,
                 format!("DVANDVA_WRITE bad_run_workflow candidate={cf} reason={err:?}"),
@@ -780,6 +780,9 @@ pub(crate) fn expected_phase_for(mode: &str, status: &str, current_phase: &Value
             Value::from("research")
         }
         (Some("development"), "spec_drafting" | "spec_review" | "spec_revision") => {
+            Value::from("spec")
+        }
+        (Some("development"), "workflow_declaring" | "workflow_review" | "workflow_revision") => {
             Value::from("spec")
         }
         (Some("research"), "research_drafting" | "research_review" | "research_revision") => {
@@ -1735,6 +1738,10 @@ fn decide_transition(
         let amendment_enter = cur_effective_mode == "development"
             && cx.new_effective_mode == "development"
             && is_amendment_enter_edge(&cur_phase_eff, &cur_status, cx.new_status);
+        let workflow_revision_reject = cur_effective_mode == "development"
+            && cx.new_effective_mode == "development"
+            && cur_status == "workflow_review"
+            && cx.new_status == "workflow_revision";
         if amendment_enter {
             // F7: the amendment entry edge is loop-capped on
             // plan_amendment:<from-phase> (from-phase = current numeric phase),
@@ -1742,6 +1749,11 @@ fn decide_transition(
             // numeric phase advance).
             let amendment_edge = format!("plan_amendment:{cur_phase}");
             loop_reason = loop_edge_reason(cur_doc, cand, &amendment_edge);
+        } else if workflow_revision_reject {
+            // P2: the per-run-workflow declaration reject loops under the single
+            // "workflow_revision" key against disagreement_cap (per-episode);
+            // cap exhaustion leaves the universal human_decision escalation.
+            loop_reason = loop_edge_reason(cur_doc, cand, "workflow_revision");
         } else if cx.new_phase != cur_phase
             && loop_counts_nonempty(cand)
             && !research_planning_relabel(&cur_effective_mode, &cur_phase, cx.new_phase)
@@ -1984,6 +1996,83 @@ fn decide_transition(
         } else {
             legal = true;
         }
+    } else if dev_dev && cur_status == "research_review" && cx.new_status == "workflow_declaring" {
+        // P2 declaration loop entry: the vadi opens the run-workflow declaration
+        // after research approval, but only while the workflow is unapproved (an
+        // already-approved run has nothing to declare).
+        if rw_approved_by(cur_doc).is_some() {
+            reason = "research_review->workflow_declaring is only legal while run_workflow is unapproved".to_string();
+        } else {
+            legal = true;
+        }
+    } else if dev_dev && cur_status == "workflow_declaring" && cx.new_status == "workflow_review" {
+        // P2: the vadi submits the declaration for peer review; the declaration
+        // stamp must be coherent (declared_by == the submitting vadi).
+        let declared_by = rw_declared_by(cand);
+        if declared_by != writer_role || declared_by != "vadi" {
+            reason = format!(
+                "workflow_declaring->workflow_review requires run_workflow.declared_by={writer_role} (the submitting vadi), got declared_by={declared_by}"
+            );
+        } else {
+            legal = true;
+        }
+    } else if dev_dev && cur_status == "workflow_revision" && cx.new_status == "workflow_review" {
+        // P2: the vadi resubmits a revised declaration (loop-capped above).
+        legal = true;
+    } else if dev_dev && cur_status == "workflow_review" && cx.new_status == "workflow_revision" {
+        // P2: the prativadi rejects the declaration with findings (loop-capped
+        // above); non-empty findings are required to name the objection.
+        if count_len(field(cand, "findings")) == 0 {
+            reason = "workflow_review->workflow_revision requires non-empty findings".to_string();
+        } else {
+            legal = true;
+        }
+    } else if dev_dev && cur_status == "workflow_review" && cx.new_status == "spec_drafting" {
+        // P2: the prativadi APPROVES the declaration and the run enters
+        // spec-drafting; the approval stamp (and, for custom graphs, the deep
+        // invariants) must hold.
+        match workflow_declaration_approve_ok(cand, &writer_role, cx.new_checkpoint) {
+            Ok(()) => legal = true,
+            Err(msg) => return Err((23, format!("DVANDVA_WRITE {msg} candidate={cf}"))),
+        }
+    } else if dev_dev
+        && cur_status == "research_review"
+        && cx.new_status == "spec_drafting"
+        && rw_source(cur_doc) == "custom"
+        && rw_approved_by(cur_doc).is_none()
+    {
+        // P2 approval enforcement: a custom, still-unapproved run-workflow cannot
+        // jump research_review->spec_drafting directly — it must be declared and
+        // approved via the workflow_declaring loop first. (Preset sources are the
+        // engine's own pre-approved workflows and keep the direct edge.)
+        reason = "research_review->spec_drafting requires an approved run_workflow; declare it via workflow_declaring first".to_string();
+    } else if dev_dev
+        && cx.new_status == "workflow_review"
+        && !is_workflow_decl_status(&cur_status)
+        && !matches!(cur_status.as_str(), "human_question" | "human_decision")
+    {
+        // P2 amendment entry: from any active non-terminal working status the
+        // writer may raise a mid-flight amendment by appending a new pending
+        // amendments[] entry that records where to resume.
+        if amendment_entry_added_ok(cur_doc, cand, &writer_role, &cur_status, cx.new_checkpoint) {
+            legal = true;
+        } else {
+            reason = "workflow_review amendment entry requires a new pending amendments[] entry (proposed_by=writer, at_checkpoint=current, resume_status=interrupted status)".to_string();
+        }
+    } else if dev_dev
+        && cur_status == "workflow_review"
+        && cx.new_status != "workflow_revision"
+        && amendment_resume_ok(
+            cur_doc,
+            cand,
+            &writer_role,
+            cx.new_status,
+            cx.new_checkpoint,
+        )
+    {
+        // P2 amendment approve/resume: the peer stamps the pending amendment
+        // approved and the run resumes to the recorded resume_status.
+        legal = true;
     } else {
         // F9 edge selection: numeric-source states select by the current phase's
         // effective profile; the spec→implementation entry (and amendment exit)
@@ -2602,6 +2691,46 @@ pub(crate) const V2_STATUS_CATALOG: &[&str] = &[
     "abandoned",
 ];
 
+/// The live `dvandva.baton.v3` engine status catalog: the 26-token v2 lifecycle
+/// base plus the three v3-only per-run-workflow declaration states
+/// (`workflow_declaring`/`workflow_review`/`workflow_revision`). This is the
+/// catalog `status_enum_ok` accepts, `baton::Status` enumerates, the
+/// `run_workflow` shape validator legalises custom-declared states against, and
+/// the v3 doc copy (`baton-schema-v3.json`) is pinned to by schema-parity. The
+/// retired v2 copies (`baton-schema-v2.json`, `product.md`/state-table catalog
+/// lines, `preflight::V2_STATUS_TOKENS`) stay frozen at the historical 26.
+pub(crate) const V3_STATUS_CATALOG: &[&str] = &[
+    "clarifying_questions_drafting",
+    "clarifying_questions_answer",
+    "clarifying_questions_followup",
+    "clarifying_questions_followup_answer",
+    "research_drafting",
+    "research_review",
+    "research_revision",
+    "spec_drafting",
+    "spec_review",
+    "spec_revision",
+    "workflow_declaring",
+    "workflow_review",
+    "workflow_revision",
+    "implementing",
+    "parallel_implementing",
+    "test_creation",
+    "cross_review",
+    "cross_fixing",
+    "deep_review",
+    "review_of_review",
+    "counter_review",
+    "deslop",
+    "termination_review",
+    "phase_review",
+    "phase_fixing",
+    "human_question",
+    "human_decision",
+    "done",
+    "abandoned",
+];
+
 fn review_target_ok(cand: &Value) -> bool {
     match field(cand, "review_target") {
         None | Some(Value::Null) => true,
@@ -2636,6 +2765,10 @@ fn v2_expected_assignee(status: &str) -> &'static str {
         "clarifying_questions_followup" => "prativadi",
         "clarifying_questions_answer" | "clarifying_questions_followup_answer" => "human",
         // F8: test_creation is team-owned in the v2 full profile (its only home).
+        // v3 per-run-workflow declaration loop: vadi drafts/revises, prativadi
+        // reviews.
+        "workflow_declaring" | "workflow_revision" => "vadi",
+        "workflow_review" => "prativadi",
         "research_drafting" | "research_revision" | "spec_drafting" | "spec_revision"
         | "implementing" | "deslop" | "phase_fixing" | "review_of_review" => "vadi",
         "parallel_implementing"
@@ -2715,7 +2848,7 @@ fn is_amendment_exit_edge(profile: &str, cur_status: &str, new_status: &str) -> 
 /// The v2 status vocabulary. The v1 arm was removed with S5-T2 (v1 candidates
 /// are rejected upstream with `schema_retired`), so only v2 statuses remain.
 /// `pub(crate)` so the schema-parity lint's unit tests can assert this
-/// hot-path acceptor agrees with [`V2_STATUS_CATALOG`] for every token.
+/// hot-path acceptor agrees with [`V3_STATUS_CATALOG`] for every token.
 pub(crate) fn status_enum_ok(status: &str) -> bool {
     matches!(
         status,
@@ -2729,6 +2862,9 @@ pub(crate) fn status_enum_ok(status: &str) -> bool {
             | "spec_drafting"
             | "spec_review"
             | "spec_revision"
+            | "workflow_declaring"
+            | "workflow_review"
+            | "workflow_revision"
             | "human_question"
             | "implementing"
             | "parallel_implementing"
@@ -2810,6 +2946,10 @@ fn phase_status_ok(mode: &str, status: &str, cand: &Value) -> bool {
             is_str("research")
         }
         ("development", "spec_drafting" | "spec_review" | "spec_revision") => is_str("spec"),
+        // v3 per-run-workflow declaration loop lives in the "spec" planning phase.
+        ("development", "workflow_declaring" | "workflow_review" | "workflow_revision") => {
+            is_str("spec")
+        }
         (
             "development",
             "implementing"
@@ -4107,6 +4247,211 @@ fn edge_is_loop_capped(graph: &EffectiveGraph, edge: &str) -> bool {
             .any(|e| e.loop_capped && format!("{}:{}", e.from, e.to) == edge),
         _ => is_loop_edge(edge),
     }
+}
+
+// ===========================================================================
+// v3 per-run-workflow declaration loop + amendments (P2)
+// ===========================================================================
+
+/// The three v3-only per-run-workflow declaration statuses.
+fn is_workflow_decl_status(status: &str) -> bool {
+    matches!(
+        status,
+        "workflow_declaring" | "workflow_review" | "workflow_revision"
+    )
+}
+
+/// `run_workflow.approved_by` as a non-empty string, or `None` when unapproved.
+fn rw_approved_by(doc: &Value) -> Option<String> {
+    match field(doc, "run_workflow").and_then(|rw| field(rw, "approved_by")) {
+        Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+        _ => None,
+    }
+}
+
+/// `run_workflow.source` (empty when absent).
+fn rw_source(doc: &Value) -> String {
+    field(doc, "run_workflow")
+        .map(|rw| str_field(rw, "source"))
+        .unwrap_or_default()
+}
+
+/// `run_workflow.declared_by` (empty when absent).
+fn rw_declared_by(doc: &Value) -> String {
+    field(doc, "run_workflow")
+        .map(|rw| str_field(rw, "declared_by"))
+        .unwrap_or_default()
+}
+
+/// `run_workflow.approved_at_checkpoint` as a `u64`, or `None`.
+fn rw_approved_at_checkpoint(doc: &Value) -> Option<u64> {
+    field(doc, "run_workflow")
+        .and_then(|rw| field(rw, "approved_at_checkpoint"))
+        .and_then(|v| v.as_u64())
+}
+
+/// The `run_workflow.amendments[]` entries (empty when absent/malformed).
+fn rw_amendments(doc: &Value) -> Vec<Value> {
+    field(doc, "run_workflow")
+        .map(|rw| arr(field(rw, "amendments")).to_vec())
+        .unwrap_or_default()
+}
+
+/// True when a candidate at `workflow_review` legitimately APPROVES a workflow
+/// declaration: the peer prativadi stamps `approved_by=prativadi` (the shape
+/// validator already enforced it differs from `declared_by`) and
+/// `approved_at_checkpoint=<current>`. For a `source=custom` graph the deep
+/// invariant checks must also pass. Returns the transition-level reason on
+/// failure.
+fn workflow_declaration_approve_ok(
+    cand: &Value,
+    writer_role: &str,
+    checkpoint: u64,
+) -> Result<(), String> {
+    if writer_role != "prativadi" {
+        return Err("bad_workflow_approval requires DVANDVA_ROLE=prativadi".to_string());
+    }
+    match rw_approved_by(cand) {
+        Some(role) if role == "prativadi" => {}
+        _ => return Err("bad_workflow_approval approved_by must be stamped prativadi".to_string()),
+    }
+    if rw_approved_at_checkpoint(cand) != Some(checkpoint) {
+        return Err(format!(
+            "bad_workflow_approval approved_at_checkpoint must be {checkpoint}"
+        ));
+    }
+    custom_invariants_ok(cand)
+}
+
+/// Run the graph-level invariant checks for a `source=custom` candidate's
+/// declared `run_workflow`; a no-op for preset sources (the engine presets are
+/// pre-validated). Emits a `bad_workflow_invariants` reason on the first
+/// violation.
+fn custom_invariants_ok(cand: &Value) -> Result<(), String> {
+    if rw_source(cand) != "custom" {
+        return Ok(());
+    }
+    let Some(rw) = field(cand, "run_workflow") else {
+        return Ok(());
+    };
+    let graph = build_custom_graph(rw);
+    // Seed from the first declared state; the invariant checker walks the whole
+    // graph from there (review-gate cut, escape reachability, absorbing states).
+    let seed = graph
+        .states
+        .first()
+        .map(|s| s.name)
+        .unwrap_or("clarifying_questions_drafting");
+    match crate::workflow::validate_workflow_invariants(&graph, seed) {
+        Ok(()) => Ok(()),
+        Err(violations) => Err(format!("bad_workflow_invariants {violations:?}")),
+    }
+}
+
+/// Build an owned [`crate::workflow::WorkflowGraph`] from a candidate's declared
+/// `run_workflow` so the invariant checker (which takes `&'static str` state
+/// tokens) can run against it. The `Box::leak` here is deliberately scoped to
+/// the rare `source=custom` declaration/approval write in a short-lived CLI
+/// process; every preset run skips this path entirely.
+fn build_custom_graph(rw: &Value) -> crate::workflow::WorkflowGraph {
+    use crate::workflow::{StateClass, WfEdge, WfState, WorkflowGraph};
+    fn leak(s: &str) -> &'static str {
+        Box::leak(s.to_string().into_boxed_str())
+    }
+    let class_of = |c: &str| match c {
+        "review_gate" => StateClass::ReviewGate,
+        "human_gate" => StateClass::HumanGate,
+        "pause" => StateClass::Pause,
+        "terminal" => StateClass::Terminal,
+        _ => StateClass::Work,
+    };
+    let states = arr(field(rw, "states"))
+        .iter()
+        .map(|s| WfState {
+            name: leak(&str_field(s, "name")),
+            owner: leak(&str_field(s, "owner")),
+            class: class_of(&str_field(s, "class")),
+        })
+        .collect();
+    let edges = arr(field(rw, "edges"))
+        .iter()
+        .map(|e| WfEdge {
+            from: leak(&str_field(e, "from")),
+            to: leak(&str_field(e, "to")),
+            loop_cap_key: None,
+            amendment_capped: false,
+        })
+        .collect();
+    WorkflowGraph {
+        name: "custom",
+        states,
+        edges,
+    }
+}
+
+/// True when a candidate legitimately RAISES a new amendment: from an active
+/// non-terminal working status the writer appends exactly one `amendments[]`
+/// entry (append-only prefix) whose `proposed_by`=writer, `at_checkpoint`=
+/// current, `resume_status`=the interrupted status, and which is not yet
+/// approved.
+fn amendment_entry_added_ok(
+    cur_doc: &Value,
+    cand: &Value,
+    writer_role: &str,
+    cur_status: &str,
+    checkpoint: u64,
+) -> bool {
+    let cur_am = rw_amendments(cur_doc);
+    let cand_am = rw_amendments(cand);
+    if cand_am.len() != cur_am.len() + 1 {
+        return false;
+    }
+    if cur_am.iter().zip(cand_am.iter()).any(|(a, b)| a != b) {
+        return false; // append-only: the existing prefix must be untouched
+    }
+    let e = &cand_am[cand_am.len() - 1];
+    str_field(e, "proposed_by") == writer_role
+        && field(e, "at_checkpoint").and_then(|v| v.as_u64()) == Some(checkpoint)
+        && str_field(e, "resume_status") == cur_status
+        && is_null_field(e, "approved_by")
+}
+
+/// True when a candidate at `workflow_review` legitimately APPROVES a pending
+/// amendment and resumes to its `resume_status`: exactly one entry flips from
+/// unapproved to `approved_by`=writer (peer) + `approved_at_checkpoint`=current
+/// with its `resume_status` equal to `new_status`; every other entry is
+/// untouched. For a `source=custom` graph the invariant checks are re-run.
+fn amendment_resume_ok(
+    cur_doc: &Value,
+    cand: &Value,
+    writer_role: &str,
+    new_status: &str,
+    checkpoint: u64,
+) -> bool {
+    let cur_am = rw_amendments(cur_doc);
+    let cand_am = rw_amendments(cand);
+    if cand_am.len() != cur_am.len() || cur_am.is_empty() {
+        return false;
+    }
+    let mut flipped = 0;
+    for (c, n) in cur_am.iter().zip(cand_am.iter()) {
+        if c == n {
+            continue;
+        }
+        let same_entry = str_field(c, "proposed_by") == str_field(n, "proposed_by")
+            && field(c, "at_checkpoint") == field(n, "at_checkpoint")
+            && str_field(c, "resume_status") == str_field(n, "resume_status");
+        let newly_approved = is_null_field(c, "approved_by")
+            && str_field(n, "approved_by") == writer_role
+            && field(n, "approved_at_checkpoint").and_then(|v| v.as_u64()) == Some(checkpoint)
+            && str_field(n, "resume_status") == new_status;
+        if same_entry && newly_approved {
+            flipped += 1;
+        } else {
+            return false;
+        }
+    }
+    flipped == 1 && custom_invariants_ok(cand).is_ok()
 }
 
 // ===========================================================================

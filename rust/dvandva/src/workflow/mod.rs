@@ -6,9 +6,11 @@
 //! write time: `fast`, `standard`, `full`, `research`, `review`. The actual
 //! preset data lives in [`presets`].
 
+pub mod invariants;
 pub mod presets;
 pub mod shape;
 
+pub use invariants::{validate_workflow_invariants, InvariantViolation};
 pub use shape::{validate_run_workflow, ShapeError};
 
 /// The behavioral class of a workflow state.
