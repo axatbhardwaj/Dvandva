@@ -326,7 +326,6 @@ fn workflow_revision_reject_silently_accepts_a_second_pending_amendment() {
 /// declared-graph membership (state + edge), not just global catalog
 /// membership + whole-graph invariants.
 #[test]
-#[ignore = "FINDING: amendment resume_status is never checked against the declared custom graph's states/edges, only the global V3_STATUS_CATALOG + whole-graph invariants; resuming into a status entirely absent from the declared graph (test_creation) is silently accepted. See amendment_resume_ok / custom_invariants_ok in write.rs."]
 fn amendment_resume_rejected_when_status_outside_declared_graph_states() {
     let d = tmp();
     let (b, n) = paths(&d);

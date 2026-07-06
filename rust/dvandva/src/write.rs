@@ -2030,11 +2030,19 @@ fn decide_transition(
         }
     } else if dev_dev && cur_status == "workflow_declaring" && cx.new_status == "workflow_review" {
         // P2: the vadi submits the declaration for peer review; the declaration
-        // stamp must be coherent (declared_by == the submitting vadi).
+        // stamp must be coherent (declared_by == the submitting vadi, and
+        // declared_at_checkpoint must not be from the future relative to the
+        // checkpoint the declaration is submitted at).
         let declared_by = rw_declared_by(cand);
         if declared_by != writer_role || declared_by != "vadi" {
             reason = format!(
                 "workflow_declaring->workflow_review requires run_workflow.declared_by={writer_role} (the submitting vadi), got declared_by={declared_by}"
+            );
+        } else if rw_declared_at_checkpoint(cand).is_some_and(|c| c > cx.new_checkpoint) {
+            reason = format!(
+                "workflow_declaring->workflow_review requires run_workflow.declared_at_checkpoint <= {} (the submitting checkpoint), got declared_at_checkpoint={:?}",
+                cx.new_checkpoint,
+                rw_declared_at_checkpoint(cand)
             );
         } else {
             legal = true;
@@ -2092,8 +2100,18 @@ fn decide_transition(
         ) {
             Ok(true) => {
                 // P2 amendment approve/resume: the peer stamps the pending amendment
-                // approved and the run resumes to the recorded resume_status.
-                legal = true;
+                // approved and the run resumes to the recorded resume_status. For a
+                // declared source=custom graph, the resume target must actually be
+                // one of the declared states (mirroring custom_invariants_ok's
+                // source=custom scoping; preset sources have no declared states[]
+                // and are governed by the whitelist/edge interpreter instead).
+                if rw_source(cand) == "custom"
+                    && !rw_state_names(cand).iter().any(|s| s == cx.new_status)
+                {
+                    reason = "amendment resume target must be a declared-graph state".to_string();
+                } else {
+                    legal = true;
+                }
             }
             Ok(false) => {
                 // F9 edge selection: numeric-source states select by the current phase's
@@ -4350,6 +4368,25 @@ fn rw_approved_at_checkpoint(doc: &Value) -> Option<u64> {
     field(doc, "run_workflow")
         .and_then(|rw| field(rw, "approved_at_checkpoint"))
         .and_then(|v| v.as_u64())
+}
+
+/// `run_workflow.declared_at_checkpoint` as a `u64`, or `None`.
+fn rw_declared_at_checkpoint(doc: &Value) -> Option<u64> {
+    field(doc, "run_workflow")
+        .and_then(|rw| field(rw, "declared_at_checkpoint"))
+        .and_then(|v| v.as_u64())
+}
+
+/// `run_workflow.states[].name` (empty when absent, as for preset sources).
+fn rw_state_names(doc: &Value) -> Vec<String> {
+    field(doc, "run_workflow")
+        .map(|rw| {
+            arr(field(rw, "states"))
+                .iter()
+                .map(|s| str_field(s, "name"))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// The `run_workflow.amendments[]` entries (empty when absent/malformed).

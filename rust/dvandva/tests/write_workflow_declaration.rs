@@ -577,20 +577,12 @@ fn workflow_review_approve_rejected_when_approval_precedes_declaration() {
     );
 }
 
-/// Sweep item 2 (declared-in-the-future half), FINDING: nothing in
-/// `write.rs`'s `workflow_declaring->workflow_review` submit branch (or
-/// anywhere else) checks `declared_at_checkpoint` against the checkpoint the
-/// declaration is actually being submitted at — only `declared_by` is
-/// checked for coherence. A vadi can stamp `declared_at_checkpoint` from the
-/// future (or any arbitrary value) relative to the current checkpoint and the
-/// submit still succeeds. `workflow::shape::validate_stamps` only enforces
-/// non-negative + `approved_at_checkpoint >= declared_at_checkpoint`; it never
-/// compares `declared_at_checkpoint` against the submitting checkpoint.
-/// FINDING for deep_review/phase_fixing: pin `declared_at_checkpoint` to the
-/// submitting checkpoint (mirroring how `approved_at_checkpoint` is pinned to
-/// `cx.new_checkpoint` in `workflow_declaration_approve_ok`).
+/// Sweep item 2 (declared-in-the-future half): the `workflow_declaring
+/// -> workflow_review` submit branch rejects a `declared_at_checkpoint` that
+/// is in the future relative to the checkpoint the declaration is actually
+/// submitted at (the `<=` rule; declaration is drafted at an earlier
+/// checkpoint than submission, so `==` would be too strict).
 #[test]
-#[ignore = "FINDING: declared_at_checkpoint is never checked against the submitting checkpoint (only declared_by is); a future/incoherent declared_at_checkpoint is silently accepted on workflow_declaring->workflow_review. See the submit branch in write.rs (dev_dev && cur_status==\"workflow_declaring\") and workflow::shape::validate_stamps."]
 fn workflow_declaring_submit_rejected_when_declared_at_checkpoint_is_in_the_future() {
     let d = tmp();
     let (b, n) = paths(&d);
