@@ -16,9 +16,15 @@ use std::path::Component;
 /// edit to the baton or its history.
 pub const BLOCK_MESSAGE: &str = "dvandva baton-guard: direct edits to the Dvandva baton are blocked. Scaffold a candidate with `dvandva next` (it lists and generates the legal edges) and install it with `dvandva write` — never edit baton.json or its history directly. For a human_question or human_decision resume (which `dvandva next` may not scaffold), edit the CANDIDATE file (baton.next.json, never baton.json) to the intended non-terminal state, then run `dvandva write`.";
 
-/// The message printed to stderr when a tool call is blocked because no
-/// baton has been created within the baton-creation SLA window.
-pub const SLA_BLOCK_MESSAGE: &str = "dvandva baton-guard: no Dvandva baton has been created yet and the baton-creation SLA has expired. Run `dvandva resolve` to check for an existing run, then `dvandva write` to install a fresh baton — no other tool call is permitted until a baton exists.";
+/// The model-visible warning injected (as PreToolUse `additionalContext`)
+/// when the baton-creation SLA has expired. Warn-only by human decision
+/// (run baton-guard-sla-scoping, Q1): the call is allowed and work
+/// continues; the message spells the creation sequence and repeats on a
+/// throttle until a baton exists.
+pub const SLA_WARN_MESSAGE: &str = "dvandva baton-guard WARNING (not a block — this tool call ran): the baton-creation SLA has expired and no Dvandva baton exists yet. Create or resume it now: (1) run `dvandva resolve --role vadi` to get the run path, (2) Write the seed candidate to <run-dir>/baton.next.json, (3) run `dvandva write <run-dir>/baton.json <run-dir>/baton.next.json`. This warning repeats every ~5 minutes until a baton exists.";
+
+/// Re-emit interval for the SLA breach warning, in seconds.
+pub const WARN_INTERVAL_SECS: u64 = 300;
 
 /// Tool names the direct-edit guard inspects. Any other `tool_name` is
 /// allowed without inspection by that guard (the SLA guard still applies).
@@ -31,9 +37,10 @@ pub enum Decision {
     Allow,
     /// The tool call directly edits the baton or its history.
     BlockDirectEdit,
-    /// No baton exists and the baton-creation SLA has expired. Carries a
-    /// human-readable reason (marker age vs. threshold).
-    BlockSla(String),
+    /// No baton exists, the baton-creation SLA has expired, and the warn
+    /// throttle has elapsed: allow the call but emit the model-visible
+    /// warning. Carries a human-readable reason (marker age vs. threshold).
+    WarnSla(String),
 }
 
 /// Baton-creation SLA state for the current PreToolUse invocation.
@@ -53,6 +60,9 @@ pub struct SlaState {
     pub marker_age_secs: Option<u64>,
     /// The SLA threshold in seconds (`DVANDVA_BATON_SLA_SECONDS`, default 120).
     pub threshold_secs: u64,
+    /// Seconds since the last breach warning was emitted for this marker,
+    /// if one ever was. `None` means never warned.
+    pub last_warned_secs_ago: Option<u64>,
 }
 
 impl SlaState {
@@ -73,16 +83,24 @@ impl SlaState {
             _ => None,
         }
     }
+
+    /// Whether a breach warning should be (re-)emitted now: never warned,
+    /// or the last warning is at least [`WARN_INTERVAL_SECS`] old.
+    pub fn should_warn(&self) -> bool {
+        self.last_warned_secs_ago
+            .is_none_or(|ago| ago >= WARN_INTERVAL_SECS)
+    }
 }
 
-/// Decide whether a PreToolUse hook `payload` (raw JSON bytes from stdin)
-/// should be blocked, given the current baton-creation `sla` state.
+/// Decide the PreToolUse outcome for `payload` (raw JSON bytes from stdin),
+/// given the current baton-creation `sla` state.
 ///
 /// Fails open (returns [`Decision::Allow`]) on empty/malformed JSON or a
 /// missing `tool_name` — a guard defect must never brick an unrelated tool
-/// call. A `Bash` invocation of `dvandva` itself is always allowed, even
-/// past the SLA, so recovery (`dvandva resolve` / `dvandva write`) stays
-/// reachable.
+/// call. The direct-edit integrity guard is the only hard block and wins in
+/// every SLA state. The SLA itself is warn-only (run baton-guard-sla-scoping,
+/// Q1/Q5): a breach never blocks; when the warn throttle has elapsed the
+/// call is allowed with a model-visible warning attached.
 pub fn should_block(payload: &[u8], sla: &SlaState) -> Decision {
     let Ok(value) = serde_json::from_slice::<Value>(payload) else {
         return Decision::Allow;
@@ -91,45 +109,42 @@ pub fn should_block(payload: &[u8], sla: &SlaState) -> Decision {
         return Decision::Allow;
     };
 
-    // Never block a `dvandva` invocation itself -- recovery must stay reachable.
-    if tool_name == "Bash" {
-        if let Some(cmd) = value
-            .get("tool_input")
-            .and_then(|v| v.get("command"))
-            .and_then(Value::as_str)
-        {
-            let trimmed = cmd.trim();
-            if trimmed == "dvandva" || trimmed.starts_with("dvandva ") {
-                return Decision::Allow;
+    // Baton-integrity guard first: a direct baton/history edit is blocked
+    // in every SLA state (warn-only never applies to integrity).
+    if GUARDED_TOOLS.contains(&tool_name) {
+        if let Some(tool_input) = value.get("tool_input").and_then(Value::as_object) {
+            let target = tool_input
+                .get("file_path")
+                .and_then(Value::as_str)
+                .or_else(|| tool_input.get("notebook_path").and_then(Value::as_str));
+            if let Some(path) = target {
+                if is_guarded_path(path) {
+                    return Decision::BlockDirectEdit;
+                }
             }
         }
     }
 
-    // SLA: no non-terminal baton yet and the marker is past threshold.
+    // Baton-creation SLA: breached + throttle elapsed => warn (allow with
+    // context); breached + recently warned => silent allow.
     if let Some(reason) = sla.breached() {
-        return Decision::BlockSla(reason);
+        if sla.should_warn() {
+            return Decision::WarnSla(reason);
+        }
     }
 
-    // Existing direct-edit guard, unchanged in spirit, now reached only
-    // after the two checks above -- still tool-scoped to the 4 edit tools.
-    if !GUARDED_TOOLS.contains(&tool_name) {
-        return Decision::Allow;
-    }
-    let Some(tool_input) = value.get("tool_input").and_then(Value::as_object) else {
-        return Decision::Allow;
-    };
-    let target = tool_input
-        .get("file_path")
-        .and_then(Value::as_str)
-        .or_else(|| tool_input.get("notebook_path").and_then(Value::as_str));
-    let Some(path) = target else {
-        return Decision::Allow;
-    };
-    if is_guarded_path(path) {
-        Decision::BlockDirectEdit
-    } else {
-        Decision::Allow
-    }
+    Decision::Allow
+}
+
+/// Extract the `session_id` Claude Code includes on every hook payload, if
+/// present. Used by the CLI wrapper to scope SLA-marker ownership to the
+/// session that armed it.
+pub fn payload_session_id(payload: &[u8]) -> Option<String> {
+    serde_json::from_slice::<Value>(payload)
+        .ok()?
+        .get("session_id")?
+        .as_str()
+        .map(str::to_string)
 }
 
 /// Whether a (possibly relative, possibly nonexistent) `path` targets a
@@ -176,6 +191,14 @@ mod tests {
             has_baton,
             marker_age_secs,
             threshold_secs,
+            last_warned_secs_ago: None,
+        }
+    }
+
+    fn sla_warned(marker_age_secs: u64, threshold_secs: u64, warned_ago: u64) -> SlaState {
+        SlaState {
+            last_warned_secs_ago: Some(warned_ago),
+            ..sla(false, Some(marker_age_secs), threshold_secs)
         }
     }
 
@@ -214,33 +237,56 @@ mod tests {
     }
 
     #[test]
-    fn dvandva_bash_command_always_allowed_even_when_sla_breached() {
+    fn breach_warns_any_tool_when_never_warned() {
         let breached = sla(false, Some(999), 120);
-        let body = payload(
-            "Bash",
-            serde_json::json!({ "command": "dvandva write --foo" }),
-        );
-        assert_eq!(should_block(&body, &breached), Decision::Allow);
+        for (tool, input) in [
+            ("Read", serde_json::json!({ "file_path": "src/lib.rs" })),
+            ("Write", serde_json::json!({ "file_path": "some/file.txt" })),
+            (
+                "Bash",
+                serde_json::json!({ "command": "dvandva --version && touch anything" }),
+            ),
+        ] {
+            let body = payload(tool, input);
+            assert!(
+                matches!(should_block(&body, &breached), Decision::WarnSla(_)),
+                "first breached {tool} call should warn (and run)"
+            );
+        }
     }
 
     #[test]
-    fn dvandva_bare_command_allowed() {
-        let breached = sla(false, Some(999), 120);
-        let body = payload("Bash", serde_json::json!({ "command": "dvandva" }));
-        assert_eq!(should_block(&body, &breached), Decision::Allow);
+    fn breach_stays_silent_within_the_warn_throttle() {
+        let recently = sla_warned(999, 120, 10);
+        let body = payload("Write", serde_json::json!({ "file_path": "a.txt" }));
+        assert_eq!(should_block(&body, &recently), Decision::Allow);
     }
 
     #[test]
-    fn sla_breach_blocks_any_tool_not_just_guarded_ones() {
-        let breached = sla(false, Some(999), 120);
+    fn breach_rewarns_once_the_throttle_elapses() {
+        let stale_warn = sla_warned(999, 120, WARN_INTERVAL_SECS);
+        let body = payload("Write", serde_json::json!({ "file_path": "a.txt" }));
+        assert!(matches!(
+            should_block(&body, &stale_warn),
+            Decision::WarnSla(_)
+        ));
+    }
+
+    #[test]
+    fn direct_edit_blocked_in_every_sla_state() {
+        // Q5: warn-only applies to the creation SLA alone; baton integrity
+        // keeps its hard block regardless of breach or throttle state.
         let body = payload(
-            "Read",
+            "Edit",
             serde_json::json!({ "file_path": "/repo/.dvandva/baton.json" }),
         );
-        assert!(matches!(
-            should_block(&body, &breached),
-            Decision::BlockSla(_)
-        ));
+        for state in [
+            sla(true, None, 120),
+            sla(false, Some(999), 120),
+            sla_warned(999, 120, 10),
+        ] {
+            assert_eq!(should_block(&body, &state), Decision::BlockDirectEdit);
+        }
     }
 
     #[test]

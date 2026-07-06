@@ -52,6 +52,13 @@ pub fn dvandva_resolve_ask(role: &str, count: usize) -> String {
     format!("DVANDVA_RESOLVE ask role={role} reason=multiple_resumable_runs count={count}")
 }
 
+/// Stdout line surfacing the armed baton-creation SLA countdown, printed by
+/// `resolve` and `preflight` on every invocation while the marker is armed
+/// (turn-entry visibility on any engine, hook or no hook).
+pub fn dvandva_sla_armed(role: &str, deadline_epoch: u64, threshold_secs: u64) -> String {
+    format!("DVANDVA_SLA armed role={role} deadline={deadline_epoch} threshold_s={threshold_secs}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -81,6 +88,14 @@ mod tests {
             "CREATE .dvandva/runs/run/baton.json"
         );
         assert_eq!(ask_line("[]"), "ASK []");
+    }
+
+    #[test]
+    fn dvandva_sla_armed_line_is_exact() {
+        assert_eq!(
+            dvandva_sla_armed("vadi", 1700000120, 120),
+            "DVANDVA_SLA armed role=vadi deadline=1700000120 threshold_s=120"
+        );
     }
 
     #[test]

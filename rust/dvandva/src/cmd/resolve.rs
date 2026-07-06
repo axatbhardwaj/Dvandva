@@ -1,11 +1,13 @@
 //! `resolve` subcommand wrapper. Filled by ws-3 (prativadi): maps
 //! `dvandva::resolve` outcomes to stdout token lines and exit codes.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use dvandva::emit;
+use dvandva::gitcfg::repo_toplevel;
 use dvandva::resolve::{resolve_active_run, ResolveEnv, ResolveError, ResolveOutcome};
-use dvandva::Role;
+use dvandva::util::{read_json_lenient, JsonReadError};
+use dvandva::{sla_marker, Role};
 
 const USAGE: &str = "\
 Usage: dvandva resolve --role <vadi|prativadi> [--cwd <dir>]
@@ -39,13 +41,25 @@ pub fn run(args: &[String]) -> i32 {
             return 2;
         }
     };
+    let env = ResolveEnv::from_process_env();
+    let explicit_selector = has_explicit_selector(&env);
 
-    match resolve_active_run(
-        parsed.role,
-        parsed.cwd.as_deref(),
-        ResolveEnv::from_process_env(),
-    ) {
-        Ok(outcome) => emit_outcome(parsed.role, &outcome),
+    match resolve_active_run(parsed.role, parsed.cwd.as_deref(), env) {
+        Ok(outcome) => {
+            if let Some(code) = handle_selector_bootstrap(
+                parsed.role,
+                parsed.cwd.as_deref(),
+                explicit_selector,
+                &outcome,
+            ) {
+                print_deadline_if_armed(parsed.cwd.as_deref());
+                return code;
+            }
+            sync_sla_marker(parsed.role, parsed.cwd.as_deref(), &outcome);
+            let code = emit_outcome(parsed.role, &outcome);
+            print_deadline_if_armed(parsed.cwd.as_deref());
+            code
+        }
         Err(ResolveError::Usage(message)) => {
             eprintln!("ERROR: {message}");
             2
@@ -54,6 +68,108 @@ pub fn run(args: &[String]) -> i32 {
             eprintln!("ERROR: --cwd is not a directory: {path}");
             2
         }
+    }
+}
+
+enum SelectorBootstrap {
+    ValidBaton,
+    MissingClean,
+    StaleRunDir(&'static str),
+}
+
+fn has_explicit_selector(env: &ResolveEnv) -> bool {
+    env.baton_file.as_deref().is_some_and(|v| !v.is_empty())
+        || env.run_dir.as_deref().is_some_and(|v| !v.is_empty())
+        || env.run_id.as_deref().is_some_and(|v| !v.is_empty())
+}
+
+fn handle_selector_bootstrap(
+    role: Role,
+    cwd: Option<&Path>,
+    explicit_selector: bool,
+    outcome: &ResolveOutcome,
+) -> Option<i32> {
+    if !explicit_selector {
+        return None;
+    }
+    let ResolveOutcome::Resolved(path) = outcome else {
+        return None;
+    };
+    let root = command_root(cwd)?;
+    let baton = if Path::new(path).is_absolute() {
+        PathBuf::from(path)
+    } else {
+        root.join(path)
+    };
+    match selector_bootstrap_state(&root, &baton) {
+        SelectorBootstrap::ValidBaton => None,
+        SelectorBootstrap::MissingClean => {
+            if role == Role::Vadi {
+                sla_marker::arm_if_absent(&root);
+            }
+            println!("{}", emit::create_line(path));
+            Some(0)
+        }
+        SelectorBootstrap::StaleRunDir(detail) => {
+            eprintln!("DVANDVA_RESOLVE stale_run_dir path={path} reason={detail}");
+            Some(12)
+        }
+    }
+}
+
+fn command_root(cwd: Option<&Path>) -> Option<PathBuf> {
+    let base = cwd
+        .map(Path::to_path_buf)
+        .or_else(|| std::env::current_dir().ok())?;
+    Some(repo_toplevel(&base).unwrap_or(base))
+}
+
+/// Surface the armed SLA countdown on stdout after every resolve, so the
+/// deadline stays visible at each turn entry on any engine (the Codex
+/// compensating control — Codex has no hook surface).
+fn print_deadline_if_armed(cwd: Option<&Path>) {
+    if let Some(root) = command_root(cwd) {
+        if let Some(line) = sla_marker::deadline_line_if_armed(&root) {
+            println!("{line}");
+        }
+    }
+}
+
+fn selector_bootstrap_state(root: &Path, baton_path: &Path) -> SelectorBootstrap {
+    match read_json_lenient(baton_path) {
+        Ok(_) => SelectorBootstrap::ValidBaton,
+        Err(JsonReadError::Invalid) => SelectorBootstrap::StaleRunDir("invalid_baton"),
+        Err(JsonReadError::Missing) => {
+            let run_dir = baton_path.parent().unwrap_or(root);
+            match read_json_lenient(&run_dir.join("baton.next.json")) {
+                Err(JsonReadError::Invalid) => {
+                    return SelectorBootstrap::StaleRunDir("invalid_candidate");
+                }
+                Ok(_) | Err(JsonReadError::Missing) => {}
+            }
+            let marker = sla_marker::marker_path(root);
+            if marker.exists() && sla_marker::read(root).is_none() {
+                return SelectorBootstrap::StaleRunDir("garbage_marker");
+            }
+            SelectorBootstrap::MissingClean
+        }
+    }
+}
+
+/// Keep the baton-creation SLA marker in step with the resolver outcome:
+/// `CREATE` for the vadi arms it (the one moment a session verifiably owes
+/// a baton), `RESOLVED` clears it. Arming never resets an existing marker,
+/// so re-resolving cannot restart the countdown. The SLA is vadi-owned —
+/// a batonless prativadi is sent to `wait --discover`, never told to
+/// scaffold — so a prativadi resolve arms nothing.
+fn sync_sla_marker(role: Role, cwd: Option<&std::path::Path>, outcome: &ResolveOutcome) {
+    let Some(root) = command_root(cwd) else {
+        return;
+    };
+    match outcome {
+        ResolveOutcome::Create(_) if role == Role::Vadi => sla_marker::arm_if_absent(&root),
+        ResolveOutcome::Resolved(_) => sla_marker::clear(&root),
+        _ => {}
     }
 }
 

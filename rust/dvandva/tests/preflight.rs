@@ -134,6 +134,15 @@ fn stderr(out: &Output) -> String {
     String::from_utf8_lossy(&out.stderr).into_owned()
 }
 
+fn read_sla_marker(repo: &Path) -> Option<String> {
+    fs::read_to_string(repo.join(".dvandva/.session-baton-pending.vadi")).ok()
+}
+
+fn write_sla_marker(repo: &Path, text: &str) {
+    fs::create_dir_all(repo.join(".dvandva")).unwrap();
+    fs::write(repo.join(".dvandva/.session-baton-pending.vadi"), text).unwrap();
+}
+
 fn cfg_read(repo: &Path, key: &str) -> String {
     let wt = git(repo, &["config", "--bool", "extensions.worktreeConfig"]);
     if String::from_utf8_lossy(&wt.stdout).trim() == "true" {
@@ -383,6 +392,175 @@ fn real_create_does_not_run_hook_stage() {
     assert!(
         !repo.join(".dvandva/githooks").exists(),
         "create must not run the hook stage"
+    );
+}
+
+#[test]
+fn run_id_selector_missing_baton_creates_and_arms_for_vadi() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    fs::create_dir_all(repo.join(".dvandva/runs/fresh")).unwrap();
+
+    let mut cmd = base_cmd(bin());
+    cmd.arg("preflight")
+        .args(["--role", "vadi", "--mode", "off"])
+        .current_dir(repo)
+        .env("DVANDVA_ROLE", "vadi")
+        .env("DVANDVA_RUN_ID", "fresh");
+    let out = cmd.output().expect("dvandva preflight");
+
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("result=create"), "stdout: {text}");
+    assert!(
+        text.contains("selected_by=DVANDVA_RUN_ID"),
+        "stdout: {text}"
+    );
+    assert!(
+        read_sla_marker(repo).is_some(),
+        "selector bootstrap for vadi should arm the SLA marker"
+    );
+}
+
+#[test]
+fn run_id_selector_missing_baton_waits_without_arming_for_prativadi() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    fs::create_dir_all(repo.join(".dvandva/runs/fresh")).unwrap();
+
+    let mut cmd = base_cmd(bin());
+    cmd.arg("preflight")
+        .args(["--role", "prativadi", "--mode", "off"])
+        .current_dir(repo)
+        .env("DVANDVA_ROLE", "prativadi")
+        .env("DVANDVA_RUN_ID", "fresh");
+    let out = cmd.output().expect("dvandva preflight");
+
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("result=wait"), "stdout: {text}");
+    assert!(
+        read_sla_marker(repo).is_none(),
+        "prativadi selector bootstrap must not arm the vadi SLA marker"
+    );
+}
+
+#[test]
+fn run_id_selector_invalid_candidate_stops_as_stale_run_dir() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    let run_dir = repo.join(".dvandva/runs/fresh");
+    fs::create_dir_all(&run_dir).unwrap();
+    fs::write(run_dir.join("baton.next.json"), "{ not json\n").unwrap();
+
+    let mut cmd = base_cmd(bin());
+    cmd.arg("preflight")
+        .args(["--role", "vadi", "--mode", "off"])
+        .current_dir(repo)
+        .env("DVANDVA_ROLE", "vadi")
+        .env("DVANDVA_RUN_ID", "fresh");
+    let out = cmd.output().expect("dvandva preflight");
+
+    assert_eq!(code(&out), 1, "stdout: {}", stdout(&out));
+    let text = stdout(&out);
+    assert!(text.contains("result=error"), "stdout: {text}");
+    assert!(text.contains("reason=stale_run_dir"), "stdout: {text}");
+    assert!(text.contains("detail=invalid_candidate"), "stdout: {text}");
+    assert!(
+        read_sla_marker(repo).is_none(),
+        "stale run-dir gate must not arm a fresh SLA marker"
+    );
+    assert!(
+        run_dir.join("baton.next.json").exists(),
+        "preflight should leave the invalid leftover candidate for human inspection"
+    );
+}
+
+#[test]
+fn run_id_selector_garbage_marker_stops_as_stale_run_dir() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    fs::create_dir_all(repo.join(".dvandva/runs/fresh")).unwrap();
+    write_sla_marker(repo, "not-a-number\n");
+
+    let mut cmd = base_cmd(bin());
+    cmd.arg("preflight")
+        .args(["--role", "vadi", "--mode", "off"])
+        .current_dir(repo)
+        .env("DVANDVA_ROLE", "vadi")
+        .env("DVANDVA_RUN_ID", "fresh");
+    let out = cmd.output().expect("dvandva preflight");
+
+    assert_eq!(code(&out), 1, "stdout: {}", stdout(&out));
+    let text = stdout(&out);
+    assert!(text.contains("result=error"), "stdout: {text}");
+    assert!(text.contains("reason=stale_run_dir"), "stdout: {text}");
+    assert!(text.contains("detail=garbage_marker"), "stdout: {text}");
+    assert_eq!(
+        read_sla_marker(repo).as_deref(),
+        Some("not-a-number\n"),
+        "garbage marker should stay in place for human inspection"
+    );
+}
+
+#[test]
+fn run_id_selector_invalid_baton_stops_as_stale_run_dir() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    let baton = repo.join(".dvandva/runs/fresh/baton.json");
+    fs::create_dir_all(baton.parent().unwrap()).unwrap();
+    fs::write(&baton, "{ not json\n").unwrap();
+
+    let mut cmd = base_cmd(bin());
+    cmd.arg("preflight")
+        .args(["--role", "vadi", "--mode", "off"])
+        .current_dir(repo)
+        .env("DVANDVA_ROLE", "vadi")
+        .env("DVANDVA_RUN_ID", "fresh");
+    let out = cmd.output().expect("dvandva preflight");
+
+    assert_eq!(code(&out), 1, "stdout: {}", stdout(&out));
+    let text = stdout(&out);
+    assert!(text.contains("result=error"), "stdout: {text}");
+    assert!(text.contains("reason=stale_run_dir"), "stdout: {text}");
+    assert!(text.contains("detail=invalid_baton"), "stdout: {text}");
+}
+
+#[test]
+fn run_id_selector_valid_baton_resolves_without_stale_gate() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    write_sla_marker(repo, "100\n");
+    write_baton_v2(
+        &repo.join(".dvandva/runs/fresh/baton.json"),
+        "fresh",
+        "implementing",
+        "vadi",
+        "[]",
+        "2026-06-29T00:00:00Z",
+    );
+
+    let mut cmd = base_cmd(bin());
+    cmd.arg("preflight")
+        .args(["--role", "vadi", "--mode", "off"])
+        .current_dir(repo)
+        .env("DVANDVA_ROLE", "vadi")
+        .env("DVANDVA_RUN_ID", "fresh");
+    let out = cmd.output().expect("dvandva preflight");
+
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("result=resolved"), "stdout: {text}");
+    assert!(!text.contains("reason=stale_run_dir"), "stdout: {text}");
+    assert!(
+        read_sla_marker(repo).is_none(),
+        "valid selected baton should satisfy the SLA and clear the marker"
     );
 }
 
