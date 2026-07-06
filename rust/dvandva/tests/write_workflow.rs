@@ -404,6 +404,38 @@ fn workflow_revision_revise_accepted_when_only_amendment_reason_changes() {
         .assert("revise edge changing only amendment reason", 0);
 }
 
+/// Defensive branch: once the latest amendment is approved, reject/revise edges
+/// must treat it as fully immutable too. Pending amendments may revise
+/// `reason`; approved amendments may not.
+#[test]
+fn workflow_revision_revise_rejected_when_approved_latest_amendment_reason_mutated() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "workflow_revision", "vadi", 5, |b| {
+        b["phase"] = json!("spec");
+        b["total_phases"] = json!(1);
+        b["master_plan_locked"] = json!(true);
+        b["loop_counts"] = json!({"workflow_revision": 1});
+        let mut a = approved_amendment("parallel_implementing", 6);
+        a["reason"] = json!("approved reason");
+        b["run_workflow"]["amendments"] = json!([a]);
+    });
+    make_baton_v3(&n, "workflow_review", "prativadi", 6, |b| {
+        b["phase"] = json!("spec");
+        b["total_phases"] = json!(1);
+        b["master_plan_locked"] = json!(true);
+        b["loop_counts"] = json!({"workflow_revision": 1});
+        let mut a = approved_amendment("parallel_implementing", 6);
+        a["reason"] = json!("mutated approved reason");
+        b["run_workflow"]["amendments"] = json!([a]);
+    });
+    run_env(&b, &n, &[("DVANDVA_ROLE", "vadi")]).assert_contains(
+        "revise edge must not mutate an already-approved latest amendment",
+        24,
+        "amendments immutable during reject/revise",
+    );
+}
+
 /// Sweep item 6, FINDING: an amendment's `resume_status` is only checked
 /// against the *global* `V3_STATUS_CATALOG` (shape level) — never against
 /// the run's own declared custom-graph `states[]`. `amendment_resume_ok`
