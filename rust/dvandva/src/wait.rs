@@ -19,12 +19,17 @@
 //! · `20` finite timeout · `21` baton missing · `22` invalid JSON · `23`
 //! persist-max · `24` stall-max · `29` split-brain · `2` usage.
 //!
-//! Status classification is [`StateClass`]-driven (see [`resolve_status_class`]):
-//! a v3 baton resolves its current status's class from its own `run_workflow`
-//! (custom -> declared `states[]`, `preset:*` -> the resolved preset), a v1/v2
-//! baton from the static token map ([`workflow::static_class`]). The class then
-//! selects the exit: `Terminal` -> 10/13, `Pause` -> 11/12, `HumanGate` -> 15,
-//! `Work`/`ReviewGate` -> the generic heartbeat path.
+//! Status classification is [`StateClass`]-driven (see [`resolve_status_class`])
+//! for BOTH the selected baton's own status and every sibling run scanned for
+//! human-pause propagation / split-brain: a v3 baton resolves its current
+//! status's class from its own `run_workflow` (custom -> declared `states[]`,
+//! `preset:*` -> the resolved preset), a v1/v2 baton from the static token map
+//! ([`workflow::static_class`]). For the selected baton, the class selects the
+//! exit: `Terminal` -> 10/13, `Pause` -> 11/12, `HumanGate` -> 15, `Work`/
+//! `ReviewGate` -> the generic heartbeat path. For a sibling (see
+//! [`scan_sibling_runs`]), `Terminal` is skipped, `Pause` and `HumanGate` both
+//! propagate a human pause (a human is needed either way), and `Work`/
+//! `ReviewGate` are active/split-brain candidates.
 
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -816,23 +821,46 @@ fn scan_sibling_runs(
         let sibling_active_roles = active_roles_csv(&sibling);
         let sibling_updated_at = field_str(&sibling, "updated_at");
 
-        match sibling_status.as_str() {
-            // Completed or abandoned run: not competing for my role, and its
+        // Class-driven, exactly like the selected baton's own status
+        // (`resolve_status_class`, below): a v3 sibling resolves its class
+        // from its own `run_workflow`, a v1/v2 sibling from the static token
+        // map. This is what keeps a v3 custom-graph sibling parked at a
+        // non-legacy declared state from leaking through as a false "active"
+        // candidate.
+        let sibling_class = resolve_status_class(&sibling, &sibling_status);
+        match sibling_class {
+            // Completed/abandoned (legacy tokens) or any DECLARED terminal
+            // state under a non-legacy name: the sibling run is over, and its
             // pause state (if any) is over — neither counts as active nor
             // propagates.
-            "done" | "abandoned" => continue,
-            // Paused on a human. A newer sibling propagates its intervention to a
-            // paired waiter; an older one (or one without a comparable
-            // timestamp) is parked.
-            "human_decision" | "human_question" => {
+            StateClass::Terminal => continue,
+            // Paused on a human — `human_decision`/`human_question` (legacy
+            // tokens, both statically `Pause`) or any DECLARED v3 `pause`
+            // state. A DECLARED v3 `human_gate` state is folded into this
+            // same propagation path: a human is needed either way, so a
+            // sibling parked on one propagates a pause exactly like `Pause`
+            // does rather than counting as an active split-brain candidate.
+            // A newer sibling propagates its intervention to a paired
+            // waiter; an older one (or one without a comparable timestamp)
+            // is parked. The propagated status label mirrors the
+            // selected-baton convention (see the `StateClass::Pause` arm
+            // above, in the main wait loop): only the literal
+            // `human_question` token keeps that label, every other
+            // Pause/HumanGate status propagates as `human_decision`.
+            StateClass::Pause | StateClass::HumanGate => {
                 if !cfg.concurrent {
                     if let Some(parsed) = newer_sibling_time(
                         selected_updated_at,
                         &sibling_updated_at,
                         &sibling_run_id,
                     ) {
+                        let propagated_status = if sibling_status == "human_question" {
+                            "human_question".to_string()
+                        } else {
+                            "human_decision".to_string()
+                        };
                         human_candidates.push(HumanCandidate {
-                            status: sibling_status,
+                            status: propagated_status,
                             run_id: sibling_run_id,
                             updated_at: parsed,
                             checkpoint: checkpoint_str(&sibling),
@@ -844,7 +872,7 @@ fn scan_sibling_runs(
                 }
                 continue;
             }
-            _ => {
+            StateClass::Work | StateClass::ReviewGate => {
                 scan.active_count += 1;
                 if !cfg.concurrent
                     && selected_assignee == peer_role(&cfg.role)

@@ -3699,3 +3699,149 @@ fn p3_selected_run_advanced_to_my_role_exits_0_no_self_sibling() {
     assert!(o.contains("checkpoint_advanced"), "{}", o.out);
     assert!(!o.contains("split_brain"), "{}", o.out);
 }
+
+// ── p3-sibling-class (sibling scan classifies by StateClass, not literal
+// token) ─────────────────────────────────────────────────────────────────────
+//
+// `scan_sibling_runs` used to classify a sibling by literal status-token match
+// ("done"/"abandoned" -> skip, "human_decision"/"human_question" -> pause
+// propagation, everything else -> active/split-brain candidate). A v3
+// custom-graph sibling parked at a declared terminal or human-gate state that
+// isn't one of those four legacy tokens was misclassified as active. Fixed to
+// resolve each sibling's own `StateClass` the same way the selected baton's
+// current status is resolved (`resolve_status_class`).
+
+/// A v3 baton with a `source:custom` run_workflow declaring one state, used as
+/// a SIBLING (carries `updated_at`, unlike `p3_write_v3_custom_baton` which is
+/// only ever written as the selected file). // p3-sibling-class
+fn p3_write_v3_custom_sibling_baton(
+    file: &Path,
+    assignee: &str,
+    status: &str,
+    class: &str,
+    checkpoint: u64,
+    updated_at: &str,
+) {
+    mkparent(file);
+    std::fs::write(
+        file,
+        format!(
+            r#"{{
+  "schema": "dvandva.baton.v3",
+  "assignee": "{assignee}",
+  "status": "{status}",
+  "phase": "spec",
+  "checkpoint": {checkpoint},
+  "updated_at": "{updated_at}",
+  "current_engine": "codex",
+  "run_workflow": {{
+    "source": "custom",
+    "declared_by": "vadi",
+    "declared_at_checkpoint": 1,
+    "approved_by": "prativadi",
+    "approved_at_checkpoint": 2,
+    "revision_round": 0,
+    "states": [
+      {{ "name": "{status}", "owner": "human", "class": "{class}" }}
+    ],
+    "edges": [],
+    "amendments": []
+  }}
+}}"#
+        ),
+    )
+    .unwrap();
+}
+
+// A v3 custom sibling declares a TERMINAL state under a non-legacy name
+// ("archived", never "done"/"abandoned"). A literal-token scan falls through
+// to the active/split-brain arm; class-aware scanning must skip it exactly
+// like a legacy done/abandoned sibling -- neither counted active nor a
+// split-brain candidate -- even though it names this role as assignee (which
+// would otherwise qualify it as a split-brain candidate). // p3-sibling-class
+#[test]
+fn p3_v3_custom_terminal_sibling_not_active_not_split_brain() {
+    let d = tmp();
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "prativadi",
+        "phase_review",
+        "2026-06-29T15:00:00Z",
+        "codex",
+    );
+    p3_write_v3_custom_sibling_baton(
+        &d.path().join(".dvandva/runs/beta/baton.json"),
+        "vadi",
+        "archived",
+        "terminal",
+        8,
+        "2026-06-29T15:01:00Z",
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "vadi",
+            "--persist",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_POLL,
+    );
+    assert!(
+        o.kept_polling(),
+        "expected keeps-polling, got {:?}\n{}",
+        o.code,
+        o.out
+    );
+    assert!(!o.contains("split_brain"), "{}", o.out);
+    assert!(o.contains("sibling_active_runs=0"), "{}", o.out);
+}
+
+// A v3 custom sibling declares a HUMAN_GATE state under a non-legacy name
+// ("awaiting_operator", never a clarifying-answer token). Class-aware
+// scanning propagates it as a human pause exactly like human_decision/
+// human_question does -- a human is needed either way -- rather than
+// treating it as an active split-brain candidate. // p3-sibling-class
+#[test]
+fn p3_v3_custom_human_gate_sibling_propagates_as_pause() {
+    let d = tmp();
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "prativadi",
+        "phase_review",
+        "2026-06-29T20:00:00Z",
+        "codex",
+    );
+    p3_write_v3_custom_sibling_baton(
+        &d.path().join(".dvandva/runs/beta/baton.json"),
+        "human",
+        "awaiting_operator",
+        "human_gate",
+        9,
+        "2026-06-29T20:01:00Z",
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "vadi",
+            "--persist",
+            "--interval",
+            "1",
+            "--max-wait",
+            "540",
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(11), "{}", o.out);
+    assert!(o.contains("sibling_run_id=beta"), "{}", o.out);
+    assert!(o.contains("selected_run_id=alpha"), "{}", o.out);
+    assert!(!o.contains("split_brain"), "{}", o.out);
+}
