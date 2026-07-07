@@ -115,6 +115,12 @@ pub enum Status {
     SpecDrafting,
     SpecReview,
     SpecRevision,
+    /// v3 per-run-workflow declaration loop: vadi drafts the run's workflow.
+    WorkflowDeclaring,
+    /// v3 per-run-workflow declaration loop: prativadi reviews the declaration.
+    WorkflowReview,
+    /// v3 per-run-workflow declaration loop: vadi revises after a rejection.
+    WorkflowRevision,
     Implementing,
     ParallelImplementing,
     TestCreation,
@@ -148,6 +154,9 @@ impl Status {
             Status::SpecDrafting => "spec_drafting",
             Status::SpecReview => "spec_review",
             Status::SpecRevision => "spec_revision",
+            Status::WorkflowDeclaring => "workflow_declaring",
+            Status::WorkflowReview => "workflow_review",
+            Status::WorkflowRevision => "workflow_revision",
             Status::Implementing => "implementing",
             Status::ParallelImplementing => "parallel_implementing",
             Status::TestCreation => "test_creation",
@@ -205,6 +214,9 @@ impl FromStr for Status {
             "spec_drafting" => Ok(Status::SpecDrafting),
             "spec_review" => Ok(Status::SpecReview),
             "spec_revision" => Ok(Status::SpecRevision),
+            "workflow_declaring" => Ok(Status::WorkflowDeclaring),
+            "workflow_review" => Ok(Status::WorkflowReview),
+            "workflow_revision" => Ok(Status::WorkflowRevision),
             "implementing" => Ok(Status::Implementing),
             "parallel_implementing" => Ok(Status::ParallelImplementing),
             "test_creation" => Ok(Status::TestCreation),

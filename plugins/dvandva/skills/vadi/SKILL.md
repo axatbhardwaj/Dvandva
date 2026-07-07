@@ -70,6 +70,8 @@ These skills are available within the Dvandva run context. Use each only when it
 | `phase: "research" or "review", status: "research_drafting"` | Mode R1 — research/intake drafting |
 | `phase: "research" or "review", status: "research_revision"` | Mode R2 — research/intake revision |
 | `phase: "research", status: "research_review"` | prativadi-owned independent research review; wait unless supervised |
+| `phase: "spec", status: "workflow_declaring"` / `"workflow_revision"` | v3 run-workflow declaration loop (vadi-owned): draft (`workflow_declaring`) then, after a reject, revise (`workflow_revision`, loop-capped, `amendments[]` unchanged) the custom `run_workflow` and submit to `workflow_review` |
+| `phase: "spec", status: "workflow_review"` | prativadi-owned v3 declaration review (approves to `spec_drafting` or rejects to `workflow_revision`); wait unless supervised |
 | `phase: "spec", status: "spec_drafting"` | Mode A — spec drafting |
 | `phase: "spec", status: "spec_revision"` | Mode B — spec revision |
 | `phase: 1..N, status: "parallel_implementing"` | Mode C — v2 two-team parallel implementation |
@@ -95,7 +97,7 @@ Recompute the required floor before phase close from actual `changed_paths`, `wo
 
 All phases are subagent-driven through conditional parallelism: use parallel subagents for genuinely disjoint tracks when the harness exposes enough subagent capacity; otherwise do the track directly and record what was not parallelized and why in `subagent_tracks` and `work_split`. In short, all phases are subagent-driven, but only independent tracks are parallelized. Do not cap Dvandva at two subagents; spawn as many independent subagent tracks as the harness can safely run without file-scope conflicts or shared-state races. Codex subagent handles must be closed explicitly after their results are consumed, because completed agents can remain open and keep counting against the thread limit. Use the canonical Dvandva subagent roster in `plugins/dvandva/agents/`:
 
-Dvandva model classes are vendor-neutral. Agent frontmatter uses `model: opus` and `model: sonnet` as class labels, not Anthropic-only product IDs. Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models. Codex maps `opus` to `gpt-5.5` with `xhigh` reasoning and `sonnet` to `gpt-5.5` with `high` reasoning. Codex should request `xhigh` reasoning effort for opus-class work and `high` reasoning effort for sonnet-class work where the active surface exposes it. Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work. Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop. Do not use `haiku` for Dvandva subagents.
+Dvandva model classes are vendor-neutral. Agent frontmatter uses `model: opus` and `model: sonnet` as class labels, not Anthropic-only product IDs. Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available. Codex maps `opus` and `fable` to `gpt-5.5` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.5` with `high` reasoning. Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it. Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work. Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop. Do not use `haiku` for Dvandva subagents.
 
 For full-profile v2 phase work, implementation-phase parallelism is mandatory. A spec-approved phase enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; the `work_split` must contain at least five implementation chunks distributed across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. After tests, the phase enters `cross_review` so each role reviews the other role's chunks before `deep_review`. Fast and standard profiles use the compact `implementing` / `phase_review` path, but they remain paired Dvandva runs with `profile_decision`, passing final verification, completed `verification_matrix` evidence, completed approved prativadi `phase-review` evidence with current-cycle `review_checkpoint`, shared termination, and role-owned final approvals.
 
@@ -127,7 +129,7 @@ Mandatory invariants for all generated agents:
 - Coordination invariant: no daemon, no hidden orchestrator — the baton is the only coordinator; generated agents never drive phase transitions.
 - Single-writer: generated agents never own `assignee`, `active_roles`, phase transitions, or final approval.
 - Path invariant: dynamic write-path disjointness — generated instances with non-empty `write_paths` sharing the same `base_checkpoint`, or any two live (`planned`/`running`) instances regardless of base_checkpoint, must be pairwise disjoint unless explicitly serialized through `depends_on` within a shared `conflict_group`; closed instances from an earlier base_checkpoint do not block later sequential reuse.
-- Model-class mapping: use `opus-class|gpt-5.5-xhigh` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit seeds; use `sonnet-class|gpt-5.5-high` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop seeds. Codex should request `xhigh` reasoning effort for opus-class work and `high` reasoning effort for sonnet-class work where the active surface exposes it. Never use `haiku`.
+- Model-class mapping: the seed roster remains pinned to `opus-class|gpt-5.5-xhigh` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit seeds, and `sonnet-class|gpt-5.5-high` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop seeds. Generated non-seed instances may also emit `fable-class|gpt-5.5-xhigh` for fable-class frontier work or `gpt-class|gpt-5.5-high` for gpt-class Codex-wrapper/bulk work. Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it. Never use `haiku`.
 
 ## Mode R1 — research drafting
 
@@ -382,11 +384,9 @@ Surface BATON_STATE_COMPACT, then follow the Stop rule.
 
 ## Regular checkpoint commits
 
-After any active mode changes files and the relevant verification commands pass,
-make a local checkpoint commit when `allow_commit == true`.
+After any active mode changes files and the relevant verification commands pass, make a local checkpoint commit when `allow_commit == true`.
 
-- Commit only the baton's intended `changed_paths` union, excluding `.dvandva/`
-  and `superpowers/`.
+- Commit only the baton's intended `changed_paths` union, excluding `.dvandva/` and `superpowers/`.
 - Compare `git status --short` against that intended path list before
   committing. If unrelated dirty paths exist, write `status: "human_decision"`
   instead of committing.
@@ -408,8 +408,7 @@ make a local checkpoint commit when `allow_commit == true`.
   nature named in the commit subject. Only the role that produced a change
   commits it — commit work is never delegated to a separate agent. Reviewers may
   file a finding against a commit that batches unrelated chunks.
-- Record the commit hash in `verification` or `summary` as
-  `checkpoint_commit=<hash>`.
+- Record the commit hash in `verification` or `summary` as `checkpoint_commit=<hash>`.
 - Do not push checkpoint commits. If a later review rejects a checkpointed
   change, fix it with a new commit rather than rewriting history unless the
   human explicitly asks for history surgery.
@@ -474,6 +473,7 @@ In `run_mode: "supervised"`, exit after surfacing any baton assigned away from v
 | `dvandva wait` exits 29 (`split_brain`) | A sibling active run is assigned to your role — reconcile selection; park the stale duplicate to `human_decision`. This is a `dvandva wait` code; it is **distinct from** `dvandva write` exit `29` (`lock_lost`). |
 | `dvandva wait` exits 24 (`stalled`) | `--stall-max` seconds elapsed without the baton advancing — a stalled or dead peer. Write `status: "human_decision"` naming the stall, then stop. This is a `dvandva wait` code; it is **distinct from** `dvandva write` exit `24` (illegal transition). |
 | `dvandva wait` exits 13 (`abandoned`) | The run was abandoned from `human_question`/`human_decision` — a terminal state (S2-T1). Surface it and stop; do not scaffold or advance. `abandoned` reopens only through a hand-authored `human_decision` write. |
+| `dvandva wait` exits 15 (`human_gate`) | The selected v3 baton is at a `HumanGate`-class (human-assigned) state — the class-driven wake for human-owned states such as `clarifying_questions_answer`/`clarifying_questions_followup_answer` or a declared `human_gate` token. Surface it to the human and act on it; a `--through-human` session waits the gate out instead of exiting 15. This is a `dvandva wait` code. |
 | `dvandva write` exits 23 (`schema_retired`) | The candidate (or the current baton) carries `schema: "dvandva.baton.v1"`; the v1 write path is retired. Migrate the candidate to `dvandva.baton.v2` and rerun; old v1 batons stay readable on the `state`/`resolve`/`wait` path. |
 | `dvandva write` exits another non-zero code | Do not edit `$BATON_FILE` by hand. 21: candidate missing. 22: candidate invalid JSON. 24: the transition is illegal, including schema changes on an existing baton — re-derive the next state from the mode table; if genuinely stuck, escalate with a fresh candidate whose `status` is `human_decision`. 25: follow the malformed-baton row. 26: filesystem problem; surface it. 30: baton installed but snapshot failed — surface and continue. |
 

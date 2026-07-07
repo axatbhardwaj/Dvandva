@@ -19,16 +19,18 @@ use crate::resolve::{
     SelectorBootstrap,
 };
 use crate::util::{coalesce, read_json_lenient};
-use crate::write::expected_owner;
+use crate::write::{expected_owner, V3_STATUS_CATALOG};
 use crate::Role;
 
 /// The v2 status catalog, mirrored locally (S2-T3 read-only sanity check):
 /// a status token outside this set is `invalid_baton`. A local literal list
 /// rather than a `write.rs` coupling — matches `crate::baton::Status`'s
-/// current 22-token catalog. Future status additions need a matching update
-/// here; the S6-T1 schema-parity lint guards against that drift via a unit
-/// test comparing this list to [`crate::write::V2_STATUS_CATALOG`] (hence the
-/// `pub(crate)` exposure).
+/// historical 26-token v2 catalog. v3 sanity uses
+/// [`crate::write::V3_STATUS_CATALOG`] directly because v3 is the live catalog.
+/// Future v2 status additions need a matching update here; the S6-T1
+/// schema-parity lint guards against that drift via a unit test comparing this
+/// list to [`crate::write::V2_STATUS_CATALOG`] (hence the `pub(crate)`
+/// exposure).
 pub(crate) const V2_STATUS_TOKENS: &[&str] = &[
     "clarifying_questions_drafting",
     "clarifying_questions_answer",
@@ -84,12 +86,14 @@ fn sanity_check(baton_path: &Path) -> SanityCheck {
     };
 
     let schema = str_field(&value, "schema");
-    if schema != "dvandva.baton.v2" {
-        return SanityCheck::V1Skipped;
-    }
+    let status_catalog = match schema.as_str() {
+        "dvandva.baton.v2" => V2_STATUS_TOKENS,
+        "dvandva.baton.v3" => V3_STATUS_CATALOG,
+        _ => return SanityCheck::V1Skipped,
+    };
 
     let status = str_field(&value, "status");
-    if !V2_STATUS_TOKENS.contains(&status.as_str()) {
+    if !status_catalog.contains(&status.as_str()) {
         return SanityCheck::Invalid(format!("unknown_status status={status}"));
     }
 

@@ -123,6 +123,81 @@ pub fn make_baton_v2(
     write_json(path, &b);
 }
 
+/// `make_baton_v3 <file> <status> <assignee> <checkpoint> [mutate]`.
+pub fn make_baton_v3(
+    path: &Path,
+    status: &str,
+    assignee: &str,
+    checkpoint: i64,
+    mutate: impl FnOnce(&mut Value),
+) {
+    let phase: Value = match status {
+        "clarifying_questions_drafting"
+        | "clarifying_questions_answer"
+        | "clarifying_questions_followup"
+        | "clarifying_questions_followup_answer" => json!("clarifying"),
+        "spec_drafting" | "spec_review" | "spec_revision" => json!("spec"),
+        "implementing"
+        | "parallel_implementing"
+        | "test_creation"
+        | "cross_review"
+        | "cross_fixing"
+        | "deep_review"
+        | "deslop"
+        | "termination_review"
+        | "phase_review"
+        | "phase_fixing"
+        | "review_of_review"
+        | "counter_review"
+        | "done" => json!(1),
+        _ => json!("research"),
+    };
+    let mut b = v2_seed();
+    b["schema"] = json!("dvandva.baton.v3");
+    b["updated_at"] = json!("2026-07-06T00:00:00Z");
+    b["status"] = json!(status);
+    b["assignee"] = json!(assignee);
+    b["checkpoint"] = json!(checkpoint);
+    b["phase"] = phase;
+    b["run_id"] = json!("run-a");
+    b["original_ask"] = json!("Original user ask for v3 enforcement");
+    b["research_ref"] = json!("./superpowers/research/run-a.html");
+    b["profile"] = json!("full");
+    b["profile_floor"] = json!("full");
+    b["profile_decision"] = json!({
+        "selected_profile": "full",
+        "floor": "full",
+        "reason": "test helper default preserves the existing full v3 development graph unless a case overrides it",
+        "decided_by": "test-suite",
+        "decided_at": "2026-07-06T00:00:00Z",
+        "risk_inputs": [],
+        "hard_triggers": [],
+        "allowlist_match": false,
+        "allowlist_refs": [],
+        "evidence_refs": ["test-helper"]
+    });
+    b["run_workflow"] = json!({
+        "source": "preset:full",
+        "declared_by": "vadi",
+        "declared_at_checkpoint": 0,
+        "approved_by": null,
+        "approved_at_checkpoint": null,
+        "revision_round": 0,
+        "states": [],
+        "edges": [],
+        "amendments": []
+    });
+    b["profile_history"] = json!([]);
+    b["current_engine"] = json!("codex");
+    b["branch"] = json!("test-branch");
+    b["master_plan_locked"] = json!(false);
+    b["question"] = Value::Null;
+    b["resume_assignee"] = Value::Null;
+    b["resume_status"] = Value::Null;
+    mutate(&mut b);
+    write_json(path, &b);
+}
+
 fn write_json(path: &Path, value: &Value) {
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(path, serde_json::to_string_pretty(value).unwrap()).unwrap();

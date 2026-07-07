@@ -45,7 +45,7 @@ fn chunk_by_id<'a>(b: &'a mut Value, id: &str) -> &'a mut Value {
 fn v2_agent_instance_write_path_collision_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+    make_baton_v3(&n, "research_drafting", "vadi", 0, |b| {
         dynamic_agent_instances(b);
         b["agent_instances"][0]["status"] = json!("running");
         b["agent_instances"][0]["write_paths"] = json!(["scripts/test-dvandva-write.sh"]);
@@ -68,7 +68,7 @@ fn v2_agent_instance_write_path_collision_exits_23() {
 fn v2_agent_instance_unsafe_write_path_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+    make_baton_v3(&n, "research_drafting", "vadi", 0, |b| {
         dynamic_agent_instances(b);
         b["agent_instances"][0]["write_paths"] = json!(["../escape"]);
     });
@@ -83,7 +83,7 @@ fn v2_agent_instance_unsafe_write_path_exits_23() {
 fn v2_agent_instance_write_path_prefix_collision_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+    make_baton_v3(&n, "research_drafting", "vadi", 0, |b| {
         dynamic_agent_instances(b);
         b["agent_instances"][0]["status"] = json!("running");
         b["agent_instances"][0]["write_paths"] = json!(["src/a"]);
@@ -106,7 +106,7 @@ fn v2_agent_instance_write_path_prefix_collision_exits_23() {
 fn v2_agent_instance_sibling_prefix_paths_accepted() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "clarifying_questions_drafting", "vadi", 0, |b| {
+    make_baton_v3(&n, "clarifying_questions_drafting", "vadi", 0, |b| {
         dynamic_agent_instances(b);
         b["agent_instances"][0]["status"] = json!("running");
         b["agent_instances"][0]["write_paths"] = json!(["src/a"]);
@@ -125,7 +125,7 @@ fn v2_agent_instance_sibling_prefix_paths_accepted() {
 fn v2_six_agent_instances_accepted() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(
+    make_baton_v3(
         &n,
         "clarifying_questions_drafting",
         "vadi",
@@ -142,7 +142,7 @@ fn v2_six_agent_instances_accepted() {
 fn v2_six_agent_instances_late_collision_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+    make_baton_v3(&n, "research_drafting", "vadi", 0, |b| {
         many_agent_instances(b);
         b["agent_instances"][4]["status"] = json!("running");
         b["agent_instances"][5]["status"] = json!("running");
@@ -160,7 +160,7 @@ fn v2_six_agent_instances_late_collision_exits_23() {
 fn v2_closed_agent_instances_same_base_collision_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+    make_baton_v3(&n, "research_drafting", "vadi", 0, |b| {
         dynamic_agent_instances(b);
         b["agent_instances"][0]["write_paths"] = json!(["scripts/test-dvandva-write.sh"]);
         let mut second = b["agent_instances"][0].clone();
@@ -184,7 +184,7 @@ fn v2_closed_agent_instances_same_base_collision_exits_23() {
 fn v2_running_agent_instances_prior_base_collision_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+    make_baton_v3(&n, "research_drafting", "vadi", 0, |b| {
         dynamic_agent_instances(b);
         b["agent_instances"][0]["status"] = json!("running");
         b["agent_instances"][0]["base_checkpoint"] = json!(5);
@@ -212,7 +212,7 @@ fn v2_running_agent_instances_prior_base_collision_exits_23() {
 fn v2_closed_agent_instances_prior_base_reuse_paths_accepted() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "clarifying_questions_drafting", "vadi", 0, |b| {
+    make_baton_v3(&n, "clarifying_questions_drafting", "vadi", 0, |b| {
         dynamic_agent_instances(b);
         b["agent_instances"][0]["base_checkpoint"] = json!(5);
         b["agent_instances"][0]["spawned_at_checkpoint"] = json!(5);
@@ -239,7 +239,7 @@ fn v2_closed_agent_instances_prior_base_reuse_paths_accepted() {
 fn v2_agent_instance_serialized_conflict_accepted() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "clarifying_questions_drafting", "vadi", 0, |b| {
+    make_baton_v3(&n, "clarifying_questions_drafting", "vadi", 0, |b| {
         dynamic_agent_instances(b);
         b["agent_instances"][0]["status"] = json!("running");
         b["agent_instances"][0]["write_paths"] = json!(["scripts/test-dvandva-write.sh"]);
@@ -263,11 +263,11 @@ fn v2_agent_instance_serialized_conflict_accepted() {
 fn v2_work_split_bare_path_collision_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "parallel_implementing", "team", 4, |b| {
+    make_baton_v3(&b, "parallel_implementing", "team", 4, |b| {
         parallel_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
     });
-    make_baton_v2(&n, "parallel_implementing", "team", 5, |b| {
+    make_baton_v3(&n, "parallel_implementing", "team", 5, |b| {
         parallel_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["summary"] =
@@ -287,11 +287,11 @@ fn v2_work_split_bare_path_collision_exits_23() {
 fn v2_work_split_default_implementation_collision_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "parallel_implementing", "team", 4, |b| {
+    make_baton_v3(&b, "parallel_implementing", "team", 4, |b| {
         parallel_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
     });
-    make_baton_v2(&n, "parallel_implementing", "team", 5, |b| {
+    make_baton_v3(&n, "parallel_implementing", "team", 5, |b| {
         parallel_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["summary"] =
@@ -315,11 +315,11 @@ fn v2_work_split_default_implementation_collision_exits_23() {
 fn v2_work_split_prefix_collision_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "cross_fixing", "team", 4, |b| {
+    make_baton_v3(&b, "cross_fixing", "team", 4, |b| {
         cross_fixing_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
     });
-    make_baton_v2(&n, "cross_fixing", "team", 5, |b| {
+    make_baton_v3(&n, "cross_fixing", "team", 5, |b| {
         cross_fixing_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["summary"] =
@@ -339,11 +339,11 @@ fn v2_work_split_prefix_collision_exits_23() {
 fn v2_work_split_empty_write_paths_cannot_mask_paths_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "cross_fixing", "team", 4, |b| {
+    make_baton_v3(&b, "cross_fixing", "team", 4, |b| {
         cross_fixing_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
     });
-    make_baton_v2(&n, "cross_fixing", "team", 5, |b| {
+    make_baton_v3(&n, "cross_fixing", "team", 5, |b| {
         cross_fixing_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["summary"] = json!("Team sync: empty write_paths must not mask write-capable paths.");
@@ -364,11 +364,11 @@ fn v2_work_split_empty_write_paths_cannot_mask_paths_exits_23() {
 fn v2_work_split_sibling_prefix_accepted() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "cross_fixing", "team", 4, |b| {
+    make_baton_v3(&b, "cross_fixing", "team", 4, |b| {
         cross_fixing_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
     });
-    make_baton_v2(&n, "cross_fixing", "team", 5, |b| {
+    make_baton_v3(&n, "cross_fixing", "team", 5, |b| {
         cross_fixing_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["summary"] = json!("Team sync: sibling prefixes should remain disjoint.");
@@ -383,11 +383,11 @@ fn v2_work_split_sibling_prefix_accepted() {
 fn v2_work_split_serialized_conflict_accepted() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "cross_fixing", "team", 4, |b| {
+    make_baton_v3(&b, "cross_fixing", "team", 4, |b| {
         cross_fixing_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
     });
-    make_baton_v2(&n, "cross_fixing", "team", 5, |b| {
+    make_baton_v3(&n, "cross_fixing", "team", 5, |b| {
         cross_fixing_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["summary"] = json!("Team sync: serialized write conflict is intentional.");
@@ -406,11 +406,11 @@ fn v2_work_split_serialized_conflict_accepted() {
 fn v2_work_split_conflict_group_without_depends_on_rejects() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "cross_fixing", "team", 4, |b| {
+    make_baton_v3(&b, "cross_fixing", "team", 4, |b| {
         cross_fixing_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
     });
-    make_baton_v2(&n, "cross_fixing", "team", 5, |b| {
+    make_baton_v3(&n, "cross_fixing", "team", 5, |b| {
         cross_fixing_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["summary"] = json!("Team sync: conflict_group alone must not serialize writers.");
@@ -432,11 +432,11 @@ fn v2_work_split_conflict_group_without_depends_on_rejects() {
 fn v2_work_split_depends_on_without_conflict_group_rejects() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "cross_fixing", "team", 4, |b| {
+    make_baton_v3(&b, "cross_fixing", "team", 4, |b| {
         cross_fixing_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
     });
-    make_baton_v2(&n, "cross_fixing", "team", 5, |b| {
+    make_baton_v3(&n, "cross_fixing", "team", 5, |b| {
         cross_fixing_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["summary"] = json!("Team sync: depends_on alone must not serialize writers.");
@@ -457,11 +457,11 @@ fn v2_work_split_depends_on_without_conflict_group_rejects() {
 fn v2_cross_review_read_overlap_accepted() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "cross_review", "team", 4, |b| {
+    make_baton_v3(&b, "cross_review", "team", 4, |b| {
         cross_review_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
     });
-    make_baton_v2(&n, "cross_review", "team", 5, |b| {
+    make_baton_v3(&n, "cross_review", "team", 5, |b| {
         cross_review_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["summary"] = json!("Team sync: cross-review overlaps are read-only by default.");
@@ -476,11 +476,11 @@ fn v2_cross_review_read_overlap_accepted() {
 fn v2_cross_review_explicit_write_collision_rejects() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "cross_review", "team", 4, |b| {
+    make_baton_v3(&b, "cross_review", "team", 4, |b| {
         cross_review_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
     });
-    make_baton_v2(&n, "cross_review", "team", 5, |b| {
+    make_baton_v3(&n, "cross_review", "team", 5, |b| {
         cross_review_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["summary"] =
@@ -500,13 +500,13 @@ fn v2_cross_review_explicit_write_collision_rejects() {
 fn v2_team_sync_new_collision_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "cross_fixing", "team", 4, |b| {
+    make_baton_v3(&b, "cross_fixing", "team", 4, |b| {
         cross_fixing_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         let first = b["work_split"][0].clone();
         b["work_split"] = json!([first]);
     });
-    make_baton_v2(&n, "cross_fixing", "team", 5, |b| {
+    make_baton_v3(&n, "cross_fixing", "team", 5, |b| {
         cross_fixing_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["summary"] = json!("Team sync: candidate adds a new colliding live fix chunk.");
@@ -526,11 +526,11 @@ fn v2_team_sync_new_collision_exits_23() {
 fn v2_work_split_terminal_reuse_accepted() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "cross_fixing", "team", 4, |b| {
+    make_baton_v3(&b, "cross_fixing", "team", 4, |b| {
         cross_fixing_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
     });
-    make_baton_v2(&n, "cross_fixing", "team", 5, |b| {
+    make_baton_v3(&n, "cross_fixing", "team", 5, |b| {
         cross_fixing_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["summary"] = json!("Team sync: terminal chunks should not block later path reuse.");
@@ -548,11 +548,11 @@ fn v2_work_split_terminal_reuse_accepted() {
 fn v2_work_split_empty_explicit_write_paths_keeps_intent_accepted() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "parallel_implementing", "team", 4, |b| {
+    make_baton_v3(&b, "parallel_implementing", "team", 4, |b| {
         parallel_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
     });
-    make_baton_v2(&n, "parallel_implementing", "team", 5, |b| {
+    make_baton_v3(&n, "parallel_implementing", "team", 5, |b| {
         parallel_chunks(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["summary"] = json!(
@@ -577,8 +577,8 @@ fn v2_work_split_empty_explicit_write_paths_keeps_intent_accepted() {
 fn v2_work_split_dangling_depends_on_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "spec_review", "prativadi", 4, |_| {});
-    make_baton_v2(&n, "parallel_implementing", "team", 5, |b| {
+    make_baton_v3(&b, "spec_review", "prativadi", 4, |_| {});
+    make_baton_v3(&n, "parallel_implementing", "team", 5, |b| {
         parallel_chunks(b);
         chunk_by_id(b, "implementation-chunk-a")["depends_on"] = json!(["missing-anchor"]);
     });
@@ -593,8 +593,8 @@ fn v2_work_split_dangling_depends_on_exits_23() {
 fn v2_work_split_depends_on_cycle_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "spec_review", "prativadi", 4, |_| {});
-    make_baton_v2(&n, "parallel_implementing", "team", 5, |b| {
+    make_baton_v3(&b, "spec_review", "prativadi", 4, |_| {});
+    make_baton_v3(&n, "parallel_implementing", "team", 5, |b| {
         parallel_chunks(b);
         chunk_by_id(b, "implementation-chunk-a")["depends_on"] = json!(["implementation-chunk-b"]);
         chunk_by_id(b, "implementation-chunk-b")["depends_on"] = json!(["implementation-chunk-a"]);
@@ -610,8 +610,8 @@ fn v2_work_split_depends_on_cycle_exits_23() {
 fn v2_work_split_anchor_depends_on_accepted() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "spec_review", "prativadi", 4, |_| {});
-    make_baton_v2(&n, "parallel_implementing", "team", 5, |b| {
+    make_baton_v3(&b, "spec_review", "prativadi", 4, |_| {});
+    make_baton_v3(&n, "parallel_implementing", "team", 5, |b| {
         // S4-T2 (D2): the spec→implementation boundary locks the plan.
         b["master_plan_locked"] = json!(true);
         parallel_chunks(b);
@@ -648,12 +648,26 @@ fn v2_work_split_anchor_depends_on_accepted() {
 // development profile matrix (fast / standard / full)
 // ===========================================================================
 
-/// Direct v2-seed scaffold candidate for the "new development default"
+/// Direct v3 scaffold candidate for the "new development default"
 /// case: only the fields the shell's raw `jq` pipeline touches are
 /// overridden; profile/profile_floor/profile_decision/profile_history stay
 /// at the schema seed's defaults (standard/standard).
 fn profile_default_scaffold_candidate() -> Value {
     let mut b = v2_seed();
+    b["schema"] = json!("dvandva.baton.v3");
+    b["profile_decision"]["reason"] =
+        json!("Default development profile for new v3 development scaffolds.");
+    b["run_workflow"] = json!({
+        "source": "preset:standard",
+        "declared_by": "vadi",
+        "declared_at_checkpoint": 0,
+        "approved_by": null,
+        "approved_at_checkpoint": null,
+        "revision_round": 0,
+        "states": [],
+        "edges": [],
+        "amendments": []
+    });
     b["updated_at"] = json!("2026-07-01T00:00:00Z");
     b["mode"] = json!("development");
     b["run_id"] = json!("run-a");
@@ -687,7 +701,7 @@ fn profile_new_development_scaffold_defaults_standard() {
 fn profile_new_development_requires_metadata_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&n, "research_drafting", "vadi", 0, |b| {
+    make_baton_v3(&n, "research_drafting", "vadi", 0, |b| {
         let o = b.as_object_mut().unwrap();
         o.remove("profile");
         o.remove("profile_floor");
@@ -705,8 +719,8 @@ fn profile_new_development_requires_metadata_exits_23() {
 fn profile_bad_enum_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, |_| {});
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, |_| {});
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         b["profile"] = json!("turbo");
     });
     run(&b, &n).assert_contains("profile bad enum exits 23", 23, "DVANDVA_WRITE bad_profile");
@@ -716,8 +730,8 @@ fn profile_bad_enum_exits_23() {
 fn profile_decision_decided_by_blank_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, |_| {});
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, |_| {});
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         b["profile_decision"]["decided_by"] = json!("   ");
     });
     run(&b, &n).assert_contains(
@@ -731,8 +745,8 @@ fn profile_decision_decided_by_blank_exits_23() {
 fn profile_floor_bad_enum_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, |_| {});
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, |_| {});
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         b["profile_floor"] = json!("turbo");
     });
     run(&b, &n).assert_contains(
@@ -746,8 +760,8 @@ fn profile_floor_bad_enum_exits_23() {
 fn profile_decision_missing_key_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, |_| {});
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, |_| {});
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         b["profile_decision"]
             .as_object_mut()
             .unwrap()
@@ -764,8 +778,8 @@ fn profile_decision_missing_key_exits_23() {
 fn profile_decision_selected_profile_mismatch_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, |_| {});
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, |_| {});
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         b["profile_decision"]["selected_profile"] = json!("standard");
     });
     run(&b, &n).assert_contains(
@@ -779,8 +793,8 @@ fn profile_decision_selected_profile_mismatch_exits_23() {
 fn profile_decision_floor_mismatch_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, |_| {});
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, |_| {});
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         b["profile_decision"]["floor"] = json!("standard");
     });
     run(&b, &n).assert_contains(
@@ -794,8 +808,8 @@ fn profile_decision_floor_mismatch_exits_23() {
 fn profile_history_bad_entry_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, |_| {});
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, |_| {});
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         b["profile_history"] = json!([{
             "from": "fast", "to": "standard", "floor": "standard", "checkpoint": 5,
             "actor_role": "bot", "reason": "invalid actor", "evidence_refs": []
@@ -819,8 +833,8 @@ fn profile_missing_existing_dev_effective_full_edge_legal() {
         o.remove("profile_decision");
         o.remove("profile_history");
     };
-    make_baton_v2(&b, "research_review", "prativadi", 4, strip);
-    make_baton_v2(&n, "spec_drafting", "vadi", 5, strip);
+    make_baton_v3(&b, "research_review", "prativadi", 4, strip);
+    make_baton_v3(&n, "spec_drafting", "vadi", 5, strip);
     run(&b, &n).assert(
         "missing profile on existing development baton keeps full-compatible edge legal",
         0,
@@ -839,8 +853,8 @@ fn profile_feature_pr_missing_effective_full_edge_legal() {
         o.remove("profile_decision");
         o.remove("profile_history");
     };
-    make_baton_v2(&b, "research_review", "prativadi", 4, strip);
-    make_baton_v2(&n, "spec_drafting", "vadi", 5, strip);
+    make_baton_v3(&b, "research_review", "prativadi", 4, strip);
+    make_baton_v3(&n, "spec_drafting", "vadi", 5, strip);
     run(&b, &n).assert(
         "missing profile on existing feature-pr baton keeps full-compatible edge legal",
         0,
@@ -858,8 +872,8 @@ fn profile_missing_existing_dev_full_only_edge_legal() {
         o.remove("profile_decision");
         o.remove("profile_history");
     };
-    make_baton_v2(&b, "spec_review", "prativadi", 4, strip);
-    make_baton_v2(&n, "parallel_implementing", "team", 5, |b| {
+    make_baton_v3(&b, "spec_review", "prativadi", 4, strip);
+    make_baton_v3(&n, "parallel_implementing", "team", 5, |b| {
         strip(b);
         // S4-T2 (D2): the spec→implementation boundary locks the plan.
         b["master_plan_locked"] = json!(true);
@@ -882,8 +896,8 @@ fn profile_missing_existing_dev_standard_edge_rejected_exits_24() {
         o.remove("profile_decision");
         o.remove("profile_history");
     };
-    make_baton_v2(&b, "spec_review", "prativadi", 4, strip);
-    make_baton_v2(&n, "implementing", "vadi", 5, |b| {
+    make_baton_v3(&b, "spec_review", "prativadi", 4, strip);
+    make_baton_v3(&n, "implementing", "vadi", 5, |b| {
         strip(b);
         b["phase"] = json!(1);
         b["master_plan_locked"] = json!(true);
@@ -899,12 +913,12 @@ fn profile_missing_existing_dev_standard_edge_rejected_exits_24() {
 fn profile_fast_allowlist_edge_legal() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "implementing", "vadi", 4, |b| {
+    make_baton_v3(&b, "implementing", "vadi", 4, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         b["changed_paths"] = json!(["README.md"]);
     });
-    make_baton_v2(&n, "phase_review", "prativadi", 5, |b| {
+    make_baton_v3(&n, "phase_review", "prativadi", 5, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         b["changed_paths"] = json!(["README.md"]);
@@ -924,12 +938,12 @@ fn profile_fast_allowlist_edge_legal() {
 fn profile_fast_research_drafting_review_edge_legal() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_drafting", "vadi", 4, |b| {
+    make_baton_v3(&b, "research_drafting", "vadi", 4, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         b["changed_paths"] = json!(["README.md"]);
     });
-    make_baton_v2(&n, "research_review", "prativadi", 5, |b| {
+    make_baton_v3(&n, "research_review", "prativadi", 5, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         b["changed_paths"] = json!(["README.md"]);
@@ -941,12 +955,12 @@ fn profile_fast_research_drafting_review_edge_legal() {
 fn profile_fast_research_review_implementing_edge_legal() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         b["changed_paths"] = json!(["README.md"]);
     });
-    make_baton_v2(&n, "implementing", "vadi", 5, |b| {
+    make_baton_v3(&n, "implementing", "vadi", 5, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         b["changed_paths"] = json!(["README.md"]);
@@ -960,13 +974,13 @@ fn profile_fast_research_review_implementing_edge_legal() {
 fn profile_fast_phase_review_fixing_edge_legal() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "phase_review", "prativadi", 4, |b| {
+    make_baton_v3(&b, "phase_review", "prativadi", 4, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         b["changed_paths"] = json!(["README.md"]);
         b["loop_counts"] = json!({"phase_review:phase_fixing": 0});
     });
-    make_baton_v2(&n, "phase_fixing", "vadi", 5, |b| {
+    make_baton_v3(&n, "phase_fixing", "vadi", 5, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         b["changed_paths"] = json!(["README.md"]);
@@ -979,12 +993,12 @@ fn profile_fast_phase_review_fixing_edge_legal() {
 fn profile_fast_phase_fixing_review_edge_legal() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "phase_fixing", "vadi", 4, |b| {
+    make_baton_v3(&b, "phase_fixing", "vadi", 4, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         b["changed_paths"] = json!(["README.md"]);
     });
-    make_baton_v2(&n, "phase_review", "prativadi", 5, |b| {
+    make_baton_v3(&n, "phase_review", "prativadi", 5, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         b["changed_paths"] = json!(["README.md"]);
@@ -996,12 +1010,12 @@ fn profile_fast_phase_fixing_review_edge_legal() {
 fn profile_fast_phase_review_termination_edge_legal() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "phase_review", "prativadi", 4, |b| {
+    make_baton_v3(&b, "phase_review", "prativadi", 4, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         b["changed_paths"] = json!(["README.md"]);
     });
-    make_baton_v2(&n, "termination_review", "team", 5, |b| {
+    make_baton_v3(&n, "termination_review", "team", 5, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         b["changed_paths"] = json!(["README.md"]);
@@ -1016,14 +1030,14 @@ fn profile_fast_phase_review_termination_edge_legal() {
 fn profile_fast_termination_fixing_edge_legal() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+    make_baton_v3(&b, "termination_review", "team", 4, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         b["changed_paths"] = json!(["README.md"]);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["loop_counts"] = json!({"termination_review:phase_fixing": 0});
     });
-    make_baton_v2(&n, "phase_fixing", "vadi", 5, |b| {
+    make_baton_v3(&n, "phase_fixing", "vadi", 5, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         b["changed_paths"] = json!(["README.md"]);
@@ -1037,7 +1051,7 @@ fn profile_fast_done_without_explainer_legal() {
     let d = tmp();
     let (b, n) = paths(&d);
     seed_done_artifacts(d.path()); // S4-T1
-    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+    make_baton_v3(&b, "termination_review", "team", 4, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         compact_terminal_evidence(b);
@@ -1046,7 +1060,7 @@ fn profile_fast_done_without_explainer_legal() {
         b["vadi_final_approval"] = json!(true);
         b["prativadi_final_approval"] = json!(true);
     });
-    make_baton_v2(&n, "done", "human", 5, |b| {
+    make_baton_v3(&n, "done", "human", 5, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         compact_terminal_evidence(b);
@@ -1064,7 +1078,7 @@ fn profile_fast_done_without_explainer_legal() {
 fn profile_fast_done_requires_verification_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+    make_baton_v3(&b, "termination_review", "team", 4, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         compact_terminal_evidence(b);
@@ -1073,7 +1087,7 @@ fn profile_fast_done_requires_verification_exits_23() {
         b["vadi_final_approval"] = json!(true);
         b["prativadi_final_approval"] = json!(true);
     });
-    make_baton_v2(&n, "done", "human", 5, |b| {
+    make_baton_v3(&n, "done", "human", 5, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         compact_terminal_evidence(b);
@@ -1093,7 +1107,7 @@ fn profile_fast_done_requires_verification_exits_23() {
 fn profile_fast_done_requires_review_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+    make_baton_v3(&b, "termination_review", "team", 4, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         compact_terminal_evidence(b);
@@ -1102,7 +1116,7 @@ fn profile_fast_done_requires_review_exits_23() {
         b["vadi_final_approval"] = json!(true);
         b["prativadi_final_approval"] = json!(true);
     });
-    make_baton_v2(&n, "done", "human", 5, |b| {
+    make_baton_v3(&n, "done", "human", 5, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         compact_terminal_evidence(b);
@@ -1124,7 +1138,7 @@ fn profile_fast_done_requires_review_exits_23() {
 fn profile_fast_done_rejects_missing_phase_review_checkpoint_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+    make_baton_v3(&b, "termination_review", "team", 4, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         compact_terminal_evidence(b);
@@ -1133,7 +1147,7 @@ fn profile_fast_done_rejects_missing_phase_review_checkpoint_exits_23() {
         b["vadi_final_approval"] = json!(true);
         b["prativadi_final_approval"] = json!(true);
     });
-    make_baton_v2(&n, "done", "human", 5, |b| {
+    make_baton_v3(&n, "done", "human", 5, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         compact_terminal_evidence(b);
@@ -1159,7 +1173,7 @@ fn profile_fast_done_rejects_missing_phase_review_checkpoint_exits_23() {
 fn profile_fast_done_rejects_stale_phase_review_checkpoint_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+    make_baton_v3(&b, "termination_review", "team", 4, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         compact_terminal_evidence(b);
@@ -1168,7 +1182,7 @@ fn profile_fast_done_rejects_stale_phase_review_checkpoint_exits_23() {
         b["vadi_final_approval"] = json!(true);
         b["prativadi_final_approval"] = json!(true);
     });
-    make_baton_v2(&n, "done", "human", 5, |b| {
+    make_baton_v3(&n, "done", "human", 5, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         compact_terminal_evidence(b);
@@ -1194,12 +1208,12 @@ fn profile_fast_done_rejects_stale_phase_review_checkpoint_exits_23() {
 fn profile_fast_without_allowlist_rejected_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "implementing", "vadi", 4, |b| {
+    make_baton_v3(&b, "implementing", "vadi", 4, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         b["changed_paths"] = json!(["README.md"]);
     });
-    make_baton_v2(&n, "phase_review", "prativadi", 5, |b| {
+    make_baton_v3(&n, "phase_review", "prativadi", 5, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         b["changed_paths"] = json!(["README.md"]);
@@ -1218,11 +1232,11 @@ fn profile_fast_without_allowlist_rejected_exits_23() {
 fn profile_fast_hard_risk_rejected_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "implementing", "vadi", 4, |b| {
+    make_baton_v3(&b, "implementing", "vadi", 4, |b| {
         fast_profile(b);
         b["changed_paths"] = json!(["README.md"]);
     });
-    make_baton_v2(&n, "phase_review", "prativadi", 5, |b| {
+    make_baton_v3(&n, "phase_review", "prativadi", 5, |b| {
         fast_profile(b);
         b["changed_paths"] = json!(["rust/dvandva/src/write.rs"]);
     });
@@ -1237,12 +1251,12 @@ fn profile_fast_hard_risk_rejected_exits_23() {
 fn profile_fast_protocol_doc_rejected_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "implementing", "vadi", 4, |b| {
+    make_baton_v3(&b, "implementing", "vadi", 4, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         b["changed_paths"] = json!(["README.md"]);
     });
-    make_baton_v2(&n, "phase_review", "prativadi", 5, |b| {
+    make_baton_v3(&n, "phase_review", "prativadi", 5, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         b["changed_paths"] = json!(["docs/protocol/local-baton-channel.md"]);
@@ -1258,12 +1272,12 @@ fn profile_fast_protocol_doc_rejected_exits_23() {
 fn profile_fast_agent_write_not_allowlisted_rejected_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "implementing", "vadi", 4, |b| {
+    make_baton_v3(&b, "implementing", "vadi", 4, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         b["changed_paths"] = json!(["README.md"]);
     });
-    make_baton_v2(&n, "phase_review", "prativadi", 5, |b| {
+    make_baton_v3(&n, "phase_review", "prativadi", 5, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         dynamic_agent_instances(b);
@@ -1282,12 +1296,12 @@ fn profile_fast_agent_write_not_allowlisted_rejected_exits_23() {
 fn profile_fast_work_split_read_not_allowlisted_rejected_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "implementing", "vadi", 4, |b| {
+    make_baton_v3(&b, "implementing", "vadi", 4, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         b["changed_paths"] = json!(["README.md"]);
     });
-    make_baton_v2(&n, "phase_review", "prativadi", 5, |b| {
+    make_baton_v3(&n, "phase_review", "prativadi", 5, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         b["changed_paths"] = json!(["README.md"]);
@@ -1304,12 +1318,12 @@ fn profile_fast_work_split_read_not_allowlisted_rejected_exits_23() {
 fn profile_fast_agent_read_not_allowlisted_rejected_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "implementing", "vadi", 4, |b| {
+    make_baton_v3(&b, "implementing", "vadi", 4, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         b["changed_paths"] = json!(["README.md"]);
     });
-    make_baton_v2(&n, "phase_review", "prativadi", 5, |b| {
+    make_baton_v3(&n, "phase_review", "prativadi", 5, |b| {
         fast_profile(b);
         fast_allowlist_work_split(b);
         dynamic_agent_instances(b);
@@ -1328,8 +1342,8 @@ fn profile_fast_agent_read_not_allowlisted_rejected_exits_23() {
 fn profile_standard_role_skill_hard_risk_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, standard_profile);
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, standard_profile);
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         standard_profile(b);
         b["changed_paths"] = json!(["plugins/dvandva/skills/vadi/SKILL.md"]);
     });
@@ -1344,8 +1358,8 @@ fn profile_standard_role_skill_hard_risk_exits_23() {
 fn profile_standard_product_spec_hard_risk_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, standard_profile);
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, standard_profile);
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         standard_profile(b);
         b["changed_paths"] = json!(["product.md"]);
     });
@@ -1360,8 +1374,8 @@ fn profile_standard_product_spec_hard_risk_exits_23() {
 fn profile_full_hard_risk_low_floor_rejected_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, fast_profile);
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, fast_profile);
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         full_low_floor_profile(b);
         b["changed_paths"] = json!(["plugins/dvandva/skills/vadi/SKILL.md"]);
     });
@@ -1376,8 +1390,8 @@ fn profile_full_hard_risk_low_floor_rejected_exits_23() {
 fn profile_full_hard_risk_decision_low_floor_rejected_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, standard_profile);
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, standard_profile);
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         b["profile"] = json!("full");
         b["profile_floor"] = json!("full");
         b["profile_decision"] = json!({
@@ -1410,8 +1424,8 @@ fn profile_full_hard_risk_decision_low_floor_rejected_exits_23() {
 fn profile_standard_env_hard_risk_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, standard_profile);
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, standard_profile);
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         standard_profile(b);
         b["changed_paths"] = json!([".env"]);
     });
@@ -1426,8 +1440,8 @@ fn profile_standard_env_hard_risk_exits_23() {
 fn profile_standard_hard_risk_work_split_path_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, standard_profile);
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, standard_profile);
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         standard_profile(b);
         b["work_split"][0]["paths"] = json!(["plugins/dvandva/references/baton-schema-v2.json"]);
     });
@@ -1442,8 +1456,8 @@ fn profile_standard_hard_risk_work_split_path_exits_23() {
 fn profile_standard_hard_risk_work_split_read_path_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, standard_profile);
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, standard_profile);
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         standard_profile(b);
         b["work_split"][0]["read_paths"] =
             json!(["plugins/dvandva/references/state-transition-table.md"]);
@@ -1459,8 +1473,8 @@ fn profile_standard_hard_risk_work_split_read_path_exits_23() {
 fn profile_standard_hard_risk_work_split_write_path_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, standard_profile);
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, standard_profile);
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         standard_profile(b);
         b["work_split"][0]["write_paths"] = json!(["templates/channel/baton.json"]);
     });
@@ -1477,8 +1491,8 @@ fn profile_standard_hard_risk_work_split_write_path_exits_23() {
 fn profile_standard_hard_risk_agent_read_path_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, standard_profile);
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, standard_profile);
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         standard_profile(b);
         b["agent_instances"] = json!([{
             "id": "profile-risk-probe",
@@ -1500,8 +1514,8 @@ fn profile_standard_hard_risk_agent_read_path_exits_23() {
 fn profile_standard_hard_risk_agent_write_path_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, standard_profile);
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, standard_profile);
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         standard_profile(b);
         b["agent_instances"] = json!([{
             "id": "profile-risk-probe",
@@ -1524,8 +1538,8 @@ fn profile_standard_hard_risk_agent_write_path_exits_23() {
 fn profile_standard_rust_src_lock_hard_risk_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, standard_profile);
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, standard_profile);
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         standard_profile(b);
         b["changed_paths"] = json!(["rust/dvandva/src/lock.rs"]);
     });
@@ -1540,8 +1554,8 @@ fn profile_standard_rust_src_lock_hard_risk_exits_23() {
 fn profile_standard_rust_cmd_write_hard_risk_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, standard_profile);
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, standard_profile);
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         standard_profile(b);
         b["changed_paths"] = json!(["rust/dvandva/src/cmd/write.rs"]);
     });
@@ -1556,8 +1570,8 @@ fn profile_standard_rust_cmd_write_hard_risk_exits_23() {
 fn profile_standard_rust_tests_write_paths_hard_risk_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, standard_profile);
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, standard_profile);
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         standard_profile(b);
         b["changed_paths"] = json!(["rust/dvandva/tests/write_paths.rs"]);
     });
@@ -1575,11 +1589,11 @@ fn profile_standard_rust_tests_write_paths_hard_risk_exits_23() {
 fn profile_fast_rust_tests_hard_risk_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "implementing", "vadi", 4, |b| {
+    make_baton_v3(&b, "implementing", "vadi", 4, |b| {
         fast_profile(b);
         b["changed_paths"] = json!(["README.md"]);
     });
-    make_baton_v2(&n, "phase_review", "prativadi", 5, |b| {
+    make_baton_v3(&n, "phase_review", "prativadi", 5, |b| {
         fast_profile(b);
         b["changed_paths"] = json!(["rust/dvandva/tests/write_paths.rs"]);
     });
@@ -1596,8 +1610,8 @@ fn profile_fast_rust_tests_hard_risk_exits_23() {
 fn profile_standard_old_top_level_script_pattern_not_hard_legal() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, standard_profile);
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, standard_profile);
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         standard_profile(b);
         b["changed_paths"] = json!(["scripts/test-install.sh"]);
     });
@@ -1613,8 +1627,8 @@ fn profile_standard_old_top_level_script_pattern_not_hard_legal() {
 fn profile_standard_old_role_skill_script_pattern_not_hard_legal() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, standard_profile);
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, standard_profile);
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         standard_profile(b);
         b["changed_paths"] = json!(["plugins/dvandva/skills/vadi/scripts/dvandva-write.sh"]);
     });
@@ -1630,8 +1644,8 @@ fn profile_standard_old_role_skill_script_pattern_not_hard_legal() {
 fn profile_standard_compact_edge_legal() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "spec_review", "prativadi", 4, standard_profile);
-    make_baton_v2(&n, "implementing", "vadi", 5, |b| {
+    make_baton_v3(&b, "spec_review", "prativadi", 4, standard_profile);
+    make_baton_v3(&n, "implementing", "vadi", 5, |b| {
         standard_profile(b);
         b["phase"] = json!(1);
         b["master_plan_locked"] = json!(true);
@@ -1643,8 +1657,8 @@ fn profile_standard_compact_edge_legal() {
 fn profile_standard_research_spec_edge_legal() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, standard_profile);
-    make_baton_v2(&n, "spec_drafting", "vadi", 5, standard_profile);
+    make_baton_v3(&b, "research_review", "prativadi", 4, standard_profile);
+    make_baton_v3(&n, "spec_drafting", "vadi", 5, standard_profile);
     run(&b, &n).assert("profile standard research_review:spec_drafting is legal", 0);
 }
 
@@ -1652,8 +1666,8 @@ fn profile_standard_research_spec_edge_legal() {
 fn profile_standard_spec_revision_edge_legal() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "spec_review", "prativadi", 4, standard_profile);
-    make_baton_v2(&n, "spec_revision", "vadi", 5, standard_profile);
+    make_baton_v3(&b, "spec_review", "prativadi", 4, standard_profile);
+    make_baton_v3(&n, "spec_revision", "vadi", 5, standard_profile);
     run(&b, &n).assert("profile standard spec_review:spec_revision is legal", 0);
 }
 
@@ -1661,11 +1675,11 @@ fn profile_standard_spec_revision_edge_legal() {
 fn profile_standard_implementing_review_edge_legal() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "implementing", "vadi", 4, |b| {
+    make_baton_v3(&b, "implementing", "vadi", 4, |b| {
         standard_profile(b);
         b["phase"] = json!(1);
     });
-    make_baton_v2(&n, "phase_review", "prativadi", 5, |b| {
+    make_baton_v3(&n, "phase_review", "prativadi", 5, |b| {
         standard_profile(b);
         b["phase"] = json!(1);
     });
@@ -1676,12 +1690,12 @@ fn profile_standard_implementing_review_edge_legal() {
 fn profile_standard_review_fixing_edge_legal() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "phase_review", "prativadi", 4, |b| {
+    make_baton_v3(&b, "phase_review", "prativadi", 4, |b| {
         standard_profile(b);
         b["phase"] = json!(1);
         b["loop_counts"] = json!({"phase_review:phase_fixing": 0});
     });
-    make_baton_v2(&n, "phase_fixing", "vadi", 5, |b| {
+    make_baton_v3(&n, "phase_fixing", "vadi", 5, |b| {
         standard_profile(b);
         b["phase"] = json!(1);
         b["loop_counts"] = json!({"phase_review:phase_fixing": 1});
@@ -1693,11 +1707,11 @@ fn profile_standard_review_fixing_edge_legal() {
 fn profile_standard_review_termination_edge_legal() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "phase_review", "prativadi", 4, |b| {
+    make_baton_v3(&b, "phase_review", "prativadi", 4, |b| {
         standard_profile(b);
         b["phase"] = json!(1);
     });
-    make_baton_v2(&n, "termination_review", "team", 5, |b| {
+    make_baton_v3(&n, "termination_review", "team", 5, |b| {
         standard_profile(b);
         b["phase"] = json!(1);
         b["active_roles"] = json!(["vadi", "prativadi"]);
@@ -1714,14 +1728,14 @@ fn profile_standard_done_without_explainer_legal() {
     let d = tmp();
     let (b, n) = paths(&d);
     seed_done_artifacts(d.path()); // S4-T1
-    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+    make_baton_v3(&b, "termination_review", "team", 4, |b| {
         standard_profile(b);
         compact_terminal_evidence(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["vadi_final_approval"] = json!(true);
         b["prativadi_final_approval"] = json!(true);
     });
-    make_baton_v2(&n, "done", "human", 5, |b| {
+    make_baton_v3(&n, "done", "human", 5, |b| {
         standard_profile(b);
         compact_terminal_evidence(b);
         b["vadi_final_approval"] = json!(true);
@@ -1737,14 +1751,14 @@ fn profile_standard_done_without_explainer_legal() {
 fn profile_standard_done_requires_verification_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+    make_baton_v3(&b, "termination_review", "team", 4, |b| {
         standard_profile(b);
         compact_terminal_evidence(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["vadi_final_approval"] = json!(true);
         b["prativadi_final_approval"] = json!(true);
     });
-    make_baton_v2(&n, "done", "human", 5, |b| {
+    make_baton_v3(&n, "done", "human", 5, |b| {
         standard_profile(b);
         compact_terminal_evidence(b);
         if let Some(matrix) = b["verification_matrix"].as_array_mut() {
@@ -1767,14 +1781,14 @@ fn profile_standard_done_requires_verification_exits_23() {
 fn profile_standard_done_requires_review_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+    make_baton_v3(&b, "termination_review", "team", 4, |b| {
         standard_profile(b);
         compact_terminal_evidence(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["vadi_final_approval"] = json!(true);
         b["prativadi_final_approval"] = json!(true);
     });
-    make_baton_v2(&n, "done", "human", 5, |b| {
+    make_baton_v3(&n, "done", "human", 5, |b| {
         standard_profile(b);
         compact_terminal_evidence(b);
         if let Some(tracks) = b["subagent_tracks"].as_array_mut() {
@@ -1794,14 +1808,14 @@ fn profile_standard_done_requires_review_exits_23() {
 fn profile_standard_done_rejects_missing_phase_review_checkpoint_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+    make_baton_v3(&b, "termination_review", "team", 4, |b| {
         standard_profile(b);
         compact_terminal_evidence(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["vadi_final_approval"] = json!(true);
         b["prativadi_final_approval"] = json!(true);
     });
-    make_baton_v2(&n, "done", "human", 5, |b| {
+    make_baton_v3(&n, "done", "human", 5, |b| {
         standard_profile(b);
         compact_terminal_evidence(b);
         if let Some(tracks) = b["subagent_tracks"].as_array_mut() {
@@ -1825,14 +1839,14 @@ fn profile_standard_done_rejects_missing_phase_review_checkpoint_exits_23() {
 fn profile_standard_done_rejects_stale_phase_review_checkpoint_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+    make_baton_v3(&b, "termination_review", "team", 4, |b| {
         standard_profile(b);
         compact_terminal_evidence(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["vadi_final_approval"] = json!(true);
         b["prativadi_final_approval"] = json!(true);
     });
-    make_baton_v2(&n, "done", "human", 5, |b| {
+    make_baton_v3(&n, "done", "human", 5, |b| {
         standard_profile(b);
         compact_terminal_evidence(b);
         if let Some(tracks) = b["subagent_tracks"].as_array_mut() {
@@ -1856,14 +1870,14 @@ fn profile_standard_done_rejects_stale_phase_review_checkpoint_exits_23() {
 fn profile_standard_done_rejects_generic_cross_review_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "termination_review", "team", 4, |b| {
+    make_baton_v3(&b, "termination_review", "team", 4, |b| {
         standard_profile(b);
         compact_terminal_evidence(b);
         b["active_roles"] = json!(["vadi", "prativadi"]);
         b["vadi_final_approval"] = json!(true);
         b["prativadi_final_approval"] = json!(true);
     });
-    make_baton_v2(&n, "done", "human", 5, |b| {
+    make_baton_v3(&n, "done", "human", 5, |b| {
         standard_profile(b);
         b["verification"] = json!([
             {"command": "bash scripts/test-dvandva-write.sh", "result": "passed", "notes": "compact terminal verification"}
@@ -1907,8 +1921,8 @@ fn profile_standard_done_rejects_generic_cross_review_exits_23() {
 fn profile_escalation_history_required_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, fast_profile);
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, fast_profile);
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         standard_profile(b);
         b["profile_history"] = json!([]);
     });
@@ -1923,7 +1937,7 @@ fn profile_escalation_history_required_exits_23() {
 fn profile_history_append_only_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, |b| {
         fast_profile(b);
         b["profile_history"] = json!([{
             "from": null, "to": "fast", "floor": "fast", "checkpoint": 2,
@@ -1931,7 +1945,7 @@ fn profile_history_append_only_exits_23() {
             "evidence_refs": ["test:initial-fast"]
         }]);
     });
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         standard_profile(b);
         b["profile_history"] = json!([{
             "from": "fast", "to": "standard", "floor": "standard", "checkpoint": 5,
@@ -1950,8 +1964,8 @@ fn profile_history_append_only_exits_23() {
 fn profile_escalation_history_accepted() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, fast_profile);
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, fast_profile);
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         standard_profile(b);
         b["profile_history"] = json!([{
             "from": "fast", "to": "standard", "floor": "standard", "checkpoint": 5,
@@ -1966,11 +1980,11 @@ fn profile_escalation_history_accepted() {
 fn profile_downgrade_below_floor_rejected_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, |b| {
         b["profile"] = json!("full");
         b["profile_floor"] = json!("full");
     });
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         standard_profile(b);
         b["profile_floor"] = json!("full");
         b["profile_decision"]["floor"] = json!("full");
@@ -1986,11 +2000,11 @@ fn profile_downgrade_below_floor_rejected_exits_23() {
 fn profile_floor_lowering_rejected_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, |b| {
         b["profile"] = json!("full");
         b["profile_floor"] = json!("full");
     });
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         b["profile"] = json!("full");
         b["profile_floor"] = json!("standard");
         b["profile_decision"] = json!({
@@ -2022,11 +2036,11 @@ fn profile_floor_lowering_rejected_exits_23() {
 fn profile_history_only_floor_lowering_rejected_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, |b| {
         b["profile"] = json!("full");
         b["profile_floor"] = json!("full");
     });
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         b["profile"] = json!("full");
         b["profile_floor"] = json!("full");
         b["profile_decision"] = json!({
@@ -2058,8 +2072,8 @@ fn profile_history_only_floor_lowering_rejected_exits_23() {
 fn profile_history_old_lower_floor_compatible() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, old_low_floor_history);
-    make_baton_v2(&n, "research_revision", "vadi", 5, old_low_floor_history);
+    make_baton_v3(&b, "research_review", "prativadi", 4, old_low_floor_history);
+    make_baton_v3(&n, "research_revision", "vadi", 5, old_low_floor_history);
     run(&b, &n).assert(
         "existing profile_history entry below current floor remains compatible",
         0,
@@ -2070,8 +2084,8 @@ fn profile_history_old_lower_floor_compatible() {
 fn profile_history_duplicate_old_lower_floor_rejected_exits_23() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, old_low_floor_history);
-    make_baton_v2(&n, "research_revision", "vadi", 5, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, old_low_floor_history);
+    make_baton_v3(&n, "research_revision", "vadi", 5, |b| {
         old_low_floor_history(b);
         let first = b["profile_history"][0].clone();
         b["profile_history"].as_array_mut().unwrap().push(first);
@@ -2087,11 +2101,11 @@ fn profile_history_duplicate_old_lower_floor_rejected_exits_23() {
 fn profile_downgrade_human_decision_legal() {
     let d = tmp();
     let (b, n) = paths(&d);
-    make_baton_v2(&b, "research_review", "prativadi", 4, |b| {
+    make_baton_v3(&b, "research_review", "prativadi", 4, |b| {
         b["profile"] = json!("full");
         b["profile_floor"] = json!("full");
     });
-    make_baton_v2(&n, "human_decision", "human", 5, |b| {
+    make_baton_v3(&n, "human_decision", "human", 5, |b| {
         standard_profile(b);
         b["profile_floor"] = json!("full");
         b["profile_decision"]["floor"] = json!("full");

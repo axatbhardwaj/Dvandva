@@ -18,6 +18,7 @@ use serde_json::Value;
 
 use crate::gitcfg::{git_stdout, repo_toplevel};
 use crate::util::{coalesce, read_json_lenient, JsonReadError};
+use crate::workflow::{self, StateClass};
 
 /// Outcome of a commit-gate evaluation: the process exit code plus the stderr
 /// lines to emit in order. The wording mirrors the shell gate verbatim so
@@ -42,9 +43,10 @@ impl GateResult {
     }
 }
 
-/// Statuses the gate treats as inactive (a run in one of these states is not
-/// baton-gated). Broader than [`crate::baton::Status::is_terminal`]
-/// (`done`/`abandoned`): the gate also treats human pauses as inactive.
+/// Fallback statuses the gate treats as inactive (a run in one of these states
+/// is not baton-gated) when no v3 class is available. Broader than
+/// [`crate::baton::Status::is_terminal`] (`done`/`abandoned`): the gate also
+/// treats human pauses as inactive.
 ///
 /// Shared with [`crate::drift_lint`], which uses the same terminal set to
 /// decide whether an active baton makes unstamped commits reportable drift.
@@ -58,6 +60,45 @@ pub fn is_gate_terminal(status: &str) -> bool {
             | "human_decision"
             | "abandoned"
     )
+}
+
+/// Class-aware inactive-baton predicate for commit gating.
+///
+/// v3 batons derive inactivity from `StateClass::HumanGate`,
+/// `StateClass::Pause`, and `StateClass::Terminal` in their `run_workflow`;
+/// v1/v2 batons, plus malformed or partial v3 read-path data, fall back to
+/// [`is_gate_terminal`]'s token set.
+fn is_inactive_baton(value: &Value) -> bool {
+    let status = field_str(value, "status", "");
+    if field_str(value, "schema", "") == "dvandva.baton.v3" {
+        if let Some(class) = v3_status_class(value, &status) {
+            return matches!(
+                class,
+                StateClass::HumanGate | StateClass::Pause | StateClass::Terminal
+            );
+        }
+    }
+    is_gate_terminal(&status)
+}
+
+fn v3_status_class(value: &Value, status: &str) -> Option<StateClass> {
+    let rw_value = value.get("run_workflow")?;
+    let rw = rw_value.as_object()?;
+    let source = field_str(rw_value, "source", "");
+    if let Some(preset_name) = source.strip_prefix("preset:") {
+        return workflow::preset(preset_name)
+            .and_then(|graph| graph.states.into_iter().find(|state| state.name == status))
+            .map(|state| state.class);
+    }
+
+    let states = rw.get("states")?.as_array()?;
+    states.iter().find_map(|state| {
+        if field_str(state, "name", "") == status {
+            StateClass::from_token(&field_str(state, "class", ""))
+        } else {
+            None
+        }
+    })
 }
 
 fn render_scalar(value: &Value) -> String {
@@ -181,8 +222,7 @@ pub fn evaluate(cwd: &Path, role: Option<&str>) -> GateResult {
                 )]);
             }
             Ok(value) => {
-                let status = field_str(&value, "status", "");
-                if !is_gate_terminal(&status) {
+                if !is_inactive_baton(&value) {
                     active.push((path.clone(), value));
                 }
             }

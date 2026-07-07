@@ -38,6 +38,7 @@ pub mod state;
 pub mod util;
 pub mod wait;
 pub mod watchdog;
+pub mod workflow;
 pub mod write;
 
 use std::path::Path;

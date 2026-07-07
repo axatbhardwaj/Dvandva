@@ -345,9 +345,9 @@ write-helper validation exit 23
 "#;
 
 const MODEL_CLASSES: &str = r#"Dvandva model classes are vendor-neutral.
-Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models.
-Codex maps `opus` to `gpt-5.5` with `xhigh` reasoning and `sonnet` to `gpt-5.5` with `high` reasoning.
-Codex should request `xhigh` reasoning effort for opus-class work and `high` reasoning effort for sonnet-class work where the active surface exposes it.
+Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available.
+Codex maps `opus` and `fable` to `gpt-5.5` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.5` with `high` reasoning.
+Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it.
 Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.
 Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
 Do not use `haiku` for Dvandva subagents.
@@ -683,12 +683,72 @@ fn phase4_research_rejects_wrong_model_class() {
 }
 
 #[test]
+fn phase4_research_accepts_new_agent_with_fable_model() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    // A hypothetical FUTURE (non-seed) agent may declare the frontier `fable`
+    // class; it is not in the seed roster, so only the general 4-class
+    // membership check applies to it.
+    w(
+        d.path(),
+        "plugins/dvandva/agents/frontier-planner.md",
+        "---\nname: dvandva-frontier-planner\nmodel: fable\n---\n",
+    );
+    let r = phase4_research::report(d.path());
+    assert!(r.passed(), "expected clean, failures: {}", r.failures());
+}
+
+#[test]
+fn phase4_research_rejects_new_agent_with_invalid_model() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    // The general membership gate is real: an unknown model class on a non-seed
+    // agent is still rejected (proves the fable-accept test is not vacuous).
+    w(
+        d.path(),
+        "plugins/dvandva/agents/frontier-planner.md",
+        "---\nname: dvandva-frontier-planner\nmodel: turbo\n---\n",
+    );
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("frontier-planner declares a single valid model class"));
+}
+
+#[test]
+fn phase4_research_rejects_seed_agent_retiered_to_fable() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    // Seeds are NOT silently re-tiered: `fable` is legal for future agents but a
+    // seed pinned to sonnet may not flip to it.
+    let p = d.path().join("plugins/dvandva/agents/researcher.md");
+    let text = fs::read_to_string(&p)
+        .unwrap()
+        .replace("model: sonnet", "model: fable");
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("uses sonnet-class model"));
+}
+
+#[test]
+fn phase4_research_rejects_seed_agent_retiered_to_gpt() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    // `gpt` is legal for future non-seed agents, not for re-tiering a seed.
+    let p = d.path().join("plugins/dvandva/agents/researcher.md");
+    let text = fs::read_to_string(&p)
+        .unwrap()
+        .replace("model: sonnet", "model: gpt");
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("uses sonnet-class model"));
+}
+
+#[test]
 fn phase4_research_rejects_command_missing_model_policy() {
     let d = tmp();
     phase4_fixture(d.path());
     let p = d.path().join("plugins/dvandva/commands/vadi.md");
     let text = fs::read_to_string(&p).unwrap().replace(
-        "Codex should request `xhigh` reasoning effort for opus-class work and `high` reasoning effort for sonnet-class work where the active surface exposes it.\n",
+        "Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it.\n",
         "",
     );
     fs::write(&p, text).unwrap();
@@ -775,9 +835,9 @@ Explicit closure is required; every generated handle must be explicitly closed b
 Dynamic write-path disjointness is required unless conflict_group serialization applies.
 There is no daemon and no mailbox.
 There is no hidden scheduler or hidden central process.
-Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models.
-Codex maps `opus` to `gpt-5.5` with `xhigh` reasoning and `sonnet` to `gpt-5.5` with `high` reasoning.
-Codex should request `xhigh` reasoning effort for opus-class work and `high` reasoning effort for sonnet-class work where the active surface exposes it.
+Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available.
+Codex maps `opus` and `fable` to `gpt-5.5` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.5` with `high` reasoning.
+Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it.
 Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.
 Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
 generated agents never own assignee, active_roles, or transitions.
@@ -791,9 +851,9 @@ Explicit closure is required; every generated handle must be explicitly closed b
 Dynamic write-path disjointness is required when instances share base_checkpoint or when both instances are live planned/running, unless conflict_group serialization through depends_on applies.
 There is no daemon and no mailbox.
 There is no hidden scheduler or hidden central process.
-Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models.
-Codex maps `opus` to `gpt-5.5` with `xhigh` reasoning and `sonnet` to `gpt-5.5` with `high` reasoning.
-Codex should request `xhigh` reasoning effort for opus-class work and `high` reasoning effort for sonnet-class work where the active surface exposes it.
+Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available.
+Codex maps `opus` and `fable` to `gpt-5.5` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.5` with `high` reasoning.
+Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it.
 Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.
 Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
 generated agents never own assignee, active_roles, or transitions.
@@ -984,7 +1044,7 @@ fn pathgate_fixture(root: &Path) {
     w(
         root,
         "rust/dvandva/src/commit_gate.rs",
-        "// dvandva commit-gate enforces DVANDVA_ROLE.\n// scans .dvandva/runs/*/baton.json; inactive done clarifying_questions_answer clarifying_questions_followup_answer human_question human_decision.\n// fail closed via read_json_lenient.\n",
+        "// dvandva commit-gate enforces DVANDVA_ROLE.\n// scans .dvandva/runs/*/baton.json; v3 inactive classes use StateClass::HumanGate StateClass::Pause StateClass::Terminal with is_gate_terminal token fallback.\n// fail closed via read_json_lenient.\n",
     );
     w(
         root,
@@ -1070,7 +1130,7 @@ fn pathgate_rejects_commit_gate_without_role() {
     w(
         d.path(),
         "rust/dvandva/src/commit_gate.rs",
-        "// scans .dvandva/runs/*/baton.json; inactive done clarifying_questions_answer clarifying_questions_followup_answer human_question human_decision.\n// fail closed via read_json_lenient.\n",
+        "// scans .dvandva/runs/*/baton.json; v3 inactive classes use StateClass::HumanGate StateClass::Pause StateClass::Terminal with is_gate_terminal token fallback.\n// fail closed via read_json_lenient.\n",
     );
     let r = run4_path_gates::report(d.path());
     assert!(r.fails_with("commit-gate must enforce DVANDVA_ROLE"));
@@ -1101,7 +1161,7 @@ fn pathgate_rejects_resolver_without_run_scope() {
     w(
         d.path(),
         "rust/dvandva/src/commit_gate.rs",
-        "// dvandva commit-gate enforces DVANDVA_ROLE.\n// inactive done clarifying_questions_answer clarifying_questions_followup_answer human_question human_decision.\n// fail closed via read_json_lenient.\n",
+        "// dvandva commit-gate enforces DVANDVA_ROLE.\n// v3 inactive classes use StateClass::HumanGate StateClass::Pause StateClass::Terminal with is_gate_terminal token fallback.\n// fail closed via read_json_lenient.\n",
     );
     let r = run4_path_gates::report(d.path());
     assert!(r.fails_with("commit_gate.rs must scan run-scoped baton paths"));
@@ -1117,7 +1177,7 @@ fn pathgate_rejects_owner_without_terminal_statuses() {
         "// dvandva commit-gate enforces DVANDVA_ROLE.\n// scans .dvandva/runs/*/baton.json.\n// fail closed via read_json_lenient.\n",
     );
     let r = run4_path_gates::report(d.path());
-    assert!(r.fails_with("commit_gate.rs must share inactive baton statuses"));
+    assert!(r.fails_with("commit_gate.rs must share inactive baton class semantics"));
 }
 
 #[test]
@@ -1157,7 +1217,7 @@ fn pathgate_rejects_resolver_without_fail_closed_json() {
     w(
         d.path(),
         "rust/dvandva/src/commit_gate.rs",
-        "// dvandva commit-gate enforces DVANDVA_ROLE.\n// scans .dvandva/runs/*/baton.json; inactive done clarifying_questions_answer clarifying_questions_followup_answer human_question human_decision.\n",
+        "// dvandva commit-gate enforces DVANDVA_ROLE.\n// scans .dvandva/runs/*/baton.json; v3 inactive classes use StateClass::HumanGate StateClass::Pause StateClass::Terminal with is_gate_terminal token fallback.\n",
     );
     let r = run4_path_gates::report(d.path());
     assert!(r.fails_with("must fail closed on malformed baton JSON"));
@@ -1437,6 +1497,41 @@ const PARITY_STATUS_TOKENS: &[&str] = &[
     "abandoned",
 ];
 
+/// The live 29-token v3 engine catalog (`PARITY_STATUS_TOKENS` plus the three
+/// v3-only per-run-workflow declaration states) that `baton-schema-v3.json` is
+/// pinned to; mirrors `write::V3_STATUS_CATALOG`.
+const PARITY_STATUS_TOKENS_V3: &[&str] = &[
+    "clarifying_questions_drafting",
+    "clarifying_questions_answer",
+    "clarifying_questions_followup",
+    "clarifying_questions_followup_answer",
+    "research_drafting",
+    "research_review",
+    "research_revision",
+    "spec_drafting",
+    "spec_review",
+    "spec_revision",
+    "workflow_declaring",
+    "workflow_review",
+    "workflow_revision",
+    "implementing",
+    "parallel_implementing",
+    "test_creation",
+    "cross_review",
+    "cross_fixing",
+    "deep_review",
+    "review_of_review",
+    "counter_review",
+    "deslop",
+    "termination_review",
+    "phase_review",
+    "phase_fixing",
+    "human_question",
+    "human_decision",
+    "done",
+    "abandoned",
+];
+
 const PARITY_REQUIRED_KEYS: &[&str] = &[
     "schema",
     "updated_at",
@@ -1491,11 +1586,14 @@ fn parity_catalog_line(tokens: &[&str]) -> String {
     format!("Status catalog (26): {}\n", tokens.join(", "))
 }
 
-/// A `baton-schema-v2.json` body carrying `status_catalog` as a JSON array.
-fn parity_status_catalog_json(tokens: &[&str]) -> String {
+/// A baton-schema reference body carrying `status_catalog` as a JSON array.
+fn parity_status_catalog_json(schema: &str, tokens: &[&str], note: Option<&str>) -> String {
     let items: Vec<String> = tokens.iter().map(|t| format!("    \"{t}\"")).collect();
+    let note_line = note
+        .map(|note| format!("  \"_note\": \"{note}\",\n"))
+        .unwrap_or_default();
     format!(
-        "{{\n  \"schema\": \"dvandva.baton.v2\",\n  \"status_catalog\": [\n{}\n  ]\n}}\n",
+        "{{\n{note_line}  \"schema\": \"{schema}\",\n  \"status_catalog\": [\n{}\n  ]\n}}\n",
         items.join(",\n")
     )
 }
@@ -1547,8 +1645,17 @@ fn parity_fixture(root: &Path) {
     // A1 — status-enum doc copies.
     w(
         root,
+        "plugins/dvandva/references/baton-schema-v3.json",
+        &parity_status_catalog_json("dvandva.baton.v3", PARITY_STATUS_TOKENS_V3, None),
+    );
+    w(
+        root,
         "plugins/dvandva/references/baton-schema-v2.json",
-        &parity_status_catalog_json(PARITY_STATUS_TOKENS),
+        &parity_status_catalog_json(
+            "dvandva.baton.v2",
+            PARITY_STATUS_TOKENS,
+            Some("HISTORICAL: dvandva.baton.v2 read-path reference"),
+        ),
     );
     w(
         root,
@@ -1622,7 +1729,11 @@ fn parity_rejects_schema_catalog_missing_token() {
     w(
         d.path(),
         "plugins/dvandva/references/baton-schema-v2.json",
-        &parity_status_catalog_json(short),
+        &parity_status_catalog_json(
+            "dvandva.baton.v2",
+            short,
+            Some("HISTORICAL: dvandva.baton.v2 read-path reference"),
+        ),
     );
     let r = schema_parity::report(d.path());
     assert!(r.fails_with("baton-schema-v2.json status_catalog"));

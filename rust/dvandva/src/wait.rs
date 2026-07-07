@@ -15,11 +15,23 @@
 //!
 //! Exit codes (protocol surface, never unified with sibling helpers):
 //! `0` assigned/actionable · `10` done · `11` human_decision · `12`
-//! human_question · `13` abandoned · `14` discover_ambiguous · `20` finite
-//! timeout · `21` baton missing · `22` invalid JSON · `23` persist-max · `24`
-//! stall-max · `29` split-brain · `2` usage.
+//! human_question · `13` abandoned · `14` discover_ambiguous · `15` human_gate
+//! · `20` finite timeout · `21` baton missing · `22` invalid JSON · `23`
+//! persist-max · `24` stall-max · `29` split-brain · `2` usage.
+//!
+//! Status classification is [`StateClass`]-driven (see [`resolve_status_class`])
+//! for BOTH the selected baton's own status and every sibling run scanned for
+//! human-pause propagation / split-brain: a v3 baton resolves its current
+//! status's class from its own `run_workflow` (custom -> declared `states[]`,
+//! `preset:*` -> the resolved preset), a v1/v2 baton from the static token map
+//! ([`workflow::static_class`]). For the selected baton, the class selects the
+//! exit: `Terminal` -> 10/13, `Pause` -> 11/12, `HumanGate` -> 15, `Work`/
+//! `ReviewGate` -> the generic heartbeat path. For a sibling (see
+//! [`scan_sibling_runs`]), `Terminal` is skipped, `Pause` and `HumanGate` both
+//! propagate a human pause (a human is needed either way), and `Work`/
+//! `ReviewGate` are active/split-brain candidates.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::time::Duration;
 
@@ -28,6 +40,7 @@ use serde_json::Value;
 use time::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time, UtcOffset};
 
 use crate::util::{coalesce, now_epoch, read_json_lenient};
+use crate::workflow::{self, StateClass};
 
 /// A fully-resolved wait invocation. Built by the `cmd::wait` wrapper after
 /// selector/env resolution (including resolver delegation for the legacy
@@ -214,17 +227,32 @@ pub fn run(cfg: &WaitConfig) -> i32 {
             String::new()
         };
 
-        match status.as_str() {
-            "done" => {
-                println!(
-                    "DVANDVA_WAIT done phase={phase} checkpoint={checkpoint} assignee={assignee}"
-                );
-                return 10;
+        // Classify the current status, then dispatch by class. v3 batons read
+        // the class from their own run_workflow; v1/v2 batons from the static
+        // token map (which retroactively maps the clarifying-answer states to
+        // HumanGate — the F5 fix).
+        let status_class = resolve_status_class(&value, &status);
+        match status_class {
+            StateClass::Terminal => {
+                // `done` -> 10, `abandoned` -> 13, both with their legacy line
+                // grammar. A DECLARED v3 terminal that is neither legacy token
+                // is treated as abandoned-equivalent (exit 13) — the honest
+                // "this run is over, and not via the done handshake" outcome.
+                if status == "done" {
+                    println!("DVANDVA_WAIT done phase={phase} checkpoint={checkpoint} assignee={assignee}");
+                    return 10;
+                }
+                println!("DVANDVA_WAIT abandoned phase={phase} checkpoint={checkpoint} assignee={assignee}");
+                return 13;
             }
-            "human_decision" | "human_question" if cfg.through_human => {
-                // Suspend the stall watchdog for the duration of the pause;
-                // it resumes counting from "now" the moment the pause clears
-                // (contract 6).
+            StateClass::HumanGate | StateClass::Pause if cfg.through_human => {
+                // --through-human passive watch: HumanGate participates exactly
+                // like a Pause (human_question) does — suspend the stall
+                // watchdog for the pause's duration (it resumes counting from
+                // "now" the instant the gate/pause clears), note the episode at
+                // most once, then fall through and keep polling. HumanGate does
+                // NOT exit 15 here: --through-human means the surfacing is being
+                // handled out of band, so we wait it out like any human pause.
                 stall_started = now_epoch();
                 through_human_paused = true;
                 let episode = (status.clone(), checkpoint.clone());
@@ -240,21 +268,28 @@ pub fn run(cfg: &WaitConfig) -> i32 {
                 // Fall through: no return, keep polling at the normal
                 // interval/heartbeat cadence below.
             }
-            "human_decision" => {
+            StateClass::HumanGate => {
+                // F5: a human-assigned gate (e.g. clarifying_questions_answer)
+                // must wake the role that surfaces it to the human. A plain
+                // exit is correct — surfacing is an action the role must take,
+                // so there are no once-per-episode semantics to preserve here.
+                println!("DVANDVA_WAIT human_gate status={status} checkpoint={checkpoint}");
+                return 15;
+            }
+            StateClass::Pause => {
+                // `human_question` -> 12 (with its resume/question fields),
+                // `human_decision` -> 11. A DECLARED v3 pause state that is
+                // neither legacy token is treated as human_decision-equivalent
+                // (exit 11) — the generic "stopped for a human" outcome.
+                if status == "human_question" {
+                    println!("DVANDVA_WAIT human_question phase={phase} checkpoint={checkpoint} assignee={assignee} resume_assignee={resume_assignee} resume_status={resume_status} question={question}");
+                    return 12;
+                }
                 println!("DVANDVA_WAIT human_decision phase={phase} checkpoint={checkpoint} assignee={assignee}");
                 return 11;
             }
-            "human_question" => {
-                println!("DVANDVA_WAIT human_question phase={phase} checkpoint={checkpoint} assignee={assignee} resume_assignee={resume_assignee} resume_status={resume_status} question={question}");
-                return 12;
-            }
-            "abandoned" => {
-                println!(
-                    "DVANDVA_WAIT abandoned phase={phase} checkpoint={checkpoint} assignee={assignee}"
-                );
-                return 13;
-            }
-            _ => {}
+            // Work / ReviewGate: fall through to the generic heartbeat path.
+            StateClass::Work | StateClass::ReviewGate => {}
         }
 
         let mut sibling_active_count = 0;
@@ -753,17 +788,31 @@ fn scan_sibling_runs(
 
     let files = list_managed_batons(&root);
 
+    // Robust self-identity, captured once. All three axes are stable across the
+    // *one* thing that used to defeat the self-skip: an atomic temp-file+rename
+    // replace of the selected baton mid-scan, which swaps its (dev, ino) between
+    // this pre-loop capture and the per-file check below (finding
+    // vadi-wait-split-brain-false-positive — the run was scanned as its own
+    // split-brain sibling).
     let selected_id = file_identity(&cfg.baton_file);
+    let selected_canonical = canonical_path(&cfg.baton_file);
+    // Path-authoritative id (empty field fallback): never spoofable by a stale
+    // `.run_id`, and — unlike inode/canonical — immune to inode churn entirely.
+    let selected_run_id = derive_run_id(&cfg.baton_file, "");
     let mut human_candidates: Vec<HumanCandidate> = Vec::new();
     let mut split_brain_candidates: Vec<SplitBrainCandidate> = Vec::new();
 
     for sibling_file in files {
-        if let (Some(sel), Some(sib)) = (selected_id, file_identity(&sibling_file)) {
-            if sel == sib {
-                continue; // self-skip by (dev, ino), never by run id
-            }
-        }
         let sibling_run_id = derive_run_id(&sibling_file, "");
+        if is_selected_self(
+            selected_id.as_ref(),
+            selected_canonical.as_deref(),
+            &selected_run_id,
+            &sibling_file,
+            &sibling_run_id,
+        ) {
+            continue;
+        }
         let Ok(sibling) = read_json_lenient(Path::new(&sibling_file)) else {
             continue;
         };
@@ -772,23 +821,46 @@ fn scan_sibling_runs(
         let sibling_active_roles = active_roles_csv(&sibling);
         let sibling_updated_at = field_str(&sibling, "updated_at");
 
-        match sibling_status.as_str() {
-            // Completed or abandoned run: not competing for my role, and its
+        // Class-driven, exactly like the selected baton's own status
+        // (`resolve_status_class`, below): a v3 sibling resolves its class
+        // from its own `run_workflow`, a v1/v2 sibling from the static token
+        // map. This is what keeps a v3 custom-graph sibling parked at a
+        // non-legacy declared state from leaking through as a false "active"
+        // candidate.
+        let sibling_class = resolve_status_class(&sibling, &sibling_status);
+        match sibling_class {
+            // Completed/abandoned (legacy tokens) or any DECLARED terminal
+            // state under a non-legacy name: the sibling run is over, and its
             // pause state (if any) is over — neither counts as active nor
             // propagates.
-            "done" | "abandoned" => continue,
-            // Paused on a human. A newer sibling propagates its intervention to a
-            // paired waiter; an older one (or one without a comparable
-            // timestamp) is parked.
-            "human_decision" | "human_question" => {
+            StateClass::Terminal => continue,
+            // Paused on a human — `human_decision`/`human_question` (legacy
+            // tokens, both statically `Pause`) or any DECLARED v3 `pause`
+            // state. A DECLARED v3 `human_gate` state is folded into this
+            // same propagation path: a human is needed either way, so a
+            // sibling parked on one propagates a pause exactly like `Pause`
+            // does rather than counting as an active split-brain candidate.
+            // A newer sibling propagates its intervention to a paired
+            // waiter; an older one (or one without a comparable timestamp)
+            // is parked. The propagated status label mirrors the
+            // selected-baton convention (see the `StateClass::Pause` arm
+            // above, in the main wait loop): only the literal
+            // `human_question` token keeps that label, every other
+            // Pause/HumanGate status propagates as `human_decision`.
+            StateClass::Pause | StateClass::HumanGate => {
                 if !cfg.concurrent {
                     if let Some(parsed) = newer_sibling_time(
                         selected_updated_at,
                         &sibling_updated_at,
                         &sibling_run_id,
                     ) {
+                        let propagated_status = if sibling_status == "human_question" {
+                            "human_question".to_string()
+                        } else {
+                            "human_decision".to_string()
+                        };
                         human_candidates.push(HumanCandidate {
-                            status: sibling_status,
+                            status: propagated_status,
                             run_id: sibling_run_id,
                             updated_at: parsed,
                             checkpoint: checkpoint_str(&sibling),
@@ -800,7 +872,7 @@ fn scan_sibling_runs(
                 }
                 continue;
             }
-            _ => {
+            StateClass::Work | StateClass::ReviewGate => {
                 scan.active_count += 1;
                 if !cfg.concurrent
                     && selected_assignee == peer_role(&cfg.role)
@@ -973,6 +1045,55 @@ fn file_identity(path: &str) -> Option<std::path::PathBuf> {
     std::fs::canonicalize(path).ok()
 }
 
+/// Absolute, symlink-resolved path. Stable across an atomic temp-file+rename
+/// replace of the target (the directory entry is what's swapped, not the path),
+/// so it identifies the selected run even after its inode churns mid-scan.
+fn canonical_path(path: &str) -> Option<PathBuf> {
+    std::fs::canonicalize(path).ok()
+}
+
+/// Whether `sibling_file` IS the selected run and so must be excluded from its
+/// own sibling set. Three independent identity axes, any one sufficient, so no
+/// single filesystem event can make the run masquerade as its own sibling:
+///   1. Path-derived run id — a pure lexical id from the on-disk layout, immune
+///      to inode churn. Restricted to concretely named runs: the generic
+///      `legacy`/`unknown` fallbacks can name genuinely distinct batons (e.g. a
+///      run literally named `legacy` vs. the legacy baton), so they defer to the
+///      path/inode axes rather than risk hiding a real peer.
+///   2. Canonical path — stable across an atomic rename replace.
+///   3. (dev, ino) — the original check, kept for hardlink/bind-mount layouts
+///      whose path strings differ.
+fn is_selected_self(
+    selected_id: Option<&FileId>,
+    selected_canonical: Option<&Path>,
+    selected_run_id: &str,
+    sibling_file: &str,
+    sibling_run_id: &str,
+) -> bool {
+    if sibling_run_id == selected_run_id
+        && selected_run_id != "legacy"
+        && selected_run_id != "unknown"
+    {
+        return true;
+    }
+    if let (Some(a), Some(b)) = (selected_canonical, canonical_path(sibling_file)) {
+        if a == b {
+            return true;
+        }
+    }
+    if let (Some(a), Some(b)) = (selected_id, file_identity(sibling_file).as_ref()) {
+        if a == b {
+            return true;
+        }
+    }
+    false
+}
+
+#[cfg(unix)]
+type FileId = (u64, u64);
+#[cfg(not(unix))]
+type FileId = std::path::PathBuf;
+
 /// Whether this role has dependency-unblocked, non-terminal work to do.
 ///
 /// For team-owned `parallel_implementing` / `cross_fixing` states this ports the
@@ -1112,6 +1233,44 @@ fn depends_on(chunk: &Value) -> Vec<String> {
         Some(Value::Array(items)) => items.iter().map(jq_scalar_string).collect(),
         _ => Vec::new(),
     }
+}
+
+// ── status classification (StateClass resolution) ───────────────────────────
+
+/// The [`StateClass`] of the baton's current `status`.
+///
+/// A v3 baton (identified by a `run_workflow` object) is class-authoritative
+/// over its own statuses:
+/// * `source: "custom"` — the class is read from the matching `states[]` entry
+///   (`states[].class`, one of the five class tokens);
+/// * `source: "preset:<name>"` — the class is resolved from the named preset's
+///   states (the class of a given token is preset-independent, so any preset
+///   carrying it agrees).
+///
+/// Any resolution miss (absent/unparseable class, status not declared, unknown
+/// preset) and every v1/v2 baton fall back to [`workflow::static_class`], the
+/// exact-replication token map. This keeps the read path honest: a malformed
+/// or partial v3 workflow degrades to legacy semantics rather than guessing.
+fn resolve_status_class(value: &Value, status: &str) -> StateClass {
+    if let Some(rw) = value.get("run_workflow").filter(|v| v.is_object()) {
+        let source = field_str(rw, "source");
+        if let Some(preset_name) = source.strip_prefix("preset:") {
+            if let Some(graph) = workflow::preset(preset_name) {
+                if let Some(st) = graph.states.iter().find(|s| s.name == status) {
+                    return st.class;
+                }
+            }
+        } else if let Some(Value::Array(states)) = rw.get("states") {
+            for s in states {
+                if field_str(s, "name") == status {
+                    if let Some(class) = StateClass::from_token(&field_str(s, "class")) {
+                        return class;
+                    }
+                }
+            }
+        }
+    }
+    workflow::static_class(status)
 }
 
 // ── field extraction (jq `//` + `join`/`tostring` string coercion) ───────────

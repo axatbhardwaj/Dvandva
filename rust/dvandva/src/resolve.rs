@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use serde_json::Value;
 
+use crate::workflow::{self, StateClass};
 use crate::{emit, util, Role};
 
 const UNSAFE_RUN_ID_MESSAGE: &str = "DVANDVA_RUN_ID must be one safe path segment (letters, numbers, dot, underscore, dash; no slash, backslash, or '..')";
@@ -200,7 +201,7 @@ fn discover_runs(root: &Path) -> Result<ResolveOutcome, ResolveError> {
             });
         };
         let candidate = RunCandidate::from_value(&value, &file.relative, &file.fallback_run_id);
-        if !RESOLVE_TERMINAL_STATUSES.contains(&candidate.status.as_str()) {
+        if !is_resolve_terminal(&value, &candidate.status) {
             resumable.push(candidate);
         }
     }
@@ -250,6 +251,41 @@ fn candidate_files(root: &Path) -> Vec<CandidateFile> {
         });
     }
     files
+}
+
+fn is_resolve_terminal(value: &Value, status: &str) -> bool {
+    if matches!(
+        object_field(value, "schema").as_deref(),
+        Some("dvandva.baton.v3")
+    ) {
+        if let Some(class) = v3_status_class(value, status) {
+            return class == StateClass::Terminal;
+        }
+    }
+
+    RESOLVE_TERMINAL_STATUSES.contains(&status)
+}
+
+fn v3_status_class(value: &Value, status: &str) -> Option<StateClass> {
+    let rw_value = value.get("run_workflow")?;
+    let rw = rw_value.as_object()?;
+    let source = object_field(rw_value, "source").unwrap_or_default();
+    if let Some(preset_name) = source.strip_prefix("preset:") {
+        return workflow::preset(preset_name)
+            .and_then(|graph| graph.states.into_iter().find(|state| state.name == status))
+            .map(|state| state.class);
+    }
+
+    let states = rw.get("states")?.as_array()?;
+    states.iter().find_map(|state| {
+        if object_field(state, "name").as_deref() == Some(status) {
+            object_field(state, "class")
+                .as_deref()
+                .and_then(StateClass::from_token)
+        } else {
+            None
+        }
+    })
 }
 
 impl RunCandidate {

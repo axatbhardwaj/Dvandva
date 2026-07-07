@@ -14,6 +14,8 @@
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering}; // p3-split-brain
+use std::sync::Arc; // p3-split-brain
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -2949,6 +2951,46 @@ fn discover_ignores_terminal_batons() {
     assert_eq!(adopted.code, Some(0), "{}", adopted.out);
 }
 
+// P3 sweep item 5: `--discover` adopting a run that is currently AT a
+// human_gate state must not silently heartbeat forever (the F5 class of bug,
+// resurfacing through the discovery path) — the adopt-and-continue preamble
+// falls through into the SAME wait loop that classifies status, so the
+// very next iteration after adoption exits 15 exactly like a directly
+// selected human_gate baton would.
+#[test]
+fn p3_discover_adopts_human_gate_baton_then_exits_15() {
+    let d = tmp();
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/gate/baton.json"),
+        "gate",
+        "human",
+        "clarifying_questions_answer",
+        "2026-07-05T09:00:00Z",
+        "codex",
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--discover",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_FAST,
+    );
+    assert!(o.contains("discovered file="), "{}", o.out);
+    assert_eq!(o.code, Some(15), "{}", o.out);
+    assert!(
+        o.contains("DVANDVA_WAIT human_gate status=clarifying_questions_answer checkpoint=8"),
+        "{}",
+        o.out
+    );
+}
+
 #[test]
 fn discover_two_actives_exits_14() {
     let d = tmp();
@@ -3051,4 +3093,757 @@ fn discover_adopted_baton_honors_until_actionable() {
     );
     assert!(o.contains("discovered file="), "{}", o.out);
     assert!(o.contains("no_actionable_work"), "{}", o.out);
+}
+
+// ── p3-wait-classes (StateClass-driven wait classification) ──────────────────
+//
+// The waiting baton's current status is classified by its StateClass rather
+// than by a closed status token match: v3 batons resolve the class from their
+// `run_workflow` (custom -> states[], preset:* -> the resolved preset), v1/v2
+// batons from the static token map. New exit 15 (`human_gate`) wakes the role
+// that must surface a HumanGate to the human (F5 fix). These tests cover the
+// class-dispatch behavior only; Cases 1-56 above are the pre-existing
+// comprehensive wait suite (ported from the shell test), and `p3-split-brain`
+// / `p3-sibling-class` below cover the later self-skip and sibling-class waves.
+
+/// Immediate-exit arg set: `--file <f> --role <role> --interval 0 --max-wait 0`.
+fn p3_now_args<'a>(role: &'a str, file: &'a str) -> [&'a str; 8] {
+    [
+        "--role",
+        role,
+        "--file",
+        file,
+        "--interval",
+        "0",
+        "--max-wait",
+        "0",
+    ]
+}
+
+/// A v1/v2 baton whose status is `status` (checkpoint 8), assigned to `human`.
+fn p3_write_v2_baton(file: &Path, status: &str) {
+    mkparent(file);
+    std::fs::write(
+        file,
+        format!(
+            r#"{{
+  "schema": "dvandva.baton.v2",
+  "assignee": "human",
+  "status": "{status}",
+  "phase": "spec",
+  "checkpoint": 8
+}}"#
+        ),
+    )
+    .unwrap();
+}
+
+/// A v3 baton with a `source:custom` run_workflow that declares exactly one
+/// state (`status` with `class`); the top-level status is that same token.
+/// `assignee` controls whether a Work-class status would otherwise go ready.
+fn p3_write_v3_custom_baton(file: &Path, status: &str, class: &str, assignee: &str) {
+    mkparent(file);
+    std::fs::write(
+        file,
+        format!(
+            r#"{{
+  "schema": "dvandva.baton.v3",
+  "assignee": "{assignee}",
+  "status": "{status}",
+  "phase": "spec",
+  "checkpoint": 8,
+  "run_workflow": {{
+    "source": "custom",
+    "declared_by": "vadi",
+    "declared_at_checkpoint": 1,
+    "approved_by": "prativadi",
+    "approved_at_checkpoint": 2,
+    "revision_round": 0,
+    "states": [
+      {{ "name": "{status}", "owner": "human", "class": "{class}" }}
+    ],
+    "edges": [],
+    "amendments": []
+  }}
+}}"#
+        ),
+    )
+    .unwrap();
+}
+
+/// A v3 baton whose run_workflow `source` is `preset:<name>`; the class of
+/// `status` is resolved from the named preset, not from any states[] entry.
+fn p3_write_v3_preset_baton(file: &Path, preset: &str, status: &str) {
+    mkparent(file);
+    std::fs::write(
+        file,
+        format!(
+            r#"{{
+  "schema": "dvandva.baton.v3",
+  "assignee": "human",
+  "status": "{status}",
+  "phase": "spec",
+  "checkpoint": 8,
+  "run_workflow": {{
+    "source": "preset:{preset}",
+    "declared_by": "vadi",
+    "declared_at_checkpoint": 1,
+    "approved_by": "prativadi",
+    "approved_at_checkpoint": 2,
+    "revision_round": 0,
+    "states": [],
+    "edges": [],
+    "amendments": []
+  }}
+}}"#
+        ),
+    )
+    .unwrap();
+}
+
+// Behavior 1+2: v1/v2 static map — clarifying-answer states are HumanGate (F5).
+#[test]
+fn p3_v2_clarifying_answer_exits_15_human_gate() {
+    let d = tmp();
+    let f = d.path().join("cqa.json");
+    p3_write_v2_baton(&f, "clarifying_questions_answer");
+    let o = run_wait(
+        None,
+        &[],
+        &p3_now_args("vadi", f.to_str().unwrap()),
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(15), "{}", o.out);
+    assert!(
+        o.contains("DVANDVA_WAIT human_gate status=clarifying_questions_answer checkpoint=8"),
+        "{}",
+        o.out
+    );
+}
+
+#[test]
+fn p3_v2_clarifying_followup_answer_exits_15() {
+    let d = tmp();
+    let f = d.path().join("cqfa.json");
+    p3_write_v2_baton(&f, "clarifying_questions_followup_answer");
+    let o = run_wait(
+        None,
+        &[],
+        &p3_now_args("vadi", f.to_str().unwrap()),
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(15), "{}", o.out);
+    assert!(
+        o.contains(
+            "DVANDVA_WAIT human_gate status=clarifying_questions_followup_answer checkpoint=8"
+        ),
+        "{}",
+        o.out
+    );
+}
+
+// Behavior 1: v3 custom — class read straight from states[].
+#[test]
+fn p3_v3_custom_human_gate_status_exits_15() {
+    let d = tmp();
+    let f = d.path().join("v3hg.json");
+    p3_write_v3_custom_baton(&f, "await_human_input", "human_gate", "human");
+    let o = run_wait(
+        None,
+        &[],
+        &p3_now_args("vadi", f.to_str().unwrap()),
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(15), "{}", o.out);
+    assert!(
+        o.contains("DVANDVA_WAIT human_gate status=await_human_input checkpoint=8"),
+        "{}",
+        o.out
+    );
+}
+
+#[test]
+fn p3_v3_custom_work_class_keeps_polling() {
+    // A Work-class status assigned to the peer -> generic heartbeat, never a
+    // class exit. Finite so it terminates on the budget with the timeout code.
+    let d = tmp();
+    let f = d.path().join("v3work.json");
+    p3_write_v3_custom_baton(&f, "drafting_pass", "work", "prativadi");
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "0",
+            "--max-wait",
+            "0",
+            "--finite",
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(20), "{}", o.out);
+    assert!(!o.contains("DVANDVA_WAIT human_gate"), "{}", o.out);
+}
+
+// P3 sweep item 1: a v3 CUSTOM graph can declare a legacy-shaped token
+// (`done`) with a NON-terminal class (`work`) — the design is class-
+// authoritative, so the declared class wins over the token's legacy meaning
+// and wait keeps polling (never the terminal exit 10 a bare `static_class`
+// lookup on the token `done` would produce). Pins `resolve_status_class`'s
+// documented contract: `states[].class` is checked before any token fallback.
+#[test]
+fn p3_v3_custom_legacy_token_done_with_work_class_keeps_polling() {
+    let d = tmp();
+    let f = d.path().join("v3misaligned.json");
+    p3_write_v3_custom_baton(&f, "done", "work", "prativadi");
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "0",
+            "--max-wait",
+            "0",
+            "--finite",
+        ],
+        BUDGET_FAST,
+    );
+    // Declared class (work) wins: finite-budget timeout, never the terminal
+    // exit 10 that the token `done` would produce under static classification.
+    assert_eq!(o.code, Some(20), "{}", o.out);
+    assert!(!o.contains("DVANDVA_WAIT human_gate"), "{}", o.out);
+}
+
+// Behavior 1: v3 preset:* — class resolved from the named preset's states.
+#[test]
+fn p3_v3_preset_clarifying_answer_exits_15() {
+    let d = tmp();
+    let f = d.path().join("v3preset.json");
+    p3_write_v3_preset_baton(&f, "standard", "clarifying_questions_answer");
+    let o = run_wait(
+        None,
+        &[],
+        &p3_now_args("vadi", f.to_str().unwrap()),
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(15), "{}", o.out);
+    assert!(
+        o.contains("DVANDVA_WAIT human_gate status=clarifying_questions_answer checkpoint=8"),
+        "{}",
+        o.out
+    );
+}
+
+// Behavior 3: declared v3 pause state that is not a legacy token -> exit 11.
+#[test]
+fn p3_v3_custom_nonlegacy_pause_exits_11() {
+    let d = tmp();
+    let f = d.path().join("v3pause.json");
+    p3_write_v3_custom_baton(&f, "await_human_ruling", "pause", "human");
+    let o = run_wait(
+        None,
+        &[],
+        &p3_now_args("vadi", f.to_str().unwrap()),
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(11), "{}", o.out);
+}
+
+// Behavior 4: declared v3 terminal that is not a legacy token -> exit 13;
+// a declared terminal named `done` still exits 10.
+#[test]
+fn p3_v3_custom_nonlegacy_terminal_exits_13() {
+    let d = tmp();
+    let f = d.path().join("v3term.json");
+    p3_write_v3_custom_baton(&f, "shipped", "terminal", "human");
+    let o = run_wait(
+        None,
+        &[],
+        &p3_now_args("vadi", f.to_str().unwrap()),
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(13), "{}", o.out);
+}
+
+#[test]
+fn p3_v3_custom_done_terminal_exits_10() {
+    let d = tmp();
+    let f = d.path().join("v3done.json");
+    p3_write_v3_custom_baton(&f, "done", "terminal", "team");
+    let o = run_wait(
+        None,
+        &[],
+        &p3_now_args("vadi", f.to_str().unwrap()),
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(10), "{}", o.out);
+}
+
+// Behavior 5: --through-human passive-watches a HumanGate the same way it does
+// human_question — one note per episode, no exit 15, auto-resumes.
+#[test]
+fn p3_through_human_human_gate_notes_once_no_exit() {
+    let d = tmp();
+    let f = d.path().join("cqa_th.json");
+    p3_write_v2_baton(&f, "clarifying_questions_answer"); // checkpoint 8
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "1",
+            "--max-wait",
+            "2",
+            "--finite",
+            "--through-human",
+        ],
+        BUDGET_SLOW,
+    );
+    // Never exits 15 under --through-human; runs out the finite budget.
+    assert_eq!(o.code, Some(20), "{}", o.out);
+    assert_eq!(
+        o.out
+            .matches(
+                "DVANDVA_WAIT note human_pause status=clarifying_questions_answer checkpoint=8"
+            )
+            .count(),
+        1,
+        "{}",
+        o.out
+    );
+}
+
+#[test]
+fn p3_through_human_human_gate_auto_wakes_on_resume() {
+    let d = tmp();
+    let f = d.path().join("cqa_th_resume.json");
+    p3_write_v2_baton(&f, "clarifying_questions_answer"); // checkpoint 8
+    let resume = f.clone();
+    thread::spawn(move || {
+        thread::sleep(Duration::from_millis(700));
+        write_baton(&resume, "vadi", "implementing");
+    });
+
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "1",
+            "--max-wait",
+            "540",
+            "--through-human",
+        ],
+        BUDGET_SLOW,
+    );
+    assert_eq!(o.code, Some(0), "{}", o.out);
+    assert!(o.contains("DVANDVA_WAIT ready role=vadi"), "{}", o.out);
+    assert!(
+        o.contains("DVANDVA_WAIT note human_pause status=clarifying_questions_answer checkpoint=8"),
+        "{}",
+        o.out
+    );
+    assert!(!o.contains("DVANDVA_WAIT human_gate"), "{}", o.out);
+}
+
+// Behavior 6: a v1/v2 ReviewGate-mapped status keeps the generic heartbeat.
+#[test]
+fn p3_v2_review_status_keeps_polling() {
+    let d = tmp();
+    let f = d.path().join("cross.json");
+    p3_write_v2_baton(&f, "cross_review");
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "0",
+            "--max-wait",
+            "0",
+            "--finite",
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(20), "{}", o.out);
+    assert!(!o.contains("DVANDVA_WAIT human_gate"), "{}", o.out);
+}
+
+// ── p3-split-brain ───────────────────────────────────────────────────────────
+// Regression for finding vadi-wait-split-brain-false-positive: a run must never
+// report ITSELF as a split-brain sibling. Live, a vadi wait exited 29 with
+// sibling_run_id == its own selected_run_id when the selected baton was
+// atomically rewritten (temp-file + rename) mid-scan — the pre-loop (dev, ino)
+// self-skip capture no longer matched the freshly-renamed file's inode, so the
+// selected run was scanned as its own sibling that happened to name the waiting
+// role as assignee.
+
+/// Atomically publish a named-run baton (write a sibling temp file, then rename
+/// over the target) so a concurrent reader only ever sees a complete document —
+/// exactly the replace shape production advances use, and the one that churns
+/// the inode the buggy self-skip relied on. // p3-split-brain
+fn atomic_write_named_baton(
+    baton: &Path,
+    run_id: &str,
+    assignee: &str,
+    status: &str,
+    checkpoint: u64,
+) {
+    let dir = baton.parent().unwrap();
+    std::fs::create_dir_all(dir).unwrap();
+    let tmp = dir.join(".baton.json.p3tmp");
+    std::fs::write(
+        &tmp,
+        format!(
+            r#"{{
+  "schema": "dvandva.baton.v2",
+  "run_id": "{run_id}",
+  "assignee": "{assignee}",
+  "status": "{status}",
+  "phase": 2,
+  "checkpoint": {checkpoint},
+  "question": null,
+  "resume_assignee": null,
+  "resume_status": null,
+  "updated_at": "2026-06-29T15:00:00Z",
+  "current_engine": "codex"
+}}"#
+        ),
+    )
+    .unwrap();
+    std::fs::rename(&tmp, baton).unwrap();
+}
+
+// The selected run advances (atomic rename) to a vadi-owned checkpoint while a
+// vadi `--file`/`--since-checkpoint`/`--until-actionable` wait polls it. It must
+// exit 0 (checkpoint_advanced), never 29 with itself as the sibling. // p3-split-brain
+#[test]
+fn p3_self_run_never_reported_as_its_own_split_brain_sibling() {
+    let d = tmp();
+    // Widen the sibling scan's window between its one-shot self-identity capture
+    // and the per-file check by seeding many terminal (`done`) sibling runs that
+    // sort BEFORE the selected run: the scan reads them all before reaching the
+    // selected file, so an atomic rename landing in that span reliably churns the
+    // selected file's inode out from under the pre-loop (dev, ino) capture. Done
+    // siblings never count as active or split-brain, so they add no false peers.
+    for i in 0..150 {
+        atomic_write_named_baton(
+            &d.path().join(format!(".dvandva/runs/run{i:04}/baton.json")),
+            &format!("run{i:04}"),
+            "prativadi",
+            "done",
+            8,
+        );
+    }
+    let baton = d.path().join(".dvandva/runs/zz/baton.json");
+    // Base: the peer (prativadi) owns checkpoint 8; vadi waits since 8.
+    atomic_write_named_baton(&baton, "zz", "prativadi", "implementing", 8);
+
+    let stop = Arc::new(AtomicBool::new(false));
+    let baton_w = baton.clone();
+    let stop_w = Arc::clone(&stop);
+    let writer = thread::spawn(move || {
+        // Churn phase: flip assignee prativadi<->vadi at a FIXED checkpoint 8.
+        // Holding the checkpoint at the --since-checkpoint value means a clean
+        // caller read never legitimately exits 0 here, so any exit during the
+        // churn is the buggy self-as-sibling scan (29). Each rename wakes the
+        // wait's directory watcher, re-running the self-skip against an
+        // ever-changing inode hundreds of times.
+        let start = Instant::now();
+        let mut vadi = false;
+        while start.elapsed() < Duration::from_millis(2000) && !stop_w.load(Ordering::Relaxed) {
+            let assignee = if vadi { "vadi" } else { "prativadi" };
+            atomic_write_named_baton(&baton_w, "zz", assignee, "implementing", 8);
+            vadi = !vadi;
+        }
+        // Final advance: vadi owns checkpoint 9. The fixed binary, which never
+        // self-reports, reads this on its next poll and exits 0 promptly.
+        atomic_write_named_baton(&baton_w, "zz", "vadi", "implementing", 9);
+    });
+
+    let o = run_wait(
+        Some(d.path()),
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            ".dvandva/runs/zz/baton.json",
+            "--since-checkpoint",
+            "8",
+            "--until-actionable",
+            "--persist",
+            "--interval",
+            "1",
+            "--max-wait",
+            "5",
+        ],
+        Duration::from_secs(12),
+    );
+    stop.store(true, Ordering::Relaxed);
+    writer.join().unwrap();
+
+    assert_ne!(
+        o.code,
+        Some(29),
+        "selected run reported itself as a split-brain sibling: {}",
+        o.out
+    );
+    assert!(
+        !(o.contains("split_brain") && o.contains("sibling_run_id=zz")),
+        "self-as-sibling split_brain line present: {}",
+        o.out
+    );
+    assert_eq!(
+        o.code,
+        Some(0),
+        "expected checkpoint_advanced exit 0: {}",
+        o.out
+    );
+}
+
+// A genuinely different active sibling run (beta) assigned to the waiting role
+// MUST still exit 29 — the self-skip fix excludes only the selected run, never a
+// real peer run. // p3-split-brain
+#[test]
+fn p3_real_sibling_assigned_to_my_role_still_exits_29() {
+    let d = tmp();
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "prativadi",
+        "implementing",
+        "2026-06-29T15:00:00Z",
+        "codex",
+    );
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/beta/baton.json"),
+        "beta",
+        "vadi",
+        "implementing",
+        "2026-06-29T15:01:00Z",
+        "claude",
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            ".dvandva/runs/alpha/baton.json",
+            "--persist",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(29), "{}", o.out);
+    assert!(o.contains("split_brain"), "{}", o.out);
+    assert!(o.contains("selected_run_id=alpha"), "{}", o.out);
+    assert!(o.contains("sibling_run_id=beta"), "{}", o.out);
+}
+
+// A static selected-run advance with no sibling exits 0 without any split-brain
+// line — the plain fixed-scenario regression. // p3-split-brain
+#[test]
+fn p3_selected_run_advanced_to_my_role_exits_0_no_self_sibling() {
+    let d = tmp();
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/zz/baton.json"),
+        "zz",
+        "vadi",
+        "implementing",
+        "2026-06-29T15:00:00Z",
+        "claude",
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            ".dvandva/runs/zz/baton.json",
+            "--since-checkpoint",
+            "7",
+            "--until-actionable",
+            "--persist",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(0), "{}", o.out);
+    assert!(o.contains("checkpoint_advanced"), "{}", o.out);
+    assert!(!o.contains("split_brain"), "{}", o.out);
+}
+
+// ── p3-sibling-class (sibling scan classifies by StateClass, not literal
+// token) ─────────────────────────────────────────────────────────────────────
+//
+// `scan_sibling_runs` used to classify a sibling by literal status-token match
+// ("done"/"abandoned" -> skip, "human_decision"/"human_question" -> pause
+// propagation, everything else -> active/split-brain candidate). A v3
+// custom-graph sibling parked at a declared terminal or human-gate state that
+// isn't one of those four legacy tokens was misclassified as active. Fixed to
+// resolve each sibling's own `StateClass` the same way the selected baton's
+// current status is resolved (`resolve_status_class`).
+
+/// A v3 baton with a `source:custom` run_workflow declaring one state, used as
+/// a SIBLING (carries `updated_at`, unlike `p3_write_v3_custom_baton` which is
+/// only ever written as the selected file). // p3-sibling-class
+fn p3_write_v3_custom_sibling_baton(
+    file: &Path,
+    assignee: &str,
+    status: &str,
+    class: &str,
+    checkpoint: u64,
+    updated_at: &str,
+) {
+    mkparent(file);
+    std::fs::write(
+        file,
+        format!(
+            r#"{{
+  "schema": "dvandva.baton.v3",
+  "assignee": "{assignee}",
+  "status": "{status}",
+  "phase": "spec",
+  "checkpoint": {checkpoint},
+  "updated_at": "{updated_at}",
+  "current_engine": "codex",
+  "run_workflow": {{
+    "source": "custom",
+    "declared_by": "vadi",
+    "declared_at_checkpoint": 1,
+    "approved_by": "prativadi",
+    "approved_at_checkpoint": 2,
+    "revision_round": 0,
+    "states": [
+      {{ "name": "{status}", "owner": "human", "class": "{class}" }}
+    ],
+    "edges": [],
+    "amendments": []
+  }}
+}}"#
+        ),
+    )
+    .unwrap();
+}
+
+// A v3 custom sibling declares a TERMINAL state under a non-legacy name
+// ("archived", never "done"/"abandoned"). A literal-token scan falls through
+// to the active/split-brain arm; class-aware scanning must skip it exactly
+// like a legacy done/abandoned sibling -- neither counted active nor a
+// split-brain candidate -- even though it names this role as assignee (which
+// would otherwise qualify it as a split-brain candidate). // p3-sibling-class
+#[test]
+fn p3_v3_custom_terminal_sibling_not_active_not_split_brain() {
+    let d = tmp();
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "prativadi",
+        "phase_review",
+        "2026-06-29T15:00:00Z",
+        "codex",
+    );
+    p3_write_v3_custom_sibling_baton(
+        &d.path().join(".dvandva/runs/beta/baton.json"),
+        "vadi",
+        "archived",
+        "terminal",
+        8,
+        "2026-06-29T15:01:00Z",
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "vadi",
+            "--persist",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_POLL,
+    );
+    assert!(
+        o.kept_polling(),
+        "expected keeps-polling, got {:?}\n{}",
+        o.code,
+        o.out
+    );
+    assert!(!o.contains("split_brain"), "{}", o.out);
+    assert!(o.contains("sibling_active_runs=0"), "{}", o.out);
+}
+
+// A v3 custom sibling declares a HUMAN_GATE state under a non-legacy name
+// ("awaiting_operator", never a clarifying-answer token). Class-aware
+// scanning propagates it as a human pause exactly like human_decision/
+// human_question does -- a human is needed either way -- rather than
+// treating it as an active split-brain candidate. // p3-sibling-class
+#[test]
+fn p3_v3_custom_human_gate_sibling_propagates_as_pause() {
+    let d = tmp();
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "prativadi",
+        "phase_review",
+        "2026-06-29T20:00:00Z",
+        "codex",
+    );
+    p3_write_v3_custom_sibling_baton(
+        &d.path().join(".dvandva/runs/beta/baton.json"),
+        "human",
+        "awaiting_operator",
+        "human_gate",
+        9,
+        "2026-06-29T20:01:00Z",
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "vadi",
+            "--persist",
+            "--interval",
+            "1",
+            "--max-wait",
+            "540",
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(11), "{}", o.out);
+    assert!(o.contains("sibling_run_id=beta"), "{}", o.out);
+    assert!(o.contains("selected_run_id=alpha"), "{}", o.out);
+    assert!(!o.contains("split_brain"), "{}", o.out);
 }

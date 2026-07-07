@@ -229,7 +229,7 @@ pub fn report(root: &Path) -> Report {
     // RE-KEYED resolvers: the three shell resolvers (commit-gate, drift-lint,
     // prepare-commit-msg) are now these binary modules. `jq empty` -> the shared
     // lenient reader `read_json_lenient`. `commit_gate.rs` owns baton-path
-    // discovery and terminal-status classification; `drift_lint.rs` and
+    // discovery and inactive class/status classification; `drift_lint.rs` and
     // `hooks.rs` share that logic by delegating to
     // `commit_gate::collect_baton_paths` / `commit_gate::is_gate_terminal`
     // rather than duplicating the literals, so the run-scan/terminal-status
@@ -247,9 +247,9 @@ pub fn report(root: &Path) -> Report {
         file_slurp_matches_ci(
             root,
             "rust/dvandva/src/commit_gate.rs",
-            "done.*clarifying_questions_answer.*clarifying_questions_followup_answer.*human_question.*human_decision",
+            "StateClass::HumanGate.*StateClass::Pause.*StateClass::Terminal|StateClass::Terminal.*StateClass::Pause.*StateClass::HumanGate",
         ),
-        "rust/dvandva/src/commit_gate.rs must share inactive baton statuses",
+        "rust/dvandva/src/commit_gate.rs must share inactive baton class semantics",
     );
 
     for rel in [

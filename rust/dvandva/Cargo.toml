@@ -1,8 +1,8 @@
 [package]
 name = "dvandva"
-version = "2.0.0-beta.4"
+version = "3.0.0-alpha.1"
 edition = "2021"
-description = "A governed-loop protocol for adversarial AI pairs. Multicall binary for two-role (vadi/prativadi) agent coordination over a validated JSON baton — state machine, waits, preflights, git gates, installers, and lints. No daemon, no orchestrator."
+description = "A governed-loop protocol for adversarial AI pairs. Each run declares its own peer-approved workflow graph — validated against five locked invariants — instead of a frozen state machine. Multicall binary for two-role (vadi/prativadi) coordination over a JSON baton: graph interpreter, class-driven waits, preflights, git gates, installers, and lints. No daemon, no orchestrator."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/axatbhardwaj/Dvandva"
 readme = "README.md"

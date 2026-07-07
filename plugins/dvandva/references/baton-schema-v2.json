@@ -1,4 +1,5 @@
 {
+  "_note": "HISTORICAL: dvandva.baton.v2 — retired write schema, kept for read-path compatibility and migration only. Live writes require dvandva.baton.v3 (see baton-schema-v3.json); a v2 write candidate is rejected with schema_retired.",
   "schema": "dvandva.baton.v2",
   "updated_at": null,
   "mode": "development",
