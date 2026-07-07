@@ -611,10 +611,12 @@ Model classes are durable workload-routing classes, not a literal ranked model t
 |---|---|---|---|
 | `opus` | `opus-class\|gpt-5.5-xhigh` | Opus-class | gpt-5.5 xhigh |
 | `sonnet` | `sonnet-class\|gpt-5.5-high` | Sonnet-class | gpt-5.5 high |
+| `fable` | `fable-class\|gpt-5.5-xhigh` | Fable-class | gpt-5.5 xhigh |
+| `gpt` | `gpt-class\|gpt-5.5-high` | Sonnet-class wrapper shells to Codex | gpt-5.5 high |
 
-Legacy validator-compatible aliases for existing batons are `opus-class|gpt-5.5`, `sonnet-class|gpt-5.4`, `gpt-5.5`, and `gpt-5.4`; new generated instances should emit the canonical effort-tier strings.
+Legacy validator-compatible aliases for existing batons are `opus-class|gpt-5.5`, `sonnet-class|gpt-5.4`, `gpt-5.5`, and `gpt-5.4`; `gpt-5.5` now resolves as a legacy alias of the `gpt` class. New generated instances should emit the canonical effort-tier strings.
 
-Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models. Codex maps `opus` to `gpt-5.5` with `xhigh` reasoning and `sonnet` to `gpt-5.5` with `high` reasoning. Codex should request `xhigh` reasoning effort for opus-class work and `high` reasoning effort for sonnet-class work where the active surface exposes it. Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work. Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop. Do not use `haiku` for Dvandva dynamic agents.
+Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available. Codex maps `opus` and `fable` to `gpt-5.5` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.5` with `high` reasoning. Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it. Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work. Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop. Do not use `haiku` for Dvandva dynamic agents.
 
 ### Permission classes
 
