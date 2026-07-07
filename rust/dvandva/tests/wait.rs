@@ -3101,8 +3101,10 @@ fn discover_adopted_baton_honors_until_actionable() {
 // than by a closed status token match: v3 batons resolve the class from their
 // `run_workflow` (custom -> states[], preset:* -> the resolved preset), v1/v2
 // batons from the static token map. New exit 15 (`human_gate`) wakes the role
-// that must surface a HumanGate to the human (F5 fix). These tests are owned by
-// p3-wait-classes; a later peer pass owns the comprehensive wait suite.
+// that must surface a HumanGate to the human (F5 fix). These tests cover the
+// class-dispatch behavior only; Cases 1-56 above are the pre-existing
+// comprehensive wait suite (ported from the shell test), and `p3-split-brain`
+// / `p3-sibling-class` below cover the later self-skip and sibling-class waves.
 
 /// Immediate-exit arg set: `--file <f> --role <role> --interval 0 --max-wait 0`.
 fn p3_now_args<'a>(role: &'a str, file: &'a str) -> [&'a str; 8] {
