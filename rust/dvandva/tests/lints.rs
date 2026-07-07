@@ -345,9 +345,9 @@ write-helper validation exit 23
 "#;
 
 const MODEL_CLASSES: &str = r#"Dvandva model classes are vendor-neutral.
-Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models.
-Codex maps `opus` to `gpt-5.5` with `xhigh` reasoning and `sonnet` to `gpt-5.5` with `high` reasoning.
-Codex should request `xhigh` reasoning effort for opus-class work and `high` reasoning effort for sonnet-class work where the active surface exposes it.
+Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available.
+Codex maps `opus` and `fable` to `gpt-5.5` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.5` with `high` reasoning.
+Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it.
 Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.
 Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
 Do not use `haiku` for Dvandva subagents.
@@ -683,12 +683,58 @@ fn phase4_research_rejects_wrong_model_class() {
 }
 
 #[test]
+fn phase4_research_accepts_new_agent_with_fable_model() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    // A hypothetical FUTURE (non-seed) agent may declare the frontier `fable`
+    // class; it is not in the seed roster, so only the general 4-class
+    // membership check applies to it.
+    w(
+        d.path(),
+        "plugins/dvandva/agents/frontier-planner.md",
+        "---\nname: dvandva-frontier-planner\nmodel: fable\n---\n",
+    );
+    let r = phase4_research::report(d.path());
+    assert!(r.passed(), "expected clean, failures: {}", r.failures());
+}
+
+#[test]
+fn phase4_research_rejects_new_agent_with_invalid_model() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    // The general membership gate is real: an unknown model class on a non-seed
+    // agent is still rejected (proves the fable-accept test is not vacuous).
+    w(
+        d.path(),
+        "plugins/dvandva/agents/frontier-planner.md",
+        "---\nname: dvandva-frontier-planner\nmodel: turbo\n---\n",
+    );
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("frontier-planner declares a single valid model class"));
+}
+
+#[test]
+fn phase4_research_rejects_seed_agent_retiered_to_fable() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    // Seeds are NOT silently re-tiered: `fable` is legal for future agents but a
+    // seed pinned to sonnet may not flip to it.
+    let p = d.path().join("plugins/dvandva/agents/researcher.md");
+    let text = fs::read_to_string(&p)
+        .unwrap()
+        .replace("model: sonnet", "model: fable");
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("uses sonnet-class model"));
+}
+
+#[test]
 fn phase4_research_rejects_command_missing_model_policy() {
     let d = tmp();
     phase4_fixture(d.path());
     let p = d.path().join("plugins/dvandva/commands/vadi.md");
     let text = fs::read_to_string(&p).unwrap().replace(
-        "Codex should request `xhigh` reasoning effort for opus-class work and `high` reasoning effort for sonnet-class work where the active surface exposes it.\n",
+        "Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it.\n",
         "",
     );
     fs::write(&p, text).unwrap();
@@ -775,9 +821,9 @@ Explicit closure is required; every generated handle must be explicitly closed b
 Dynamic write-path disjointness is required unless conflict_group serialization applies.
 There is no daemon and no mailbox.
 There is no hidden scheduler or hidden central process.
-Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models.
-Codex maps `opus` to `gpt-5.5` with `xhigh` reasoning and `sonnet` to `gpt-5.5` with `high` reasoning.
-Codex should request `xhigh` reasoning effort for opus-class work and `high` reasoning effort for sonnet-class work where the active surface exposes it.
+Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available.
+Codex maps `opus` and `fable` to `gpt-5.5` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.5` with `high` reasoning.
+Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it.
 Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.
 Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
 generated agents never own assignee, active_roles, or transitions.
@@ -791,9 +837,9 @@ Explicit closure is required; every generated handle must be explicitly closed b
 Dynamic write-path disjointness is required when instances share base_checkpoint or when both instances are live planned/running, unless conflict_group serialization through depends_on applies.
 There is no daemon and no mailbox.
 There is no hidden scheduler or hidden central process.
-Claude Code maps `opus` to Opus-class and `sonnet` to Sonnet-class models.
-Codex maps `opus` to `gpt-5.5` with `xhigh` reasoning and `sonnet` to `gpt-5.5` with `high` reasoning.
-Codex should request `xhigh` reasoning effort for opus-class work and `high` reasoning effort for sonnet-class work where the active surface exposes it.
+Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available.
+Codex maps `opus` and `fable` to `gpt-5.5` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.5` with `high` reasoning.
+Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it.
 Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.
 Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
 generated agents never own assignee, active_roles, or transitions.

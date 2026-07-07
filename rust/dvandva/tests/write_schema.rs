@@ -901,6 +901,8 @@ fn v2_agent_instance_accepts_canonical_and_legacy_model_aliases() {
     for model_class in [
         "opus-class|gpt-5.5-xhigh",
         "sonnet-class|gpt-5.5-high",
+        "fable-class|gpt-5.5-xhigh",
+        "gpt-class|gpt-5.5-high",
         "opus",
         "sonnet",
         "opus-class|gpt-5.5",

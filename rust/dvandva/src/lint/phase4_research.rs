@@ -17,7 +17,7 @@
 use std::path::Path;
 
 use crate::lint::{
-    count_lines_matching, file_contains, file_has_exact_line, output_contract_contains,
+    count_lines_matching, file_contains, file_has_exact_line, list_md, output_contract_contains,
     resolve_root, Report, MODEL_POLICY_CLAUDE_MAPPING, MODEL_POLICY_CODEX_EFFORT,
     MODEL_POLICY_CODEX_MAPPING, MODEL_POLICY_NO_HAIKU_COMMANDS, MODEL_POLICY_NO_HAIKU_SUBAGENTS,
     MODEL_POLICY_OPUS_ROUTING, MODEL_POLICY_SONNET_ROUTING,
@@ -50,6 +50,12 @@ const NEW_AGENTS: [&str; 5] = [
     "doc-verifier",
     "pattern-mapper",
 ];
+/// The enforced model-class vocabulary (D2): every agent frontmatter `model:`
+/// line must be one of these four vendor-neutral classes. `opus`/`sonnet` are
+/// the seed classes; `fable` (frontier) and `gpt` (bulk-mechanical) are legal
+/// for future agents. Seed re-tiering is separately blocked by the exact-value
+/// pins in the OPUS_AGENTS/SONNET_AGENTS loops.
+const VALID_MODEL_CLASSES: [&str; 4] = ["opus", "sonnet", "fable", "gpt"];
 const OPUS_AGENTS: [&str; 7] = [
     "adversarial-analyst",
     "architect",
@@ -183,6 +189,18 @@ fn require_agent_model(
     let one = count_lines_matching(root, rel, "^model:") == 1;
     let exact = file_has_exact_line(root, rel, &format!("model: {expected}"));
     r.add(one && exact, msg);
+}
+
+/// Every agent file carries exactly one `model:` frontmatter line whose value is
+/// one of the four enforced classes (`opus`/`sonnet`/`fable`/`gpt`). This is the
+/// general membership gate; the seed roster is additionally pinned to its exact
+/// opus/sonnet value by the OPUS_AGENTS/SONNET_AGENTS loops.
+fn require_agent_model_class(r: &mut Report, root: &Path, rel: &str, msg: impl Into<String>) {
+    let one = count_lines_matching(root, rel, "^model:") == 1;
+    let member = VALID_MODEL_CLASSES
+        .iter()
+        .any(|class| file_has_exact_line(root, rel, &format!("model: {class}")));
+    r.add(one && member, msg);
 }
 
 /// phase4-research's OWN content checks for a repo root (no chaining).
@@ -1247,6 +1265,21 @@ pub fn report(root: &Path) -> Report {
         );
     }
 
+    // General 4-class membership: every agent file (including future non-seed
+    // agents) must declare exactly one valid model class.
+    for path in list_md(root, "plugins/dvandva/agents") {
+        let name = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("agent")
+            .to_string();
+        require_agent_model_class(
+            &mut r,
+            root,
+            &format!("plugins/dvandva/agents/{name}.md"),
+            format!("agent {name} declares a single valid model class"),
+        );
+    }
     for agent in OPUS_AGENTS {
         require_agent_model(
             &mut r,

@@ -3343,10 +3343,21 @@ fn agent_instance_entry_ok(inst: &Value) -> bool {
         return false;
     }
     let parent_ok = matches!(field(inst, "parent_role"), Some(Value::String(s)) if s == "vadi" || s == "prativadi");
+    // Enforced model-class vocabulary (D2): four vendor-neutral classes —
+    // `opus`/`sonnet` (existing) plus `fable` (frontier: hardest
+    // architecture/adversarial review) and `gpt` (bulk-mechanical: clear-spec
+    // implementation, data analysis). Each ships a canonical
+    // `<class>-class|<codex-model+effort>` string; the bare short names stay
+    // accepted. Legacy aliases remain on the allowlist for backward
+    // compatibility, but their SEMANTICS have moved: the bare `gpt-5.5` alias no
+    // longer resolves to opus/sonnet-class — it now resolves to the `gpt` class
+    // (the string stays accepted only so older batons still validate).
     let valid_model = matches!(field(inst, "model_class"), Some(Value::String(s)) if matches!(
         s.as_str(),
         "opus-class|gpt-5.5-xhigh"
             | "sonnet-class|gpt-5.5-high"
+            | "fable-class|gpt-5.5-xhigh"
+            | "gpt-class|gpt-5.5-high"
             | "opus-class|gpt-5.5"
             | "sonnet-class|gpt-5.4"
             | "gpt-5.5"
