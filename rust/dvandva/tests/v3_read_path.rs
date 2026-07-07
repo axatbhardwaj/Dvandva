@@ -259,6 +259,48 @@ fn resolve_excludes_v3_statuses_declared_terminal_by_class() {
 }
 
 #[test]
+fn resolve_includes_v3_done_token_declared_work_by_class() {
+    let dir = tempfile::tempdir().unwrap();
+    let run_id = "class-work-done";
+    let baton = dir
+        .path()
+        .join(format!(".dvandva/runs/{run_id}/baton.json"));
+    let mut value = read_path_baton("dvandva.baton.v3", run_id);
+    value["status"] = json!("done");
+    value["assignee"] = json!("vadi");
+    value["run_workflow"] = json!({
+        "source": "custom",
+        "declared_by": "vadi",
+        "declared_at_checkpoint": 0,
+        "approved_by": "prativadi",
+        "approved_at_checkpoint": 1,
+        "revision_round": 0,
+        "states": [
+            {"name": "done", "owner": "vadi", "class": "work"}
+        ],
+        "edges": [],
+        "amendments": []
+    });
+    write_json(&baton, &value);
+
+    let (code, out, err) = run(
+        &[
+            "resolve",
+            "--role",
+            "prativadi",
+            "--cwd",
+            dir.path().to_str().unwrap(),
+        ],
+        None,
+    );
+    assert_eq!(code, 0, "resolve stderr:\n{err}");
+    assert!(
+        out.contains(&format!("RESOLVED .dvandva/runs/{run_id}/baton.json")),
+        "class-work v3 baton should remain resumable even when the token is done:\n{out}"
+    );
+}
+
+#[test]
 fn live_references_expose_v3_and_mark_v2_historical() {
     let root = repo_root();
 
