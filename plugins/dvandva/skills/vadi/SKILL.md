@@ -70,6 +70,8 @@ These skills are available within the Dvandva run context. Use each only when it
 | `phase: "research" or "review", status: "research_drafting"` | Mode R1 — research/intake drafting |
 | `phase: "research" or "review", status: "research_revision"` | Mode R2 — research/intake revision |
 | `phase: "research", status: "research_review"` | prativadi-owned independent research review; wait unless supervised |
+| `phase: "spec", status: "workflow_declaring"` / `"workflow_revision"` | v3 run-workflow declaration loop (vadi-owned): draft (`workflow_declaring`) then, after a reject, revise (`workflow_revision`, loop-capped, `amendments[]` unchanged) the custom `run_workflow` and submit to `workflow_review` |
+| `phase: "spec", status: "workflow_review"` | prativadi-owned v3 declaration review (approves to `spec_drafting` or rejects to `workflow_revision`); wait unless supervised |
 | `phase: "spec", status: "spec_drafting"` | Mode A — spec drafting |
 | `phase: "spec", status: "spec_revision"` | Mode B — spec revision |
 | `phase: 1..N, status: "parallel_implementing"` | Mode C — v2 two-team parallel implementation |
@@ -382,11 +384,9 @@ Surface BATON_STATE_COMPACT, then follow the Stop rule.
 
 ## Regular checkpoint commits
 
-After any active mode changes files and the relevant verification commands pass,
-make a local checkpoint commit when `allow_commit == true`.
+After any active mode changes files and the relevant verification commands pass, make a local checkpoint commit when `allow_commit == true`.
 
-- Commit only the baton's intended `changed_paths` union, excluding `.dvandva/`
-  and `superpowers/`.
+- Commit only the baton's intended `changed_paths` union, excluding `.dvandva/` and `superpowers/`.
 - Compare `git status --short` against that intended path list before
   committing. If unrelated dirty paths exist, write `status: "human_decision"`
   instead of committing.
@@ -408,8 +408,7 @@ make a local checkpoint commit when `allow_commit == true`.
   nature named in the commit subject. Only the role that produced a change
   commits it — commit work is never delegated to a separate agent. Reviewers may
   file a finding against a commit that batches unrelated chunks.
-- Record the commit hash in `verification` or `summary` as
-  `checkpoint_commit=<hash>`.
+- Record the commit hash in `verification` or `summary` as `checkpoint_commit=<hash>`.
 - Do not push checkpoint commits. If a later review rejects a checkpointed
   change, fix it with a new commit rather than rewriting history unless the
   human explicitly asks for history surgery.
@@ -474,6 +473,7 @@ In `run_mode: "supervised"`, exit after surfacing any baton assigned away from v
 | `dvandva wait` exits 29 (`split_brain`) | A sibling active run is assigned to your role — reconcile selection; park the stale duplicate to `human_decision`. This is a `dvandva wait` code; it is **distinct from** `dvandva write` exit `29` (`lock_lost`). |
 | `dvandva wait` exits 24 (`stalled`) | `--stall-max` seconds elapsed without the baton advancing — a stalled or dead peer. Write `status: "human_decision"` naming the stall, then stop. This is a `dvandva wait` code; it is **distinct from** `dvandva write` exit `24` (illegal transition). |
 | `dvandva wait` exits 13 (`abandoned`) | The run was abandoned from `human_question`/`human_decision` — a terminal state (S2-T1). Surface it and stop; do not scaffold or advance. `abandoned` reopens only through a hand-authored `human_decision` write. |
+| `dvandva wait` exits 15 (`human_gate`) | The selected v3 baton is at a `HumanGate`-class (human-assigned) state — the class-driven wake for human-owned states such as `clarifying_questions_answer`/`clarifying_questions_followup_answer` or a declared `human_gate` token. Surface it to the human and act on it; a `--through-human` session waits the gate out instead of exiting 15. This is a `dvandva wait` code. |
 | `dvandva write` exits 23 (`schema_retired`) | The candidate (or the current baton) carries `schema: "dvandva.baton.v1"`; the v1 write path is retired. Migrate the candidate to `dvandva.baton.v2` and rerun; old v1 batons stay readable on the `state`/`resolve`/`wait` path. |
 | `dvandva write` exits another non-zero code | Do not edit `$BATON_FILE` by hand. 21: candidate missing. 22: candidate invalid JSON. 24: the transition is illegal, including schema changes on an existing baton — re-derive the next state from the mode table; if genuinely stuck, escalate with a fresh candidate whose `status` is `human_decision`. 25: follow the malformed-baton row. 26: filesystem problem; surface it. 30: baton installed but snapshot failed — surface and continue. |
 

@@ -73,6 +73,8 @@ Terminal expectations differ by profile. `full` keeps the existing run explainer
 | `mode: "development"` or legacy `mode: "feature-pr"` | `phase: "research", status: "research_revision"` | vadi-owned research revision; wait unless supervised |
 | `mode: "research"` | `phase: "research", status: "research_review", review_target: "research"` | Mode R — independent research review for exploratory or seed-development research |
 | `mode: "review"` | `phase: "review", status: "research_review"` | Mode R — review-mode intake investigation; preserve `review_target` as the selected review subject |
+| `mode: "development"` | `phase: "spec", status: "workflow_declaring"` / `"workflow_revision"` | vadi-owned v3 run-workflow declaration drafting and (post-reject) revision; wait unless supervised |
+| `mode: "development"` | `phase: "spec", status: "workflow_review"` | prativadi-owned v3 review of the vadi's custom `run_workflow`: approve to `spec_drafting` when the declaration stamp and (for custom graphs) the deep invariants hold, or reject to `workflow_revision` with non-empty `findings` (loop-capped on `workflow_revision`) |
 | `mode: "development"` or `mode: "research"` | `phase: "spec", status: "spec_review", review_target: "spec"` | Mode A — spec Q&A using the existing spec statuses |
 | `mode: "development"` or legacy `mode: "feature-pr"`, `profile: "full"` or missing legacy profile | `phase: 1..N, status: "parallel_implementing"` | v2 team-owned full-profile implementation; participate when `active_roles` contains prativadi |
 | `mode: "development"` or legacy `mode: "feature-pr"`, `profile: "fast"` or `"standard"` | `phase: 1..N, status: "implementing"` / `status: "phase_review"` | compact profile implementation and independent review path |
@@ -381,12 +383,9 @@ If you disapprove:
 
 ## Regular checkpoint commits
 
-After any active mode applies narrow fixups or counter-fixups and the relevant
-verification commands pass, make a local checkpoint commit when
-`allow_commit == true`.
+After any active mode applies narrow fixups or counter-fixups and the relevant verification commands pass, make a local checkpoint commit when `allow_commit == true`.
 
-- Commit only the baton's intended `changed_paths` union, excluding `.dvandva/`
-  and `superpowers/`.
+- Commit only the baton's intended `changed_paths` union, excluding `.dvandva/` and `superpowers/`.
 - Compare `git status --short` against that intended path list before
   committing. If unrelated dirty paths exist, write `status: "human_decision"`
   instead of committing.
@@ -474,6 +473,7 @@ In `run_mode: "supervised"`, exit after surfacing any baton assigned away from p
 | `dvandva wait` exits 29 (`split_brain`) | A sibling active run is assigned to your role — reconcile selection; park the stale duplicate to `human_decision`. This is a `dvandva wait` code; it is **distinct from** `dvandva write` exit `29` (`lock_lost`). |
 | `dvandva wait` exits 24 (`stalled`) | `--stall-max` seconds elapsed without the baton advancing — a stalled or dead peer. Write `status: "human_decision"` naming the stall, then stop. This is a `dvandva wait` code; it is **distinct from** `dvandva write` exit `24` (illegal transition). |
 | `dvandva wait` exits 13 (`abandoned`) | The run was abandoned from `human_question`/`human_decision` — a terminal state (S2-T1). Surface it and stop; do not advance. `abandoned` reopens only through a hand-authored `human_decision` write. |
+| `dvandva wait` exits 15 (`human_gate`) | The selected v3 baton is at a `HumanGate`-class (human-assigned) state — the class-driven wake for human-owned states such as `clarifying_questions_answer`/`clarifying_questions_followup_answer` or a declared `human_gate` token. Surface it to the human and act on it; a `--through-human` session waits the gate out instead of exiting 15. This is a `dvandva wait` code. |
 | `dvandva write` exits 23 (`schema_retired`) | The candidate (or the current baton) carries `schema: "dvandva.baton.v1"`; the v1 write path is retired. Migrate the candidate to `dvandva.baton.v2` and rerun; old v1 batons stay readable on the `state`/`resolve`/`wait` path. |
 | `dvandva write` exits another non-zero code | Do not edit `$BATON_FILE` by hand. 21: candidate missing. 22: candidate invalid JSON. 24: the transition is illegal, including schema changes on an existing baton — re-derive the next state from the mode table; if genuinely stuck, escalate with a fresh candidate whose `status` is `human_decision`. 25: follow the malformed-baton row. 26: filesystem problem; surface it. 30: baton installed but snapshot failed — surface and continue. |
 

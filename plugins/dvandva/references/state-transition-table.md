@@ -10,6 +10,70 @@ Status catalog (26): clarifying_questions_drafting, clarifying_questions_answer,
 
 `dvandva lint schema-parity` (S6-T1) holds this line equal to the engine `dvandva.baton.v2` status enum, `baton-schema-v2.json` `status_catalog`, and the `product.md` copy. `done` and `abandoned` (S2-T1) are the two terminal statuses.
 
+## v3 Per-Run-Workflow Declaration
+
+`dvandva.baton.v3` extends the v2 lifecycle with a peer-approved run-workflow
+declaration loop. The live v3 engine status catalog is **29 tokens**: the 26 v2
+lifecycle statuses above plus three v3-only declaration states —
+`workflow_declaring` (vadi-owned, phase `spec`), `workflow_review`
+(prativadi-owned, phase `spec`), and `workflow_revision` (vadi-owned, phase
+`spec`). `dvandva lint schema-parity` holds `baton-schema-v3.json`
+`status_catalog` equal to this 29-token engine catalog; the retired v2 copies
+(`baton-schema-v2.json`, the v2 catalog line above, and the `product.md` copy)
+stay frozen at the historical 26. `done` and `abandoned` remain the only two
+terminal statuses.
+
+### Declaration-loop edges (development mode)
+
+The declaration loop runs after research approval and only when a run carries a
+**custom, still-unapproved** `run_workflow`. A preset run_workflow (`source:
+"preset:<name>"`) is engine-pre-approved and keeps the direct
+`research_review -> spec_drafting` edge; a custom, unapproved run_workflow must
+be declared and peer-approved through the loop before it can reach
+`spec_drafting`.
+
+| From | To | Trigger |
+|---|---|---|
+| `research_review` | `workflow_declaring` | Vadi opens the run-workflow declaration after research approval; legal only while `run_workflow` is unapproved (else write reason `research_review->workflow_declaring is only legal while run_workflow is unapproved`). |
+| `workflow_declaring` | `workflow_review` | Vadi submits the declaration for peer review; `run_workflow.declared_by` must equal the submitting vadi and `declared_at_checkpoint` must be at or below the submitting checkpoint. |
+| `workflow_review` | `workflow_revision` | Prativadi rejects with non-empty `findings`; `amendments[]` must stay unchanged. Loop-capped under the single `workflow_revision` key against `disagreement_cap` (per-episode); cap exhaustion leaves only the universal `human_decision` escalation. |
+| `workflow_revision` | `workflow_review` | Vadi resubmits the revised declaration; only its free-form `reason` may change, and `amendments[]` stays immutable during reject/revise. |
+| `workflow_review` | `spec_drafting` | Prativadi APPROVES the declaration; the approval stamp and, for custom graphs, the deep declaration invariants must hold (failure is `dvandva write` exit 23). The run enters spec drafting with the approved run_workflow. |
+| `research_review` | `spec_drafting` | Direct edge only for a preset or already-approved run_workflow. A custom, still-unapproved run_workflow is rejected here (write reason `research_review->spec_drafting requires an approved run_workflow; declare it via workflow_declaring first`). |
+
+### Amendment entry via workflow_review
+
+From any active non-terminal working status (not a declaration state and not
+`human_question`/`human_decision`), the writer may raise a mid-flight amendment
+by writing `workflow_review` with a new pending `amendments[]` entry
+(`proposed_by` = writer, `at_checkpoint` = current, `resume_status` = the
+interrupted status). The peer then either rejects to `workflow_revision` or
+approves and resumes: `workflow_review -> <resume_status>` stamps the pending
+amendment approved and restores the recorded `resume_status`, which for a
+custom-source graph must be one of the declared states.
+
+### v3 wait exit codes (StateClass-driven)
+
+`dvandva wait` classifies the selected baton's current status by `StateClass`. A
+v3 baton reads its class from its own `run_workflow` (custom source -> the
+matching `states[].class`; preset source -> the named preset's state classes);
+v1/v2 batons and any resolution miss fall back to the static token map. The
+class selects the exit code:
+
+- **`15` (`human_gate`)** — a `HumanGate`-class state (a human-assigned state such
+  as a declared `human_gate` token, or the clarifying-answer states
+  `clarifying_questions_answer`/`clarifying_questions_followup_answer` via the F5
+  static map) wakes the role that must surface it to the human. Under
+  `--through-human` the gate is waited out like any human pause instead of
+  exiting 15.
+- **`11`** — a declared v3 `Pause`-class state that is not a legacy token is
+  treated as `human_decision`-equivalent (the generic "stopped for a human"
+  outcome); legacy `human_decision` also exits 11, while `human_question`
+  exits 12.
+- **`13`** — a declared v3 `Terminal`-class state that is neither `done` nor
+  `abandoned` is treated as abandoned-equivalent; `done` exits 10 and legacy
+  `abandoned` exits 13.
+
 ## v2 Additions
 
 `dvandva.baton.v2` is the run-scoped schema for named runs at
