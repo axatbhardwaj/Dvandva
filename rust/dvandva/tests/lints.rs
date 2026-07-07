@@ -729,6 +729,20 @@ fn phase4_research_rejects_seed_agent_retiered_to_fable() {
 }
 
 #[test]
+fn phase4_research_rejects_seed_agent_retiered_to_gpt() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    // `gpt` is legal for future non-seed agents, not for re-tiering a seed.
+    let p = d.path().join("plugins/dvandva/agents/researcher.md");
+    let text = fs::read_to_string(&p)
+        .unwrap()
+        .replace("model: sonnet", "model: gpt");
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("uses sonnet-class model"));
+}
+
+#[test]
 fn phase4_research_rejects_command_missing_model_policy() {
     let d = tmp();
     phase4_fixture(d.path());

@@ -922,6 +922,20 @@ fn v2_agent_instance_accepts_canonical_and_legacy_model_aliases() {
 }
 
 #[test]
+fn v2_agent_instance_rejects_bare_fable_and_gpt_model_classes() {
+    for model_class in ["fable", "gpt"] {
+        let d = tmp();
+        let (b, n) = paths(&d);
+        make_baton_v3(&n, "clarifying_questions_drafting", "vadi", 0, |b| {
+            b["phase"] = json!("clarifying");
+            dynamic_agent_instances(b);
+            b["agent_instances"][0]["model_class"] = json!(model_class);
+        });
+        run(&b, &n).assert_contains(model_class, 23, "DVANDVA_WRITE bad_agent_instances");
+    }
+}
+
+#[test]
 fn v2_dynamic_owner_requires_output_refs() {
     let d = tmp();
     let (b, n) = paths(&d);
