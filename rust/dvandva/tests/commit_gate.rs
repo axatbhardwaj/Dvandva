@@ -363,6 +363,32 @@ fn gate_v3_human_pause_and_terminal_classes_are_inactive() {
     }
 }
 
+// P3 sweep item 3: `review_gate` is deliberately absent from
+// `is_inactive_baton`'s match arm (only `human_gate`/`pause`/`terminal` make a
+// v3 baton inactive) — a v3 baton parked at a review-gate status (e.g.
+// `workflow_review`) stays ACTIVE, so a role that isn't the assignee is still
+// blocked exactly like any other Work-class status.
+#[test]
+fn gate_v3_review_gate_class_stays_active_and_blocks_wrong_role() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    make_v3_baton_with_state_class(
+        &repo.join(".dvandva/runs/run-review/baton.json"),
+        "workflow_review",
+        "prativadi",
+        7,
+        "[]",
+        "review_gate",
+    );
+
+    let out = run_gate(repo, Some("vadi"));
+    assert_eq!(code(&out), 1, "stderr: {}", stderr(&out));
+    let err = stderr(&out);
+    assert!(err.contains("DVANDVA_GATE blocked"), "err: {err}");
+    assert!(err.contains("assignee=prativadi"), "err: {err}");
+}
+
 // (f) Two active batons -> gate exits 1 (ambiguous).
 #[test]
 fn gate_two_active_ambiguous() {

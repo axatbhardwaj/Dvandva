@@ -881,6 +881,66 @@ fn sanity_check_v3_workflow_status_uses_v3_owner_table() {
     );
 }
 
+// P3 sweep item 2: a v3 baton at one of the three NEW per-run-workflow
+// declaration tokens (`workflow_review`), correctly owned, passes the v3
+// sanity check and proceeds to the hook stage exactly like any other v3
+// status — the 29-token v3 catalog accepts it (unlike the v2 catalog below).
+#[test]
+fn sanity_check_v3_workflow_review_status_proceeds() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    write_baton_v3(
+        &repo.join(".dvandva/runs/accuracy/baton.json"),
+        "accuracy",
+        "workflow_review",
+        "prativadi",
+        "[]",
+        "2026-06-29T00:00:00Z",
+    );
+
+    let out = preflight(repo, Some("prativadi"), &["--role", "prativadi"]);
+    assert_eq!(code(&out), 0, "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("result=resolved"), "stdout: {text}");
+    assert!(!text.contains("reason=invalid_baton"), "stdout: {text}");
+    assert!(text.contains("DVANDVA_HOOK_PREFLIGHT"), "stdout: {text}");
+    assert!(text.contains("result=ok"), "stdout: {text}");
+}
+
+// P3 sweep item 2: `workflow_review` is a v3-only addition to the status
+// catalog. A v2 baton is still checked against the legacy 26-token catalog
+// ([`V2_STATUS_TOKENS`]), which does not contain it — so the very same token
+// that passes sanity on a v3 baton above fails `unknown_status` on a v2 one.
+#[test]
+fn sanity_check_v2_baton_rejects_v3_only_workflow_review_token() {
+    let tmp = tempfile::tempdir().unwrap();
+    let repo = tmp.path();
+    init_repo(repo);
+    write_baton_v2(
+        &repo.join(".dvandva/runs/accuracy/baton.json"),
+        "accuracy",
+        "workflow_review",
+        "prativadi",
+        "[]",
+        "2026-06-29T00:00:00Z",
+    );
+
+    let out = preflight(repo, Some("prativadi"), &["--role", "prativadi"]);
+    assert_eq!(code(&out), 1, "stderr: {}", stderr(&out));
+    let text = stdout(&out);
+    assert!(text.contains("result=error"), "stdout: {text}");
+    assert!(text.contains("reason=invalid_baton"), "stdout: {text}");
+    assert!(
+        text.contains("unknown_status status=workflow_review"),
+        "stdout: {text}"
+    );
+    assert!(
+        !repo.join(".dvandva/githooks").exists(),
+        "invalid v2 baton must not run the hook stage"
+    );
+}
+
 // (v1 legacy) A v1-schema baton skips the sanity check entirely and notes the
 // skip on the result=resolved line.
 #[test]

@@ -2951,6 +2951,46 @@ fn discover_ignores_terminal_batons() {
     assert_eq!(adopted.code, Some(0), "{}", adopted.out);
 }
 
+// P3 sweep item 5: `--discover` adopting a run that is currently AT a
+// human_gate state must not silently heartbeat forever (the F5 class of bug,
+// resurfacing through the discovery path) — the adopt-and-continue preamble
+// falls through into the SAME wait loop that classifies status, so the
+// very next iteration after adoption exits 15 exactly like a directly
+// selected human_gate baton would.
+#[test]
+fn p3_discover_adopts_human_gate_baton_then_exits_15() {
+    let d = tmp();
+    write_named_observed_baton(
+        &d.path().join(".dvandva/runs/gate/baton.json"),
+        "gate",
+        "human",
+        "clarifying_questions_answer",
+        "2026-07-05T09:00:00Z",
+        "codex",
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--discover",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_FAST,
+    );
+    assert!(o.contains("discovered file="), "{}", o.out);
+    assert_eq!(o.code, Some(15), "{}", o.out);
+    assert!(
+        o.contains("DVANDVA_WAIT human_gate status=clarifying_questions_answer checkpoint=8"),
+        "{}",
+        o.out
+    );
+}
+
 #[test]
 fn discover_two_actives_exits_14() {
     let d = tmp();
@@ -3243,6 +3283,39 @@ fn p3_v3_custom_work_class_keeps_polling() {
         ],
         BUDGET_FAST,
     );
+    assert_eq!(o.code, Some(20), "{}", o.out);
+    assert!(!o.contains("DVANDVA_WAIT human_gate"), "{}", o.out);
+}
+
+// P3 sweep item 1: a v3 CUSTOM graph can declare a legacy-shaped token
+// (`done`) with a NON-terminal class (`work`) — the design is class-
+// authoritative, so the declared class wins over the token's legacy meaning
+// and wait keeps polling (never the terminal exit 10 a bare `static_class`
+// lookup on the token `done` would produce). Pins `resolve_status_class`'s
+// documented contract: `states[].class` is checked before any token fallback.
+#[test]
+fn p3_v3_custom_legacy_token_done_with_work_class_keeps_polling() {
+    let d = tmp();
+    let f = d.path().join("v3misaligned.json");
+    p3_write_v3_custom_baton(&f, "done", "work", "prativadi");
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "0",
+            "--max-wait",
+            "0",
+            "--finite",
+        ],
+        BUDGET_FAST,
+    );
+    // Declared class (work) wins: finite-budget timeout, never the terminal
+    // exit 10 that the token `done` would produce under static classification.
     assert_eq!(o.code, Some(20), "{}", o.out);
     assert!(!o.contains("DVANDVA_WAIT human_gate"), "{}", o.out);
 }
