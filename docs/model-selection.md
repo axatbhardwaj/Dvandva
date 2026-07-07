@@ -1,0 +1,91 @@
+# Model Selection
+
+As-of date: 2026-07-06.
+
+This page records the user's advisory model preferences for Dvandva runs. It is
+not the same thing as the protocol's machine-readable model-class contract:
+agent frontmatter and generated-agent records use durable workload classes,
+while this table explains which currently available model should be preferred
+for a human or wrapper when there is a choice.
+
+Route A scope: this is taste-aware casting guidance from the 2026-07-05 model
+workflow notes, not a normative protocol replacement. Any change that turns
+these preferences into baton policy or validator behavior needs its own
+reviewed run.
+
+## Ranking Table
+
+Higher is better.
+
+Cost is the user's effective local cost, not provider list price. Intelligence
+means how hard a problem the model can handle unsupervised. Taste covers UI/UX,
+code quality, API design, and copy.
+
+| Model | Cost | Intelligence | Taste |
+|---|---:|---:|---:|
+| `gpt-5.5` | 9 | 8 | 5 |
+| `sonnet-5` | 5 | 5 | 7 |
+| `opus-4.8` | 4 | 7 | 8 |
+| `fable-5` | 2 | 9 | 9 |
+
+## How To Apply
+
+These are defaults, not limits. If a cheaper model's output does not meet the
+bar, rerun or redo the work with a stronger model without asking first. Judge
+the output, not the price tag. Escalation costs less than shipping mediocre
+work.
+
+Cost is only a tie-breaker. When axes conflict for anything that ships, use:
+
+```text
+intelligence > taste > cost
+```
+
+Use `gpt-5.5` for bulk or mechanical work where the specification is clear:
+implementation, data analysis, migrations, and other high-volume tasks. In this
+workspace it is effectively free and strong enough to clear most mechanical
+work without supervision.
+
+Anything user-facing needs taste `>= 7`: UI, copy, docs intended for a human,
+API design, examples, and polish passes. That makes `sonnet-5`, `opus-4.8`, or
+`fable-5` the normal choices for those surfaces. Do not rely on `gpt-5.5` alone
+for final taste-sensitive output unless another tasteful reviewer has checked
+it.
+
+For reviews of plans and implementations, prefer `fable-5` or `opus-4.8`.
+Optionally add `gpt-5.5` as an extra independent perspective when the review
+benefits from decorrelation.
+
+Never use Haiku for Dvandva subagents or workflow work.
+
+## Mechanics
+
+`gpt-5.5` is reached through the Codex CLI, for example `codex exec` or
+`codex review`. When using a Codex skill that already wraps the needed surface,
+use that skill. For work the skills do not cover, such as investigation or data
+analysis, run `codex exec -s read-only` with a self-contained prompt.
+
+Claude models (`sonnet-5`, `opus-4.8`, `fable-5`) run through the Agent or
+Workflow model parameter where that surface exposes them.
+
+When a workflow or subagent surface only accepts Claude model parameters but a
+run needs `gpt-5.5`, spawn a thin Claude wrapper agent with a cheap acceptable
+model and low effort. The wrapper's job is only to write a self-contained Codex
+prompt, run `codex exec` through Bash, and return the result. The wrapper must
+not silently reinterpret the task.
+
+## Dvandva Class Boundary
+
+Dvandva's durable model labels are workload classes. Seed agent files and baton
+records may say `model: opus`, `model: sonnet`, or the expanded class vocabulary
+introduced by the active run; those labels are protocol data, not a live ranked
+model table.
+
+Do not retier the 15 seed agents just because this preference table exists. A
+seed's model field is a stance contract for workload class and review strength.
+Changing that roster is source behavior and needs a reviewed source commit.
+
+For generated agents, use the protocol's current validator-accepted model-class
+strings and map them to concrete engines with this advisory table in mind. If
+the concrete model landscape changes, update this page first, then separately
+decide whether the protocol class map should change.
