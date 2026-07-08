@@ -36,6 +36,41 @@ that work to `sonnet`/`opus`/`gpt-5.5` subagents and keeps only judgment and
 taste surfaces: decisions, plans, reviews, human-facing artifacts, and
 coordination writes.
 
+### The pipeline ring (default casting, 2026-07-08)
+
+Adapted from Anthropic's coordinator ("plan big, execute small") and advisor
+patterns, with two local amendments: self-review is hygiene, never a credited
+gate, and the planner returns at the end so the plan's own premise gets judged.
+Nobody reviews their own work.
+
+```text
+fable plans -> gpt-5.5 reviews the plan -> gpt-5.5 executes (+self-check, uncredited)
+  ^                                                          |
+  +--- fable adjudicates <---- opus deep-reviews <-----------+
+       review + done-claim     the implementation
+```
+
+- `fable-5` — bookends only: designs the plan/workflow, then adjudicates the
+  final review and the done-claim against that plan. Fixed stations, never
+  on-request advice (escalation-on-demand under-calls; Anthropic's own advisor
+  data shows call-rate prompting nets flat).
+- `gpt-5.5` — the workhorse: reviews the plan (cross-vendor decorrelation),
+  writes all implementation and tests, self-checks as hygiene (tests, lint,
+  diff read) with zero review credit.
+- `opus-4.8` — the credited deep review of the implementation; cross-vendor
+  from the author.
+- `sonnet-5` — documentation, research tracks, and bounded support work
+  (taste 7 meets the user-facing floor).
+
+Dvandva state mapping: `workflow_declaring`/`spec_drafting` = fable,
+`workflow_review`/`spec_review` = gpt (prativadi), `implementing`/
+`test_creation` = gpt, `deep_review` = opus, `deslop`/docs = sonnet,
+`termination_review` = fable + gpt dual approval.
+
+Chair tiering: high-stakes runs (protocol source, novel architecture) keep
+fable in the chair, where its judgment is continuous. Routine runs may chair
+on opus and dispatch fable only at the two bookend stations.
+
 These are defaults, not limits. If a cheaper model's output does not meet the
 bar, rerun or redo the work with a stronger model without asking first. Judge
 the output, not the price tag. Escalation costs less than shipping mediocre
