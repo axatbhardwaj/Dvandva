@@ -115,6 +115,8 @@ pub fn run_install_codex(marketplace: &str) -> i32 {
         return 1;
     }
 
+    refresh_marketplace_cache(marketplace);
+
     println!("Step 1: registering marketplace '{marketplace}'...");
     let code = run_idempotent(
         "Codex marketplace",
@@ -267,6 +269,47 @@ fn already_present_pattern() -> Regex {
 // ---------------------------------------------------------------------
 // Marketplace.json path resolution (legacy app-server fallback)
 // ---------------------------------------------------------------------
+
+/// Force `codex plugin marketplace add` to perform a fresh copy instead of
+/// silently reusing a stale on-disk cache: Codex treats an existing
+/// `${CODEX_HOME}/.tmp/marketplaces/<name>` directory as "already
+/// registered" and skips re-copying even when the source marketplace
+/// content changed underneath it, which is exactly the staleness observed
+/// live (a plugin version bump kept resolving to the old cached copy until
+/// the cache dir was removed by hand). Removing the prior cache before every
+/// add makes the destination match the source again. Best-effort: a
+/// missing/unreadable prior cache is not an error.
+fn refresh_marketplace_cache(marketplace: &str) {
+    refresh_marketplace_cache_at(marketplace, &codex_home_dir());
+}
+
+/// Pure computation behind [`refresh_marketplace_cache`], split out for
+/// testability without mutating process-global environment variables
+/// (mirrors [`compute_codex_home_dir`]).
+fn refresh_marketplace_cache_at(marketplace: &str, codex_home: &Path) {
+    let name = local_marketplace_name(marketplace).unwrap_or_else(|| marketplace_name(marketplace));
+    let cache_dir = codex_home.join(".tmp/marketplaces").join(name);
+    let _ = std::fs::remove_dir_all(&cache_dir);
+}
+
+/// When `marketplace` is a local directory, read the marketplace's own
+/// declared `"name"` field from `.agents/plugins/marketplace.json` — this is
+/// what Codex uses as the cache directory name, which need not match the
+/// directory's own basename (unlike the remote-ref guess in
+/// [`marketplace_name`]).
+fn local_marketplace_name(marketplace: &str) -> Option<String> {
+    let candidate = Path::new(marketplace);
+    if !candidate.is_dir() {
+        return None;
+    }
+    let contents =
+        std::fs::read_to_string(candidate.join(".agents/plugins/marketplace.json")).ok()?;
+    let manifest: Value = serde_json::from_str(&contents).ok()?;
+    manifest
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+}
 
 /// `${CODEX_HOME:-$HOME/.codex}`.
 fn codex_home_dir() -> PathBuf {
@@ -569,6 +612,49 @@ mod tests {
         assert_eq!(marketplace_name("axatbhardwaj/Dvandva"), "dvandva");
         assert_eq!(marketplace_name("axatbhardwaj/Dvandva.git"), "dvandva");
         assert_eq!(marketplace_name("https://example.com/Foo/BAR.git"), "bar");
+    }
+
+    #[test]
+    fn local_marketplace_name_reads_declared_name_field() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".agents/plugins")).unwrap();
+        std::fs::write(
+            dir.path().join(".agents/plugins/marketplace.json"),
+            r#"{"name":"dvandva","plugins":[]}"#,
+        )
+        .unwrap();
+        // Declared name need not match the directory's own basename.
+        assert_eq!(
+            local_marketplace_name(dir.path().to_str().unwrap()),
+            Some("dvandva".to_string())
+        );
+    }
+
+    #[test]
+    fn local_marketplace_name_none_for_non_local_or_missing_manifest() {
+        assert_eq!(local_marketplace_name("axatbhardwaj/Dvandva"), None);
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(local_marketplace_name(dir.path().to_str().unwrap()), None);
+    }
+
+    #[test]
+    fn refresh_marketplace_cache_removes_stale_dir_for_local_marketplace() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join(".agents/plugins")).unwrap();
+        std::fs::write(
+            dir.path().join(".agents/plugins/marketplace.json"),
+            r#"{"name":"dvandva","plugins":[]}"#,
+        )
+        .unwrap();
+
+        let codex_home = tempfile::tempdir().unwrap();
+        let cache_dir = codex_home.path().join(".tmp/marketplaces/dvandva");
+        std::fs::create_dir_all(&cache_dir).unwrap();
+        std::fs::write(cache_dir.join("stale-marker"), b"stale").unwrap();
+
+        refresh_marketplace_cache_at(dir.path().to_str().unwrap(), codex_home.path());
+
+        assert!(!cache_dir.exists());
     }
 
     #[test]

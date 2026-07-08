@@ -301,6 +301,103 @@ fn legacy_app_server_fallback_when_plugin_add_unavailable() {
     assert!(contains(&text, "dvandva:worktree-setup"));
 }
 
+/// Fake `codex` stub reproducing the observed real-world staleness bug:
+/// `plugin marketplace add` copies the source marketplace.json into the
+/// `CODEX_HOME` cache the first time, but on every later add treats the mere
+/// existence of the cache directory as "already registered" and skips
+/// re-copying — even when the source content changed underneath it — unless
+/// the caller clears the cache first.
+const FAKE_CODEX_STALE_CACHE: &str = r#"#!/usr/bin/env bash
+set -euo pipefail
+
+printf '%s\n' "$*" >> "$CODEX_FAKE_LOG"
+
+case "$1 $2 $3" in
+  "plugin add --help")
+    cat <<'HELP'
+Install a plugin from a configured marketplace snapshot.
+Usage: codex plugin add [OPTIONS] <PLUGIN[@MARKETPLACE]>
+HELP
+    ;;
+  "plugin marketplace add")
+    src="$4/.agents/plugins/marketplace.json"
+    dest="$CODEX_HOME/.tmp/marketplaces/dvandva/.agents/plugins/marketplace.json"
+    if [[ -f "$dest" ]]; then
+      echo "Marketplace 'dvandva' already registered" >&2
+      exit 1
+    fi
+    mkdir -p "$(dirname "$dest")"
+    cp "$src" "$dest"
+    ;;
+  "plugin add dvandva@dvandva")
+    printf '{"id":"dvandva@dvandva","installed":true}\n'
+    ;;
+  *)
+    echo "unexpected fake codex invocation: $*" >&2
+    exit 64
+    ;;
+esac
+"#;
+
+// ---------------------------------------------------------------------
+// Reproduces the observed live bug: a re-install after the source
+// marketplace changed must refresh the CODEX_HOME cache, not keep serving a
+// stale copy from a prior install (fixed by removing the cache dir before
+// every `codex plugin marketplace add`).
+// ---------------------------------------------------------------------
+#[test]
+fn stale_marketplace_cache_is_refreshed_on_reinstall() {
+    let run = InstallCodexRun::new();
+    let tmp = run.tmp_path().to_path_buf();
+    let marketplace = write_marketplace_fixture(&tmp);
+    let marketplace_manifest = marketplace.join(".agents/plugins/marketplace.json");
+    fs::write(
+        &marketplace_manifest,
+        r#"{"name":"dvandva","plugins":[{"name":"dvandva","version":"1.0.0"}]}"#,
+    )
+    .unwrap();
+    write_executable(&run.fake_bin.join("codex"), FAKE_CODEX_STALE_CACHE);
+    let log = tmp.join("codex-stale.log");
+    let codex_home = tmp.join("codex-home-stale");
+
+    let run = run
+        .env("CODEX_HOME", codex_home.clone())
+        .env("HOME", tmp.join("home-stale"))
+        .env("CODEX_FAKE_LOG", log);
+
+    let first = run.run(&[marketplace.to_str().unwrap()]);
+    assert_eq!(first.status.code(), Some(0), "stderr: {}", combined(&first));
+
+    let cache_manifest =
+        codex_home.join(".tmp/marketplaces/dvandva/.agents/plugins/marketplace.json");
+    let first_contents = fs::read_to_string(&cache_manifest).unwrap();
+    assert!(
+        first_contents.contains("1.0.0"),
+        "first install did not populate the cache: {first_contents}"
+    );
+
+    // Bump the source marketplace version, simulating a plugin release.
+    fs::write(
+        &marketplace_manifest,
+        r#"{"name":"dvandva","plugins":[{"name":"dvandva","version":"2.0.0"}]}"#,
+    )
+    .unwrap();
+
+    let second = run.run(&[marketplace.to_str().unwrap()]);
+    assert_eq!(
+        second.status.code(),
+        Some(0),
+        "stderr: {}",
+        combined(&second)
+    );
+
+    let second_contents = fs::read_to_string(&cache_manifest).unwrap();
+    assert!(
+        second_contents.contains("2.0.0"),
+        "stale marketplace cache was not refreshed on reinstall: {second_contents}"
+    );
+}
+
 // ---------------------------------------------------------------------
 // Extra: missing `codex` on PATH exits 1 with the shell's exact message
 // ---------------------------------------------------------------------
