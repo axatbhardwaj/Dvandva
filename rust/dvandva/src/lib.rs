@@ -35,6 +35,7 @@ pub mod sla_marker;
 pub mod smoke;
 pub mod snapshot;
 pub mod state;
+pub mod upgrade;
 pub mod util;
 pub mod wait;
 pub mod watchdog;

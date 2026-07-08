@@ -176,7 +176,7 @@ fn print_codex_done() {
 
 /// `command -v NAME`: true when an executable regular file named `name`
 /// exists in some `PATH` directory.
-fn command_exists(name: &str) -> bool {
+pub(crate) fn command_exists(name: &str) -> bool {
     let Some(path_var) = env::var_os("PATH") else {
         return false;
     };
@@ -209,12 +209,11 @@ fn command_probe_succeeds(command: &str, args: &[&str]) -> bool {
         .unwrap_or(false)
 }
 
-/// Ports the shell `run_idempotent` helper: spawn `command args...`, and
-/// treat a failure whose combined stdout+stderr matches the "already
-/// present" pattern (case-insensitive) as success. Prints progress exactly
-/// like the shell function and returns the effective exit code.
-fn run_idempotent(label: &str, command: &str, args: &[&str]) -> i32 {
-    let (combined, exit_code) = match Command::new(command).args(args).output() {
+/// Spawns `command args...`, capturing combined stdout+stderr and the
+/// effective exit code (`127` when the executable itself fails to spawn,
+/// mirroring `run_idempotent`'s prior inline spawn-failure handling).
+pub(crate) fn capture_combined(command: &str, args: &[&str]) -> (String, i32) {
+    match Command::new(command).args(args).output() {
         Ok(Output {
             status,
             stdout,
@@ -228,7 +227,15 @@ fn run_idempotent(label: &str, command: &str, args: &[&str]) -> i32 {
             }
         }
         Err(err) => (format!("ERROR: failed to execute {command}: {err}"), 127),
-    };
+    }
+}
+
+/// Ports the shell `run_idempotent` helper: spawn `command args...`, and
+/// treat a failure whose combined stdout+stderr matches the "already
+/// present" pattern (case-insensitive) as success. Prints progress exactly
+/// like the shell function and returns the effective exit code.
+pub(crate) fn run_idempotent(label: &str, command: &str, args: &[&str]) -> i32 {
+    let (combined, exit_code) = capture_combined(command, args);
 
     if exit_code == 0 {
         if !combined.is_empty() {
@@ -262,7 +269,7 @@ fn combine_output(stdout: &[u8], stderr: &[u8]) -> String {
 }
 
 /// `grep -Eiq 'already|exists|registered|installed|duplicate'`.
-fn already_present_pattern() -> Regex {
+pub(crate) fn already_present_pattern() -> Regex {
     Regex::new("(?i)already|exists|registered|installed|duplicate").expect("static regex")
 }
 
@@ -312,7 +319,7 @@ fn local_marketplace_name(marketplace: &str) -> Option<String> {
 }
 
 /// `${CODEX_HOME:-$HOME/.codex}`.
-fn codex_home_dir() -> PathBuf {
+pub(crate) fn codex_home_dir() -> PathBuf {
     compute_codex_home_dir(env::var_os("CODEX_HOME"), env::var_os("HOME"))
 }
 

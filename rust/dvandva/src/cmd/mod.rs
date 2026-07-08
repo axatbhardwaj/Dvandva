@@ -21,6 +21,7 @@ pub mod retire;
 pub mod smoke;
 pub mod snapshot;
 pub mod state;
+pub mod upgrade;
 pub mod wait;
 pub mod watchdog;
 pub mod write;

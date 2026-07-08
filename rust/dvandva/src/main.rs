@@ -31,7 +31,7 @@ Core:      state | resolve | write | wait | snapshot | next | brief
 Preflight: preflight | hook-preflight
 Monitor:   watchdog
 Git gate:  commit-gate | drift-lint | install-hooks | git-hook <name> | baton-guard
-Install:   install | install-codex | smoke-install | retire-agents
+Install:   install | install-codex | upgrade | smoke-install | retire-agents
 Lints:     lint <artifacts|skills|protocol-phase1|skill-phase3|phase4-research|
                  run3-dynamic-agents|run4-path-gates|run4-standalone-agents>
 
@@ -86,6 +86,7 @@ fn main() -> ExitCode {
         Some("install-hooks") => cmd::install_hooks::run(sub_args),
         Some("install") => cmd::install::run(sub_args),
         Some("install-codex") => cmd::install_codex::run(sub_args),
+        Some("upgrade") => cmd::upgrade::run(sub_args),
         Some("retire-agents") => cmd::retire::run(sub_args),
         Some("smoke-install") => cmd::smoke::run(sub_args),
         Some("lint") => cmd::lint::run(sub_args),
