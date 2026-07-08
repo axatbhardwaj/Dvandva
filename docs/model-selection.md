@@ -30,6 +30,12 @@ code quality, API design, and copy.
 
 ## How To Apply
 
+A Fable-class model hosting a session (for example the vadi chair) never writes
+code itself — no implementation, tests, or fixes, however small. It dispatches
+that work to `sonnet`/`opus`/`gpt-5.5` subagents and keeps only judgment and
+taste surfaces: decisions, plans, reviews, human-facing artifacts, and
+coordination writes.
+
 These are defaults, not limits. If a cheaper model's output does not meet the
 bar, rerun or redo the work with a stronger model without asking first. Judge
 the output, not the price tag. Escalation costs less than shipping mediocre
