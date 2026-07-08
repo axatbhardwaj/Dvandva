@@ -8,9 +8,9 @@
 {
   "schema": "dvandva.artifact.research.v1",
   "artifact_type": "explainer",
-  "title": "Dvandva product explainer — paths for phases and profiles",
-  "date": "2026-07-06",
-  "basis": "engine truth on feat/clarifying-questions-phase fe9d283 · dvandva 2.0.0-beta.3 · plugin 1.4.2"
+  "title": "Dvandva product explainer — declared workflows, presets, and the baton",
+  "date": "2026-07-08",
+  "basis": "engine truth on main ada386c · dvandva 3.0.0-alpha.2 · plugin 1.5.1"
 }
 </script>
 <style>
@@ -79,7 +79,7 @@
   <div class="duel">
     <h1><span class="k-vadi">vadi</span> <span class="vs">×</span> <span class="k-prat">prativadi</span></h1>
   </div>
-  <p class="thesis">Two rival AI agents from different vendors build your software together — one proposes, one prosecutes. They never talk. They pass a baton file through a state machine that refuses to finish until the work is <em>proven</em>.</p>
+  <p class="thesis">Two rival AI agents from different vendors build your software together — one proposes, one prosecutes. They never talk. They pass a baton file through a workflow <em>they declare for the job</em> — and the engine refuses to let it finish until the work is <em>proven</em>.</p>
   <div class="baton-rail" aria-hidden="true">
     <span class="endcap l">VADI · proposes, implements</span>
     <span class="endcap r">PRATIVADI · reviews, attacks</span>
@@ -90,6 +90,7 @@
     <span class="chip">crash-tolerant: kill either side, rejoin at preflight</span>
     <span class="chip">engine-agnostic: Claude Code × Codex is the canonical pair</span>
     <span class="chip">walkaway or supervised</span>
+    <span class="chip">v3: each run declares its own workflow — peer-approved, invariant-checked</span>
   </div>
 </header>
 
@@ -160,7 +161,7 @@
     <text x="460" y="30" fill="#5c6774" font-size="9.5" text-anchor="middle">floor: ≥5 questions combined, ≥1 asked by each role — enforced by the write gate, not a convention</text>
     <text x="460" y="145" fill="#5c6774" font-size="9.5" text-anchor="middle">every mode (development / research / review) and every profile (fast / standard / full) enters here — there is no bypass edge</text>
   </svg>
-  <figcaption>New in this cycle: the transit map below picks up at RESEARCH — read it as "after the four clarifying stations above," on every line.</figcaption>
+  <figcaption>The preset map below picks up at RESEARCH — read it as "after the four clarifying stations above," on every line.</figcaption>
   </figure>
 </section>
 
@@ -175,9 +176,44 @@
 </section>
 
 <section>
-  <p class="eyebrow">step two — the centerpiece</p>
-  <h2>Pick a profile: every path, one map</h2>
-  <p>All five routes share the same stations. A line stops where its ceremony applies and passes through where it doesn't. Station color = who owns that stop.</p>
+  <p class="eyebrow">step two — new in v3</p>
+  <h2>Declare the workflow: the graph itself is now a reviewed deliverable</h2>
+  <p>After research is accepted, the run does not fall into a frozen state machine — it <em>declares</em> one. The vadi proposes the workflow for this specific job (a preset below, or a custom graph of states, owners, and loop caps); the prativadi reviews it in a capped revision loop; and the engine validates the approved graph against five locked invariants before a single line of spec is written. Mid-run the graph can be amended, but every amendment is peer-re-gated through the same check.</p>
+  <figure>
+  <svg viewBox="0 0 1040 190" width="100%" role="img" aria-label="The workflow declaration loop">
+    <defs><marker id="dw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8a97a8"/></marker></defs>
+    <rect x="10" y="58" width="140" height="54" rx="9" fill="#182130" stroke="#26303e"/>
+    <text x="80" y="81" fill="#dce4ee" font-size="11" text-anchor="middle">research_review</text>
+    <text x="80" y="98" fill="#5c6774" font-size="9" text-anchor="middle">research accepted</text>
+    <line x1="150" y1="85" x2="192" y2="85" stroke="#8a97a8" stroke-width="1.2" marker-end="url(#dw)"/>
+    <rect x="192" y="58" width="172" height="54" rx="9" fill="#0f2a22" stroke="#34d399"/>
+    <text x="278" y="81" fill="#dce4ee" font-size="11" text-anchor="middle">workflow_declaring</text>
+    <text x="278" y="98" fill="#34d399" font-size="9" text-anchor="middle">vadi: preset or custom graph</text>
+    <line x1="364" y1="85" x2="406" y2="85" stroke="#8a97a8" stroke-width="1.2" marker-end="url(#dw)"/>
+    <rect x="406" y="58" width="164" height="54" rx="9" fill="#241830" stroke="#a78bfa"/>
+    <text x="488" y="81" fill="#dce4ee" font-size="11" text-anchor="middle">workflow_review</text>
+    <text x="488" y="98" fill="#a78bfa" font-size="9" text-anchor="middle">prativadi challenges the graph</text>
+    <line x1="570" y1="85" x2="640" y2="85" stroke="#8a97a8" stroke-width="1.2" marker-end="url(#dw)"/>
+    <rect x="640" y="52" width="120" height="66" rx="9" fill="#12241a" stroke="#46c26a" stroke-width="1.8"/>
+    <text x="700" y="78" fill="#46c26a" font-size="10.5" text-anchor="middle">5 invariants</text>
+    <text x="700" y="94" fill="#5c6774" font-size="8.5" text-anchor="middle">checked at approval</text>
+    <line x1="760" y1="85" x2="802" y2="85" stroke="#8a97a8" stroke-width="1.2" marker-end="url(#dw)"/>
+    <rect x="802" y="58" width="130" height="54" rx="9" fill="#182130" stroke="#26303e"/>
+    <text x="867" y="81" fill="#dce4ee" font-size="11" text-anchor="middle">spec_drafting</text>
+    <text x="867" y="98" fill="#5c6774" font-size="9" text-anchor="middle">the graph is now law</text>
+    <path d="M 460 112 C 420 152 330 152 290 114" fill="none" stroke="#a78bfa" stroke-width="1.2" stroke-dasharray="5 4" marker-end="url(#dw)"/>
+    <text x="375" y="158" fill="#5c6774" font-size="9" text-anchor="middle">workflow_revision ⟲ (loop-capped — deadlock escalates to you)</text>
+    <text x="700" y="34" fill="#5c6774" font-size="9" text-anchor="middle">peer-gate is a node-cut to done · escapes reachable · owner totality · dual-approval done · no absorbing non-terminals</text>
+    <text x="80" y="140" fill="#5c6774" font-size="9">wait is class-driven off the declared graph: work / review_gate / human_gate / pause / terminal — human-gate states wake their owner (exit 15)</text>
+  </svg>
+  <figcaption>The graph a run will live under is itself proposed, attacked, revised, and machine-validated — you provably cannot declare a workflow whose review gates can be dodged on the way to <code>done</code>.</figcaption>
+  </figure>
+</section>
+
+<section>
+  <p class="eyebrow">step three — the preset library</p>
+  <h2>Five preset graphs: every path, one map</h2>
+  <p>These five routes ship with the engine as declarable presets — most runs pick one and move on; a custom graph must pass the same five invariants. All five share the same stations: a line stops where its ceremony applies and passes through where it doesn't. Station color = who owns that stop.</p>
   <figure>
   <svg viewBox="0 0 1060 560" width="100%" role="img" aria-label="Transit map of all Dvandva paths">
     <defs>
@@ -354,6 +390,7 @@
     <tr><td>erase your partner's work in a retry</td><td>team-state writes must be supersets of the installed arrays (<code>lost_update</code>)</td></tr>
     <tr><td>quietly change the plan</td><td><code>total_phases</code> freezes at lock; amendments are reviewed episodes; the lock opens only via the human</td></tr>
     <tr><td>argue forever</td><td>six loop families are counted and capped; the cap's only exit is escalation to you</td></tr>
+    <tr><td>declare a workflow that dodges review</td><td>five locked invariants at approval: deleting the peer-review gates provably disconnects <code>done</code>; escapes stay reachable; every state has an owner; termination is dual-approved; no state traps the run</td></tr>
     <tr><td>drift off the map</td><td>hand-editing the baton is hook-blocked; commits outside declared scope are gate-blocked; a corrupt baton fails preflight; the docs are lint-pinned to the engine</td></tr>
   </table>
 </section>
@@ -362,7 +399,7 @@
   <p class="eyebrow">boarding</p>
   <h2>Get started</h2>
   <pre><code># the runtime (one binary, published on crates.io)
-cargo install dvandva --version 2.0.0-beta.3
+cargo install dvandva --version 3.0.0-alpha.2
 
 # the plugin, into Claude Code and Codex
 dvandva install</code></pre>
@@ -372,7 +409,7 @@ Codex:   Join the same Dvandva development run and review the baton.</code></pre
   <p class="quiet">Walkaway mode drives the baton autonomously until <span class="k-seal">done</span> — or until a question needs you, in which case the Claude session asks you directly, wherever your remote session is open.</p>
 </section>
 
-<p class="foot">DVANDVA · engine truth as of feat/clarifying-questions-phase fe9d283 · dvandva 2.0.0-beta.3 · plugin 1.4.2 · 26 statuses · 102 whitelisted edges + human &amp; amendment rails · 1131 tests</p>
+<p class="foot">DVANDVA · engine truth as of main ada386c · dvandva 3.0.0-alpha.2 · plugin 1.5.1 · 29 statuses · graph interpreter over 5 declarable presets + custom graphs, 5 locked invariants · 1326 tests</p>
 </main>
 </body>
 </html>
