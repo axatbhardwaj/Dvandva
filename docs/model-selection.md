@@ -137,6 +137,14 @@ Rules for the grok lane:
   tool use, or baton writes directly.
 - Read-only invocation: restrict tools (`--disallowed-tools`) and never use
   `--always-approve`/`--yolo` for research lanes.
+- Plan-pulse (adopted by the 2026-07-09 `grok-placement` run): the lane may be
+  pointed at plans and claims, not just research questions — "what shipped or
+  changed in the live world that undermines this plan?" Findings are
+  quarantined in lane artifacts until a Claude-family role independently
+  confirms them; only confirmed findings may enter baton fields. All of
+  Grok's other self-proposed seats (debugging triage, PR/commit glue, bulk
+  automation, critique-as-a-station) were rejected there — no live-data
+  advantage, existing seats own them.
 
 ## Dvandva Class Boundary
 
