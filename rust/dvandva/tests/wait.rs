@@ -622,7 +622,7 @@ fn until_actionable_open_owner_role_finding_wakes_owner_in_cross_fixing() {
 }
 
 #[test]
-fn until_actionable_unknown_owner_role_finding_status_wakes_fail_safe() {
+fn until_actionable_unknown_finding_status_wakes_owner_fail_safe() {
     let d = tmp();
     write_team_baton_with_findings(
         &d.path().join(".dvandva/runs/alpha/baton.json"),

@@ -472,8 +472,8 @@ mod role_skill_contract {
         for (path, role) in role_skills() {
             require_match(
                 &path,
-                r#"human_(decision|question).*(paired run pause|stop both roles together)|stop both roles together.*human_(decision|question)|paired run pause.*human_(decision|question)"#,
-                &format!("{role} skill says human_question and human_decision are paired run pauses that stop both roles together"),
+                r#"human_(decision|question).*paired pause of active work on both roles|paired pause of active work on both roles.*human_(decision|question)"#,
+                &format!("{role} skill says human_question and human_decision are a paired pause of active work on both roles, not a stop of the polling loop"),
             );
         }
     });
@@ -645,8 +645,8 @@ mod command_contract {
         for (path, role) in command_files() {
             require_match(
                 &path,
-                r#"human_(decision|question).*(paired run pause|stop both roles together)|stop both roles together.*human_(decision|question)|paired run pause.*human_(decision|question)"#,
-                &format!("{role} command says human_question and human_decision are paired run pauses that stop both roles together"),
+                r#"human_(decision|question).*paired pause of ACTIVE WORK for both roles|paired pause of ACTIVE WORK for both roles.*human_(decision|question)"#,
+                &format!("{role} command says human_question and human_decision are a paired pause of active work for both roles, not a stop of the polling loop"),
             );
         }
     });
@@ -977,8 +977,8 @@ mod state_ref_contract {
     live_tree_test!(human_intervention_states_are_paired_run_pauses, {
         require_match(
             &state_ref(),
-            r#"human_(decision|question).*(paired run pause|stop both roles together)|stop both roles together.*human_(decision|question)|paired run pause.*human_(decision|question)"#,
-            "state reference says human_question and human_decision are paired run pauses that stop both roles together",
+            r#"human_(decision|question).*paired pause of\s+active work on both roles|paired pause of\s+active work on both roles.*human_(decision|question)"#,
+            "state reference says human_question and human_decision are a paired pause of active work on both roles, not a stop of the polling loop",
         );
     });
 

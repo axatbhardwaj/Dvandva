@@ -579,7 +579,7 @@ fn phase4_fixture(root: &Path) {
 
     // commands
     let command = format!(
-        "{SUPERPOWERS}research_ref work_split verification_matrix test_creation deep_review deslop\nparallel subagents\nconditional parallelism\nsubagent_tracks\nInvoke `dvandva:research`.\nregular local checkpoint commits\nModel-class mapping is vendor-neutral.\nNever use `haiku`.\n{MODEL_CLASSES}"
+        "{SUPERPOWERS}research_ref work_split verification_matrix test_creation deep_review deslop\nparallel subagents\nconditional parallelism\nsubagent_tracks\nInvoke `dvandva:research`.\nregular local checkpoint commits\nA Codex-hosted role goes silent but keeps its --through-human wait running through the pause.\nModel-class mapping is vendor-neutral.\nNever use `haiku`.\n{MODEL_CLASSES}"
     );
     let command = format!("{command}{RING_DISPATCH}");
     w(root, "plugins/dvandva/commands/vadi.md", &command);
@@ -894,6 +894,25 @@ fn phase4_research_rejects_command_missing_ring_dispatch_defaults() {
     );
     let r = phase4_research::report(d.path());
     assert!(r.fails_with("pins gpt-class implementation/test/fix defaults"));
+}
+
+#[test]
+fn phase4_research_rejects_command_dropping_keeps_wait_running() {
+    // Guard against regressing to a stop-at-pause instruction: a Codex-hosted
+    // role must keep its `--through-human` wait running through a human pause,
+    // not exit the wait loop. Doctor the needle out and the pin must bite.
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/commands/vadi.md");
+    let text = fs::read_to_string(&p).unwrap().replace(
+        "A Codex-hosted role goes silent but keeps its --through-human wait running through the pause.",
+        "A Codex-hosted role stops silently unless it is the only session.",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with(
+        "plugins/dvandva/commands/vadi.md keeps the Codex through-human wait running through a human pause"
+    ));
 }
 
 #[test]

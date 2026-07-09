@@ -1788,6 +1788,19 @@ pub fn report(root: &Path) -> Report {
             MODEL_POLICY_NO_HAIKU_COMMANDS,
             format!("{file} forbids haiku-class Dvandva subagents"),
         );
+        // A human pause stops ACTIVE WORK, not the polling loop: a Codex-hosted
+        // role keeps its `--through-human` wait running through the pause and
+        // resumes unattended. Pin the keeps-wait-running wording so the goal
+        // text can never regress to a stop-at-pause instruction that makes Codex
+        // exit its wait loop at every human pause.
+        r.add(
+            file_slurp_matches_ci(
+                root,
+                file,
+                r"keeps\s+its\s+--through-human\s+wait\s+running",
+            ),
+            format!("{file} keeps the Codex through-human wait running through a human pause"),
+        );
     }
     req(
         &mut r,

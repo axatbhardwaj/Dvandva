@@ -119,8 +119,9 @@ For git work-gating, completed `done` batons and human-intervention
 them, and drift lint only reports off-protocol commits while at least one active
 baton is present or when checkpoint history gives it a scan floor.
 
-For waiting, `human_question` and `human_decision` are a paired run pause that
-stops both roles together. If a selected run is in a non-terminal wait and a newer
+For waiting, `human_question` and `human_decision` are a paired pause of active
+work on both roles, not a stop of the polling loop. If a selected run is in a
+non-terminal wait and a newer
 sibling run enters `human_decision` or `human_question`, the wait helper
 propagates that sibling human-intervention state to the selected waiter unless
 `DVANDVA_CONCURRENT=1`. Older sibling human-intervention batons remain parked
@@ -133,8 +134,10 @@ session hosts — on writing a pause state, or on a wait exit 11/12 (including
 sibling propagation) — asks the human directly in-session (question, options,
 resume fields) and stays available for the answer, using Claude Code's
 mobile/remote surface to reach the user away from the PC. The Codex-hosted role
-writes or observes the pause and stops silently and must not compete to consume
-the human answer. If no Claude Code session is part of the run (both roles
+goes silent but keeps its `--through-human` wait running through the pause and
+resumes automatically when the surfacing session records the answer — exiting the
+wait loop at a human pause is a protocol violation, and must not compete to
+consume the human answer. If no Claude Code session is part of the run (both roles
 Codex-hosted), the writer of the pause surfaces it; `current_engine` still
 records the writer for traceability. The native Claude Code remote session is
 the human notification channel (F5); ensure the Claude-hosted session is the
@@ -588,8 +591,10 @@ Every review-mode status uses `phase: "review"`.
   `vadi_final_approval`, and `DVANDVA_ROLE=prativadi` may raise only
   `prativadi_final_approval`.
 
-Any other transition is illegal in v1 or v2. The writing agent must reject
-illegal transitions and route to `human_decision` instead.
+Any other transition is illegal under the live `dvandva.baton.v3` write
+contract, which carries the historical v1/v2 edges forward unchanged. The
+writing agent must reject illegal transitions and route to `human_decision`
+instead.
 
 ## Handoff Rule
 

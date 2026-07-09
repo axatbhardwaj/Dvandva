@@ -137,8 +137,11 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
 - `dvandva wait`: continuous polling is the hard rule. `--max-wait` is the
   heartbeat interval by default, and the helper keeps polling until role
   ownership, shared terminal `done`, the terminal `abandoned` (S2-T1; wait exits
-  13), `human_question`, `human_decision`, or user interrupt. `human_question` and `human_decision` are a paired run pause that
-  stops both roles together. During a selected non-terminal wait, the wait
+  13), `human_question`, `human_decision`, or user interrupt. `human_question` and `human_decision` are a paired pause of
+  active work on both roles, not a stop of the polling loop: the Codex-hosted
+  role's `--through-human` wait keeps running through the pause and resumes
+  automatically when the answer lands, so exiting the wait loop at a human pause
+  is a protocol violation. During a selected non-terminal wait, the wait
   helper propagates a newer sibling run's `human_decision` or
   `human_question` unless `DVANDVA_CONCURRENT=1`; older sibling
   human-intervention batons are ignored so parked runs cannot hijack newer work.
@@ -664,8 +667,9 @@ writes:
   `DVANDVA_ROLE=vadi`; raising `prativadi_final_approval` requires
   `DVANDVA_ROLE=prativadi`.
 
-Any other transition is illegal in v1 or v2 and must be rejected by the writing
-agent.
+Any other transition is illegal under the live `dvandva.baton.v3` write
+contract, which carries the historical v1/v2 edges forward unchanged, and must
+be rejected by the writing agent.
 
 ## Dynamic Agent Instances (Run 3)
 
