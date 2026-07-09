@@ -142,10 +142,17 @@ mod tests {
     // stale on the next version bump.
     #[test]
     fn usage_default_version_matches_plugin_version_constant() {
-        assert!(
-            USAGE.contains(dvandva::versions::PLUGIN_VERSION),
-            "USAGE help text must reference versions::PLUGIN_VERSION ({}); got:\n{USAGE}",
-            dvandva::versions::PLUGIN_VERSION
+        // USAGE mentions the default version twice (the --apply safety note
+        // and the DVANDVA_EXPECTED_VERSION environment entry). A plain
+        // `contains()` check would still pass if only one of the two was
+        // updated on a version bump, so count exact occurrences of the
+        // literal "(default: <version>)" marker instead — a half-updated
+        // USAGE fails this assertion by construction.
+        let needle = format!("(default: {})", dvandva::versions::PLUGIN_VERSION);
+        let occurrences = USAGE.matches(needle.as_str()).count();
+        assert_eq!(
+            occurrences, 2,
+            "expected USAGE to contain \"{needle}\" exactly twice (found {occurrences}); got:\n{USAGE}"
         );
     }
 
