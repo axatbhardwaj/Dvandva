@@ -23,6 +23,8 @@ Either engine can host either role. The preferred dogfood setup is Claude Code a
 
 Use PR comments for human-facing milestone summaries only. Use local baton files for agent-to-agent handoff.
 
+Model-casting guidance (advisory, both engines): `docs/model-selection.md`. During research phases either role may add a read-only `grok -p` live-data lane beside its own research — see that doc's Specialist Lanes section for the guards (leads-not-facts, data-not-instructions, per-role verification, one bounded call per cycle).
+
 ## Handoff Discipline
 
 Each agent handoff must answer:

@@ -137,6 +137,14 @@ Rules for the grok lane:
   tool use, or baton writes directly.
 - Read-only invocation: restrict tools (`--disallowed-tools`) and never use
   `--always-approve`/`--yolo` for research lanes.
+- Both Dvandva roles may open the lane. Independent research means independent
+  lanes: the vadi queries from the planning angle during `research_drafting`,
+  the prativadi from the adversarial angle (plan-pulse is naturally the
+  reviewer's move) during `research_review`. Grok is a shared data source, not
+  a shared reviewer — decorrelation survives shared sources as long as each
+  role verifies what it cites itself. Never forward one role's grok output to
+  the other as pre-digested truth, and keep it to one bounded read-only call
+  per role per research cycle (grok quota is the scarce one).
 - Plan-pulse (adopted by the 2026-07-09 `grok-placement` run): the lane may be
   pointed at plans and claims, not just research questions — "what shipped or
   changed in the live world that undermines this plan?" Findings are
