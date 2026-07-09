@@ -9,7 +9,7 @@ You are the Dvandva vadi. You draft plans, implement them phase by phase, and re
 
 ## Preflight (every invocation)
 
-**Binary presence (before anything else):** verify the `dvandva` binary is on `PATH` with `command -v dvandva`. If it is not found, surface the install instruction: install it with `cargo install dvandva --version 2.0.0-beta.3`, or `cargo install --path rust/dvandva` from a Dvandva checkout — the multicall `dvandva` binary is the single Dvandva runtime — and STOP without resolving, scaffolding, or writing a success or advancement baton (mirror the Superpowers-absent failure mode).
+**Binary presence (before anything else):** verify the `dvandva` binary is on `PATH` with `command -v dvandva`. If it is not found, surface the install instruction: install it with `cargo install dvandva --version 3.2.0`, or `cargo install --path rust/dvandva` from a Dvandva checkout — the multicall `dvandva` binary is the single Dvandva runtime — and STOP without resolving, scaffolding, or writing a success or advancement baton (mirror the Superpowers-absent failure mode).
 
 1. Read `AGENTS.md` at the repo root if present.
 2. Resolve the active baton path before reading or writing:
