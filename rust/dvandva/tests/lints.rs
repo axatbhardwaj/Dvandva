@@ -536,7 +536,7 @@ fn phase4_fixture(root: &Path) {
     w(
         root,
         "plugins/dvandva/references/state-transition-table.md",
-        &format!("{BIG_LIST}{MODEL_CLASSES}"),
+        &format!("{BIG_LIST}{MODEL_CLASSES}dvandva.baton.v3 is the sole writable schema; v1/v2 are retired from the WRITE path.\n"),
     );
 
     // vadi skill
@@ -1025,6 +1025,23 @@ fn phase4_research_rejects_retired_codex_model_mapping() {
     fs::write(&p, text).unwrap();
     let r = phase4_research::report(d.path());
     assert!(r.fails_with("product.md avoids retired Codex gpt-5.4 mapping"));
+}
+
+#[test]
+fn phase4_research_rejects_transition_table_missing_v3_write_retirement() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d
+        .path()
+        .join("plugins/dvandva/references/state-transition-table.md");
+    let text = fs::read_to_string(&p)
+        .unwrap()
+        .replace("is the sole writable schema", "");
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with(
+        "plugins/dvandva/references/state-transition-table.md documents v3-only write retirement"
+    ));
 }
 
 #[test]

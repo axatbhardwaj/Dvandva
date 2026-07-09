@@ -4,7 +4,7 @@ This is the plugin-local reference for `dvandva.baton.v1` and the v2 design
 contract. The skill bodies carry the operational checklist; this file is the
 bundled transition reference available after plugin install.
 
-The `dvandva write` subcommand enforces v1 and v2 transition subsets deterministically at write time; the write port's `cargo test` suite asserts every documented v1 edge plus the v2 research/test/review/deslop edges below.
+The `dvandva write` subcommand enforces the `dvandva.baton.v3` transition contract deterministically at write time; `dvandva.baton.v1` and `dvandva.baton.v2` are retired from the WRITE path (`schema_retired`) and survive only as read-path history. The write port's `cargo test` suite still asserts every documented v1 edge plus the v2 research/test/review/deslop edges below, which v3 carries forward unchanged, alongside the v3 declaration-loop edges.
 
 Status catalog (26): clarifying_questions_drafting, clarifying_questions_answer, clarifying_questions_followup, clarifying_questions_followup_answer, research_drafting, research_review, research_revision, spec_drafting, spec_review, spec_revision, implementing, parallel_implementing, test_creation, cross_review, cross_fixing, deep_review, review_of_review, counter_review, deslop, termination_review, phase_review, phase_fixing, human_question, human_decision, done, abandoned
 
@@ -179,14 +179,18 @@ v2 baton exists, its `run_id` is immutable for that run. v2 adds:
   enum validation. Fix the candidate and rerun the helper; do not edit the
   installed baton directly.
 
-Legacy `.dvandva/baton.json` may continue to be READ as `dvandva.baton.v1`, but
-the v1 WRITE path is retired (S5-T2/D5): a `dvandva.baton.v1` write candidate —
-or a current baton still carrying `schema: "dvandva.baton.v1"` — is rejected with
-`schema_retired` and a migration hint to `dvandva.baton.v2`. The lenient READ
-path (`state`/`resolve`/`wait`/`brief`) is untouched, so old v1 batons stay
-observable; `baton-schema.json` and `templates/channel/baton.json` are kept as
-HISTORICAL v1 references. The live
-v2 write-helper enforcement requires safe `run_id`, `original_ask`,
+Legacy `.dvandva/baton.json` may continue to be READ as `dvandva.baton.v1`, and
+old run-scoped batons as `dvandva.baton.v2`, but the v1 and v2 WRITE paths are
+retired (S5-T2/D5, extended by the v3 per-run-workflow schema): a
+`dvandva.baton.v1` or `dvandva.baton.v2` write candidate — or a current baton
+still carrying either schema — is rejected with `schema_retired` and a migration
+hint (the helper chains v1→v2→v3), so `dvandva.baton.v3` is the sole writable
+schema. The lenient READ path (`state`/`resolve`/`wait`/`brief`) is untouched, so
+old v1/v2 batons stay observable; `baton-schema.json` and
+`templates/channel/baton.json` are kept as HISTORICAL v1 references and
+`baton-schema-v2.json` as the HISTORICAL v2 reference. The
+v2 write-helper enforcement — carried forward unchanged by the live
+`dvandva.baton.v3` write helper — requires safe `run_id`, `original_ask`,
 `run_explainer_ref`, `active_roles`, `work_split`, `agent_instances`,
 `subagent_tracks`, and `verification_matrix`; it also requires a non-empty
 `research_ref` before advancing beyond the initial research draft, except that
@@ -557,7 +561,7 @@ termination. Every review-mode status uses `phase: "review"`. S4-T7 adds the
 
 - **Spec-entry lock (S4-T2/D2).** `spec_review -> implementing`/`parallel_implementing` requires candidate `master_plan_locked == true` (`bad_master_plan_locked`); `master_plan_locked` `true->false` is rejected on every development edge except a write whose `new_status` is `human_decision`.
 - **Done-gate refs/matrix/superset (S4-T1/T4/T6).** A `done` candidate must resolve each required ref to an existing non-empty file (`missing_artifact`), carry a complete-and-fresh `verification_matrix` (`stale_verification_matrix`, anchored at the last implementation-family checkpoint), and (team-owned) preserve installed `subagent_tracks`/`agent_instances`/`work_split` ids and `findings` as a superset (`lost_update`).
-- **v1 write retirement (S5-T2/D5).** A `dvandva.baton.v1` write candidate — or a current baton still on v1 — is rejected with `schema_retired` and a migration hint. The READ path (`state`/`resolve`/`wait`/`brief`) stays lenient, so old v1 batons remain observable.
+- **v1/v2 write retirement (S5-T2/D5; extended by the v3 per-run-workflow schema).** A `dvandva.baton.v1` or `dvandva.baton.v2` write candidate — or a current baton still carrying either schema — is rejected with `schema_retired` and a migration hint (v1→v2→v3), so `dvandva.baton.v3` is the sole writable schema. The READ path (`state`/`resolve`/`wait`/`brief`) stays lenient, so old v1/v2 batons remain observable.
 - **Parallel-chunk floor + waiver (S5-T3).** `parallel_implementing` entry and `parallel_implementing -> test_creation` require `>=2` write-capable chunks per role AND (`>=5` total OR a valid `work_split_waiver`); malformed waivers are `bad_work_split_waiver`.
 - **Post-install fence (S4-T10).** After the atomic rename the write path re-verifies the lock; loss is `lock_lost_post_install` (exit 29) — the install DID happen and may be superseded, so the caller must re-read.
 

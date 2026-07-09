@@ -53,20 +53,25 @@ and default `turn_cap` to 60. Nullable v2 additions for the accepted run modes
 are `research_outcome`, `review_ref`, and `review_intake`; `review_target`
 remains the existing selector field. Development runs additionally carry
 `profile`, `profile_floor`, `profile_decision`, and `profile_history` for the
-orthogonal `fast | standard | full` lifecycle-depth selector. The live v2
-write-helper enforcement covers v2-only fields, safe `run_id` values, schema
-continuity for existing runs, v2 status-owner pairs, honest `agent_instances`
-and `subagent_tracks`, profile floors/allowlists, the full-profile terminal
-`run_explainer_ref` and `run_explainer_reviews` invariants, and v2 lifecycle
-transitions.
+orthogonal `fast | standard | full` lifecycle-depth selector. The v2
+write-helper enforcement — carried forward unchanged by the live
+`dvandva.baton.v3` write helper, the sole write contract — covers v2-only
+fields, safe `run_id` values, schema continuity for existing runs, status-owner
+pairs, honest `agent_instances` and `subagent_tracks`, profile floors/allowlists,
+the full-profile terminal `run_explainer_ref` and `run_explainer_reviews`
+invariants, and lifecycle transitions.
 
-The v1 WRITE path is retired (S5-T2). A `dvandva.baton.v1` write candidate — a
-scaffold or a transition — is rejected with `schema_retired` (exit 23) plus a
-migration hint to `dvandva.baton.v2`; a current baton still carrying
-`schema: "dvandva.baton.v1"` also has no legal forward write. The lenient READ
-path (`dvandva state`/`resolve`/`wait`/`brief`) is untouched, so existing v1
-batons remain observable and resumable-for-read. `references/baton-schema.json`
-and `templates/channel/baton.json` are kept as HISTORICAL v1 references only.
+The v1 and v2 WRITE paths are retired (S5-T2; v2 extended by the v3
+per-run-workflow schema). A `dvandva.baton.v1` or `dvandva.baton.v2` write
+candidate — a scaffold or a transition — is rejected with `schema_retired`
+(exit 23) plus a migration hint (the helper chains v1→v2→v3), so
+`dvandva.baton.v3` is the sole writable schema; a current baton still carrying
+`schema: "dvandva.baton.v1"` or `"dvandva.baton.v2"` also has no legal forward
+write. The lenient READ path (`dvandva state`/`resolve`/`wait`/`brief`) is
+untouched, so existing v1/v2 batons remain observable and resumable-for-read.
+`references/baton-schema.json` and `templates/channel/baton.json` are kept as
+HISTORICAL v1 references only, and `references/baton-schema-v2.json` as the
+HISTORICAL v2 reference.
 
 Accepted terminal artifact gates are mode/profile-conditional: full-profile
 development runs require `run_explainer_ref` plus completed approved
@@ -591,8 +596,10 @@ illegal transitions and route to `human_decision` instead.
 The active agent must stop doing LLM work after writing a baton that assigns the next action to another actor. In default `run_mode: "walkaway"`, it then blocks in the foreground wait helper instead of exiting the overall run. After installing a handoff checkpoint, call the helper with `--since-checkpoint <written_checkpoint> --until-actionable` so team-owned `active_roles` states do not return the writer as ready on the same checkpoint and do not wake a role until that role has dependency-unblocked actionable work; the helper exits 0 only after a peer write advances the baton and the selected role is actionable.
 
 Every baton write goes through `dvandva write`,
-which validates the v1 or v2 transition, installs atomically, and snapshots the
-checkpoint. The live v2 write-helper enforcement covers named-run research
+which validates the `dvandva.baton.v3` transition (v1/v2 candidates are rejected
+with `schema_retired`), installs atomically, and snapshots the
+checkpoint. The v2 write-helper enforcement — carried forward by the live v3
+write helper — covers named-run research
 transitions, v2-only fields, safe run IDs, schema continuity, status-owner
 pairs, `subagent_tracks`, profile floor/allowlist checks, the three-angle
 `deep_review -> deslop` gate for full-profile development, and the

@@ -1040,6 +1040,14 @@ pub fn report(root: &Path) -> Report {
         );
     }
 
+    req(
+        &mut r,
+        root,
+        "plugins/dvandva/references/state-transition-table.md",
+        "is the sole writable schema",
+        "plugins/dvandva/references/state-transition-table.md documents v3-only write retirement",
+    );
+
     let readme = "README.md";
     req(
         &mut r,
