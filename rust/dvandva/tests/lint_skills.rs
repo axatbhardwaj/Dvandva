@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 fn dvandva() -> Command {
     Command::new(env!("CARGO_BIN_EXE_dvandva"))
@@ -202,6 +202,192 @@ fn non_role_research_skill_passes_without_embedded_schema() {
 #[test]
 fn non_role_testing_skill_passes_without_embedded_schema() {
     assert_exit(&real_skill("plugins/dvandva/skills/testing/SKILL.md"), 0);
+}
+
+// --- documented seed round-trips through the live write gate (p4-e2e-writable-seed) ---
+//
+// `vadi_role_skill_passes_full_lint` / `prativadi_role_skill_passes_full_lint`
+// above prove the inline block is a *shape-valid* v3 contract; they do not
+// prove the write path actually accepts it. Pre-migration, the documented
+// seed carried `schema: "dvandva.baton.v2"` and any write attempt was
+// rejected with `schema_retired` (see
+// `.dvandva/runs/prod-readiness/notes/p4-red-evidence.md`) — a blocked-HIGH
+// where the installed docs could not scaffold a run. This test closes that
+// gap: it extracts the CURRENT inline seed straight out of the real
+// SKILL.md, fills only the blanks the surrounding prose (vadi/SKILL.md line
+// 24) documents as vadi-supplied at scaffold time, and pushes the result
+// through the real `dvandva write` binary. A future regression that
+// reintroduces a stale/rejected schema, or drifts the required-key contract
+// out of sync with the write path, fails this test — not just the lint.
+
+/// Mirror of the engine's `extract_fenced_json_block` (in
+/// `dvandva/src/lint/skills.rs`, `pub(crate)` and therefore unreachable from
+/// an integration test): collects the lines inside the ` ```json ` fence
+/// found after the frontmatter's second `---`. Kept in lockstep with that
+/// scanner so this test extracts the SAME text the live lint validates.
+fn extract_json_fence(content: &str) -> String {
+    let mut dashes = 0u32;
+    let mut inside = false;
+    let mut collected: Vec<&str> = Vec::new();
+    for line in content.lines() {
+        if line == "---" {
+            dashes += 1;
+            continue;
+        }
+        if dashes >= 2 && line == "```json" {
+            inside = true;
+            continue;
+        }
+        if dashes >= 2 && line == "```" {
+            inside = false;
+        }
+        if inside {
+            collected.push(line);
+        }
+    }
+    collected.join("\n")
+}
+
+/// Fill the scaffold blanks the surrounding SKILL.md prose documents as
+/// vadi-supplied (non-empty safe `run_id`, non-empty `original_ask`,
+/// populated default `work_split`/`verification_matrix`, current
+/// `updated_at`), plus the additive development `profile` block the prose
+/// requires orthogonally to the required-key JSON fence (`profile`,
+/// `profile_floor`, `profile_decision`, `profile_history` are NOT in the v3
+/// required-key contract the lint checks, so the fence omits them, but
+/// `fresh_scaffold_profile_present` in `write.rs` requires all four on a
+/// fresh development-mode scaffold). A minimal `subagent_tracks` entry is
+/// also required by the live gate (`subagent_tracks_ok`) though the prose
+/// does not name it explicitly. Every other field in the extracted seed is
+/// left untouched.
+fn fill_documented_scaffold_blanks(seed: &mut Value, run_id: &str) {
+    seed["run_id"] = json!(run_id);
+    seed["original_ask"] = json!(
+        "lint_skills round-trip: prove the documented v3 seed is writable through the live gate."
+    );
+    seed["updated_at"] = json!("2026-07-09T00:00:00Z");
+    seed["work_split"] = json!([{
+        "id": "research-codebase",
+        "phase": "research",
+        "owner": "vadi",
+        "scope": "Map relevant files, scripts, tests, and conventions before spec drafting.",
+        "paths": [],
+        "can_parallelize": true,
+        "parallel_rationale": "Codebase exploration can run beside docs research and risk review when subagent tooling is available.",
+        "depends_on": [],
+        "status": "planned",
+        "artifact_refs": []
+    }]);
+    seed["verification_matrix"] = json!([{
+        "id": "verify-research-coverage",
+        "phase": "research",
+        "owner": "prativadi",
+        "covers": ["original_ask", "research_ref", "work_split"],
+        "command": null,
+        "expected": "Independent research review confirms the artifact is source-backed and sufficient for spec drafting.",
+        "result": "pending",
+        "evidence_ref": null
+    }]);
+    seed["subagent_tracks"] = json!([{
+        "id": "startup-controller",
+        "phase": "research",
+        "status": "planned",
+        "track": "controller",
+        "owner": "vadi",
+        "parallelized": false,
+        "rationale": "Initial run scaffold; record concrete subagent tracks as each phase begins.",
+        "inputs": [],
+        "outputs": [],
+        "evidence_refs": [],
+        "result": "pending"
+    }]);
+    seed["profile"] = json!("standard");
+    seed["profile_floor"] = json!("standard");
+    seed["profile_decision"] = json!({
+        "selected_profile": "standard",
+        "floor": "standard",
+        "reason": "lint_skills round-trip: default new development scaffold, no hard-risk paths declared.",
+        "decided_by": "vadi",
+        "decided_at": "2026-07-09T00:00:00Z",
+        "risk_inputs": [],
+        "hard_triggers": [],
+        "allowlist_match": false,
+        "allowlist_refs": [],
+        "evidence_refs": ["lint-skills-round-trip"]
+    });
+    seed["profile_history"] = json!([]);
+}
+
+/// Extract the documented seed from `skill_rel`, fill its scaffold blanks,
+/// and write it through the real `dvandva write` binary in a fresh named-run
+/// tempdir. Asserts the write succeeds and installs a history snapshot.
+fn assert_documented_seed_writes_through_gate(skill_rel: &str, run_id: &str) {
+    let content = std::fs::read_to_string(repo_root().join(skill_rel))
+        .unwrap_or_else(|e| panic!("{skill_rel} should be readable: {e}"));
+    let fence = extract_json_fence(&content);
+    let mut seed: Value = serde_json::from_str(&fence)
+        .unwrap_or_else(|e| panic!("documented seed in {skill_rel} must parse as JSON: {e}"));
+    fill_documented_scaffold_blanks(&mut seed, run_id);
+
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir
+        .path()
+        .join(".dvandva/runs")
+        .join(run_id)
+        .join("baton.json");
+    let candidate = dir.path().join("seed-candidate.json");
+    std::fs::write(&candidate, serde_json::to_string_pretty(&seed).unwrap()).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_dvandva"))
+        .arg("write")
+        .arg(&baton)
+        .arg(&candidate)
+        .env("DVANDVA_ROLE", "vadi")
+        .env_remove("DVANDVA_LOCK_TIMEOUT")
+        .env_remove("DVANDVA_WRITE_BARRIER")
+        .env_remove("DVANDVA_WRITE_BARRIER_POSTFENCE")
+        .output()
+        .expect("failed to run dvandva write");
+    let combined = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        output.status.code(),
+        Some(0),
+        "documented seed from {skill_rel} should write cleanly through the live gate\noutput: {combined}"
+    );
+    assert!(
+        combined.contains("DVANDVA_WRITE ok"),
+        "expected 'DVANDVA_WRITE ok', got: {combined}"
+    );
+    assert!(baton.is_file(), "write should install {}", baton.display());
+    let history = baton
+        .parent()
+        .unwrap()
+        .join("history/0-clarifying_questions_drafting-vadi.json");
+    assert!(
+        history.is_file(),
+        "write should snapshot history to {}",
+        history.display()
+    );
+}
+
+#[test]
+fn vadi_documented_v3_seed_writes_through_live_gate() {
+    assert_documented_seed_writes_through_gate(
+        "plugins/dvandva/skills/vadi/SKILL.md",
+        "e2e-vadi-seed",
+    );
+}
+
+#[test]
+fn prativadi_documented_v3_seed_writes_through_live_gate() {
+    assert_documented_seed_writes_through_gate(
+        "plugins/dvandva/skills/prativadi/SKILL.md",
+        "e2e-prativadi-seed",
+    );
 }
 
 // --- synthetic fixtures ---
