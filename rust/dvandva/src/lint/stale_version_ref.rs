@@ -2,7 +2,12 @@
 //!
 //! This lint intentionally avoids a bare semver grep. It checks only lines with
 //! Dvandva-specific version anchors, so third-party versions and historical
-//! prose do not become release blockers.
+//! prose do not become release blockers. Maintained anchor families: the
+//! `cargo install dvandva --version`/`dvandva@` install commands, the
+//! `` `dvandva X.Y.Z` `` binary-version prose, the crate README `` Version `X.Y.Z` ``
+//! line, the "installable plugin (version `X.Y.Z`)" prose, and the
+//! `retire.rs` plugin-default line — new user-facing version mentions should
+//! reuse one of these phrasings rather than inventing an unchecked one.
 
 use std::fs;
 use std::path::Path;
@@ -347,8 +352,7 @@ fn skip_dir(rel: &str) -> bool {
 }
 
 fn allowlisted(rel: &str) -> bool {
-    rel == "rust/Cargo.lock"
-        || rel == "product.md"
+    rel == "product.md"
         || rel == "CLAUDE.md"
         || rel.starts_with("rust/dvandva/tests/")
         || rel.starts_with("superpowers/")
