@@ -9,6 +9,11 @@ Upgrades the dvandva binary (`cargo install dvandva`) and both engine plugin
 caches (Claude Code + Codex), including a `claude plugin update
 dvandva@dvandva` cache bump. Prints a version-table report at the end.
 
+Exit codes:
+  0  committed and verified
+  20 failed and rolled back cleanly
+  21 rollback incomplete; inspect the residual report
+
 Options:
   -h, --help      Show this help.
 

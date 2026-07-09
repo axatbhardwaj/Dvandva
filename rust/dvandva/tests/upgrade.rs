@@ -766,4 +766,11 @@ fn upgrade_help_flag_prints_usage_and_exits_zero() {
     assert_eq!(output.status.code(), Some(0));
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("Usage: dvandva upgrade"));
+    assert!(stdout.contains("Exit codes:"), "stdout: {stdout}");
+    assert!(stdout.contains("0  committed"), "stdout: {stdout}");
+    assert!(stdout.contains("20 failed"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("21 rollback incomplete"),
+        "stdout: {stdout}"
+    );
 }

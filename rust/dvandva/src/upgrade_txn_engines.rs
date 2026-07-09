@@ -1,7 +1,6 @@
 //! Engine-specific compensation targets for transactional `dvandva upgrade`.
 
 use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
@@ -38,28 +37,6 @@ pub fn codex_marketplace_cache_dir(codex_home: &Path, marketplace: impl AsRef<Pa
         .join(marketplace_cache_name(marketplace.as_ref()))
 }
 
-/// Restore only Claude Code's active Dvandva plugin pointer from a W0 snapshot.
-///
-/// The snapshot should be the pre-upgrade `installed_plugins.json`; unrelated
-/// plugins in the current file are preserved.
-pub fn restore_claude_dvandva_pointer(current_path: &Path, snapshot_path: &Path) -> io::Result<()> {
-    let mut current = read_json(current_path)?;
-    let snapshot = read_json(snapshot_path)?;
-    let replacement = find_dvandva_entry(&snapshot).cloned().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            format!("{} has no dvandva plugin entry", snapshot_path.display()),
-        )
-    })?;
-
-    if !replace_dvandva_entry(&mut current, replacement.clone()) {
-        insert_dvandva_entry(&mut current, replacement)?;
-    }
-
-    let body = serde_json::to_vec_pretty(&current).map_err(io::Error::other)?;
-    fs::write(current_path, body)
-}
-
 fn marketplace_cache_name(marketplace: &Path) -> String {
     local_marketplace_name(marketplace).unwrap_or_else(|| {
         let raw = marketplace.to_string_lossy();
@@ -84,81 +61,10 @@ fn local_marketplace_name(marketplace: &Path) -> Option<String> {
         .map(str::to_string)
 }
 
-fn read_json(path: &Path) -> io::Result<Value> {
-    let body = fs::read(path)?;
-    serde_json::from_slice(&body).map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))
-}
-
-fn find_dvandva_entry(value: &Value) -> Option<&Value> {
-    if let Some(entry) = value.get("dvandva") {
-        return Some(entry);
-    }
-    let plugins = value.get("plugins")?;
-    if let Some(entry) = plugins.get("dvandva") {
-        return Some(entry);
-    }
-    plugins
-        .as_array()?
-        .iter()
-        .find(|entry| plugin_is_dvandva(entry))
-}
-
-fn replace_dvandva_entry(value: &mut Value, replacement: Value) -> bool {
-    if let Some(object) = value.as_object_mut() {
-        if object.contains_key("dvandva") {
-            object.insert("dvandva".to_string(), replacement);
-            return true;
-        }
-        if let Some(plugins) = object.get_mut("plugins") {
-            if let Some(plugin_object) = plugins.as_object_mut() {
-                if plugin_object.contains_key("dvandva") {
-                    plugin_object.insert("dvandva".to_string(), replacement);
-                    return true;
-                }
-            }
-            if let Some(plugin_array) = plugins.as_array_mut() {
-                for entry in plugin_array {
-                    if plugin_is_dvandva(entry) {
-                        *entry = replacement;
-                        return true;
-                    }
-                }
-            }
-        }
-    }
-    false
-}
-
-fn insert_dvandva_entry(value: &mut Value, replacement: Value) -> io::Result<()> {
-    let object = value.as_object_mut().ok_or_else(|| {
-        io::Error::new(
-            io::ErrorKind::InvalidData,
-            "installed_plugins.json root must be an object",
-        )
-    })?;
-    match object.get_mut("plugins").and_then(Value::as_object_mut) {
-        Some(plugins) => {
-            plugins.insert("dvandva".to_string(), replacement);
-        }
-        None => {
-            object.insert("dvandva".to_string(), replacement);
-        }
-    }
-    Ok(())
-}
-
-fn plugin_is_dvandva(value: &Value) -> bool {
-    ["name", "id", "plugin", "pluginName"]
-        .iter()
-        .any(|key| value.get(*key).and_then(Value::as_str) == Some("dvandva"))
-}
-
 #[cfg(test)]
 mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
-
-    use serde_json::json;
 
     use super::*;
 
@@ -206,51 +112,5 @@ mod tests {
             codex_marketplace_cache_dir(Path::new("/tmp/codex-home"), &marketplace),
             PathBuf::from("/tmp/codex-home/.tmp/marketplaces/dvandva")
         );
-    }
-
-    #[test]
-    fn restore_claude_pointer_rewrites_only_dvandva_entry() {
-        let tmp = tempfile::tempdir().unwrap();
-        let current = tmp.path().join("current.json");
-        let snapshot = tmp.path().join("snapshot.json");
-        fs::write(
-            &current,
-            serde_json::to_vec_pretty(&json!({
-                "plugins": {
-                    "dvandva": {
-                        "version": "1.5.2",
-                        "installPath": "/new",
-                        "gitCommitSha": "new-sha"
-                    },
-                    "other": {"version": "9"}
-                }
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-        fs::write(
-            &snapshot,
-            serde_json::to_vec_pretty(&json!({
-                "plugins": {
-                    "dvandva": {
-                        "version": "1.5.1",
-                        "installPath": "/old",
-                        "gitCommitSha": "old-sha"
-                    },
-                    "other": {"version": "1"}
-                }
-            }))
-            .unwrap(),
-        )
-        .unwrap();
-
-        restore_claude_dvandva_pointer(&current, &snapshot).unwrap();
-
-        let restored: serde_json::Value =
-            serde_json::from_slice(&fs::read(&current).unwrap()).unwrap();
-        assert_eq!(restored["plugins"]["dvandva"]["version"], "1.5.1");
-        assert_eq!(restored["plugins"]["dvandva"]["installPath"], "/old");
-        assert_eq!(restored["plugins"]["dvandva"]["gitCommitSha"], "old-sha");
-        assert_eq!(restored["plugins"]["other"]["version"], "9");
     }
 }

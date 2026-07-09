@@ -147,6 +147,13 @@ fn run_transactional_upgrade_inner(
         Ok(lock) => lock,
         Err(err) => {
             eprintln!("ERROR: upgrade lock unavailable: {err}");
+            if config.breadcrumb_path().exists() {
+                eprintln!(
+                    "ERROR: upgrade breadcrumb exists at {}; recovery cannot safely run until the lock is released or reclaimed.",
+                    config.breadcrumb_path().display()
+                );
+                return Err(TxnFailure::RollbackIncomplete);
+            }
             return Err(TxnFailure::RolledBack);
         }
     };
@@ -277,6 +284,12 @@ struct UpgradeLock {
     token: String,
 }
 
+#[derive(Debug)]
+struct StaleReclaimGuard {
+    path: PathBuf,
+    token: String,
+}
+
 impl UpgradeLock {
     fn acquire(path: &Path, stale_timeout: Duration) -> Result<Self, String> {
         if let Some(parent) = path.parent() {
@@ -297,6 +310,7 @@ impl UpgradeLock {
                 if !lock_is_stale(path, stale_timeout)? {
                     return Err(format!("{} is held by another upgrade", path.display()));
                 }
+                let _reclaim = StaleReclaimGuard::acquire(path, stale_timeout)?;
                 fs::remove_file(path).map_err(|err| err.to_string())?;
                 Self::acquire(path, stale_timeout)
             }
@@ -316,12 +330,56 @@ impl Drop for UpgradeLock {
     }
 }
 
+impl StaleReclaimGuard {
+    fn acquire(lock_path: &Path, stale_timeout: Duration) -> Result<Self, String> {
+        let path = stale_reclaim_path(lock_path);
+        let token = format!("{}:{}", std::process::id(), unix_timestamp_secs());
+        let content = lock_content(&token);
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                file.write_all(content.as_bytes())
+                    .map_err(|err| err.to_string())?;
+                Ok(Self { path, token })
+            }
+            Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {
+                if lock_is_stale(&path, stale_timeout)? {
+                    fs::remove_file(&path).map_err(|err| err.to_string())?;
+                    return Self::acquire(lock_path, stale_timeout);
+                }
+                Err(format!(
+                    "{} is held by another stale-lock reclaimer",
+                    path.display()
+                ))
+            }
+            Err(err) => Err(err.to_string()),
+        }
+    }
+}
+
+impl Drop for StaleReclaimGuard {
+    fn drop(&mut self) {
+        let Ok(content) = fs::read_to_string(&self.path) else {
+            return;
+        };
+        if content.contains(&format!("token={}", self.token)) {
+            let _ = fs::remove_file(&self.path);
+        }
+    }
+}
+
 fn lock_content(token: &str) -> String {
     format!(
         "pid={}\ntimestamp={}\ntoken={token}\n",
         std::process::id(),
         unix_timestamp_secs()
     )
+}
+
+fn stale_reclaim_path(lock_path: &Path) -> PathBuf {
+    let Some(file_name) = lock_path.file_name() else {
+        return lock_path.with_extension("reclaim");
+    };
+    lock_path.with_file_name(format!("{}.reclaim", file_name.to_string_lossy()))
 }
 
 fn lock_is_stale(path: &Path, stale_timeout: Duration) -> Result<bool, String> {
@@ -737,6 +795,92 @@ mod tests {
             "unrecoverable breadcrumb should remain for residual inspection"
         );
         assert!(!config.lock_path().exists());
+    }
+
+    #[test]
+    fn live_lock_with_breadcrumb_exits_21_without_claiming_clean_rollback() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let codex_home = tmp.path().join("codex-home");
+        let state_dir = tmp.path().join("state");
+        let config = TransactionConfig::new("local-marketplace", &home, &codex_home, &state_dir);
+        fs::create_dir_all(&state_dir).unwrap();
+        fs::write(
+            config.lock_path(),
+            format!(
+                "pid=999999999\ntimestamp={}\ntoken=999999999:{}\n",
+                unix_timestamp_secs(),
+                unix_timestamp_secs()
+            ),
+        )
+        .unwrap();
+        write_breadcrumb(
+            &config.breadcrumb_path(),
+            &Breadcrumb::new(Vec::new(), state_dir.join("upgrade-snapshots/previous")),
+        )
+        .unwrap();
+
+        let mut executor = SuccessfulUpgrade {
+            live_binary: home.join(".cargo/bin/dvandva"),
+            live_seen_during_plugins: None,
+        };
+
+        let code = run_transactional_upgrade(&config, &mut executor);
+
+        assert_eq!(code, EXIT_ROLLBACK_INCOMPLETE);
+        assert!(
+            config.breadcrumb_path().exists(),
+            "recovery was not attempted, so the breadcrumb must remain"
+        );
+        assert_eq!(executor.live_seen_during_plugins, None);
+    }
+
+    #[test]
+    fn stale_lock_reclaim_guard_blocks_competing_reclaimer() {
+        let tmp = tempfile::tempdir().unwrap();
+        let lock_path = tmp.path().join("upgrade.lock");
+        fs::write(&lock_path, "pid=1\ntimestamp=0\ntoken=1:0\n").unwrap();
+        fs::write(
+            tmp.path().join("upgrade.lock.reclaim"),
+            format!(
+                "pid=2\ntimestamp={}\ntoken=2:{}\n",
+                unix_timestamp_secs(),
+                unix_timestamp_secs()
+            ),
+        )
+        .unwrap();
+
+        let err = UpgradeLock::acquire(&lock_path, DEFAULT_STALE_LOCK_TIMEOUT)
+            .expect_err("reclaim sentinel should block a competing stale-lock owner");
+
+        assert!(
+            err.contains("reclaim"),
+            "error should name the reclaim guard; got: {err}"
+        );
+        assert_eq!(
+            fs::read_to_string(&lock_path).unwrap(),
+            "pid=1\ntimestamp=0\ntoken=1:0\n",
+            "competing reclaimer must not remove the stale lock while a guard exists"
+        );
+    }
+
+    #[test]
+    fn stale_reclaim_guard_is_reclaimed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let lock_path = tmp.path().join("upgrade.lock");
+        let reclaim_path = tmp.path().join("upgrade.lock.reclaim");
+        fs::write(&lock_path, "pid=1\ntimestamp=0\ntoken=1:0\n").unwrap();
+        fs::write(&reclaim_path, "pid=2\ntimestamp=0\ntoken=2:0\n").unwrap();
+
+        let lock = UpgradeLock::acquire(&lock_path, DEFAULT_STALE_LOCK_TIMEOUT)
+            .expect("stale reclaim guard should be replaceable");
+
+        assert!(lock_path.exists());
+        assert!(
+            !reclaim_path.exists(),
+            "successful stale-lock reclaim must clean up its reclaim guard"
+        );
+        drop(lock);
     }
 
     #[test]
