@@ -590,7 +590,8 @@ fn w0_lock_held_by_another_process_blocks_before_any_mutation() {
     fs::write(
         &lock_path,
         format!(
-            "pid=999999999\ntimestamp={}\ntoken=999999999:{}\n",
+            "pid={}\ntimestamp={}\ntoken=live:{}\n",
+            std::process::id(),
             std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()

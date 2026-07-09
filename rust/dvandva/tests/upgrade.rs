@@ -712,7 +712,7 @@ fn concurrent_upgrade_lock_is_refused_without_running_any_step() {
     let (run, tmp, marketplace, home, codex_home) = base_fixture(FAKE_CODEX_MODERN);
     write_fake_installed_binary(&home, "3.0.0");
     let config = txn_config(&home, &codex_home);
-    write_lock(&config.lock_path(), 999_999, now_secs());
+    write_lock(&config.lock_path(), std::process::id(), now_secs());
 
     let output = run.run(&[marketplace.to_str().unwrap()]);
 

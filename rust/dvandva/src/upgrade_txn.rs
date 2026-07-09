@@ -404,15 +404,10 @@ fn lock_is_stale(path: &Path, stale_timeout: Duration) -> Result<bool, String> {
     }) else {
         return Ok(true);
     };
-    if unix_timestamp_secs().saturating_sub(timestamp) <= stale_timeout.as_secs() {
-        return Ok(false);
-    }
     if let Some(pid) = lock_pid(&content) {
-        if process_is_live(pid) {
-            return Ok(false);
-        }
+        return Ok(!process_is_live(pid));
     }
-    Ok(true)
+    Ok(unix_timestamp_secs().saturating_sub(timestamp) > stale_timeout.as_secs())
 }
 
 fn remove_stale_lock_under_guard(path: &Path, stale_timeout: Duration) -> Result<(), String> {
@@ -1004,7 +999,8 @@ mod tests {
         fs::write(
             config.lock_path(),
             format!(
-                "pid=999999999\ntimestamp={}\ntoken=999999999:{}\n",
+                "pid={}\ntimestamp={}\ntoken=live:{}\n",
+                std::process::id(),
                 unix_timestamp_secs(),
                 unix_timestamp_secs()
             ),
@@ -1043,7 +1039,8 @@ mod tests {
         fs::write(
             tmp.path().join("upgrade.lock.reclaim"),
             format!(
-                "pid=2\ntimestamp={}\ntoken=2:{}\n",
+                "pid={}\ntimestamp={}\ntoken=live-reclaim:{}\n",
+                std::process::id(),
                 unix_timestamp_secs(),
                 unix_timestamp_secs()
             ),
@@ -1075,7 +1072,8 @@ mod tests {
         .unwrap();
         let _guard = StaleReclaimGuard::acquire(&lock_path, DEFAULT_STALE_LOCK_TIMEOUT).unwrap();
         let refreshed = format!(
-            "pid=2\ntimestamp={}\ntoken=2:{}\n",
+            "pid={}\ntimestamp={}\ntoken=live-refresh:{}\n",
+            std::process::id(),
             unix_timestamp_secs(),
             unix_timestamp_secs()
         );
@@ -1146,6 +1144,27 @@ mod tests {
                 .contains(&format!("pid={}", std::process::id())),
             "live holder's lock file must remain intact"
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn fresh_lock_with_dead_pid_is_reclaimed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let lock_path = tmp.path().join("upgrade.lock");
+        fs::write(
+            &lock_path,
+            format!(
+                "pid=999999999\ntimestamp={}\ntoken=dead-fresh\n",
+                unix_timestamp_secs()
+            ),
+        )
+        .unwrap();
+
+        let lock = UpgradeLock::acquire(&lock_path, DEFAULT_STALE_LOCK_TIMEOUT)
+            .expect("dead holder should be reclaimable without waiting for the timeout");
+
+        assert!(lock_path.exists());
+        drop(lock);
     }
 
     #[cfg(unix)]
