@@ -11,7 +11,7 @@ dvandva@dvandva` cache bump. Prints a version-table report at the end.
 
 Exit codes:
   0  committed and verified
-  20 failed and rolled back cleanly
+  20 failed with prior state intact
   21 rollback incomplete; inspect the residual report
 
 Options:

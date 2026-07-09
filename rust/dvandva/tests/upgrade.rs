@@ -872,7 +872,14 @@ fn upgrade_help_flag_prints_usage_and_exits_zero() {
     assert!(stdout.contains("Usage: dvandva upgrade"));
     assert!(stdout.contains("Exit codes:"), "stdout: {stdout}");
     assert!(stdout.contains("0  committed"), "stdout: {stdout}");
-    assert!(stdout.contains("20 failed"), "stdout: {stdout}");
+    assert!(
+        stdout.contains("20 failed with prior state intact"),
+        "stdout: {stdout}"
+    );
+    assert!(
+        !stdout.contains("failed and rolled back cleanly"),
+        "stdout: {stdout}"
+    );
     assert!(
         stdout.contains("21 rollback incomplete"),
         "stdout: {stdout}"
