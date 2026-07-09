@@ -725,6 +725,27 @@ fn phase4_research_rejects_grok_may_can_credited_review_authority() {
 }
 
 #[test]
+fn phase4_research_accepts_grok_uncredited_review_lead_wording() {
+    // "uncredited review" contains the substring "credited review"; the negative
+    // credited-review pattern must not false-positive on legitimate uncredited
+    // first-pass-lead wording. Anchoring the needle with `\b` is what lets
+    // "uncredited review" through while still rejecting a bare "credited review".
+    let d = tmp();
+    phase4_fixture(d.path());
+    w(
+        d.path(),
+        "docs/model-selection.md",
+        &format!("{GROK_PLAN_PULSE_DOC}\nGrok may run an uncredited review lead pass.\n"),
+    );
+    let r = phase4_research::report(d.path());
+    assert!(
+        !r.fails_with("avoids assigning Grok credited review authority"),
+        "uncredited-lead wording tripped the credited-review check: {}",
+        r.failures()
+    );
+}
+
+#[test]
 fn phase4_research_rejects_command_missing_ring_dispatch_defaults() {
     let d = tmp();
     phase4_fixture(d.path());

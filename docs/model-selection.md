@@ -219,10 +219,10 @@ stand.
 
 Rules for the grok lane:
 
-- Research phases, plus the plan-review loop's uncredited latest-tech pulse
-  (the plan-pulse pattern below) — never a credited review station whose
-  approval gates anything, never the ring's execute stations, and never a
-  code-touching subagent.
+- Research phases, the plan-review loop's uncredited latest-tech pulse, and
+  the pre-review probe (both the plan-pulse and pre-review-probe patterns
+  below) — never a credited review station whose approval gates anything,
+  never the ring's execute stations, and never a code-touching subagent.
 - Always a parallel lane beside the `sonnet-5` research track, never a
   replacement for it. The sonnet track remains the primary; grok adds the
   live-social/news modality the sweep would otherwise miss.
@@ -240,7 +240,8 @@ Rules for the grok lane:
   a shared reviewer — decorrelation survives shared sources as long as each
   role verifies what it cites itself. Never forward one role's grok output to
   the other as pre-digested truth, and keep it to one bounded read-only call
-  per role per research cycle (grok quota is the scarce one).
+  per role per research cycle, plus at most one bounded pre-review probe per
+  phase (grok quota is the scarce one).
 - Plan-pulse (adopted by the 2026-07-09 `grok-placement` run): the lane may be
   pointed at plans and claims, not just research questions — "what shipped or
   changed in the live world that undermines this plan?" Findings are
