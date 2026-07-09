@@ -1181,6 +1181,55 @@ fn phase4_research_rejects_unclosed_goal_fence_tail_capture() {
 }
 
 #[test]
+fn phase4_research_rejects_unclosed_goal_fence_infostring_closer_tail_capture() {
+    // FIX (p4-tc5-fence-closer-confusion): a Markdown code fence closes only on a
+    // BARE ``` line. A fence line carrying an info string (```json, the shape of
+    // the canonical baton seed block that follows every SKILL /goal block) is the
+    // OPENER of a new block, never a closer. The cde5963 unclosed-fence guard only
+    // bites when the /goal fence runs clean to EOF; if the bare closer is missing
+    // but a later info-string fence opens, an extractor that treats ANY fence as
+    // the closer mistakes that opener for the /goal block's closer and tail-
+    // captures everything between — reviving the exact tail-capture bypass in live
+    // skill shape. Here the executable `/goal` line is stripped of both clauses AND
+    // its bare closing fence, an F5 status row carrying both clauses follows, and
+    // then a ```json seed block (bare-closed, exactly as the real files) opens: a
+    // fence-agnostic extractor closes the /goal block at the ```json opener, sweeps
+    // in the F5 wording, and both goal-scoped pins PASS (failures:0 — the bypass);
+    // a bare-closer-only extractor returns None and both pins bite.
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/skills/vadi/SKILL.md");
+    let mut text = fs::read_to_string(&p).unwrap();
+    // Strip both required clauses from the executable `/goal` line AND delete its
+    // bare closing fence in one surgical cut (same as the unclosed-fence test).
+    text = text.replace(
+        " Codex-hosted sessions append --through-human on the general wait; when no Claude Code-hosted session is part of the run, the role that wrote the pause surfaces it while the peer waits the pause out.\n```\n",
+        "\n",
+    );
+    // Re-introduce both clauses verbatim in a later `human_question` F5 status-row
+    // table (as the real SKILL files do), then open a ```json baton-seed block
+    // after it. The unclosed /goal fence would sweep the F5 wording up to the
+    // ```json opener, which a fence-agnostic extractor mistakes for the closer.
+    text.push_str(
+        "\n## Failure modes\n\n| Failure | What to do |\n|---|---|\n| `status` is `human_question` | F5: Codex-hosted sessions append --through-human on the general wait; when no Claude Code-hosted session is part of the run, the role that wrote the pause surfaces it while the peer waits the pause out. |\n",
+    );
+    text.push_str(
+        "\n## Canonical baton schema (dvandva.baton.v3)\n\n```json\n{\n  \"schema\": \"dvandva.baton.v3\"\n}\n```\n",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(
+        r.fails_with(
+            "plugins/dvandva/skills/vadi/SKILL.md carries the writer-of-pause F5 fallback"
+        ) && r.fails_with(
+            "plugins/dvandva/skills/vadi/SKILL.md appends --through-human on the general wait"
+        ),
+        "an info-string fence opener must not masquerade as the /goal block's closer; the unclosed fence must fail closed (None), not tail-capture the later F5 rows; failures: {}",
+        r.failures()
+    );
+}
+
+#[test]
 fn phase4_research_rejects_skill_seed_cap_reverted_to_3() {
     // FIX 2 (p4-tc3-default-cap-10-unpinned): the seed baton's raised default-10
     // disagreement cap is pinned per role. Revert the seed value to the old

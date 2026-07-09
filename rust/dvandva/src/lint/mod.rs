@@ -238,8 +238,21 @@ pub fn goal_block(root: &Path, rel: &str) -> Option<String> {
             }
             Some(ref mut b) => {
                 if is_fence {
-                    closed = true;
-                    break;
+                    // A Markdown code fence closes only on a *bare* closing fence.
+                    // A fence line carrying an info string (```json, ```text, …)
+                    // OPENS a new block — it can never close the `/goal` block. If
+                    // the canonical block's bare closer is missing but a later
+                    // info-string fence opens (the `json` baton-seed block that
+                    // follows every SKILL `/goal` block is exactly this shape), an
+                    // extractor that treats any fence as the closer mistakes that
+                    // opener for the closer and tail-captures everything between —
+                    // passing goal-scoped pins against text that is NOT the launch
+                    // block. Fail closed instead: the canonical block never closed.
+                    if is_bare_fence(line) {
+                        closed = true;
+                        break;
+                    }
+                    return None;
                 }
                 b.push_str(line);
                 b.push('\n');
@@ -256,20 +269,42 @@ pub fn goal_block(root: &Path, rel: &str) -> Option<String> {
     block
 }
 
+/// A Markdown code fence closes only on a *bare* closing fence: ```` ``` ```` with
+/// no info string (trailing whitespace allowed). A fence line carrying an info
+/// string (```` ```json ````) is the OPENER of a new block and can never close an
+/// already-open one, so it must not be mistaken for a closer.
+fn is_bare_fence(line: &str) -> bool {
+    line.trim() == "```"
+}
+
 /// Count the fenced code blocks that contain a line beginning with `/goal`.
+///
+/// Shares [`goal_block`]'s fence semantics: an info-string fence opens a block and
+/// only a bare fence closes it, so an info-string fence encountered while already
+/// inside a block is literal content, not a boundary.
 fn count_fenced_goal_blocks(content: &str) -> usize {
     let mut count = 0;
     let mut in_fence = false;
     let mut this_fence_has_goal = false;
     for line in content.lines() {
-        if line.trim_start().starts_with("```") {
-            if in_fence && this_fence_has_goal {
-                count += 1;
-            }
-            in_fence = !in_fence;
+        let is_fence = line.trim_start().starts_with("```");
+        if is_fence && !in_fence {
+            // Opener (bare or info-string): a new fenced block begins.
+            in_fence = true;
             this_fence_has_goal = false;
             continue;
         }
+        if is_fence && is_bare_fence(line) {
+            // Bare closer: end the block, counting it if it held a `/goal`.
+            if this_fence_has_goal {
+                count += 1;
+            }
+            in_fence = false;
+            this_fence_has_goal = false;
+            continue;
+        }
+        // Either a non-fence line, or an info-string fence WHILE already inside a
+        // block — the latter is literal content, never a closer.
         if in_fence && line.trim_start().starts_with("/goal") {
             this_fence_has_goal = true;
         }
