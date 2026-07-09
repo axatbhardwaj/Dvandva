@@ -39,7 +39,7 @@ use notify::{RecursiveMode, Watcher};
 use serde_json::Value;
 use time::{Date, Month, OffsetDateTime, PrimitiveDateTime, Time, UtcOffset};
 
-use crate::util::{coalesce, now_epoch, read_json_lenient};
+use crate::util::{coalesce, is_open_finding_status, now_epoch, read_json_lenient};
 use crate::workflow::{self, StateClass};
 
 /// A fully-resolved wait invocation. Built by the `cmd::wait` wrapper after
@@ -1199,10 +1199,8 @@ fn finding_status(finding: &Value) -> String {
 }
 
 fn finding_is_open(finding: &Value) -> bool {
-    matches!(
-        finding_status(finding).as_str(),
-        "" | "open" | "new" | "active" | "reopened" | "changes_requested" | "needs_fix"
-    )
+    let status = finding_status(finding);
+    is_open_finding_status(Some(&status))
 }
 
 fn chunk_scan_summary(baton: &Value, role: &str, status: &str, phase: &str) -> String {

@@ -622,6 +622,33 @@ fn until_actionable_open_owner_role_finding_wakes_owner_in_cross_fixing() {
 }
 
 #[test]
+fn until_actionable_unknown_owner_role_finding_status_wakes_fail_safe() {
+    let d = tmp();
+    write_team_baton_with_findings(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "cross_fixing",
+        "[]",
+        r#"[{"id":"f1","status":"blocked_by_peer","owner_role":"prativadi","summary":"future open-ish token"}]"#,
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "prativadi",
+            "--until-actionable",
+            "--interval",
+            "0",
+            "--max-wait",
+            "0",
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(0), "{}", o.out);
+}
+
+#[test]
 fn until_actionable_open_peer_finding_suppresses_advance_owner() {
     let d = tmp();
     write_team_baton_with_findings(

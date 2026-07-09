@@ -397,13 +397,10 @@ fn compact_findings(root: &Value) -> Vec<Value> {
 fn is_open_finding(value: &Value) -> bool {
     if value.is_object() {
         let status = match jq_coalesce(get(value, "status")) {
-            Some(raw) => coalesce_tostring(Some(raw)).to_ascii_lowercase(),
+            Some(raw) => coalesce_tostring(Some(raw)),
             _ => "open".to_string(),
         };
-        !matches!(
-            status.as_str(),
-            "closed" | "resolved" | "completed" | "approved"
-        )
+        crate::util::is_open_finding_status(Some(&status))
     } else {
         true
     }
@@ -574,6 +571,39 @@ mod tests {
         assert!(state.get("work_split").is_none());
         assert!(state.get("subagent_tracks").is_none());
         assert!(state["refs"].get("huge").is_none());
+    }
+
+    #[test]
+    fn compact_state_closes_terminal_finding_statuses_case_insensitively() {
+        let baton = temp_root("finding-status").join("baton.json");
+        write_json(
+            &baton,
+            json!({
+                "schema": "dvandva.baton.v3",
+                "run_id": "finding-status",
+                "mode": "development",
+                "status": "cross_fixing",
+                "assignee": "team",
+                "phase": 4,
+                "checkpoint": 1,
+                "work_split": [],
+                "subagent_tracks": [],
+                "verification_matrix": [],
+                "findings": [
+                    {"id": "closed-1", "status": "PASSED", "summary": "should be closed"},
+                    {"id": "closed-2", "status": "Resolved", "summary": "should be closed"},
+                    {"id": "open-1", "status": "blocked_by_peer", "summary": "unknown tokens fail open"}
+                ],
+                "blockers": [],
+                "changed_paths": []
+            }),
+        );
+
+        let state = compact_state_from_file(&baton, Role::Prativadi).unwrap();
+
+        let open = state["open_findings"].as_array().unwrap();
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0]["id"], "open-1");
     }
 
     #[test]

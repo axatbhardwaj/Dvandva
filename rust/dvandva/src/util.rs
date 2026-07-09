@@ -20,6 +20,27 @@ pub fn coalesce(value: Option<&Value>) -> Option<&Value> {
     }
 }
 
+/// Shared finding-open predicate for wait, state, and brief surfaces.
+///
+/// Terminal statuses are closed case-insensitively; every other token is open
+/// by default so future finding statuses fail safe and wake the owner.
+pub fn is_open_finding_status(status: Option<&str>) -> bool {
+    let status = status.unwrap_or("open").trim().to_ascii_lowercase();
+    !matches!(
+        status.as_str(),
+        "closed"
+            | "resolved"
+            | "completed"
+            | "approved"
+            | "passed"
+            | "done"
+            | "rejected"
+            | "collapsed"
+            | "skipped"
+            | "cancelled"
+    )
+}
+
 /// Safe run id: `^[A-Za-z0-9][A-Za-z0-9._-]*$` and never contains `..`.
 ///
 /// Shared verbatim by resolve, write, wait, preflight, and the lints.
@@ -105,6 +126,32 @@ mod tests {
         assert!(coalesce(Some(&t)).is_some());
         assert!(coalesce(Some(&zero)).is_some());
         assert!(coalesce(Some(&empty)).is_some());
+    }
+
+    #[test]
+    fn finding_status_open_semantics_fail_safe() {
+        for status in [
+            None,
+            Some(""),
+            Some("open"),
+            Some("CHANGES_REQUESTED"),
+            Some("blocked_by_peer"),
+        ] {
+            assert!(is_open_finding_status(status), "{status:?} should be open");
+        }
+        for status in [
+            Some("resolved"),
+            Some("Resolved"),
+            Some("PASSED"),
+            Some("completed"),
+            Some("done"),
+            Some("cancelled"),
+        ] {
+            assert!(
+                !is_open_finding_status(status),
+                "{status:?} should be closed"
+            );
+        }
     }
 
     #[test]

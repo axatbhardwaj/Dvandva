@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-use crate::util::{self, coalesce, read_json_lenient};
+use crate::util::{self, coalesce, is_open_finding_status, read_json_lenient};
 
 /// At most this many history entries are shown, most-recent last.
 const HISTORY_LIMIT: usize = 5;
@@ -279,20 +279,14 @@ fn render_findings(out: &mut String, root: &Value) {
     }
 }
 
-/// Mirrors `src/state.rs`'s `is_open_finding`: an object finding is open
-/// unless its (coalesced, case-insensitive) status is
-/// closed/resolved/completed/approved; a bare (non-object) finding is
-/// always open.
+/// Mirrors the shared finding-open predicate: terminal statuses are closed
+/// case-insensitively; every other token is open by default.
 fn is_open_finding(value: &Value) -> bool {
     if value.is_object() {
         let status = coalesce_get(value, "status")
             .map(tostring)
-            .unwrap_or_else(|| "open".to_string())
-            .to_ascii_lowercase();
-        !matches!(
-            status.as_str(),
-            "closed" | "resolved" | "completed" | "approved"
-        )
+            .unwrap_or_else(|| "open".to_string());
+        is_open_finding_status(Some(&status))
     } else {
         true
     }
