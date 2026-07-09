@@ -17,13 +17,14 @@
 use std::path::Path;
 
 use crate::lint::{
-    count_lines_matching, file_contains, file_has_exact_line, file_slurp_matches_ci, list_md,
-    output_contract_contains, resolve_root, Report, MODEL_POLICY_CLAUDE_MAPPING,
-    MODEL_POLICY_CODEX_EFFORT, MODEL_POLICY_CODEX_MAPPING, MODEL_POLICY_NO_HAIKU_COMMANDS,
-    MODEL_POLICY_NO_HAIKU_SUBAGENTS, MODEL_POLICY_OPUS_ROUTING, MODEL_POLICY_SONNET_ROUTING,
-    MODEL_POLICY_STALE_CANONICAL_COMPAT_MAPPING, MODEL_POLICY_STALE_CODEX_MAPPING,
-    MODEL_POLICY_STALE_OPUS_ROUTING, MODEL_POLICY_STALE_SONNET_ROUTING,
-    MODEL_POLICY_VENDOR_NEUTRAL_COMMANDS, MODEL_POLICY_VENDOR_NEUTRAL_DOCS,
+    count_lines_matching, file_contains, file_has_exact_line, file_slurp_matches_ci,
+    goal_block_matches_ci, list_md, output_contract_contains, resolve_root, Report,
+    MODEL_POLICY_CLAUDE_MAPPING, MODEL_POLICY_CODEX_EFFORT, MODEL_POLICY_CODEX_MAPPING,
+    MODEL_POLICY_NO_HAIKU_COMMANDS, MODEL_POLICY_NO_HAIKU_SUBAGENTS, MODEL_POLICY_OPUS_ROUTING,
+    MODEL_POLICY_SONNET_ROUTING, MODEL_POLICY_STALE_CANONICAL_COMPAT_MAPPING,
+    MODEL_POLICY_STALE_CODEX_MAPPING, MODEL_POLICY_STALE_OPUS_ROUTING,
+    MODEL_POLICY_STALE_SONNET_ROUTING, MODEL_POLICY_VENDOR_NEUTRAL_COMMANDS,
+    MODEL_POLICY_VENDOR_NEUTRAL_DOCS,
 };
 
 const ALL_AGENTS: [&str; 15] = [
@@ -1808,30 +1809,36 @@ pub fn report(root: &Path) -> Report {
     // F5 fallback, and must never regress to the OLD narrow "only session"
     // wording. 683406e installed all three; a rollback of the SKILL goal blocks
     // and the F5 rows to their d153fd4 state fails these pins closed.
-    for file in [
-        "plugins/dvandva/commands/vadi.md",
-        "plugins/dvandva/commands/prativadi.md",
-        "plugins/dvandva/skills/vadi/SKILL.md",
-        "plugins/dvandva/skills/prativadi/SKILL.md",
+    //
+    // For the commands the whole file IS the goal surface, so they stay
+    // file-scoped. For the SKILL files the pins scope to the fenced `/goal`
+    // launch block only (p4-cr10): both SKILL files repeat the writer-of-pause
+    // fallback in a later `human_question` F5 status-row table, so a file-scoped
+    // pin passes even when the executable `/goal` line loses the fallback. The
+    // scoped check reads only the launch block, so that bypass fails closed.
+    for (file, scoped) in [
+        ("plugins/dvandva/commands/vadi.md", false),
+        ("plugins/dvandva/commands/prativadi.md", false),
+        ("plugins/dvandva/skills/vadi/SKILL.md", true),
+        ("plugins/dvandva/skills/prativadi/SKILL.md", true),
     ] {
+        let matches = |pattern: &str| {
+            if scoped {
+                goal_block_matches_ci(root, file, pattern)
+            } else {
+                file_slurp_matches_ci(root, file, pattern)
+            }
+        };
         r.add(
-            file_slurp_matches_ci(
-                root,
-                file,
-                r"Codex-hosted\s+sessions\s+append\s+--through-human",
-            ),
+            matches(r"Codex-hosted\s+sessions\s+append\s+--through-human"),
             format!("{file} appends --through-human on the general wait"),
         );
         r.add(
-            file_slurp_matches_ci(
-                root,
-                file,
-                r"the\s+role\s+that\s+wrote\s+the\s+pause\s+surfaces\s+it",
-            ),
+            matches(r"the\s+role\s+that\s+wrote\s+the\s+pause\s+surfaces\s+it"),
             format!("{file} carries the writer-of-pause F5 fallback"),
         );
         r.add(
-            !file_slurp_matches_ci(root, file, r"only\s+when\s+it\s+is\s+the\s+only\s+session"),
+            !matches(r"only\s+when\s+it\s+is\s+the\s+only\s+session"),
             format!("{file} avoids the stale only-session pause fallback"),
         );
     }

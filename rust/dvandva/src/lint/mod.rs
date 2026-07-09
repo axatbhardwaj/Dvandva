@@ -174,6 +174,46 @@ pub fn file_slurp_matches_ci(root: &Path, rel: &str, pattern: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// The fenced `/goal` launch block of a skill file: the run of lines from the
+/// `/goal …` marker up to (but not including) the closing ``` fence or the next
+/// `## ` section heading, whichever comes first. `None` when the file has no
+/// `/goal` marker.
+///
+/// SKILL liveness pins scope to this block so a duplicate of the launch-text
+/// wording in a later status-row table cannot mask a regression in the
+/// executable goal line (p4-cr10).
+pub fn goal_block(root: &Path, rel: &str) -> Option<String> {
+    let content = read(root, rel)?;
+    let mut block: Option<String> = None;
+    for line in content.lines() {
+        match block {
+            None => {
+                if line.trim_start().starts_with("/goal") {
+                    block = Some(format!("{line}\n"));
+                }
+            }
+            Some(ref mut b) => {
+                if line.trim() == "```" || line.starts_with("## ") {
+                    break;
+                }
+                b.push_str(line);
+                b.push('\n');
+            }
+        }
+    }
+    block
+}
+
+/// Case-insensitive slurp regex over a skill file's `/goal` launch block only.
+pub fn goal_block_matches_ci(root: &Path, rel: &str, pattern: &str) -> bool {
+    let Some(re) = compile_ci(pattern) else {
+        return false;
+    };
+    goal_block(root, rel)
+        .map(|b| re.is_match(&slurp_spaces(&b)))
+        .unwrap_or(false)
+}
+
 /// Slurp-match over the concatenation of several files (used where a single
 /// shell invariant now spans more than one Rust source file).
 pub fn union_slurp_matches_ci(root: &Path, rels: &[&str], pattern: &str) -> bool {

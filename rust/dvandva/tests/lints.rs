@@ -665,7 +665,13 @@ fn phase4_role_skill() -> String {
     s.push_str("Phase convention: implementation-chunk\n");
     s.push_str("same-status sync checkpoints\n");
     s.push_str("subagent_tracks\n");
-    s.push_str("Codex-hosted sessions append --through-human on the general wait; when no Claude Code-hosted session is part of the run, the role that wrote the pause surfaces it while the peer waits the pause out.\n");
+    // A realistic fenced `/goal` launch block. The SKILL liveness pins scope to
+    // THIS block, so the same fallback wording repeated in a later F5 status-row
+    // table cannot mask a regression in the executable goal text (p4-cr10).
+    s.push_str("## `/goal` condition (paste into your engine when launching)\n\n");
+    s.push_str("```\n");
+    s.push_str("/goal You are Dvandva role. Continue walkaway until done or human_question/human_decision; the Claude Code-hosted session surfaces the pause while a Codex-hosted role keeps its --through-human wait running through it. Codex-hosted sessions append --through-human on the general wait; when no Claude Code-hosted session is part of the run, the role that wrote the pause surfaces it while the peer waits the pause out.\n");
+    s.push_str("```\n");
     s.push_str(NEW5);
     s
 }
@@ -954,6 +960,42 @@ fn phase4_research_rejects_goal_missing_writer_of_pause_fallback() {
     assert!(r.fails_with(
         "plugins/dvandva/skills/prativadi/SKILL.md carries the writer-of-pause F5 fallback"
     ));
+}
+
+#[test]
+fn phase4_research_rejects_skill_goal_stripped_despite_f5_row_duplicate() {
+    // LIVE-SHAPED bypass regression (p4-cr10). Both SKILL files carry the
+    // writer-of-pause fallback TWICE: once in the executable `/goal` launch block
+    // and once in the later `human_question` F5 status-row table. A file-scoped
+    // liveness pin passes as long as EITHER copy survives, so a rollback that
+    // strips the fallback from the executable `/goal` line while leaving the F5
+    // row intact slips straight through. Scoping the SKILL pin to the `/goal`
+    // block closes that gap: with the goal block stripped, the pin must bite even
+    // though the F5 duplicate is still present.
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/skills/vadi/SKILL.md");
+    let mut text = fs::read_to_string(&p).unwrap();
+    // Strip the fallback from the executable `/goal` block (its only occurrence)…
+    text = text.replace(
+        "when no Claude Code-hosted session is part of the run, the role that wrote the pause surfaces it while the peer waits the pause out.",
+        "the sole session surfaces it.",
+    );
+    // …but re-introduce it verbatim in a later `human_question` F5 status-row
+    // table, exactly as the real SKILL files do. A whole-file pin would still
+    // see it here; the scoped pin must not.
+    text.push_str(
+        "\n## Failure modes\n\n| Failure | What to do |\n|---|---|\n| `status` is `human_question` | F5: the Claude Code-hosted session surfaces this; when no Claude Code-hosted session is part of the run, the role that wrote the pause surfaces it while the peer waits the pause out. |\n",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(
+        r.fails_with(
+            "plugins/dvandva/skills/vadi/SKILL.md carries the writer-of-pause F5 fallback"
+        ),
+        "scoped SKILL pin must bite when the /goal block loses the fallback even though the F5 row keeps it; failures: {}",
+        r.failures()
+    );
 }
 
 #[test]
