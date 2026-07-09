@@ -249,6 +249,14 @@ Rules for the grok lane:
   Grok's other self-proposed seats (debugging triage, PR/commit glue, bulk
   automation, critique-as-a-station) were rejected there — no live-data
   advantage, existing seats own them.
+- Pre-review probe (adopted by the 2026-07-09 `prod-readiness` run: four
+  probes, each caught real post-approval issues, one claim rejected on
+  evidence — the quarantine filter works in both directions): before a
+  credited deep review begins, either role may point one bounded read-only
+  grok call at the phase diff for first-pass review leads. Same guards as
+  plan-pulse: findings land in a lane ledger, each is addressed or rejected
+  in writing before the phase advances, and none of it is credited review
+  evidence — `opus-4.8` remains the credited deep/adversarial gate.
 
 ## Dvandva Class Boundary
 

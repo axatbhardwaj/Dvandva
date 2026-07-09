@@ -258,7 +258,7 @@ fn req_grok_plan_pulse_policy(r: &mut Report, root: &Path) {
         !file_slurp_matches_ci(
             root,
             rel,
-            r"grok[^.]{0,120}(owns|is|becomes|serves as)[^.]{0,120}credited review",
+            r"grok[^.]{0,120}(may|can|owns|is|becomes|serves as)[^.]{0,120}credited review",
         ),
         "docs/model-selection.md avoids assigning Grok credited review authority",
     );

@@ -707,6 +707,24 @@ fn phase4_research_rejects_grok_credited_or_execute_authority() {
 }
 
 #[test]
+fn phase4_research_rejects_grok_may_can_credited_review_authority() {
+    // The credited-review negative pattern must also catch permissive `may`/`can`
+    // wording, not just declarative `owns`/`is`. "grok may be the credited
+    // review authority" is just as forbidden as "grok owns the credited review".
+    let d = tmp();
+    phase4_fixture(d.path());
+    w(
+        d.path(),
+        "docs/model-selection.md",
+        &format!(
+            "{GROK_PLAN_PULSE_DOC}\nGrok may serve as the credited review gate for the phase.\n"
+        ),
+    );
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("avoids assigning Grok credited review authority"));
+}
+
+#[test]
 fn phase4_research_rejects_command_missing_ring_dispatch_defaults() {
     let d = tmp();
     phase4_fixture(d.path());

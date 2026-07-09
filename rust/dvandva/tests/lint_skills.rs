@@ -396,6 +396,60 @@ fn prativadi_documented_v3_seed_writes_through_live_gate() {
     );
 }
 
+// --- documented seed carries a real startup subagent_tracks entry (p4-dr-seed-subagent-tracks-test-mask) ---
+//
+// The round-trip tests above run the documented seed through the write gate,
+// but `fill_documented_scaffold_blanks` injects a fallback `subagent_tracks`
+// entry when the extracted seed's array is empty — so a SKILL.md that dropped
+// its startup track would still pass those tests. This test closes that mask:
+// it asserts DIRECTLY on the JSON parsed straight out of each SKILL.md, with no
+// helper in the assertion path, that `subagent_tracks` is a non-empty array
+// whose first entry carries non-empty id/track/owner/result.
+
+/// Read and parse the documented seed straight out of `skill_rel` (no scaffold
+/// fill), returning the top-level JSON object.
+fn parse_documented_seed(skill_rel: &str) -> Value {
+    let content = std::fs::read_to_string(repo_root().join(skill_rel))
+        .unwrap_or_else(|e| panic!("{skill_rel} should be readable: {e}"));
+    let fence = extract_json_fence(&content);
+    serde_json::from_str(&fence)
+        .unwrap_or_else(|e| panic!("documented seed in {skill_rel} must parse as JSON: {e}"))
+}
+
+/// Assert the documented seed's `subagent_tracks` is a non-empty array whose
+/// first entry has non-empty id/track/owner/result. No helper injection: this
+/// reads the SKILL.md exactly as installed.
+fn assert_documented_seed_has_startup_track(skill_rel: &str) {
+    let seed = parse_documented_seed(skill_rel);
+    let tracks = seed["subagent_tracks"]
+        .as_array()
+        .unwrap_or_else(|| panic!("{skill_rel}: documented seed subagent_tracks must be an array"));
+    assert!(
+        !tracks.is_empty(),
+        "{skill_rel}: documented seed subagent_tracks must be non-empty (startup track missing)"
+    );
+    let first = &tracks[0];
+    for key in ["id", "track", "owner", "result"] {
+        let value = first[key].as_str().unwrap_or_else(|| {
+            panic!("{skill_rel}: first subagent_tracks entry must carry a string {key}")
+        });
+        assert!(
+            !value.is_empty(),
+            "{skill_rel}: first subagent_tracks entry has empty {key}"
+        );
+    }
+}
+
+#[test]
+fn vadi_documented_seed_carries_startup_subagent_track() {
+    assert_documented_seed_has_startup_track("plugins/dvandva/skills/vadi/SKILL.md");
+}
+
+#[test]
+fn prativadi_documented_seed_carries_startup_subagent_track() {
+    assert_documented_seed_has_startup_track("plugins/dvandva/skills/prativadi/SKILL.md");
+}
+
 // --- synthetic fixtures ---
 
 #[test]
