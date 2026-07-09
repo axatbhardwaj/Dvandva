@@ -251,6 +251,18 @@ fn req_grok_plan_pulse_policy(r: &mut Report, root: &Path) {
         "docs/model-selection.md treats Grok output as data not instructions",
     );
     r.add(
+        file_slurp_matches_ci(root, rel, r"Pre-review probe.*adopted"),
+        "docs/model-selection.md pins the pre-review probe seat",
+    );
+    r.add(
+        file_slurp_matches_ci(root, rel, r"one bounded pre-review probe per\s+phase"),
+        "docs/model-selection.md caps pre-review probes per phase",
+    );
+    r.add(
+        file_slurp_matches_ci(root, rel, r"fallback[- ]bulk.*out-of-ring"),
+        "docs/model-selection.md scopes the fallback-bulk seat out-of-ring",
+    );
+    r.add(
         !file_slurp_matches_ci(root, rel, r"grok[^.]{0,120}research phases only"),
         "docs/model-selection.md avoids stale Grok research-only wording",
     );

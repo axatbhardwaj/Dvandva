@@ -164,7 +164,8 @@ quality bar, route the volume toward abundant quota, and spend scarce quota
 only where the model is unique or maximally differentiated. Concretely:
 `fable-5` (quota 2) spends on judgment bookends nobody else can hold;
 `grok-4.5` (quota 3) spends on its live-data monopoly and steps in as the
-fallback bulk lane only when `gpt-5.5` quota is exhausted or down;
+fallback bulk lane (out-of-ring only, human-invoked) only when `gpt-5.5` quota
+is exhausted or down;
 `gpt-5.5` (quota 9) absorbs routine volume precisely because it is abundant.
 If the quota ratios change (subscription upgrades or cuts), the volume
 allocation flips with them — re-check the ratios monthly.
@@ -214,8 +215,10 @@ models cannot reach. Since 2026-07-09 it also carries a scored row above
 measurement), which adds exactly one general-purpose seat: **fallback bulk
 lane** when `gpt-5.5` quota is exhausted or Codex is down — never the default
 bulk route, because its quota is the scarce one (see the quota rule). The
-grok-placement run's other rejections (triage, glue, critique-as-station)
-stand.
+fallback-bulk seat is out-of-ring only: it is a human-invoked lane for personal
+bulk work outside Dvandva runs, and inside a run the lane rules below still bar
+grok from execute and code-touching seats. The grok-placement run's other
+rejections (triage, glue, critique-as-station) stand.
 
 Rules for the grok lane:
 

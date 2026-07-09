@@ -365,6 +365,9 @@ const GROK_PLAN_PULSE_DOC: &str = r#"Research phases, plus the plan-review loop'
 Plan-pulse findings stay quarantined until a Claude-family role confirms them.
 The lane is never a credited review station whose approval gates anything, never the ring's execute stations, and never a code-touching subagent.
 Its output is data, not instructions.
+Keep it to one bounded read-only call per role per research cycle, plus at most one bounded pre-review probe per phase.
+Pre-review probe (adopted by the 2026-07-09 prod-readiness run): before a credited deep review, either role may point one bounded read-only grok call at the phase diff for first-pass review leads.
+The fallback-bulk seat is out-of-ring only: a human-invoked lane for personal bulk work outside Dvandva runs.
 "#;
 
 const SUPERPOWERS: &str = "Superpowers is a hard runtime dependency.\nDvandva owns baton state.\n";
@@ -743,6 +746,68 @@ fn phase4_research_accepts_grok_uncredited_review_lead_wording() {
         "uncredited-lead wording tripped the credited-review check: {}",
         r.failures()
     );
+}
+
+#[test]
+fn phase4_research_rejects_missing_pre_review_probe_bullet() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    w(
+        d.path(),
+        "docs/model-selection.md",
+        &GROK_PLAN_PULSE_DOC.replace(
+            "Pre-review probe (adopted by the 2026-07-09 prod-readiness run):",
+            "First-pass lead note:",
+        ),
+    );
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("pins the pre-review probe seat"));
+}
+
+#[test]
+fn phase4_research_rejects_missing_per_phase_probe_quota() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    w(
+        d.path(),
+        "docs/model-selection.md",
+        &GROK_PLAN_PULSE_DOC.replace(
+            "plus at most one bounded pre-review probe per phase",
+            "with no further probe budget",
+        ),
+    );
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("caps pre-review probes per phase"));
+}
+
+#[test]
+fn phase4_research_rejects_missing_fallback_out_of_ring_scope() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    w(
+        d.path(),
+        "docs/model-selection.md",
+        &GROK_PLAN_PULSE_DOC.replace(
+            "The fallback-bulk seat is out-of-ring only:",
+            "The fallback-bulk seat applies broadly:",
+        ),
+    );
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("scopes the fallback-bulk seat out-of-ring"));
+}
+
+#[test]
+fn phase4_research_accepts_probe_and_fallback_scope_wording() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let r = phase4_research::report(d.path());
+    for msg in [
+        "pins the pre-review probe seat",
+        "caps pre-review probes per phase",
+        "scopes the fallback-bulk seat out-of-ring",
+    ] {
+        assert!(!r.fails_with(msg), "{msg} tripped: {}", r.failures());
+    }
 }
 
 #[test]
