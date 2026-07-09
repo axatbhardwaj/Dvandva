@@ -496,7 +496,7 @@ Use the `dvandva.baton.v3` seed below for new development scaffolds. Existing `m
   "changed_paths": [], "verification": [], "findings": [], "narrow_fixups": [],
   "vadi_counter": [], "deferred": [], "blockers": [],
   "next_action": "vadi: run clarifying_questions_drafting, ask round-1 questions, then hand off for the human answer bundle.",
-  "run_id": "", "original_ask": "", "research_ref": null, "run_explainer_ref": null, "active_roles": [], "agent_instances": [], "work_split": [], "subagent_tracks": [], "verification_matrix": [],
+  "run_id": "", "original_ask": "", "research_ref": null, "run_explainer_ref": null, "active_roles": [], "agent_instances": [], "work_split": [], "subagent_tracks": [{"id": "startup-controller", "phase": "research", "status": "planned", "track": "controller", "owner": "vadi", "parallelized": false, "rationale": "Initial run scaffold; record concrete subagent tracks as each phase begins.", "inputs": [], "outputs": [], "evidence_refs": [], "result": "pending"}], "verification_matrix": [],
   "run_workflow": {"source": "preset:standard", "declared_by": "vadi", "declared_at_checkpoint": 0, "approved_by": null, "approved_at_checkpoint": null, "revision_round": 0, "states": [], "edges": [], "amendments": []}
 }
 ```

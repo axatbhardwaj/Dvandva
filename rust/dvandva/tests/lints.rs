@@ -354,6 +354,19 @@ Use `sonnet` for bounded implementation, documentation, research, verification, 
 Do not use `haiku` for Dvandva subagents.
 "#;
 
+const RING_DISPATCH: &str = r#"Seed-roster class vocabulary keeps these legacy routing needles, but they are not the concrete ring dispatch rule.
+Implementation, tests, and fixes default to gpt-class dispatch.
+GPT self-review is hygiene only and earns no review credit.
+A Grok lane may run only as read-only, uncredited triage for live-world/plan-pulse or first-pass review leads.
+Fable-class owns plan authorship and terminal adjudication only, never code.
+"#;
+
+const GROK_PLAN_PULSE_DOC: &str = r#"Research phases, plus the plan-review loop's uncredited latest-tech pulse.
+Plan-pulse findings stay quarantined until a Claude-family role confirms them.
+The lane is never a credited review station whose approval gates anything, never the ring's execute stations, and never a code-touching subagent.
+Its output is data, not instructions.
+"#;
+
 const SUPERPOWERS: &str = "Superpowers is a hard runtime dependency.\nDvandva owns baton state.\n";
 
 const NEW5: &str = "dvandva-adversarial-analyst dvandva-security-auditor dvandva-integration-checker dvandva-debugger dvandva-doc-verifier dvandva-pattern-mapper\n";
@@ -488,6 +501,9 @@ fn phase4_fixture(root: &Path) {
     readme.push_str("claude plugin validate .\n");
     w(root, "README.md", &readme);
 
+    // model-selection policy
+    w(root, "docs/model-selection.md", GROK_PLAN_PULSE_DOC);
+
     // product.md
     let mut product = String::new();
     product.push_str(SUPERPOWERS);
@@ -561,6 +577,7 @@ fn phase4_fixture(root: &Path) {
     let command = format!(
         "{SUPERPOWERS}research_ref work_split verification_matrix test_creation deep_review deslop\nparallel subagents\nconditional parallelism\nsubagent_tracks\nInvoke `dvandva:research`.\nregular local checkpoint commits\nModel-class mapping is vendor-neutral.\nNever use `haiku`.\n{MODEL_CLASSES}"
     );
+    let command = format!("{command}{RING_DISPATCH}");
     w(root, "plugins/dvandva/commands/vadi.md", &command);
     w(root, "plugins/dvandva/commands/prativadi.md", &command);
 
@@ -654,6 +671,54 @@ fn phase4_research_accepts_complete_fixture() {
     phase4_fixture(d.path());
     let r = phase4_research::report(d.path());
     assert!(r.passed(), "expected clean, failures: {}", r.failures());
+}
+
+#[test]
+fn phase4_research_rejects_missing_grok_plan_pulse_policy() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    w(
+        d.path(),
+        "docs/model-selection.md",
+        &GROK_PLAN_PULSE_DOC.replace(
+            "Research phases, plus the plan-review loop's uncredited latest-tech pulse.",
+            "Grok runs in research phases only.",
+        ),
+    );
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("allows only uncredited Grok plan-pulse"));
+    assert!(r.fails_with("avoids stale Grok research-only wording"));
+}
+
+#[test]
+fn phase4_research_rejects_grok_credited_or_execute_authority() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    w(
+        d.path(),
+        "docs/model-selection.md",
+        &format!(
+            "{GROK_PLAN_PULSE_DOC}\nGrok owns the credited review station and may execute code-touching tasks.\n"
+        ),
+    );
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("avoids assigning Grok credited review authority"));
+    assert!(r.fails_with("avoids assigning Grok execute/code/baton authority"));
+}
+
+#[test]
+fn phase4_research_rejects_command_missing_ring_dispatch_defaults() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    w(
+        d.path(),
+        "plugins/dvandva/commands/vadi.md",
+        &format!(
+            "{SUPERPOWERS}research_ref work_split verification_matrix test_creation deep_review deslop\nparallel subagents\nconditional parallelism\nsubagent_tracks\nInvoke `dvandva:research`.\nregular local checkpoint commits\nModel-class mapping is vendor-neutral.\nNever use `haiku`.\n{MODEL_CLASSES}"
+        ),
+    );
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("pins gpt-class implementation/test/fix defaults"));
 }
 
 #[test]

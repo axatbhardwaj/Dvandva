@@ -250,16 +250,16 @@ fn extract_json_fence(content: &str) -> String {
 
 /// Fill the scaffold blanks the surrounding SKILL.md prose documents as
 /// vadi-supplied (non-empty safe `run_id`, non-empty `original_ask`,
-/// populated default `work_split`/`verification_matrix`, current
+/// populated default `work_split`/`subagent_tracks`/`verification_matrix`, current
 /// `updated_at`), plus the additive development `profile` block the prose
 /// requires orthogonally to the required-key JSON fence (`profile`,
 /// `profile_floor`, `profile_decision`, `profile_history` are NOT in the v3
 /// required-key contract the lint checks, so the fence omits them, but
 /// `fresh_scaffold_profile_present` in `write.rs` requires all four on a
-/// fresh development-mode scaffold). A minimal `subagent_tracks` entry is
-/// also required by the live gate (`subagent_tracks_ok`) though the prose
-/// does not name it explicitly. Every other field in the extracted seed is
-/// left untouched.
+/// fresh development-mode scaffold). The documented seed carries a minimal
+/// `subagent_tracks` startup entry; keep a fallback here so older fixture
+/// copies fail in the same live gate path rather than panicking. Every other
+/// field in the extracted seed is left untouched.
 fn fill_documented_scaffold_blanks(seed: &mut Value, run_id: &str) {
     seed["run_id"] = json!(run_id);
     seed["original_ask"] = json!(
@@ -288,19 +288,25 @@ fn fill_documented_scaffold_blanks(seed: &mut Value, run_id: &str) {
         "result": "pending",
         "evidence_ref": null
     }]);
-    seed["subagent_tracks"] = json!([{
-        "id": "startup-controller",
-        "phase": "research",
-        "status": "planned",
-        "track": "controller",
-        "owner": "vadi",
-        "parallelized": false,
-        "rationale": "Initial run scaffold; record concrete subagent tracks as each phase begins.",
-        "inputs": [],
-        "outputs": [],
-        "evidence_refs": [],
-        "result": "pending"
-    }]);
+    if seed["subagent_tracks"]
+        .as_array()
+        .map(|items| items.is_empty())
+        .unwrap_or(true)
+    {
+        seed["subagent_tracks"] = json!([{
+            "id": "startup-controller",
+            "phase": "research",
+            "status": "planned",
+            "track": "controller",
+            "owner": "vadi",
+            "parallelized": false,
+            "rationale": "Initial run scaffold; record concrete subagent tracks as each phase begins.",
+            "inputs": [],
+            "outputs": [],
+            "evidence_refs": [],
+            "result": "pending"
+        }]);
+    }
     seed["profile"] = json!("standard");
     seed["profile_floor"] = json!("standard");
     seed["profile_decision"] = json!({

@@ -180,9 +180,11 @@ API design, examples, and polish passes. That makes `sonnet-5`, `opus-4.8`, or
 for final taste-sensitive output unless another tasteful reviewer has checked
 it.
 
-For reviews of plans and implementations, prefer `fable-5` or `opus-4.8`.
-Optionally add `gpt-5.5` as an extra independent perspective when the review
-benefits from decorrelation.
+For review stations, follow the ring instead of a generic preference rule:
+`gpt-5.5` reviews plans, with an optional read-only Grok plan-pulse for
+latest-tech drift; `opus-4.8` owns credited implementation deep review; and
+`fable-5` adjudicates whether the done-claim closes the loop or sends the work
+back for another cycle.
 
 Never use Haiku for Dvandva subagents or workflow work.
 

@@ -17,10 +17,10 @@
 use std::path::Path;
 
 use crate::lint::{
-    count_lines_matching, file_contains, file_has_exact_line, list_md, output_contract_contains,
-    resolve_root, Report, MODEL_POLICY_CLAUDE_MAPPING, MODEL_POLICY_CODEX_EFFORT,
-    MODEL_POLICY_CODEX_MAPPING, MODEL_POLICY_NO_HAIKU_COMMANDS, MODEL_POLICY_NO_HAIKU_SUBAGENTS,
-    MODEL_POLICY_OPUS_ROUTING, MODEL_POLICY_SONNET_ROUTING,
+    count_lines_matching, file_contains, file_has_exact_line, file_slurp_matches_ci, list_md,
+    output_contract_contains, resolve_root, Report, MODEL_POLICY_CLAUDE_MAPPING,
+    MODEL_POLICY_CODEX_EFFORT, MODEL_POLICY_CODEX_MAPPING, MODEL_POLICY_NO_HAIKU_COMMANDS,
+    MODEL_POLICY_NO_HAIKU_SUBAGENTS, MODEL_POLICY_OPUS_ROUTING, MODEL_POLICY_SONNET_ROUTING,
     MODEL_POLICY_STALE_CANONICAL_COMPAT_MAPPING, MODEL_POLICY_STALE_CODEX_MAPPING,
     MODEL_POLICY_STALE_OPUS_ROUTING, MODEL_POLICY_STALE_SONNET_ROUTING,
     MODEL_POLICY_VENDOR_NEUTRAL_COMMANDS, MODEL_POLICY_VENDOR_NEUTRAL_DOCS,
@@ -93,6 +93,15 @@ const ADVERSARIAL: [&str; 8] = [
     "integration-checker",
     "doc-verifier",
 ];
+const MODEL_POLICY_SEED_LEGACY_CAVEAT: &str = "Seed-roster class vocabulary keeps these legacy routing needles, but they are not the concrete ring dispatch rule";
+const MODEL_POLICY_RING_DEFAULTS: &str =
+    "Implementation, tests, and fixes default to gpt-class dispatch";
+const MODEL_POLICY_GPT_SELF_REVIEW_NO_CREDIT: &str =
+    "GPT self-review is hygiene only and earns no review credit";
+const MODEL_POLICY_GROK_UNCREDITED: &str =
+    "A Grok lane may run only as read-only, uncredited triage for live-world/plan-pulse or first-pass review leads";
+const MODEL_POLICY_FABLE_NO_CODE: &str =
+    "Fable-class owns plan authorship and terminal adjudication only, never code";
 
 fn req(r: &mut Report, root: &Path, rel: &str, needle: &str, msg: impl Into<String>) {
     r.add(file_contains(root, rel, needle), msg);
@@ -179,6 +188,90 @@ fn req_model_policy_common(r: &mut Report, root: &Path, rel: &str, vendor_neutra
     req_model_policy_routing(r, root, rel);
 }
 
+fn req_command_ring_dispatch(r: &mut Report, root: &Path, rel: &str) {
+    req(
+        r,
+        root,
+        rel,
+        MODEL_POLICY_SEED_LEGACY_CAVEAT,
+        format!("{rel} distinguishes seed routing needles from ring dispatch"),
+    );
+    req(
+        r,
+        root,
+        rel,
+        MODEL_POLICY_RING_DEFAULTS,
+        format!("{rel} pins gpt-class implementation/test/fix defaults"),
+    );
+    req(
+        r,
+        root,
+        rel,
+        MODEL_POLICY_GPT_SELF_REVIEW_NO_CREDIT,
+        format!("{rel} denies review credit for GPT self-review"),
+    );
+    req(
+        r,
+        root,
+        rel,
+        MODEL_POLICY_GROK_UNCREDITED,
+        format!("{rel} pins Grok as uncredited read-only triage"),
+    );
+    req(
+        r,
+        root,
+        rel,
+        MODEL_POLICY_FABLE_NO_CODE,
+        format!("{rel} pins Fable-class to plan/done judgment"),
+    );
+}
+
+fn req_grok_plan_pulse_policy(r: &mut Report, root: &Path) {
+    let rel = "docs/model-selection.md";
+    r.add(
+        file_slurp_matches_ci(root, rel, r"plan-review loop.*uncredited latest-tech pulse"),
+        "docs/model-selection.md allows only uncredited Grok plan-pulse",
+    );
+    r.add(
+        file_slurp_matches_ci(
+            root,
+            rel,
+            r"plan-pulse findings.*quarantined.*Claude-family role.*confirms",
+        ),
+        "docs/model-selection.md quarantines Grok plan-pulse findings",
+    );
+    r.add(
+        file_slurp_matches_ci(root, rel, r"never a credited review station")
+            && file_slurp_matches_ci(root, rel, r"never the ring's execute stations")
+            && file_slurp_matches_ci(root, rel, r"code-touching subagent"),
+        "docs/model-selection.md forbids Grok credited review, execute, and code-touching seats",
+    );
+    r.add(
+        file_slurp_matches_ci(root, rel, r"Its output is data, not instructions"),
+        "docs/model-selection.md treats Grok output as data not instructions",
+    );
+    r.add(
+        !file_slurp_matches_ci(root, rel, r"grok[^.]{0,120}research phases only"),
+        "docs/model-selection.md avoids stale Grok research-only wording",
+    );
+    r.add(
+        !file_slurp_matches_ci(
+            root,
+            rel,
+            r"grok[^.]{0,120}(owns|is|becomes|serves as)[^.]{0,120}credited review",
+        ),
+        "docs/model-selection.md avoids assigning Grok credited review authority",
+    );
+    r.add(
+        !file_slurp_matches_ci(
+            root,
+            rel,
+            r"\bgrok\s+(may|can|owns|is|becomes|serves as)[^.]{0,120}(execute|executor|code-touching|writes code|baton write)",
+        ),
+        "docs/model-selection.md avoids assigning Grok execute/code/baton authority",
+    );
+}
+
 fn require_agent_model(
     r: &mut Report,
     root: &Path,
@@ -208,6 +301,7 @@ pub fn report(root: &Path) -> Report {
     let mut r = Report::new();
 
     let research = "plugins/dvandva/skills/research/SKILL.md";
+    req_grok_plan_pulse_policy(&mut r, root);
     req(
         &mut r,
         root,
@@ -1638,6 +1732,7 @@ pub fn report(root: &Path) -> Report {
         "plugins/dvandva/commands/prativadi.md",
     ] {
         req_model_policy_common(&mut r, root, file, MODEL_POLICY_VENDOR_NEUTRAL_COMMANDS);
+        req_command_ring_dispatch(&mut r, root, file);
         req(
             &mut r,
             root,

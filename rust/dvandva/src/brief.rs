@@ -452,3 +452,54 @@ fn render_next_action(out: &mut String, root: &Value) {
         Some(other) => out.push_str(&format!("{}\n", tostring(other))),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn render_brief_filters_terminal_findings_and_keeps_future_statuses_open() {
+        let dir = tempfile::tempdir().unwrap();
+        let baton = dir.path().join("baton.json");
+        std::fs::write(
+            &baton,
+            serde_json::to_string_pretty(&json!({
+                "schema": "dvandva.baton.v3",
+                "run_id": "brief-findings",
+                "mode": "development",
+                "profile": "full",
+                "phase": 4,
+                "status": "deep_review",
+                "assignee": "prativadi",
+                "checkpoint": 112,
+                "disagreement_cap": 3,
+                "work_split": [],
+                "findings": [
+                    {"id": "closed-passed", "status": "PASSED", "severity": "medium", "summary": "must not render"},
+                    {"id": "closed-resolved", "status": "Resolved", "severity": "medium", "summary": "must not render"},
+                    {"id": "open-future", "status": "blocked_by_peer", "severity": "high", "summary": "must render"}
+                ],
+                "verification_matrix": [],
+                "next_action": "continue"
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        let out = render_brief(&baton, "prativadi").unwrap();
+
+        assert!(
+            !out.contains("closed-passed"),
+            "PASSED terminal finding leaked into brief:\n{out}"
+        );
+        assert!(
+            !out.contains("closed-resolved"),
+            "Resolved terminal finding leaked into brief:\n{out}"
+        );
+        assert!(
+            out.contains("open-future") && out.contains("blocked_by_peer"),
+            "unknown future status should fail open in brief:\n{out}"
+        );
+    }
+}
