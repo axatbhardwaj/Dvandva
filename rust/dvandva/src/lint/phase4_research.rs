@@ -1802,6 +1802,39 @@ pub fn report(root: &Path) -> Report {
             format!("{file} keeps the Codex through-human wait running through a human pause"),
         );
     }
+    // A human pause stops ACTIVE WORK, not the polling loop. The four
+    // goal-bearing surfaces (both commands and both SKILL /goal blocks) must
+    // carry the through-human general-wait note and the CANONICAL writer-of-pause
+    // F5 fallback, and must never regress to the OLD narrow "only session"
+    // wording. 683406e installed all three; a rollback of the SKILL goal blocks
+    // and the F5 rows to their d153fd4 state fails these pins closed.
+    for file in [
+        "plugins/dvandva/commands/vadi.md",
+        "plugins/dvandva/commands/prativadi.md",
+        "plugins/dvandva/skills/vadi/SKILL.md",
+        "plugins/dvandva/skills/prativadi/SKILL.md",
+    ] {
+        r.add(
+            file_slurp_matches_ci(
+                root,
+                file,
+                r"Codex-hosted\s+sessions\s+append\s+--through-human",
+            ),
+            format!("{file} appends --through-human on the general wait"),
+        );
+        r.add(
+            file_slurp_matches_ci(
+                root,
+                file,
+                r"the\s+role\s+that\s+wrote\s+the\s+pause\s+surfaces\s+it",
+            ),
+            format!("{file} carries the writer-of-pause F5 fallback"),
+        );
+        r.add(
+            !file_slurp_matches_ci(root, file, r"only\s+when\s+it\s+is\s+the\s+only\s+session"),
+            format!("{file} avoids the stale only-session pause fallback"),
+        );
+    }
     req(
         &mut r,
         root,

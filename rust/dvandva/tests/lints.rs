@@ -579,7 +579,7 @@ fn phase4_fixture(root: &Path) {
 
     // commands
     let command = format!(
-        "{SUPERPOWERS}research_ref work_split verification_matrix test_creation deep_review deslop\nparallel subagents\nconditional parallelism\nsubagent_tracks\nInvoke `dvandva:research`.\nregular local checkpoint commits\nA Codex-hosted role goes silent but keeps its --through-human wait running through the pause.\nModel-class mapping is vendor-neutral.\nNever use `haiku`.\n{MODEL_CLASSES}"
+        "{SUPERPOWERS}research_ref work_split verification_matrix test_creation deep_review deslop\nparallel subagents\nconditional parallelism\nsubagent_tracks\nInvoke `dvandva:research`.\nregular local checkpoint commits\nA Codex-hosted role goes silent but keeps its --through-human wait running through the pause.\nCodex-hosted sessions append --through-human on the general wait; when no Claude Code-hosted session is part of the run, the role that wrote the pause surfaces it while the peer waits the pause out.\nModel-class mapping is vendor-neutral.\nNever use `haiku`.\n{MODEL_CLASSES}"
     );
     let command = format!("{command}{RING_DISPATCH}");
     w(root, "plugins/dvandva/commands/vadi.md", &command);
@@ -665,6 +665,7 @@ fn phase4_role_skill() -> String {
     s.push_str("Phase convention: implementation-chunk\n");
     s.push_str("same-status sync checkpoints\n");
     s.push_str("subagent_tracks\n");
+    s.push_str("Codex-hosted sessions append --through-human on the general wait; when no Claude Code-hosted session is part of the run, the role that wrote the pause surfaces it while the peer waits the pause out.\n");
     s.push_str(NEW5);
     s
 }
@@ -912,6 +913,63 @@ fn phase4_research_rejects_command_dropping_keeps_wait_running() {
     let r = phase4_research::report(d.path());
     assert!(r.fails_with(
         "plugins/dvandva/commands/vadi.md keeps the Codex through-human wait running through a human pause"
+    ));
+}
+
+#[test]
+fn phase4_research_rejects_skill_goal_missing_through_human_general_wait() {
+    // 683406e added the `(Codex-hosted sessions append --through-human)` note to
+    // the SKILL /goal blocks; d153fd4 had no such note there. Doctor it out of a
+    // SKILL goal block and the through-human general-wait pin must bite, so a
+    // rollback of the SKILL files fails closed.
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/skills/vadi/SKILL.md");
+    let text = fs::read_to_string(&p).unwrap().replace(
+        "Codex-hosted sessions append --through-human on the general wait;",
+        "The general wait needs no extra flag;",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with(
+        "plugins/dvandva/skills/vadi/SKILL.md appends --through-human on the general wait"
+    ));
+}
+
+#[test]
+fn phase4_research_rejects_goal_missing_writer_of_pause_fallback() {
+    // The canonical F5 fallback ("when no Claude Code-hosted session is part of
+    // the run, the role that wrote the pause surfaces it") is the writer-of-pause
+    // rule. d153fd4 had no occurrence of it in any goal-bearing file. Doctor it
+    // out and the pin must bite so a rollback fails closed.
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/skills/prativadi/SKILL.md");
+    let text = fs::read_to_string(&p).unwrap().replace(
+        "the role that wrote the pause surfaces it while the peer waits the pause out.",
+        "the sole session surfaces it.",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with(
+        "plugins/dvandva/skills/prativadi/SKILL.md carries the writer-of-pause F5 fallback"
+    ));
+}
+
+#[test]
+fn phase4_research_rejects_stale_only_session_pause_fallback() {
+    // The OLD narrow fallback ("it surfaces the pause itself only when it is the
+    // only session") is what 683406e retired. If it ever reappears — exactly what
+    // a rollback to d153fd4 does — the anti-needle must reject it.
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/commands/vadi.md");
+    let mut text = fs::read_to_string(&p).unwrap();
+    text.push_str("\nThe role surfaces the pause itself only when it is the only session.\n");
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with(
+        "plugins/dvandva/commands/vadi.md avoids the stale only-session pause fallback"
     ));
 }
 

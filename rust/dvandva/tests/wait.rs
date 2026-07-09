@@ -2336,6 +2336,15 @@ fn usage_advertises_540_default_and_help_exits_0() {
     let o = run_wait(None, &[], &["--help"], BUDGET_FAST);
     assert_eq!(o.code, Some(0), "{}", o.out);
     assert!(o.contains("--max-wait 540"), "{}", o.out);
+    // The --since-checkpoint help must spell out that a --through-human wait
+    // polls THROUGH human_question/human_decision, unlike a plain wait. Pin the
+    // qualified wording so it can never regress to the old "all three stop
+    // immediately" help text.
+    assert!(
+        o.contains("a --through-human wait keeps polling through those two pauses"),
+        "{}",
+        o.out
+    );
 }
 
 // ── Task S2-T1 (abandoned terminal) ─────────────────────────────────────────
