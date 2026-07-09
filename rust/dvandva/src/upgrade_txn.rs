@@ -171,6 +171,9 @@ fn run_transactional_upgrade_inner(
     }
 
     let tx_id = transaction_id();
+    // Accepted residual: if Snapshot::create fails partway, any backups it already
+    // wrote under snapshot_root stay on disk (no breadcrumb exists yet to reclaim
+    // them). No live state has been touched, so this is inert clutter, not corruption.
     let snapshot = match Snapshot::create(&config.snapshot_root(&tx_id), &config.snapshot_paths()) {
         Ok(snapshot) => snapshot,
         Err(err) => {
@@ -662,13 +665,16 @@ fn install_staged_binary_last(staged_binary: &Path, live_binary: &Path) -> io::R
             format!("live binary path has no parent: {}", live_binary.display()),
         )
     })?;
+    // Read permissions before staging the tmp file so a metadata failure here
+    // returns via `?` without ever creating a tmp file that would need cleanup.
+    let staged_permissions = fs::metadata(staged_binary)?.permissions();
     fs::create_dir_all(parent)?;
     let tmp = parent.join(format!(".dvandva-upgrade-{}.tmp", transaction_id()));
     if let Err(err) = fs::copy(staged_binary, &tmp) {
         let _ = fs::remove_file(&tmp);
         return Err(err);
     }
-    if let Err(err) = fs::set_permissions(&tmp, fs::metadata(staged_binary)?.permissions()) {
+    if let Err(err) = fs::set_permissions(&tmp, staged_permissions) {
         let _ = fs::remove_file(&tmp);
         return Err(err);
     }
