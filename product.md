@@ -232,7 +232,7 @@ The dated advisory ranking table for concrete model choice lives in `docs/model-
 2. A teammate can follow the README — including the Superpowers install step — and run a Dvandva pilot on a low-risk real PR without DM-ing the owner. Two persistent sessions are the default; one engine playing both roles serially is a fallback.
 3. One pilot is completed: spec phase converges, ≥2 implementation phases run, ≥1 mutual-review loop triggers, and one disagreement-loop event occurs and resolves (or terminates correctly at human escalation). Metrics — turn count per agent, agent-to-agent PR comment count, wall-clock, real issues caught — are written up as `docs/case-studies/pilot-01.md` against the PR 353 baseline.
 4. In the pilot, both skills auto-activate from natural workflow language at least once each. Explicit invocation (`/vadi`, `$prativadi`) stays as documented fallback.
-5. No runaway loops. The disagreement-round cap (default 3) triggers a forced `human_decision` correctly when exercised, and the wait helper wakes/stops cleanly at every baton-state transition.
+5. No runaway loops. The disagreement-round cap (default 10) triggers a forced `human_decision` correctly when exercised, and the wait helper wakes/stops cleanly at every baton-state transition.
 
 If criterion #5 fails (any runaway loop observed during pilot), v1 does not ship — the cap mechanism is the operational safety floor and has to work.
 
@@ -508,7 +508,7 @@ Phase advancement invariant: the vadi never advances a phase directly after impl
 
 Three caps the spec enforces operationally:
 
-- **Disagreement round cap (default 3).** Counter resets at the start of each phase. On the 3rd mutual-review disapproval, the writing agent must set `status: human_decision` and exit. Tunable per-phase via a `disagreement_cap` field on the baton (set during spec phase by either agent).
+- **Disagreement round cap (default 10).** Counter resets at the start of each phase. On the 10th mutual-review disapproval, the writing agent must set `status: human_decision` and exit. Tunable per-phase via a `disagreement_cap` field on the baton (set during spec phase by either agent).
 - **Per-invocation turn cap (default 60).** Each agent's `/goal` invocation must stop after the active model-work turn cap even if the baton condition has not been hit, and surface its current state for human review. Passive shell wait heartbeats do not count against this cap.
 - **No phase count cap.** Plans declare `total_phases` during the spec phase; the protocol does not constrain how many phases are reasonable. The spec phase itself is responsible for sane phase scoping.
 - **Planning-question boundary (S4-T5/D1).** `human_question` may be entered pre-lock (`master_plan_locked: false`) from any planning state (`research_*`/`spec_*`), AND post-lock from the working states `implementing`, `parallel_implementing`, `test_creation`, `cross_fixing`, and `phase_fixing`. The rule: when a genuine requirement ambiguity — not a design or scope decision — blocks progress, route one concrete question to the human instead of guessing; `resume_status`/`resume_assignee` restore the exact prior state on the answer. Entering `human_question` is not a loop edge (it is a human-bounded stop-together pause). `human_decision` stays the re-routing and scope-escalation state. The Claude Code-hosted session owns surfacing both to the human (F5, see §12).
@@ -780,7 +780,7 @@ This appendix is the spec-level authoritative reference for the schema (includin
   "resume_assignee": "vadi | prativadi | null; role to resume after a human_question answer",
   "resume_status": "spec_drafting | spec_review | spec_revision | null; status to restore after a human_question answer",
   "disagreement_round": "integer, set to 0 by the agent that writes the first baton of each new phase; incremented by the agent that disagrees during mutual review",
-  "disagreement_cap": "integer, default 3, optionally set during spec phase",
+  "disagreement_cap": "integer, default 10, optionally set during spec phase",
   "work_split_waiver": "S5-T3 additive nullable object gating the parallel/test-creation chunk floor: {reason: <non-blank string>, approved_by: \"prativadi\", checkpoint: <number>}. When valid it waives ONLY the >=5-total chunk floor; the per-role >=2 write-capable-chunk floor is never waivable. Any other present shape is rejected (bad_work_split_waiver). Absent = the >=5 floor is in force.",
   "loop_counts": "v2 additive map keyed \"<kind>:<phase>\" to a per-cycle counter for repeated review/fix loops; the write helper mandates increment-by-one on every loop-edge write (an absent counter reads as 0 but the candidate must still write the increment, so the cap cannot be bypassed by omission) and routes a counter that reaches disagreement_cap to human_decision. The counter resets on phase advance.",
   "turn_cap": "integer, default 60; passive shell wait heartbeats do not count",

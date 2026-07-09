@@ -366,7 +366,7 @@ If you approve, baton write:
 If you disapprove:
 
 1. Increment `disagreement_round` by 1.
-2. If `disagreement_round >= disagreement_cap` (default 3), set `status: "human_decision", assignee: "human"`, populate `blockers` with "mutual review reached cap without agreement; needs human call". Update `next_action: "Human: decide whether to accept the prativadi's fixup, the vadi's counter, or a third path. Edit baton.assignee to resume."`. Set `current_engine` as above. Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Write the complete next baton to `"$BATON_NEXT_FILE"`, then install it with `dvandva write "$BATON_FILE" "$BATON_NEXT_FILE"` — it validates the transition, installs atomically, and snapshots the checkpoint into `"$BATON_DIR/history/"` (and an auto-named terminal archive on human_decision). On non-zero exit do not edit `"$BATON_FILE"` directly: fix the candidate per the exit code and re-run. Exit 30 means installed-but-snapshot-failed — surface it and continue. Surface BATON_STATE_COMPACT, then follow the Stop rule.
+2. If `disagreement_round >= disagreement_cap` (default 10), set `status: "human_decision", assignee: "human"`, populate `blockers` with "mutual review reached cap without agreement; needs human call". Update `next_action: "Human: decide whether to accept the prativadi's fixup, the vadi's counter, or a third path. Edit baton.assignee to resume."`. Set `current_engine` as above. Set `updated_at` to the current UTC time in ISO-8601 format (e.g., `2026-05-13T10:30:00Z`). Increment `checkpoint` by 1. Write the complete next baton to `"$BATON_NEXT_FILE"`, then install it with `dvandva write "$BATON_FILE" "$BATON_NEXT_FILE"` — it validates the transition, installs atomically, and snapshots the checkpoint into `"$BATON_DIR/history/"` (and an auto-named terminal archive on human_decision). On non-zero exit do not edit `"$BATON_FILE"` directly: fix the candidate per the exit code and re-run. Exit 30 means installed-but-snapshot-failed — surface it and continue. Surface BATON_STATE_COMPACT, then follow the Stop rule.
 3. Otherwise, write your counter-changes inline (edit the files the prativadi's fixup touched). Baton write:
    - `phase: <current N>` (unchanged)
    - `status: "counter_review"`
@@ -487,7 +487,7 @@ New scaffolds write the `dvandva.baton.v3` seed below (`"development"` for `mode
   "phase": "clarifying", "total_phases": 0, "status": "clarifying_questions_drafting", "assignee": "vadi",
   "current_engine": null, "review_target": null, "plan_ref": null, "master_plan_locked": false,
   "question": null, "resume_assignee": null, "resume_status": null,
-  "disagreement_round": 0, "disagreement_cap": 3, "turn_cap": 60, "branch": "", "checkpoint": 0,
+  "disagreement_round": 0, "disagreement_cap": 10, "turn_cap": 60, "branch": "", "checkpoint": 0,
   "allow_commit": true, "allow_push": true, "allow_pr": false,
   "vadi_final_approval": false, "prativadi_final_approval": false,
   "final_commit": null, "pushed_ref": null,

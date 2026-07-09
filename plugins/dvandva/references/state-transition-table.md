@@ -329,7 +329,7 @@ early. Scalar-owner states still reject same-status rewrites.
   "resume_assignee": "vadi | prativadi | null; role to resume after a human_question answer",
   "resume_status": "spec_drafting | spec_review | spec_revision | null; status to restore after a human_question answer",
   "disagreement_round": "integer, reset to 0 by the agent that writes the first baton of each new phase",
-  "disagreement_cap": "integer, default 3, optionally set during spec phase",
+  "disagreement_cap": "integer, default 10, optionally set during spec phase",
   "work_split_waiver": "S5-T3 additive nullable object gating the parallel/test-creation chunk floor: {reason: <non-blank string>, approved_by: \"prativadi\", checkpoint: <number>}. When valid it waives ONLY the >=5-total chunk floor; the per-role >=2 write-capable-chunk floor is never waivable. Any other present shape is rejected (write reason bad_work_split_waiver). Absent = the >=5 floor is in force.",
   "loop_counts": "v2 additive map keyed \"<kind>:<phase>\" to an integer per-cycle counter for repeated review/fix loops; the write helper mandates increment-by-one on every loop-edge write (grandfathering only the read of an absent counter to 0, so the cap cannot be bypassed by omitting loop_counts) and, at disagreement_cap, allows only a human_decision target. Absent counters read as 0; the counter resets on phase advance.",
   "turn_cap": "integer, default 60; passive shell wait heartbeats do not count",

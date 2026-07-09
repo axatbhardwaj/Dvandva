@@ -360,7 +360,7 @@ If you approve:
 If you disapprove:
 
 1. Increment `disagreement_round` by 1.
-2. If `disagreement_round >= disagreement_cap` (default 3):
+2. If `disagreement_round >= disagreement_cap` (default 10):
    - `status: "human_decision"`
    - `assignee: "human"`
    - `current_engine`: set to `"claude"` if you are Claude Code, or `"codex"` if you are Codex. This is for traceability only.
@@ -488,7 +488,7 @@ Use the `dvandva.baton.v3` seed below for new development scaffolds. Existing `m
   "phase": "clarifying", "total_phases": 0, "status": "clarifying_questions_drafting", "assignee": "vadi",
   "current_engine": null, "review_target": null, "plan_ref": null, "master_plan_locked": false,
   "question": null, "resume_assignee": null, "resume_status": null,
-  "disagreement_round": 0, "disagreement_cap": 3, "turn_cap": 60, "branch": "", "checkpoint": 0,
+  "disagreement_round": 0, "disagreement_cap": 10, "turn_cap": 60, "branch": "", "checkpoint": 0,
   "allow_commit": true, "allow_push": true, "allow_pr": false,
   "vadi_final_approval": false, "prativadi_final_approval": false,
   "final_commit": null, "pushed_ref": null,
