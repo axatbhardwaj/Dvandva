@@ -117,7 +117,9 @@ repeat the whole cycle (back to "human task")
   credit.
 - `grok-4.5` — a shared specialist lane inside both research legs and inside
   the plan-review loop, where it specifically checks for latest-tech/live-
-  world drift (see Specialist Lanes below for the read-only guards).
+  world drift (uncredited — plan-pulse findings stay quarantined until a
+  Claude-family role confirms them; see Specialist Lanes below for the
+  read-only guards).
 - `opus-4.8` — the credited deep/adversarial review of the implementation,
   looping with gpt-5.5 until fixed; cross-vendor from the author. Across a run
   opus writes code close to never — its stations are review-only roughly
@@ -215,8 +217,10 @@ stand.
 
 Rules for the grok lane:
 
-- Research phases only. Never in the pipeline ring's plan, execute, or review
-  stations, and never a code-touching subagent.
+- Research phases, plus the plan-review loop's uncredited latest-tech pulse
+  (the plan-pulse pattern below) — never a credited review station whose
+  approval gates anything, never the ring's execute stations, and never a
+  code-touching subagent.
 - Always a parallel lane beside the `sonnet-5` research track, never a
   replacement for it. The sonnet track remains the primary; grok adds the
   live-social/news modality the sweep would otherwise miss.
