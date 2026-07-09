@@ -268,7 +268,13 @@ fn finish_rollback(
 ) -> Result<(), TxnFailure> {
     let report = restore_snapshots(records);
     if report.residuals.is_empty() {
-        let _ = fs::remove_file(config.breadcrumb_path());
+        if let Err(err) = clear_committed_breadcrumb(&config.breadcrumb_path()) {
+            eprintln!(
+                "ERROR: rollback restored snapshots but could not clear breadcrumb {}: {err}",
+                config.breadcrumb_path().display()
+            );
+            return Err(TxnFailure::RollbackIncomplete);
+        }
         if let Some(root) = snapshot_root {
             let _ = fs::remove_dir_all(root);
         }
@@ -398,16 +404,43 @@ fn stale_reclaim_path(lock_path: &Path) -> PathBuf {
 
 fn lock_is_stale(path: &Path, stale_timeout: Duration) -> Result<bool, String> {
     let content = fs::read_to_string(path).map_err(|err| err.to_string())?;
+    Ok(lock_content_is_stale(
+        &content,
+        stale_timeout,
+        unix_timestamp_secs(),
+        process_liveness,
+    ))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProcessLiveness {
+    Live,
+    Dead,
+    #[cfg(any(not(target_os = "linux"), test))]
+    Unknown,
+}
+
+fn lock_content_is_stale(
+    content: &str,
+    stale_timeout: Duration,
+    now: u64,
+    process_liveness: impl Fn(u32) -> ProcessLiveness,
+) -> bool {
     let Some(timestamp) = content.lines().find_map(|line| {
         line.strip_prefix("timestamp=")
             .and_then(|value| value.parse::<u64>().ok())
     }) else {
-        return Ok(true);
+        return true;
     };
-    if let Some(pid) = lock_pid(&content) {
-        return Ok(!process_is_live(pid));
+    if let Some(pid) = lock_pid(content) {
+        return match process_liveness(pid) {
+            ProcessLiveness::Live => false,
+            ProcessLiveness::Dead => true,
+            #[cfg(any(not(target_os = "linux"), test))]
+            ProcessLiveness::Unknown => now.saturating_sub(timestamp) > stale_timeout.as_secs(),
+        };
     }
-    Ok(unix_timestamp_secs().saturating_sub(timestamp) > stale_timeout.as_secs())
+    now.saturating_sub(timestamp) > stale_timeout.as_secs()
 }
 
 fn remove_stale_lock_under_guard(path: &Path, stale_timeout: Duration) -> Result<(), String> {
@@ -427,13 +460,17 @@ fn lock_pid(content: &str) -> Option<u32> {
 }
 
 #[cfg(target_os = "linux")]
-fn process_is_live(pid: u32) -> bool {
-    Path::new("/proc").join(pid.to_string()).exists()
+fn process_liveness(pid: u32) -> ProcessLiveness {
+    if Path::new("/proc").join(pid.to_string()).exists() {
+        ProcessLiveness::Live
+    } else {
+        ProcessLiveness::Dead
+    }
 }
 
 #[cfg(not(target_os = "linux"))]
-fn process_is_live(_pid: u32) -> bool {
-    false
+fn process_liveness(_pid: u32) -> ProcessLiveness {
+    ProcessLiveness::Unknown
 }
 
 #[derive(Debug)]
@@ -569,8 +606,8 @@ fn restore_snapshots(records: &[SnapshotRecord]) -> RollbackReport {
 }
 
 fn restore_snapshot(record: &SnapshotRecord) -> io::Result<()> {
-    remove_path_if_exists(&record.target)?;
     if !record.existed {
+        remove_path_if_exists(&record.target)?;
         return Ok(());
     }
     let Some(backup) = &record.backup else {
@@ -579,12 +616,8 @@ fn restore_snapshot(record: &SnapshotRecord) -> io::Result<()> {
             "snapshot metadata says path existed but backup is missing",
         ));
     };
-    if !backup.exists() {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            format!("snapshot backup missing: {}", backup.display()),
-        ));
-    }
+    ensure_snapshot_backup_available(record, backup)?;
+    remove_path_if_exists(&record.target)?;
     if let Some(parent) = record.target.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -595,6 +628,22 @@ fn restore_snapshot(record: &SnapshotRecord) -> io::Result<()> {
     } else {
         fs::copy(backup, &record.target)?;
         fs::set_permissions(&record.target, fs::metadata(backup)?.permissions())
+    }
+}
+
+fn ensure_snapshot_backup_available(record: &SnapshotRecord, backup: &Path) -> io::Result<()> {
+    let exists = if record.was_symlink {
+        fs::symlink_metadata(backup).is_ok()
+    } else {
+        backup.exists()
+    };
+    if exists {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("snapshot backup missing: {}", backup.display()),
+        ))
     }
 }
 
@@ -615,9 +664,21 @@ fn install_staged_binary_last(staged_binary: &Path, live_binary: &Path) -> io::R
     })?;
     fs::create_dir_all(parent)?;
     let tmp = parent.join(format!(".dvandva-upgrade-{}.tmp", transaction_id()));
-    fs::copy(staged_binary, &tmp)?;
-    fs::set_permissions(&tmp, fs::metadata(staged_binary)?.permissions())?;
-    fs::rename(&tmp, live_binary)
+    if let Err(err) = fs::copy(staged_binary, &tmp) {
+        let _ = fs::remove_file(&tmp);
+        return Err(err);
+    }
+    if let Err(err) = fs::set_permissions(&tmp, fs::metadata(staged_binary)?.permissions()) {
+        let _ = fs::remove_file(&tmp);
+        return Err(err);
+    }
+    match fs::rename(&tmp, live_binary) {
+        Ok(()) => Ok(()),
+        Err(err) => {
+            let _ = fs::remove_file(&tmp);
+            Err(err)
+        }
+    }
 }
 
 fn remove_path_if_exists(path: &Path) -> io::Result<()> {
@@ -735,6 +796,72 @@ mod tests {
 
         fn verify_committed(&mut self, _live_binary: &Path) -> Result<(), UpgradeStepError> {
             panic!("commit verification must not run after a plugin failure");
+        }
+    }
+
+    struct BreadcrumbCleanupBlockingFailure {
+        breadcrumb_path: PathBuf,
+        cache_marker: PathBuf,
+    }
+
+    impl UpgradeExecutor for BreadcrumbCleanupBlockingFailure {
+        fn stage_binary(&mut self, stage_root: &Path) -> Result<PathBuf, UpgradeStepError> {
+            let staged = stage_root.join("bin/dvandva");
+            fs::create_dir_all(staged.parent().unwrap()).unwrap();
+            fs::write(&staged, "new staged binary").unwrap();
+            Ok(staged)
+        }
+
+        fn verify_binary(&mut self, binary: &Path) -> Result<(), UpgradeStepError> {
+            if binary.is_file() {
+                Ok(())
+            } else {
+                Err(UpgradeStepError::new(
+                    "verify-staged",
+                    "missing staged binary",
+                ))
+            }
+        }
+
+        fn upgrade_plugins(&mut self, _marketplace: &str) -> Result<(), UpgradeStepError> {
+            fs::write(&self.cache_marker, "new cache").unwrap();
+            fs::remove_file(&self.breadcrumb_path).unwrap();
+            fs::create_dir(&self.breadcrumb_path).unwrap();
+            Err(UpgradeStepError::new("plugins", "simulated plugin failure"))
+        }
+
+        fn verify_committed(&mut self, _live_binary: &Path) -> Result<(), UpgradeStepError> {
+            panic!("commit verification must not run after a plugin failure");
+        }
+    }
+
+    struct PluginSuccessNoLiveRead;
+
+    impl UpgradeExecutor for PluginSuccessNoLiveRead {
+        fn stage_binary(&mut self, stage_root: &Path) -> Result<PathBuf, UpgradeStepError> {
+            let staged = stage_root.join("bin/dvandva");
+            fs::create_dir_all(staged.parent().unwrap()).unwrap();
+            fs::write(&staged, "new staged binary").unwrap();
+            Ok(staged)
+        }
+
+        fn verify_binary(&mut self, binary: &Path) -> Result<(), UpgradeStepError> {
+            if binary.is_file() {
+                Ok(())
+            } else {
+                Err(UpgradeStepError::new(
+                    "verify-staged",
+                    "missing staged binary",
+                ))
+            }
+        }
+
+        fn upgrade_plugins(&mut self, _marketplace: &str) -> Result<(), UpgradeStepError> {
+            Ok(())
+        }
+
+        fn verify_committed(&mut self, _live_binary: &Path) -> Result<(), UpgradeStepError> {
+            panic!("commit verification must not run after a failed binary swap");
         }
     }
 
@@ -1094,6 +1221,27 @@ mod tests {
     }
 
     #[test]
+    fn unknown_pid_liveness_falls_back_to_timestamp_staleness() {
+        let now = unix_timestamp_secs();
+        let fresh = format!("pid=12345\ntimestamp={now}\ntoken=fresh\n");
+        assert!(
+            !lock_content_is_stale(&fresh, DEFAULT_STALE_LOCK_TIMEOUT, now, |_| {
+                ProcessLiveness::Unknown
+            },),
+            "unsupported pid liveness must not make a fresh lock reclaimable"
+        );
+
+        let old_timestamp = now.saturating_sub(DEFAULT_STALE_LOCK_TIMEOUT.as_secs() + 1);
+        let old = format!("pid=12345\ntimestamp={old_timestamp}\ntoken=old\n");
+        assert!(
+            lock_content_is_stale(&old, DEFAULT_STALE_LOCK_TIMEOUT, now, |_| {
+                ProcessLiveness::Unknown
+            },),
+            "unsupported pid liveness should fall back to timestamp timeout"
+        );
+    }
+
+    #[test]
     fn stale_reclaim_guard_is_reclaimed() {
         let tmp = tempfile::tempdir().unwrap();
         let lock_path = tmp.path().join("upgrade.lock");
@@ -1167,6 +1315,71 @@ mod tests {
         drop(lock);
     }
 
+    #[test]
+    fn missing_snapshot_backup_does_not_delete_live_target() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("live.txt");
+        let backup = tmp.path().join("missing-backup.txt");
+        fs::write(&target, "live content").unwrap();
+        let record = SnapshotRecord {
+            target: target.clone(),
+            backup: Some(backup),
+            existed: true,
+            was_dir: false,
+            was_symlink: false,
+        };
+
+        let report = restore_snapshots(&[record]);
+
+        assert!(
+            !report.residuals.is_empty(),
+            "missing backup should be reported as residual"
+        );
+        assert_eq!(
+            fs::read_to_string(&target).unwrap(),
+            "live content",
+            "restore must validate backup before deleting the live target"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dangling_symlink_backup_restores_without_following_target() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let target = tmp.path().join("live-link");
+        let backup = tmp.path().join("backup-link");
+        fs::write(&target, "mutated regular file").unwrap();
+        symlink("missing-relative-target", &backup).unwrap();
+        let record = SnapshotRecord {
+            target: target.clone(),
+            backup: Some(backup),
+            existed: true,
+            was_dir: false,
+            was_symlink: true,
+        };
+
+        let report = restore_snapshots(&[record]);
+
+        assert!(
+            report.residuals.is_empty(),
+            "dangling symlink backups are valid snapshots: {:?}",
+            report.residuals
+        );
+        assert!(
+            fs::symlink_metadata(&target)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "target should be restored as a symlink"
+        );
+        assert_eq!(
+            fs::read_link(&target).unwrap(),
+            PathBuf::from("missing-relative-target")
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn snapshot_restore_preserves_symlink_inside_directory() {
@@ -1201,6 +1414,79 @@ mod tests {
             PathBuf::from("real.txt")
         );
         assert_eq!(fs::read_to_string(cache.join("real.txt")).unwrap(), "old");
+    }
+
+    #[test]
+    fn rollback_exits_21_and_preserves_snapshot_if_breadcrumb_cleanup_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let codex_home = tmp.path().join("codex-home");
+        let state_dir = tmp.path().join("state");
+        let live_binary = home.join(".cargo/bin/dvandva");
+        let claude_cache = home.join(".claude/plugins/cache/dvandva/dvandva");
+        let cache_marker = claude_cache.join("version.txt");
+
+        fs::create_dir_all(live_binary.parent().unwrap()).unwrap();
+        fs::create_dir_all(&claude_cache).unwrap();
+        fs::write(&live_binary, "old binary").unwrap();
+        fs::write(&cache_marker, "old cache").unwrap();
+
+        let config = TransactionConfig::new("local-marketplace", &home, &codex_home, &state_dir);
+        let mut executor = BreadcrumbCleanupBlockingFailure {
+            breadcrumb_path: config.breadcrumb_path(),
+            cache_marker: cache_marker.clone(),
+        };
+
+        let code = run_transactional_upgrade(&config, &mut executor);
+
+        assert_eq!(code, EXIT_ROLLBACK_INCOMPLETE);
+        assert_eq!(fs::read_to_string(&live_binary).unwrap(), "old binary");
+        assert_eq!(fs::read_to_string(&cache_marker).unwrap(), "old cache");
+        assert!(
+            config.breadcrumb_path().is_dir(),
+            "failed breadcrumb cleanup should leave the marker path for inspection"
+        );
+        assert!(
+            fs::read_dir(state_dir.join("upgrade-snapshots"))
+                .unwrap()
+                .next()
+                .is_some(),
+            "snapshot root must be preserved when breadcrumb cleanup fails"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn failed_binary_swap_removes_live_bin_temp_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let codex_home = tmp.path().join("codex-home");
+        let state_dir = tmp.path().join("state");
+        let live_binary = home.join(".cargo/bin/dvandva");
+        fs::create_dir_all(&live_binary).unwrap();
+        fs::write(live_binary.join("old-marker"), "old directory").unwrap();
+
+        let config = TransactionConfig::new("local-marketplace", &home, &codex_home, &state_dir);
+        let mut executor = PluginSuccessNoLiveRead;
+
+        let code = run_transactional_upgrade(&config, &mut executor);
+
+        assert_eq!(code, EXIT_ROLLED_BACK);
+        assert!(live_binary.is_dir());
+        assert_eq!(
+            fs::read_to_string(live_binary.join("old-marker")).unwrap(),
+            "old directory"
+        );
+        let temp_files = fs::read_dir(live_binary.parent().unwrap())
+            .unwrap()
+            .filter_map(Result::ok)
+            .map(|entry| entry.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.starts_with(".dvandva-upgrade-"))
+            .collect::<Vec<_>>();
+        assert!(
+            temp_files.is_empty(),
+            "failed binary swap left live-bin temp files: {temp_files:?}"
+        );
     }
 
     #[test]
