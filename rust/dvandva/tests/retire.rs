@@ -9,12 +9,12 @@
 //!
 //! Version re-key: the shell suite pins `DVANDVA_EXPECTED_VERSION=1.1.0`
 //! throughout. The Rust port moved the compiled default
-//! (`dvandva::retire::DEFAULT_EXPECTED_VERSION`) to `1.2.0`, and the flow
-//! patches move it to `1.3.0`, and the hardening slice moves it to `1.4.0`, the html-deliverables skill to `1.4.1`, and the wait-through-human docs wave to `1.4.2`. The fixture-based tests below set an
+//! (`dvandva::retire::DEFAULT_EXPECTED_VERSION`) to `1.2.0`, and later waves
+//! keep moving it with the shipped plugin version. The fixture-based tests below set an
 //! explicit `DVANDVA_EXPECTED_VERSION` override (see `EXPECTED_VER`, `1.2.0`)
 //! and build their cache directories at that same explicit version, so they
 //! are decoupled from the compiled default; only
-//! `default_expected_version_is_1_4_2_when_env_unset` exercises the bare
+//! `default_expected_version_matches_plugin_version_when_env_unset` exercises the bare
 //! default.
 
 use std::fs;
@@ -23,6 +23,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use serde_json::json;
+
+use dvandva::versions::PLUGIN_VERSION;
 
 /// Re-keyed from the shell suite's "1.1.0" to the new compiled default.
 const EXPECTED_VER: &str = "1.2.0";
@@ -741,16 +743,18 @@ fn restore_rejects_backup_path_that_is_not_a_symlink() {
 }
 
 // ---------------------------------------------------------------------------
-// Contract point: DVANDVA_EXPECTED_VERSION default changes to 1.4.2 in the
-// wait-through-human docs wave (S2/S4/S5/S6 hardening pinned 1.4.0; the
-// html-deliverables skill 1.4.1; the flow patches 1.3.0; the Rust port 1.2.0;
-// the shell suite 1.1.0).
+// Contract point: DVANDVA_EXPECTED_VERSION default follows the shipped plugin
+// version. Fixture tests keep their explicit override; this one exercises the
+// bare default.
 // ---------------------------------------------------------------------------
 #[test]
-fn default_expected_version_is_1_4_2_when_env_unset() {
+fn default_expected_version_matches_plugin_version_when_env_unset() {
     let fixture = Fixture::new();
     let fake_home = fixture.build_fake_home("home-default-version", false, CacheCompleteness::Full);
-    let cache_agents = fake_home.join(".claude/plugins/cache/dvandva/dvandva/1.4.2/agents");
+    let cache_agents = fake_home
+        .join(".claude/plugins/cache/dvandva/dvandva")
+        .join(PLUGIN_VERSION)
+        .join("agents");
     fs::create_dir_all(&cache_agents).unwrap();
     for agent in DVANDVA_AGENTS {
         fs::write(
@@ -776,7 +780,7 @@ fn default_expected_version_is_1_4_2_when_env_unset() {
         String::from_utf8_lossy(&output.stderr)
     );
     let text = combined(&output);
-    assert!(text.contains("1.4.2"), "{text}");
+    assert!(text.contains(PLUGIN_VERSION), "{text}");
 }
 
 // ---------------------------------------------------------------------------

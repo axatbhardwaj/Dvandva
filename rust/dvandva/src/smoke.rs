@@ -25,13 +25,13 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::lint;
+use crate::versions::PLUGIN_VERSION;
 
-/// Expected published Dvandva plugin version (bumped to `1.4.0` for the S2/S4/S5/S6
-/// hardening slice; was `1.3.0` for the flow patches and `1.2.0` for the Rust port).
-pub const EXPECTED_DVANDVA_VERSION: &str = "1.4.2";
+/// Expected published Dvandva plugin version.
+pub const EXPECTED_DVANDVA_VERSION: &str = PLUGIN_VERSION;
 
 /// The exact 15-agent seed roster, mirroring the shell script's array (and
 /// its already-alphabetical order).
@@ -1004,7 +1004,7 @@ fn phase_wait_probe(plugin_dir: &Path, tmp_dir: &Path) -> Result<(), SmokeError>
 /// Re-keyed from the bundled `dvandva-write.sh` invocations: drives this
 /// same binary's `write` subcommand instead. S5-T2 retired v1 from the write
 /// path, so this now probes that a v1 scaffold candidate is REJECTED with
-/// `schema_retired`, then exercises the live v2 research seed scaffold + one
+/// `schema_retired`, then exercises the live v3 seed scaffold + one
 /// legal transition.
 fn phase_write_probe(plugin_dir: &Path, tmp_dir: &Path) -> Result<(), SmokeError> {
     let write_box = tmp_dir.join("write-helper");
@@ -1040,42 +1040,86 @@ fn phase_write_probe(plugin_dir: &Path, tmp_dir: &Path) -> Result<(), SmokeError
         return Err(fail("v1 schema_retired probe must not install a baton"));
     }
 
-    let v2_write_box = tmp_dir.join("write-helper-v2/.dvandva/runs/smoke");
-    fs::create_dir_all(&v2_write_box)
-        .map_err(|error| fail(format!("cannot create v2 write-helper dir: {error}")))?;
-    let v2_baton_path = v2_write_box.join("baton.json");
-    let v2_baton_next_path = v2_write_box.join("baton.next.json");
-    let schema_v2 = read_json(&plugin_dir.join("references/baton-schema-v2.json"))?;
-    let v2_scaffold = with_fields(
-        schema_v2,
+    let v3_write_box = tmp_dir.join("write-helper-v3/.dvandva/runs/smoke");
+    fs::create_dir_all(&v3_write_box)
+        .map_err(|error| fail(format!("cannot create v3 write-helper dir: {error}")))?;
+    let v3_baton_path = v3_write_box.join("baton.json");
+    let v3_baton_next_path = v3_write_box.join("baton.next.json");
+    let schema_v3 = read_json(&plugin_dir.join("references/baton-schema-v3.json"))?;
+    let v3_scaffold = with_fields(
+        schema_v3,
         &[
             (
                 "updated_at",
                 Value::String("2026-06-27T00:00:00Z".to_string()),
             ),
             ("run_id", Value::String("smoke".to_string())),
-            ("original_ask", Value::String("Smoke v2 helper".to_string())),
+            ("original_ask", Value::String("Smoke v3 helper".to_string())),
             (
                 "research_ref",
                 Value::String("./superpowers/research/smoke.html".to_string()),
             ),
             ("current_engine", Value::String("codex".to_string())),
             ("branch", Value::String("smoke".to_string())),
-            ("status", Value::String("research_drafting".to_string())),
-            ("assignee", Value::String("vadi".to_string())),
             ("checkpoint", Value::from(0)),
             ("master_plan_locked", Value::Bool(false)),
             ("question", Value::Null),
             ("resume_assignee", Value::Null),
             ("resume_status", Value::Null),
+            (
+                "work_split",
+                json!([
+                    {
+                        "id": "smoke-seed",
+                        "phase": "clarifying",
+                        "owner": "vadi",
+                        "scope": "Smoke seed scaffold.",
+                        "paths": [],
+                        "depends_on": [],
+                        "status": "completed"
+                    }
+                ]),
+            ),
+            (
+                "verification_matrix",
+                json!([
+                    {
+                        "id": "verify-smoke-seed",
+                        "phase": "clarifying",
+                        "owner": "vadi",
+                        "covers": ["smoke-seed"],
+                        "expected": "Smoke seed writes.",
+                        "result": "passed",
+                        "evidence_ref": "smoke write probe"
+                    }
+                ]),
+            ),
+            (
+                "subagent_tracks",
+                json!([
+                    {
+                        "id": "smoke-seed-track",
+                        "phase": "clarifying",
+                        "status": "completed",
+                        "track": "controller",
+                        "owner": "vadi",
+                        "parallelized": false,
+                        "rationale": "Minimal smoke write scaffold.",
+                        "inputs": [],
+                        "outputs": ["seed scaffold"],
+                        "evidence_refs": ["smoke write probe"],
+                        "result": "passed"
+                    }
+                ]),
+            ),
         ],
     );
-    write_json(&v2_baton_next_path, &v2_scaffold)?;
-    run_write(&v2_baton_path, &v2_baton_next_path, "v2 scaffold")?;
+    write_json(&v3_baton_next_path, &v3_scaffold)?;
+    run_write(&v3_baton_path, &v3_baton_next_path, "v3 scaffold")?;
 
-    let v2_history_0 = v2_write_box.join("history/0-research_drafting-vadi.json");
-    if !v2_history_0.is_file() {
-        return Err(fail("v2 write helper did not snapshot research scaffold"));
+    let v3_history_0 = v3_write_box.join("history/0-clarifying_questions_drafting-vadi.json");
+    if !v3_history_0.is_file() {
+        return Err(fail("v3 write helper did not snapshot seed scaffold"));
     }
 
     Ok(())

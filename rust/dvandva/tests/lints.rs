@@ -13,6 +13,7 @@ use dvandva::lint::{
     phase4_research, protocol_phase1, run3_dynamic_agents, run4_path_gates, run4_standalone_agents,
     schema_parity, skill_phase3,
 };
+use dvandva::versions::PLUGIN_VERSION;
 use tempfile::TempDir;
 
 fn w(root: &Path, rel: &str, content: &str) {
@@ -1233,12 +1234,14 @@ fn pathgate_rejects_missing_required_rust_source() {
 }
 
 // ---------------------------------------------------------------------------
-// run4-standalone-agents (re-keyed: version 1.4.2, retire-agents, Rust ports)
+// run4-standalone-agents (re-keyed: current plugin version, retire-agents, Rust ports)
 // ---------------------------------------------------------------------------
 
 fn standalone_fixture(root: &Path) {
     let mut readme = String::new();
-    readme.push_str("Dvandva 1.4.2 ships the canonical Dvandva roster. Run 4 makes Dvandva-only ");
+    readme.push_str(&format!(
+        "Dvandva {PLUGIN_VERSION} ships the canonical Dvandva roster. Run 4 makes Dvandva-only "
+    ));
     readme.push_str("retirement available only for Dvandva-covered workflows. The retired Claude ");
     readme.push_str(
         "symlink allowlist is adversarial-analyst, architect, developer, quality-reviewer, ",
@@ -1257,7 +1260,7 @@ fn standalone_fixture(root: &Path) {
     w(
         root,
         "product.md",
-        "Run 4 retires only Dvandva-covered standalone agents after version 1.4.2 cache parity and functional parity via Runs 1-4 usage. The Claude allowlist is adversarial-analyst, architect, developer, quality-reviewer, and sandbox-executor. Codex agent-axis cleanup is explicitly no-op. Skills are out of scope. Restore uses the backup manifest.\n",
+        &format!("Run 4 retires only Dvandva-covered standalone agents after version {PLUGIN_VERSION} cache parity and functional parity via Runs 1-4 usage. The Claude allowlist is adversarial-analyst, architect, developer, quality-reviewer, and sandbox-executor. Codex agent-axis cleanup is explicitly no-op. Skills are out of scope. Restore uses the backup manifest.\n"),
     );
     w(
         root,
@@ -1267,7 +1270,7 @@ fn standalone_fixture(root: &Path) {
     w(
         root,
         "plugins/dvandva/references/state-transition-table.md",
-        "Run 4 records the 1.4.2 Dvandva roster parity, Dvandva-only retirement, Codex agent-axis no-op, and functional parity via Runs 1-4 usage.\n",
+        &format!("Run 4 records the {PLUGIN_VERSION} Dvandva roster parity, Dvandva-only retirement, Codex agent-axis no-op, and functional parity via Runs 1-4 usage.\n"),
     );
     w(
         root,
@@ -1290,24 +1293,24 @@ fn standalone_fixture(root: &Path) {
     w(
         root,
         "rust/dvandva/src/installers.rs",
-        "// dvandva install and dvandva install-codex ports; 1.4.2 canonical 15-agent roster.\n",
+        &format!("// dvandva install and dvandva install-codex ports; {PLUGIN_VERSION} canonical 15-agent roster.\n"),
     );
 
-    // manifests at 1.4.2.
+    // manifests at the shared plugin version.
     w(
         root,
         ".claude-plugin/marketplace.json",
-        "{\n  \"plugins\": [\n    { \"name\": \"dvandva\", \"source\": \"./plugins/dvandva\", \"version\": \"1.4.2\" }\n  ]\n}\n",
+        &format!("{{\n  \"plugins\": [\n    {{ \"name\": \"dvandva\", \"source\": \"./plugins/dvandva\", \"version\": \"{PLUGIN_VERSION}\" }}\n  ]\n}}\n"),
     );
     w(
         root,
         "plugins/dvandva/.claude-plugin/plugin.json",
-        "{ \"name\": \"dvandva\", \"version\": \"1.4.2\" }\n",
+        &format!("{{ \"name\": \"dvandva\", \"version\": \"{PLUGIN_VERSION}\" }}\n"),
     );
     w(
         root,
         "plugins/dvandva/.codex-plugin/plugin.json",
-        "{ \"name\": \"dvandva\", \"version\": \"1.4.2\" }\n",
+        &format!("{{ \"name\": \"dvandva\", \"version\": \"{PLUGIN_VERSION}\" }}\n"),
     );
 
     // 15 canonical agents.
@@ -1365,7 +1368,9 @@ fn standalone_rejects_version_mismatch() {
         "{ \"name\": \"dvandva\", \"version\": \"0.3.0\" }\n",
     );
     let r = run4_standalone_agents::report(d.path());
-    assert!(r.fails_with("Dvandva manifest versions must all equal 1.4.2"));
+    assert!(r.fails_with(&format!(
+        "Dvandva manifest versions must all equal {PLUGIN_VERSION}"
+    )));
 }
 
 #[test]

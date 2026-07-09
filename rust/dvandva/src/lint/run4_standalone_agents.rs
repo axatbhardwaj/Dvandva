@@ -15,8 +15,9 @@ use crate::lint::{
     file_contains, file_exists, file_matches_ci, file_slurp_matches_ci, list_md, read,
     resolve_root, union_slurp_matches_ci, Report,
 };
+use crate::versions::PLUGIN_VERSION;
 
-const EXPECTED_VERSION: &str = "1.4.2";
+const EXPECTED_VERSION: &str = PLUGIN_VERSION;
 
 const EXPECTED_AGENTS: [&str; 15] = [
     "adversarial-analyst",

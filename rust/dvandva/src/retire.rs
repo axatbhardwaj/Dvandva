@@ -27,6 +27,7 @@ use serde_json::{json, Value};
 
 use crate::emit;
 use crate::util::utc_compact_timestamp;
+use crate::versions::PLUGIN_VERSION;
 
 /// Exactly the 5 standalone agents eligible for retirement.
 pub const ALLOWLIST: [&str; 5] = [
@@ -59,12 +60,9 @@ pub const REQUIRED_AGENTS: [&str; 15] = [
 
 /// Default `DVANDVA_EXPECTED_VERSION` when the env var is unset or empty.
 ///
-/// The shell source (`scripts/retire-standalone-agents.sh`) pinned `1.1.0`;
-/// the Rust port moved to `1.2.0`, the flow patches bumped it to `1.3.0`, the
-/// S2/S4/S5/S6 hardening slice bumped it to `1.4.0`, the html-deliverables
-/// skill to `1.4.1`, and the wait-through-human docs wave bumps the default
-/// to `1.4.2` to track the plugin version being shipped alongside them.
-pub const DEFAULT_EXPECTED_VERSION: &str = "1.4.2";
+/// Mirrors [`PLUGIN_VERSION`] so the retirement gate tracks the plugin version
+/// shipped alongside the binary.
+pub const DEFAULT_EXPECTED_VERSION: &str = PLUGIN_VERSION;
 
 /// Is `candidate` (a bare filename, e.g. `"architect.md"`) one of the 5
 /// standalone agents eligible for retirement?
@@ -611,7 +609,7 @@ mod tests {
         );
         assert_eq!(paths.codex_home, "/home/fake/.codex");
         assert_eq!(paths.expected_version, DEFAULT_EXPECTED_VERSION);
-        assert_eq!(paths.expected_version, "1.4.2");
+        assert_eq!(paths.expected_version, PLUGIN_VERSION);
     }
 
     #[test]
@@ -622,7 +620,7 @@ mod tests {
 
         let paths_empty = RetirePaths::from_env("/home/fake", Some(""), Some(""));
         assert_eq!(paths_empty.codex_home, "/home/fake/.codex");
-        assert_eq!(paths_empty.expected_version, "1.4.2");
+        assert_eq!(paths_empty.expected_version, PLUGIN_VERSION);
     }
 
     fn build_complete_cache(base: &std::path::Path, version: &str) {

@@ -37,6 +37,7 @@ pub mod snapshot;
 pub mod state;
 pub mod upgrade;
 pub mod util;
+pub mod versions;
 pub mod wait;
 pub mod watchdog;
 pub mod workflow;
