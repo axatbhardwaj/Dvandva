@@ -20,6 +20,7 @@ pub mod run4_standalone_agents;
 pub mod schema_parity;
 pub mod skill_phase3;
 pub mod skills;
+pub mod stale_version_ref;
 
 pub(crate) const MODEL_POLICY_VENDOR_NEUTRAL_DOCS: &str =
     "Dvandva model classes are vendor-neutral";
