@@ -1004,8 +1004,8 @@ fn phase_wait_probe(plugin_dir: &Path, tmp_dir: &Path) -> Result<(), SmokeError>
 /// Re-keyed from the bundled `dvandva-write.sh` invocations: drives this
 /// same binary's `write` subcommand instead. S5-T2 retired v1 from the write
 /// path, so this now probes that a v1 scaffold candidate is REJECTED with
-/// `schema_retired`, then exercises the live v3 seed scaffold + one
-/// legal transition.
+/// `schema_retired`, then exercises the live v3 seed scaffold write and
+/// history snapshot.
 fn phase_write_probe(plugin_dir: &Path, tmp_dir: &Path) -> Result<(), SmokeError> {
     let write_box = tmp_dir.join("write-helper");
     fs::create_dir_all(&write_box)
