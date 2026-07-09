@@ -1,9 +1,10 @@
 //! `lint run4-standalone-agents` — standalone-agent retirement contract.
 //!
-//! RE-KEYED: manifest versions bump to `1.4.0` (S2/S4/S5/S6 hardening; was `1.3.0` flow patches, `1.2.0` port); the retire helper
-//! (`scripts/retire-standalone-agents.sh`) becomes `dvandva retire-agents`
+//! The manifest-version parity check follows the shared plugin release version
+//! (`crate::versions::PLUGIN_VERSION`). The retire helper
+//! (`scripts/retire-standalone-agents.sh`) became `dvandva retire-agents`
 //! (`rust/dvandva/src/retire.rs`); its test suite, the smoke script, and the
-//! install test scripts become the Rust ports (`retire.rs` `#[cfg(test)]`,
+//! install test scripts became the Rust ports (`retire.rs` `#[cfg(test)]`,
 //! `smoke.rs`, `installers.rs`). The 15-agent roster assertions are unchanged.
 
 use std::path::Path;
