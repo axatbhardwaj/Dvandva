@@ -337,7 +337,7 @@ fn rel_path(root: &Path, path: &Path) -> String {
 fn scanned_extension(path: &Path) -> bool {
     matches!(
         path.extension().and_then(|ext| ext.to_str()),
-        Some("md" | "rs" | "toml" | "json")
+        Some("html" | "md" | "rs" | "toml" | "json")
     )
 }
 

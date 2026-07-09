@@ -634,6 +634,27 @@ fn rejects_cargo_install_at_version_spelling() {
 }
 
 #[test]
+fn rejects_html_explainer_stale_install_hint() {
+    let d = tmp();
+    base_fixture(d.path(), CRATE_VERSION, PLUGIN_VERSION);
+    w(
+        d.path(),
+        "docs/dvandva-explainer.html",
+        &format!("<code>cargo install dvandva --version {CRATE_VERSION_STALE}</code>\n"),
+    );
+    let r = stale_version_ref::report(d.path());
+    assert_eq!(r.failures(), 1, "expected exactly one stale finding");
+    let msg = r.findings.iter().find(|f| !f.ok).unwrap().message.clone();
+    assert!(
+        msg.starts_with("docs/dvandva-explainer.html:"),
+        "unexpected file: {msg}"
+    );
+    assert!(msg.contains(&format!(
+        "cargo install dvandva uses {CRATE_VERSION_STALE}, expected {CRATE_VERSION}"
+    )));
+}
+
+#[test]
 fn nested_skip_dir_components_are_ignored() {
     let d = tmp();
     base_fixture(d.path(), CRATE_VERSION, PLUGIN_VERSION);
