@@ -33,7 +33,8 @@ Monitor:   watchdog
 Git gate:  commit-gate | drift-lint | install-hooks | git-hook <name> | baton-guard
 Install:   install | install-codex | upgrade | smoke-install | retire-agents
 Lints:     lint <artifacts|skills|protocol-phase1|skill-phase3|phase4-research|
-                 run3-dynamic-agents|run4-path-gates|run4-standalone-agents>
+                 run3-dynamic-agents|run4-path-gates|run4-standalone-agents|
+                 schema-parity|stale-version-ref>
 
 Multicall binary: when invoked through a git-hook symlink (pre-commit,
 prepare-commit-msg, ...) the hook name is taken from argv[0].";
