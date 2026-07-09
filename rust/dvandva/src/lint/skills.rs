@@ -6,13 +6,14 @@
 //! out-of-band final-approval instructions and requires EXACTLY ONE fenced
 //! ` ```json ` block (the A2 precondition — a body carrying more than one
 //! FAILS outright) whose top-level keys exactly match the engine's
-//! `dvandva.baton.v2` required-key list (schema `dvandva.baton.v2`).
+//! `dvandva.baton.v3` required-key list (schema `dvandva.baton.v3`).
 //!
-//! S5-T2 (D5) re-key: the check compares the inline block against
-//! [`crate::write::v2_required_keys`] — the engine's OWN required-key list, the
-//! single source of truth — rather than the retired
-//! `plugins/dvandva/references/baton-schema.json` v1 file. This keeps the skills'
-//! seed shape and the write engine's contract from ever drifting.
+//! The check compares the inline block against
+//! [`crate::write::v2_required_keys`] plus the v3 `run_workflow` key — the
+//! engine's OWN required-key base plus the live v3 envelope — rather than the retired
+//! `plugins/dvandva/references/baton-schema.json` v1 file or historical v2
+//! read-path reference. This keeps the skills' seed shape and the write
+//! engine's contract from ever drifting.
 
 use std::path::Path;
 
@@ -124,9 +125,9 @@ pub fn run(args: &[String]) -> i32 {
         .as_ref()
         .and_then(|v| v.get("schema"))
         .and_then(Value::as_str)
-        == Some("dvandva.baton.v2");
+        == Some("dvandva.baton.v3");
     if !schema_ok {
-        eprintln!("FAIL: inlined JSON block does not have schema=dvandva.baton.v2 in {file_arg}");
+        eprintln!("FAIL: inlined JSON block does not have schema=dvandva.baton.v3 in {file_arg}");
         return 1;
     }
     let inline_obj = parsed
@@ -135,9 +136,10 @@ pub fn run(args: &[String]) -> i32 {
         .cloned()
         .unwrap_or_default();
 
-    // S5-T2: the exact-key check compares against the engine's own v2
-    // required-key list (one source of truth), not a bundled schema file.
-    let required_keys = crate::write::v2_required_keys();
+    // The exact-key check compares against the engine's own v2 required-key
+    // base plus the v3-only run_workflow envelope, not a bundled schema file.
+    let mut required_keys = crate::write::v2_required_keys();
+    required_keys.push("run_workflow");
     let mut sorted = required_keys.clone();
     sorted.sort_unstable();
     for key in &sorted {

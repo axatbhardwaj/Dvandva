@@ -1464,11 +1464,10 @@ fn phase4_aggregator_scopes_artifacts_to_superpowers_dir() {
 // schema-parity (S6-T1)
 //
 // These fixtures build temp trees per assertion. The lint's engine-side lists
-// (the v2 status catalog + `v2_required_keys()`) are compiled into the crate,
-// so a fixture supplies only the DOC/source copies and the lint compares them
-// against the compiled engine. The two literal lists below mirror the
-// `pub(crate)` engine lists (`write::V2_STATUS_CATALOG` and
-// `write::v2_required_keys()`), which an integration test cannot reach; if the
+// (the status catalogs + `v2_required_keys() + run_workflow`) are compiled into
+// the crate, so a fixture supplies only the DOC/source copies and the lint
+// compares them against the compiled engine. The literal lists below mirror the
+// `pub(crate)` engine lists, which an integration test cannot reach; if the
 // engine lists change these must move in lock-step (that drift is exactly what
 // the lint's in-crate unit tests catch).
 // ---------------------------------------------------------------------------
@@ -1583,6 +1582,7 @@ const PARITY_REQUIRED_KEYS: &[&str] = &[
     "work_split",
     "subagent_tracks",
     "verification_matrix",
+    "run_workflow",
 ];
 
 /// The `Status catalog (26):` marker line the lint parses out of `product.md`
@@ -1609,10 +1609,10 @@ fn parity_skill_md(name: &str, keys: &[&str]) -> String {
     let entries: Vec<String> = keys
         .iter()
         .map(|k| {
-            let val = if *k == "schema" {
-                "\"dvandva.baton.v2\""
-            } else {
-                "null"
+            let val = match *k {
+                "schema" => "\"dvandva.baton.v3\"",
+                "run_workflow" => "{\"source\":\"preset:standard\",\"declared_by\":\"vadi\",\"declared_at_checkpoint\":0,\"approved_by\":null,\"approved_at_checkpoint\":null,\"revision_round\":0,\"states\":[],\"edges\":[],\"amendments\":[]}",
+                _ => "null",
             };
             format!("  \"{k}\": {val}")
         })
@@ -1631,10 +1631,10 @@ fn parity_skill_md_multi_fence(name: &str, keys: &[&str]) -> String {
     let entries: Vec<String> = keys
         .iter()
         .map(|k| {
-            let val = if *k == "schema" {
-                "\"dvandva.baton.v2\""
-            } else {
-                "null"
+            let val = match *k {
+                "schema" => "\"dvandva.baton.v3\"",
+                "run_workflow" => "{\"source\":\"preset:standard\",\"declared_by\":\"vadi\",\"declared_at_checkpoint\":0,\"approved_by\":null,\"approved_at_checkpoint\":null,\"revision_round\":0,\"states\":[],\"edges\":[],\"amendments\":[]}",
+                _ => "null",
             };
             format!("  \"{k}\": {val}")
         })

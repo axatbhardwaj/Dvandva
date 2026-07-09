@@ -4,12 +4,11 @@
 //! against silent drift. Two axes are covered:
 //!
 //! * **Code side** (unit tests in this module): the engine's own status catalog
-//!   ([`crate::write::V2_STATUS_CATALOG`], reused by v3 until custom workflow
-//!   tokens land) is asserted equal to
-//!   [`crate::baton::Status`]'s catalog and to
-//!   [`crate::preflight::V2_STATUS_TOKENS`], and the run-terminal set is asserted
-//!   to be exactly `{done, abandoned}`. These are the cheapest checks and never
-//!   touch the filesystem.
+//!   ([`crate::write::V3_STATUS_CATALOG`]) is asserted against
+//!   [`crate::baton::Status`]'s catalog, the historical v2 catalog is asserted
+//!   against [`crate::preflight::V2_STATUS_TOKENS`], and the run-terminal set is
+//!   asserted to be exactly `{done, abandoned}`. These are the cheapest checks
+//!   and never touch the filesystem.
 //! * **Doc/source side** ([`report`]): the lint parses the DOC copies of the
 //!   contract and compares them against the compiled engine lists.
 //!
@@ -35,7 +34,7 @@
 //!      `Status catalog (26):` marker line.
 //! 2. **Required-keys parity.** The `vadi` + `prativadi` SKILL.md inline
 //!    fenced `json` blocks' top-level keys must equal
-//!    [`crate::write::v2_required_keys`]. The fence is extracted with the
+//!    [`crate::write::v2_required_keys`] plus required `run_workflow`. The fence is extracted with the
 //!    SAME scanner `lint skills` uses
 //!    ([`crate::lint::skills::extract_fenced_json_block`], `pub(crate)`), so
 //!    the two lints can never diverge on which lines belong to the inline
@@ -179,7 +178,10 @@ fn marked_catalog(root: &Path, rel: &str) -> Option<Vec<String>> {
 // ---------------------------------------------------------------------------
 
 fn required_keys_parity(root: &Path, r: &mut Report) {
-    let mut want: Vec<String> = v2_required_keys().iter().map(|s| s.to_string()).collect();
+    let mut want: Vec<String> = v3_inline_required_keys()
+        .iter()
+        .map(|s| s.to_string())
+        .collect();
     want.sort();
 
     for (rel, label) in [
@@ -207,9 +209,15 @@ fn required_keys_parity(root: &Path, r: &mut Report) {
             .unwrap_or(false);
         r.add(
             ok,
-            format!("{label} SKILL.md inline baton keys equal write.rs v2_required_keys()"),
+            format!("{label} SKILL.md inline baton keys equal write.rs v2_required_keys() plus run_workflow"),
         );
     }
+}
+
+fn v3_inline_required_keys() -> Vec<&'static str> {
+    let mut keys = v2_required_keys();
+    keys.push("run_workflow");
+    keys
 }
 
 /// The top-level keys of the first fenced `json` object in an already-read
@@ -285,7 +293,7 @@ mod tests {
     use crate::baton::Status;
     use crate::commit_gate::{matches_reminder_hard_path, REMINDER_HARD_PATH_TOKENS};
     use crate::preflight::V2_STATUS_TOKENS;
-    use crate::write::{status_enum_ok, v2_required_keys, V2_STATUS_CATALOG, V3_STATUS_CATALOG};
+    use crate::write::{status_enum_ok, V2_STATUS_CATALOG, V3_STATUS_CATALOG};
 
     #[test]
     fn engine_catalog_has_26_unique_tokens() {
@@ -375,15 +383,19 @@ mod tests {
     }
 
     #[test]
-    fn v2_required_keys_are_unique() {
-        let mut sorted = v2_required_keys();
+    fn v3_inline_required_keys_are_unique() {
+        let mut sorted = super::v3_inline_required_keys();
         let total = sorted.len();
         sorted.sort_unstable();
         sorted.dedup();
         assert_eq!(
             sorted.len(),
             total,
-            "v2_required_keys must have no duplicates"
+            "v3 inline required keys must have no duplicates"
+        );
+        assert!(
+            sorted.binary_search(&"run_workflow").is_ok(),
+            "v3_required_keys must include run_workflow"
         );
     }
 

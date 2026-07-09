@@ -59,11 +59,12 @@ fn real_skill(rel: &str) -> String {
     repo_root().join(rel).to_string_lossy().into_owned()
 }
 
-/// S5-T2: the engine's `dvandva.baton.v2` required-key list, mirrored here as the
+/// The engine's `dvandva.baton.v3` required-key list, mirrored here as the
 /// self-contained fixture reference (the lint compares an inline block against
-/// `crate::write::v2_required_keys`, which is pub(crate) and not reachable from an
-/// integration test). Keep in sync with `write::required_keys`.
-const V2_REQUIRED_KEYS: &[&str] = &[
+/// the crate's `v2_required_keys()` plus required `run_workflow`, which is
+/// pub(crate) and not reachable from an integration test). Keep in sync with
+/// that live write-path shape.
+const V3_REQUIRED_KEYS: &[&str] = &[
     "schema",
     "updated_at",
     "mode",
@@ -109,18 +110,29 @@ const V2_REQUIRED_KEYS: &[&str] = &[
     "work_split",
     "subagent_tracks",
     "verification_matrix",
+    "run_workflow",
 ];
 
-/// A self-contained v2 inline contract block carrying exactly the v2 required
-/// keys (schema = dvandva.baton.v2). Fixtures build from this so the lint tests
+/// A self-contained v3 inline contract block carrying exactly the v3 required
+/// keys (schema = dvandva.baton.v3). Fixtures build from this so the lint tests
 /// do not depend on any bundled schema file.
-fn v2_inline_block() -> Value {
+fn v3_inline_block() -> Value {
     let mut obj = serde_json::Map::new();
-    for key in V2_REQUIRED_KEYS {
-        let value = if *key == "schema" {
-            Value::String("dvandva.baton.v2".to_string())
-        } else {
-            Value::Null
+    for key in V3_REQUIRED_KEYS {
+        let value = match *key {
+            "schema" => Value::String("dvandva.baton.v3".to_string()),
+            "run_workflow" => serde_json::json!({
+                "source": "preset:standard",
+                "declared_by": "vadi",
+                "declared_at_checkpoint": 0,
+                "approved_by": null,
+                "approved_at_checkpoint": null,
+                "revision_round": 0,
+                "states": [],
+                "edges": [],
+                "amendments": []
+            }),
+            _ => Value::Null,
         };
         obj.insert((*key).to_string(), value);
     }
@@ -136,10 +148,9 @@ fn role_skill_with_block(name: &str, description: &str, block: &Value) -> String
 
 // --- real repo skill files ---
 //
-// S5-T2 (D5): the docs wave (ordered AFTER the WE3 engine wave) swapped the
-// vadi/prativadi SKILL.md inline contract blocks to v2, so these two real-tree
-// assertions run as active guards. The v2 accept path is also covered
-// self-contained below.
+// The docs wave swapped the vadi/prativadi SKILL.md inline contract blocks to
+// the live v3 seed, so these two real-tree assertions run as active guards.
+// The v3 accept path is also covered self-contained below.
 
 #[test]
 fn vadi_role_skill_passes_full_lint() {
@@ -152,15 +163,15 @@ fn prativadi_role_skill_passes_full_lint() {
 }
 
 #[test]
-fn vadi_role_skill_with_v2_block_passes() {
+fn vadi_role_skill_with_v3_block_passes() {
     let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join("vadi-v2.md");
+    let file = dir.path().join("vadi-v3.md");
     std::fs::write(
         &file,
         role_skill_with_block(
             "vadi",
-            "Use when testing that a well-formed v2 inline block passes the role lint.",
-            &v2_inline_block(),
+            "Use when testing that a well-formed v3 inline block passes the role lint.",
+            &v3_inline_block(),
         ),
     )
     .unwrap();
@@ -168,15 +179,15 @@ fn vadi_role_skill_with_v2_block_passes() {
 }
 
 #[test]
-fn prativadi_role_skill_with_v2_block_passes() {
+fn prativadi_role_skill_with_v3_block_passes() {
     let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join("prativadi-v2.md");
+    let file = dir.path().join("prativadi-v3.md");
     std::fs::write(
         &file,
         role_skill_with_block(
             "prativadi",
-            "Use when testing that a well-formed v2 inline block passes the role lint.",
-            &v2_inline_block(),
+            "Use when testing that a well-formed v3 inline block passes the role lint.",
+            &v3_inline_block(),
         ),
     )
     .unwrap();
@@ -208,12 +219,11 @@ fn role_skill_without_embedded_schema_fails() {
 }
 
 #[test]
-fn role_inline_v2_schema_rejects_unexpected_key() {
-    // S5-T2: CONVERTED from `role_inline_v1_schema_rejects_v2_only_key`. The
-    // exact-key check is now against the v2 required-key list, so any extra
+fn role_inline_v3_schema_rejects_unexpected_key() {
+    // The exact-key check is against the v3 required-key list, so any extra
     // top-level key is "unexpected".
     let dir = tempfile::tempdir().unwrap();
-    let mut block = v2_inline_block();
+    let mut block = v3_inline_block();
     block.as_object_mut().unwrap().insert(
         "not_a_baton_key".to_string(),
         Value::String("extra".to_string()),
@@ -223,7 +233,7 @@ fn role_inline_v2_schema_rejects_unexpected_key() {
         &file,
         role_skill_with_block(
             "vadi",
-            "Use when testing rejection of an unexpected top-level key in the v2 inline block.",
+            "Use when testing rejection of an unexpected top-level key in the v3 inline block.",
             &block,
         ),
     )
@@ -233,10 +243,10 @@ fn role_inline_v2_schema_rejects_unexpected_key() {
 
 #[test]
 fn role_inline_v1_schema_now_rejected() {
-    // S5-T2: an inline block still carrying schema=dvandva.baton.v1 is rejected —
-    // the lint now requires v2.
+    // An inline block still carrying schema=dvandva.baton.v1 is rejected —
+    // the lint now requires v3.
     let dir = tempfile::tempdir().unwrap();
-    let mut block = v2_inline_block();
+    let mut block = v3_inline_block();
     block.as_object_mut().unwrap().insert(
         "schema".to_string(),
         Value::String("dvandva.baton.v1".to_string()),
@@ -251,26 +261,53 @@ fn role_inline_v1_schema_now_rejected() {
         ),
     )
     .unwrap();
-    assert_exit_contains(file.to_str().unwrap(), 1, "schema=dvandva.baton.v2");
+    assert_exit_contains(file.to_str().unwrap(), 1, "schema=dvandva.baton.v3");
 }
 
 #[test]
-fn role_inline_v2_schema_missing_required_key_rejected() {
-    // S5-T2: dropping a required key from the v2 block is a missing-key failure.
+fn role_inline_v2_schema_now_rejected() {
+    // A v2 inline block is stale: the write path rejects v2 candidates, and
+    // the skill lint must forbid documenting a seed that cannot be written.
     let dir = tempfile::tempdir().unwrap();
-    let mut block = v2_inline_block();
-    block.as_object_mut().unwrap().remove("run_id");
+    let mut block = v3_inline_block();
+    block.as_object_mut().unwrap().insert(
+        "schema".to_string(),
+        Value::String("dvandva.baton.v2".to_string()),
+    );
+    let file = dir.path().join("role-with-v2-schema.md");
+    std::fs::write(
+        &file,
+        role_skill_with_block(
+            "prativadi",
+            "Use when testing rejection of a retired v2 inline schema in a role skill.",
+            &block,
+        ),
+    )
+    .unwrap();
+    assert_exit_contains(file.to_str().unwrap(), 1, "schema=dvandva.baton.v3");
+}
+
+#[test]
+fn role_inline_v3_schema_missing_required_key_rejected() {
+    // Dropping a required key from the v3 block is a missing-key failure.
+    let dir = tempfile::tempdir().unwrap();
+    let mut block = v3_inline_block();
+    block.as_object_mut().unwrap().remove("run_workflow");
     let file = dir.path().join("role-with-missing-key.md");
     std::fs::write(
         &file,
         role_skill_with_block(
             "vadi",
-            "Use when testing rejection of a v2 inline block missing a required key.",
+            "Use when testing rejection of a v3 inline block missing a required key.",
             &block,
         ),
     )
     .unwrap();
-    assert_exit_contains(file.to_str().unwrap(), 1, "missing required key 'run_id'");
+    assert_exit_contains(
+        file.to_str().unwrap(),
+        1,
+        "missing required key 'run_workflow'",
+    );
 }
 
 #[test]
@@ -279,7 +316,7 @@ fn role_skill_rejects_out_of_band_final_approval_text() {
     let file = dir.path().join("role-with-out-of-band-approval.md");
     let content = format!(
         "---\nname: prativadi\ndescription: Use when testing rejection of stale out-of-band final approval text.\n---\n\n# Test Role\n\n- If `<current N> == total_phases`, set `prativadi_final_approval: true`; the vadi must review later.\n\n```json\n{}\n```\n",
-        serde_json::to_string_pretty(&v2_inline_block()).unwrap()
+        serde_json::to_string_pretty(&v3_inline_block()).unwrap()
     );
     std::fs::write(&file, content).unwrap();
     assert_exit_contains(file.to_str().unwrap(), 1, "out-of-band final approval");
