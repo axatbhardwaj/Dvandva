@@ -462,9 +462,7 @@ fn plugin_manifest_mismatch_fails_closed() {
     );
     let r = stale_version_ref::report(d.path());
     assert_eq!(r.failures(), 1, "expected exactly one manifest mismatch");
-    assert!(r.fails_with(&format!(
-        "plugins/dvandva/.codex-plugin/plugin.json plugin version matches {PLUGIN_VERSION}"
-    )));
+    assert!(r.fails_with("Dvandva plugin manifests agree on one version"));
 }
 
 #[test]
@@ -482,4 +480,105 @@ fn versions_rs_plugin_version_mismatch_fails_closed() {
     assert!(r.fails_with(&format!(
         "rust/dvandva/src/versions.rs PLUGIN_VERSION matches manifests ({PLUGIN_VERSION})"
     )));
+}
+
+#[test]
+fn missing_crate_truth_still_scans_plugin_anchors() {
+    let d = tmp();
+    base_fixture(d.path(), CRATE_VERSION, PLUGIN_VERSION);
+    fs::remove_file(d.path().join("rust/dvandva/Cargo.toml")).unwrap();
+    edit(
+        d.path(),
+        "README.md",
+        &format!("installable plugin (version `{PLUGIN_VERSION}`)"),
+        &format!("installable plugin (version `{PLUGIN_VERSION_STALE}`)"),
+    );
+    let r = stale_version_ref::report(d.path());
+    assert!(r.fails_with("declares a package version"));
+    assert!(r.fails_with(&format!(
+        "installable plugin prose uses {PLUGIN_VERSION_STALE}, expected {PLUGIN_VERSION}"
+    )));
+}
+
+#[test]
+fn manifest_disagreement_does_not_use_first_manifest_as_truth() {
+    let d = tmp();
+    base_fixture(d.path(), CRATE_VERSION, PLUGIN_VERSION);
+    edit(
+        d.path(),
+        "plugins/dvandva/.claude-plugin/plugin.json",
+        &format!("\"version\": \"{PLUGIN_VERSION}\""),
+        &format!("\"version\": \"{PLUGIN_VERSION_STALE}\""),
+    );
+    let r = stale_version_ref::report(d.path());
+    assert!(!r.passed(), "manifest disagreement must fail closed");
+    assert!(
+        r.fails_with("Dvandva plugin manifests agree on one version"),
+        "expected consensus failure, got: {}",
+        r.failures()
+    );
+    assert!(
+        !r.findings
+            .iter()
+            .any(|f| !f.ok && f.message.contains("installable plugin prose uses")),
+        "must not compare prose against a stale first manifest; failures: {}",
+        r.failures()
+    );
+}
+
+#[test]
+fn rejects_cargo_install_equals_version_spelling() {
+    let d = tmp();
+    base_fixture(d.path(), CRATE_VERSION, PLUGIN_VERSION);
+    w(
+        d.path(),
+        "docs/install.md",
+        &format!("cargo install dvandva --version={CRATE_VERSION_STALE}\n"),
+    );
+    let r = stale_version_ref::report(d.path());
+    assert_eq!(r.failures(), 1, "expected exactly one stale finding");
+    assert!(r.fails_with(&format!(
+        "cargo install dvandva uses {CRATE_VERSION_STALE}, expected {CRATE_VERSION}"
+    )));
+}
+
+#[test]
+fn rejects_cargo_install_at_version_spelling() {
+    let d = tmp();
+    base_fixture(d.path(), CRATE_VERSION, PLUGIN_VERSION);
+    w(
+        d.path(),
+        "docs/install.md",
+        &format!("cargo install dvandva@{CRATE_VERSION_STALE}\n"),
+    );
+    let r = stale_version_ref::report(d.path());
+    assert_eq!(r.failures(), 1, "expected exactly one stale finding");
+    assert!(r.fails_with(&format!(
+        "cargo install dvandva uses {CRATE_VERSION_STALE}, expected {CRATE_VERSION}"
+    )));
+}
+
+#[test]
+fn nested_skip_dir_components_are_ignored() {
+    let d = tmp();
+    base_fixture(d.path(), CRATE_VERSION, PLUGIN_VERSION);
+    w(
+        d.path(),
+        "docs/target/generated.md",
+        &format!("cargo install dvandva --version {CRATE_VERSION_STALE}\n"),
+    );
+    let r = stale_version_ref::report(d.path());
+    assert!(r.passed(), "expected nested target/ to be skipped");
+}
+
+#[test]
+fn unreadable_scanned_file_fails_closed() {
+    let d = tmp();
+    base_fixture(d.path(), CRATE_VERSION, PLUGIN_VERSION);
+    let path = d.path().join("docs/bad.md");
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(&path, [0xff, 0xfe, 0xfd]).unwrap();
+    let r = stale_version_ref::report(d.path());
+    assert!(!r.passed(), "invalid UTF-8 scanned file must fail closed");
+    assert!(r.fails_with("docs/bad.md unreadable scanned file"));
 }

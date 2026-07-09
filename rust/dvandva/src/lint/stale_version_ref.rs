@@ -6,6 +6,7 @@
 
 use std::fs;
 use std::path::Path;
+use std::sync::LazyLock;
 
 use regex::Regex;
 use serde_json::Value;
@@ -17,6 +18,29 @@ const VERSIONS_RS: &str = "rust/dvandva/src/versions.rs";
 const CLAUDE_PLUGIN: &str = "plugins/dvandva/.claude-plugin/plugin.json";
 const CODEX_PLUGIN: &str = "plugins/dvandva/.codex-plugin/plugin.json";
 const MARKETPLACE: &str = ".claude-plugin/marketplace.json";
+
+static CARGO_TOML_VERSION_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"(?m)^version[[:space:]]*=[[:space:]]*"([^"]+)""#).unwrap());
+static VERSIONS_RS_PLUGIN_VERSION_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"(?m)^pub const PLUGIN_VERSION: &str[[:space:]]*=[[:space:]]*"([^"]+)";"#).unwrap()
+});
+static CARGO_INSTALL_VERSION_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(
+        r#"cargo install[[:space:]]+dvandva[[:space:]]+--version(?:[[:space:]]+|=)([0-9][0-9A-Za-z_.-]*)"#,
+    )
+    .unwrap()
+});
+static CARGO_INSTALL_AT_VERSION_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r#"cargo install[[:space:]]+dvandva@([0-9][0-9A-Za-z_.-]*)"#).unwrap()
+});
+static DVANDVA_BINARY_VERSION_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"`dvandva[[:space:]]+([0-9][0-9A-Za-z_.-]*)`"#).unwrap());
+static CRATE_README_VERSION_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"Version[[:space:]]+`([0-9][0-9A-Za-z_.-]*)`"#).unwrap());
+static INSTALLABLE_PLUGIN_VERSION_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"version[[:space:]]+`([0-9][0-9A-Za-z_.-]*)`"#).unwrap());
+static RETIRE_DEFAULT_VERSION_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"default:[[:space:]]*([0-9][0-9A-Za-z_.-]*)"#).unwrap());
 
 /// Build the stale-version-reference findings for a repo root.
 pub fn report(root: &Path) -> Report {
@@ -33,23 +57,26 @@ pub fn report(root: &Path) -> Report {
         (CODEX_PLUGIN, plugin_json_version(root, CODEX_PLUGIN)),
         (MARKETPLACE, marketplace_version(root)),
     ];
-    let plugin_truth = plugin_versions
-        .iter()
-        .find_map(|(_, version)| version.as_deref())
-        .map(str::to_string);
+    let plugin_truth = plugin_manifest_consensus(&plugin_versions);
     for (rel, version) in &plugin_versions {
         r.add(
             version.is_some(),
             format!("{rel} declares a Dvandva plugin version"),
         );
     }
-    if let Some(want) = plugin_truth.as_deref() {
-        for (rel, version) in &plugin_versions {
-            r.add(
-                version.as_deref() == Some(want),
-                format!("{rel} plugin version matches {want}"),
-            );
+    match plugin_truth.as_deref() {
+        Some(want) => {
+            for (rel, version) in &plugin_versions {
+                r.add(
+                    version.as_deref() == Some(want),
+                    format!("{rel} plugin version matches {want}"),
+                );
+            }
         }
+        None if plugin_versions.iter().all(|(_, version)| version.is_some()) => {
+            r.add(false, "Dvandva plugin manifests agree on one version");
+        }
+        None => {}
     }
 
     let const_version = versions_rs_plugin_version(root);
@@ -64,23 +91,40 @@ pub fn report(root: &Path) -> Report {
         );
     }
 
-    if let (Some(crate_version), Some(plugin_version)) =
-        (crate_version.as_deref(), plugin_truth.as_deref())
-    {
-        let stale = anchored_version_findings(root, crate_version, plugin_version);
-        if stale.is_empty() {
+    let stale = anchored_version_findings(root, crate_version.as_deref(), plugin_truth.as_deref());
+    if stale.is_empty() {
+        if let (Some(crate_version), Some(plugin_version)) =
+            (crate_version.as_deref(), plugin_truth.as_deref())
+        {
             r.add(
                 true,
                 format!("anchored Dvandva version references match crate {crate_version} and plugin {plugin_version}"),
             );
-        } else {
-            for finding in stale {
-                r.add(false, finding);
-            }
+        } else if crate_version.is_some() || plugin_truth.is_some() {
+            r.add(
+                true,
+                "anchored Dvandva version references match available version truth",
+            );
+        }
+    } else {
+        for finding in stale {
+            r.add(false, finding);
         }
     }
 
     r
+}
+
+fn plugin_manifest_consensus(plugin_versions: &[(&str, Option<String>)]) -> Option<String> {
+    let first = plugin_versions.first()?.1.as_deref()?;
+    if plugin_versions
+        .iter()
+        .all(|(_, version)| version.as_deref() == Some(first))
+    {
+        Some(first.to_string())
+    } else {
+        None
+    }
 }
 
 /// CLI entry: resolve root, run findings, print, return exit code.
@@ -93,8 +137,8 @@ pub fn run(args: &[String]) -> i32 {
 
 fn cargo_version(root: &Path) -> Option<String> {
     let text = read(root, CARGO_TOML)?;
-    let re = Regex::new(r#"(?m)^version[[:space:]]*=[[:space:]]*"([^"]+)""#).ok()?;
-    re.captures(&text)
+    CARGO_TOML_VERSION_RE
+        .captures(&text)
         .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
 }
 
@@ -122,17 +166,15 @@ fn marketplace_version(root: &Path) -> Option<String> {
 
 fn versions_rs_plugin_version(root: &Path) -> Option<String> {
     let text = read(root, VERSIONS_RS)?;
-    let re =
-        Regex::new(r#"(?m)^pub const PLUGIN_VERSION: &str[[:space:]]*=[[:space:]]*"([^"]+)";"#)
-            .ok()?;
-    re.captures(&text)
+    VERSIONS_RS_PLUGIN_VERSION_RE
+        .captures(&text)
         .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
 }
 
 fn anchored_version_findings(
     root: &Path,
-    crate_version: &str,
-    plugin_version: &str,
+    crate_version: Option<&str>,
+    plugin_version: Option<&str>,
 ) -> Vec<String> {
     let mut findings = Vec::new();
     for rel in scan_files(root) {
@@ -140,12 +182,17 @@ fn anchored_version_findings(
             continue;
         }
         let Some(text) = read(root, &rel) else {
+            findings.push(format!("{rel} unreadable scanned file"));
             continue;
         };
         for (idx, line) in text.lines().enumerate() {
             let line_no = idx + 1;
-            check_crate_anchor(&rel, line, line_no, crate_version, &mut findings);
-            check_plugin_anchor(&rel, line, line_no, plugin_version, &mut findings);
+            if let Some(crate_version) = crate_version {
+                check_crate_anchor(&rel, line, line_no, crate_version, &mut findings);
+            }
+            if let Some(plugin_version) = plugin_version {
+                check_plugin_anchor(&rel, line, line_no, plugin_version, &mut findings);
+            }
         }
     }
     findings
@@ -158,10 +205,9 @@ fn check_crate_anchor(
     crate_version: &str,
     findings: &mut Vec<String>,
 ) {
-    if let Some(found) = capture_version(
-        line,
-        r#"cargo install[[:space:]]+dvandva[[:space:]]+--version[[:space:]]+([0-9][0-9A-Za-z_.-]*)"#,
-    ) {
+    if let Some(found) = capture_version(line, &CARGO_INSTALL_VERSION_RE)
+        .or_else(|| capture_version(line, &CARGO_INSTALL_AT_VERSION_RE))
+    {
         expect_version(
             rel,
             line_no,
@@ -173,8 +219,7 @@ fn check_crate_anchor(
     }
 
     if line.contains("published on crates.io as") || line.contains("dvandva --version") {
-        if let Some(found) = capture_version(line, r#"`dvandva[[:space:]]+([0-9][0-9A-Za-z_.-]*)`"#)
-        {
+        if let Some(found) = capture_version(line, &DVANDVA_BINARY_VERSION_RE) {
             expect_version(
                 rel,
                 line_no,
@@ -187,8 +232,7 @@ fn check_crate_anchor(
     }
 
     if line.trim_start().starts_with("Version `") {
-        if let Some(found) = capture_version(line, r#"Version[[:space:]]+`([0-9][0-9A-Za-z_.-]*)`"#)
-        {
+        if let Some(found) = capture_version(line, &CRATE_README_VERSION_RE) {
             expect_version(
                 rel,
                 line_no,
@@ -209,8 +253,7 @@ fn check_plugin_anchor(
     findings: &mut Vec<String>,
 ) {
     if line.contains("installable plugin") {
-        if let Some(found) = capture_version(line, r#"version[[:space:]]+`([0-9][0-9A-Za-z_.-]*)`"#)
-        {
+        if let Some(found) = capture_version(line, &INSTALLABLE_PLUGIN_VERSION_RE) {
             expect_version(
                 rel,
                 line_no,
@@ -223,8 +266,7 @@ fn check_plugin_anchor(
     }
 
     if rel == "rust/dvandva/src/cmd/retire.rs" && line.contains("default:") {
-        if let Some(found) = capture_version(line, r#"default:[[:space:]]*([0-9][0-9A-Za-z_.-]*)"#)
-        {
+        if let Some(found) = capture_version(line, &RETIRE_DEFAULT_VERSION_RE) {
             expect_version(
                 rel,
                 line_no,
@@ -237,10 +279,8 @@ fn check_plugin_anchor(
     }
 }
 
-fn capture_version(line: &str, pattern: &str) -> Option<String> {
-    Regex::new(pattern)
-        .ok()?
-        .captures(line)
+fn capture_version(line: &str, re: &Regex) -> Option<String> {
+    re.captures(line)
         .and_then(|caps| caps.get(1).map(|m| m.as_str().to_string()))
 }
 
@@ -302,15 +342,8 @@ fn scanned_extension(path: &Path) -> bool {
 }
 
 fn skip_dir(rel: &str) -> bool {
-    rel == ".git"
-        || rel == ".dvandva"
-        || rel == "target"
-        || rel == "rust/target"
-        || rel == ".superpowers"
-        || rel.starts_with(".git/")
-        || rel.starts_with(".dvandva/")
-        || rel.starts_with(".superpowers/")
-        || rel.starts_with("rust/target/")
+    rel.split('/')
+        .any(|component| matches!(component, ".git" | ".dvandva" | ".superpowers" | "target"))
 }
 
 fn allowlisted(rel: &str) -> bool {
