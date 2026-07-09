@@ -1,19 +1,9 @@
-//! `dvandva upgrade` logic — brings the whole stack current in one command:
-//! `cargo install dvandva`, the dual-engine plugin install (the same code
-//! path `dvandva install` uses, via [`installers::run_install`]), and a
-//! `claude plugin update dvandva@dvandva` cache bump, finishing with a
-//! concise version-table report.
+//! `dvandva upgrade` logic — brings the whole stack current in one command.
 //!
-//! Step sequencing mirrors the feature request literally: cargo, then both
-//! engines' plugin install, then the Claude-only cache-bump update. The two
-//! plugin engines are driven through two single-target
-//! [`installers::run_install`] calls (rather than one dual-target call) so a
-//! Claude-side failure never prevents the Codex side from running — matching
-//! the exit rule below, which needs each engine's outcome independently.
-//!
-//! Exit rule: non-zero when the cargo step fails, or when *both* plugin
-//! engines fail; a single engine's plugin failure is a warning, not a hard
-//! failure, as long as the other engine succeeded.
+//! The public CLI delegates ordering and rollback to [`crate::upgrade_txn`]:
+//! stage the new binary under an isolated `cargo install --root`, verify it,
+//! mutate both plugin engines, then swap the live binary last. Any hard failure
+//! rolls back reachable snapshots and exits with the transaction taxonomy.
 
 use std::env;
 use std::fs;
@@ -23,6 +13,9 @@ use std::process::Command;
 use regex::Regex;
 
 use crate::installers::{self, InstallTargets};
+use crate::upgrade_txn::{
+    run_transactional_upgrade, TransactionConfig, UpgradeExecutor, UpgradeStepError,
+};
 
 /// How many trailing lines of a subprocess's combined stdout+stderr to print
 /// (`cargo install` in particular can produce a long compile log; only the
@@ -32,74 +25,100 @@ const TAIL_LINES: usize = 20;
 /// Runs the `upgrade` flow, printing progress and a final version-table
 /// report, and returning the effective process exit code.
 pub fn run_upgrade(marketplace: &str) -> i32 {
-    let cargo_ok = run_cargo_install();
+    let home = home_dir();
+    let codex_home = installers::codex_home_dir();
+    let state_dir = home.join(".dvandva");
+    let config = TransactionConfig::new(marketplace, &home, &codex_home, &state_dir);
+    let mut executor = RealUpgradeExecutor;
+    let code = run_transactional_upgrade(&config, &mut executor);
+    print_version_table(&home, &codex_home);
+    code
+}
 
-    let claude_install_ok = installers::run_install(
-        InstallTargets {
-            claude: true,
-            codex: false,
-        },
-        marketplace,
-    ) == 0;
-    let codex_ok = installers::run_install(
-        InstallTargets {
-            claude: false,
-            codex: true,
-        },
-        marketplace,
-    ) == 0;
+struct RealUpgradeExecutor;
 
-    let claude_ok = if claude_install_ok {
-        run_claude_plugin_update(marketplace)
-    } else {
-        false
-    };
-
-    if !claude_ok && codex_ok {
-        eprintln!("WARNING: Claude Code plugin upgrade failed; Codex plugin upgrade succeeded.");
-    } else if claude_ok && !codex_ok {
-        eprintln!("WARNING: Codex plugin upgrade failed; Claude Code plugin upgrade succeeded.");
+impl UpgradeExecutor for RealUpgradeExecutor {
+    fn stage_binary(&mut self, stage_root: &Path) -> Result<PathBuf, UpgradeStepError> {
+        run_cargo_install_staged(stage_root)
     }
 
-    print_version_table(&home_dir(), &installers::codex_home_dir());
+    fn verify_binary(&mut self, binary: &Path) -> Result<(), UpgradeStepError> {
+        verify_dvandva_binary("verify-staged-binary", binary)
+    }
 
-    let plugins_ok = claude_ok || codex_ok;
-    if cargo_ok && plugins_ok {
-        0
-    } else {
-        1
+    fn upgrade_plugins(&mut self, marketplace: &str) -> Result<(), UpgradeStepError> {
+        run_plugins_all_or_nothing(marketplace)
+    }
+
+    fn verify_committed(&mut self, live_binary: &Path) -> Result<(), UpgradeStepError> {
+        verify_dvandva_binary("verify-committed-binary", live_binary)
     }
 }
 
 // ---------------------------------------------------------------------
-// Step 1: `cargo install dvandva`
+// Step 1: `cargo install dvandva --root <stage>`
 // ---------------------------------------------------------------------
 
-fn run_cargo_install() -> bool {
+fn run_cargo_install_staged(stage_root: &Path) -> Result<PathBuf, UpgradeStepError> {
     if !installers::command_exists("cargo") {
-        eprintln!("ERROR: cargo CLI not found on PATH");
-        return false;
+        return Err(UpgradeStepError::new(
+            "stage-binary",
+            "cargo CLI not found on PATH",
+        ));
     }
 
-    println!("Binary: running `cargo install dvandva`...");
-    let (combined, code) = installers::capture_combined("cargo", &["install", "dvandva"]);
+    println!(
+        "Binary: staging with `cargo install dvandva --root {}`...",
+        stage_root.display()
+    );
+    let args = cargo_install_args(stage_root);
+    let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+    let (combined, code) = installers::capture_combined("cargo", &refs);
     let tail = tail_lines(&combined, TAIL_LINES);
 
     if code == 0 {
         if !tail.is_empty() {
             println!("{tail}");
         }
-        return true;
+        let staged = stage_root.join("bin/dvandva");
+        if staged.is_file() {
+            return Ok(staged);
+        }
+        return Err(UpgradeStepError::new(
+            "stage-binary",
+            format!(
+                "cargo install succeeded but {} is missing",
+                staged.display()
+            ),
+        ));
     }
 
     if !tail.is_empty() {
         eprintln!("{tail}");
     }
     if installers::already_present_pattern().is_match(&combined) {
-        println!("cargo install dvandva: already up to date; continuing.");
-        return true;
+        let staged = stage_root.join("bin/dvandva");
+        if staged.is_file() {
+            println!("cargo install dvandva: already present in staging root; continuing.");
+            return Ok(staged);
+        }
     }
-    false
+    Err(UpgradeStepError::new(
+        "stage-binary",
+        format!(
+            "cargo install dvandva --root {} exited {code}",
+            stage_root.display()
+        ),
+    ))
+}
+
+fn cargo_install_args(stage_root: &Path) -> Vec<String> {
+    vec![
+        "install".to_string(),
+        "dvandva".to_string(),
+        "--root".to_string(),
+        stage_root.display().to_string(),
+    ]
 }
 
 // ---------------------------------------------------------------------
@@ -142,6 +161,71 @@ fn run_claude_plugin_update(marketplace: &str) -> bool {
         ) == 0;
     }
     false
+}
+
+fn run_plugins_all_or_nothing(marketplace: &str) -> Result<(), UpgradeStepError> {
+    let claude_install_ok = installers::run_install(
+        InstallTargets {
+            claude: true,
+            codex: false,
+        },
+        marketplace,
+    ) == 0;
+    let codex_ok = installers::run_install(
+        InstallTargets {
+            claude: false,
+            codex: true,
+        },
+        marketplace,
+    ) == 0;
+    let claude_update_ok = claude_install_ok && run_claude_plugin_update(marketplace);
+
+    if plugins_committed(claude_install_ok, claude_update_ok, codex_ok) {
+        return Ok(());
+    }
+
+    Err(UpgradeStepError::new(
+        "plugins",
+        format!(
+            "plugin upgrade did not fully commit: claude_install={claude_install_ok}, \
+             claude_update={claude_update_ok}, codex={codex_ok}"
+        ),
+    ))
+}
+
+fn plugins_committed(claude_install_ok: bool, claude_update_ok: bool, codex_ok: bool) -> bool {
+    claude_install_ok && claude_update_ok && codex_ok
+}
+
+fn verify_dvandva_binary(stage: &'static str, binary: &Path) -> Result<(), UpgradeStepError> {
+    match Command::new(binary).arg("--version").output() {
+        Ok(output) if output.status.success() => {
+            let text = String::from_utf8_lossy(&output.stdout);
+            if text.trim().starts_with("dvandva ") {
+                Ok(())
+            } else {
+                Err(UpgradeStepError::new(
+                    stage,
+                    format!(
+                        "unexpected version output from {}: {text}",
+                        binary.display()
+                    ),
+                ))
+            }
+        }
+        Ok(output) => Err(UpgradeStepError::new(
+            stage,
+            format!(
+                "{} --version exited {:?}",
+                binary.display(),
+                output.status.code()
+            ),
+        )),
+        Err(err) => Err(UpgradeStepError::new(
+            stage,
+            format!("failed to execute {} --version: {err}", binary.display()),
+        )),
+    }
 }
 
 /// Keeps only the last `n` lines of `text` (verbatim when it has `n` lines or
@@ -273,5 +357,21 @@ mod tests {
             newest_cache_version(Path::new("/definitely/not/a/real/path")),
             "unknown"
         );
+    }
+
+    #[test]
+    fn cargo_install_args_stage_into_supplied_root() {
+        assert_eq!(
+            cargo_install_args(Path::new("/tmp/dvandva-stage")),
+            vec!["install", "dvandva", "--root", "/tmp/dvandva-stage"]
+        );
+    }
+
+    #[test]
+    fn plugin_commit_requires_both_engines_and_claude_update() {
+        assert!(plugins_committed(true, true, true));
+        assert!(!plugins_committed(false, false, true));
+        assert!(!plugins_committed(true, false, true));
+        assert!(!plugins_committed(true, true, false));
     }
 }

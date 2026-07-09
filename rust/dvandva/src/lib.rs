@@ -36,6 +36,8 @@ pub mod smoke;
 pub mod snapshot;
 pub mod state;
 pub mod upgrade;
+pub mod upgrade_txn;
+pub mod upgrade_txn_engines;
 pub mod util;
 pub mod versions;
 pub mod wait;
