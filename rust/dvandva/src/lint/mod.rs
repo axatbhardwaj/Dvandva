@@ -187,8 +187,9 @@ const GOAL_LAUNCH_HEADING: &str = "## `/goal` condition (paste into your engine 
 /// with the `/goal` marker, up to (but not including) the closing fence.
 ///
 /// Returns `None` — so every goal-scoped positive pin fails closed — when the
-/// file has no such block, OR when MORE THAN ONE fenced `/goal` block exists
-/// anywhere in the file. Two mechanisms guard the executable launch line:
+/// file has no such block, when MORE THAN ONE fenced `/goal` block exists
+/// anywhere in the file, OR when the launch fence is never closed. Three
+/// mechanisms guard the executable launch line:
 ///
 /// * **Heading anchor.** Only fences after the canonical launch heading are
 ///   considered, so a fenced decoy `/goal` block placed BEFORE the heading
@@ -197,6 +198,11 @@ const GOAL_LAUNCH_HEADING: &str = "## `/goal` condition (paste into your engine 
 /// * **Duplicate fail-closed.** A second fenced `/goal` block anywhere in the
 ///   file is itself suspicious (a decoy alongside the real block), so the
 ///   extractor refuses to guess which is canonical and returns `None`.
+/// * **Unclosed-fence fail-closed.** A `/goal` fence whose closing fence is
+///   missing runs to EOF and would otherwise capture unrelated later text — e.g.
+///   a status row that repeats the launch wording (p4-tc4-unclosed-goal-fence-
+///   tail-capture) — so the extractor returns `None` rather than read past the
+///   intended block.
 ///
 /// Any `/goal` text OUTSIDE a code fence — a prose mention or an unfenced decoy
 /// line (p4-dr12) — is ignored either way. SKILL liveness pins scope to this
@@ -215,6 +221,7 @@ pub fn goal_block(root: &Path, rel: &str) -> Option<String> {
     let mut past_heading = false;
     let mut in_fence = false;
     let mut block: Option<String> = None;
+    let mut closed = false;
     for line in content.lines() {
         if !past_heading {
             past_heading = line.trim() == GOAL_LAUNCH_HEADING;
@@ -231,12 +238,20 @@ pub fn goal_block(root: &Path, rel: &str) -> Option<String> {
             }
             Some(ref mut b) => {
                 if is_fence {
+                    closed = true;
                     break;
                 }
                 b.push_str(line);
                 b.push('\n');
             }
         }
+    }
+    // An unclosed `/goal` fence runs to EOF and would capture unrelated later
+    // text (e.g. an F5 status row repeating the launch wording), so fail closed
+    // — same policy as a duplicate block — rather than pass goal-scoped pins
+    // against text that is not the launch block.
+    if block.is_some() && !closed {
+        return None;
     }
     block
 }

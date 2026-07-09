@@ -1136,6 +1136,51 @@ fn phase4_research_rejects_duplicate_fenced_goal_blocks() {
 }
 
 #[test]
+fn phase4_research_rejects_unclosed_goal_fence_tail_capture() {
+    // FIX (p4-tc4-unclosed-goal-fence-tail-capture): the goal extractor must fail
+    // CLOSED when the canonical `/goal` fence is never closed. With the closing
+    // ``` deleted, a run-to-EOF extractor captures everything after the `/goal`
+    // line — including the later F5 status-row wording — so a `/goal` block
+    // stripped of the required clauses still satisfies the goal-scoped positive
+    // pins against text that is NOT the launch block (the tail capture). Returning
+    // None on an unclosed fence (same fail-closed policy as duplicate blocks)
+    // makes every goal-scoped pin bite. Here the fenced `/goal` line is stripped
+    // of both clauses AND its closing fence is deleted, and an F5 status row
+    // carrying both clauses is appended after it: a tail-capturing extractor reads
+    // the F5 wording and PASSES (the bypass — the whole report goes failures:0);
+    // the fail-closed extractor returns None and both goal-scoped pins bite.
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/skills/vadi/SKILL.md");
+    let mut text = fs::read_to_string(&p).unwrap();
+    // Strip both required clauses from the executable `/goal` line AND delete its
+    // closing fence in one surgical cut (the clauses and the closer are contiguous
+    // in the canonical block), leaving the opening fence unmatched to EOF.
+    text = text.replace(
+        " Codex-hosted sessions append --through-human on the general wait; when no Claude Code-hosted session is part of the run, the role that wrote the pause surfaces it while the peer waits the pause out.\n```\n",
+        "\n",
+    );
+    // Re-introduce both clauses verbatim in a later `human_question` F5 status-row
+    // table, exactly as the real SKILL files do. The unclosed fence sweeps this
+    // wording into a tail-capturing extractor's block; the fail-closed one never
+    // reads it.
+    text.push_str(
+        "\n## Failure modes\n\n| Failure | What to do |\n|---|---|\n| `status` is `human_question` | F5: Codex-hosted sessions append --through-human on the general wait; when no Claude Code-hosted session is part of the run, the role that wrote the pause surfaces it while the peer waits the pause out. |\n",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(
+        r.fails_with(
+            "plugins/dvandva/skills/vadi/SKILL.md carries the writer-of-pause F5 fallback"
+        ) && r.fails_with(
+            "plugins/dvandva/skills/vadi/SKILL.md appends --through-human on the general wait"
+        ),
+        "unclosed /goal fence must fail closed (None), not tail-capture the later F5 rows; failures: {}",
+        r.failures()
+    );
+}
+
+#[test]
 fn phase4_research_rejects_skill_seed_cap_reverted_to_3() {
     // FIX 2 (p4-tc3-default-cap-10-unpinned): the seed baton's raised default-10
     // disagreement cap is pinned per role. Revert the seed value to the old
