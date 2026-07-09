@@ -465,6 +465,16 @@ impl TxnFixture {
             self.old_live_binary,
             "live binary was not restored byte-identically"
         );
+        self.assert_plugin_targets_restored_to_old();
+    }
+
+    /// The five plugin-engine W0 targets only (everything except the live
+    /// binary itself) — split out so a test that deliberately reshapes the
+    /// live-binary target (e.g. into a directory, to force a
+    /// `install_staged_binary_last` failure without going through
+    /// `assert_all_targets_restored_to_old`'s byte-for-byte file read) can
+    /// still reuse the plugin-side restore assertions verbatim.
+    fn assert_plugin_targets_restored_to_old(&self) {
         assert_eq!(
             fs::read_to_string(&self.claude_installed_plugins).unwrap(),
             self.old_claude_installed_plugins,
@@ -509,6 +519,54 @@ impl TxnFixture {
     fn breadcrumb_path(&self) -> PathBuf {
         self.home.join(".dvandva/upgrade.breadcrumb.json")
     }
+}
+
+// ---------------------------------------------------------------------
+// Pre-W0: state_dir creation fails
+// ---------------------------------------------------------------------
+
+/// `fs::create_dir_all(&config.state_dir)` is the very first fallible
+/// operation in `run_transactional_upgrade_inner` — earlier than lock
+/// acquisition, snapshot creation, or any engine step. Making `HOME` itself
+/// read-only (so `HOME/.dvandva` can never come into existence) must exit
+/// 20 with zero lock/snapshot/engine side effects and every target
+/// untouched.
+#[cfg(unix)]
+#[test]
+fn state_dir_creation_failure_exits_20_before_any_lock_or_engine_step() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = TxnFixture::new(FAKE_CODEX_MODERN);
+    let original_mode = fs::metadata(&fixture.home).unwrap().permissions().mode();
+    fs::set_permissions(&fixture.home, fs::Permissions::from_mode(0o555)).unwrap();
+    let _guard = PermGuard {
+        path: fixture.home.clone(),
+        mode: original_mode,
+    };
+
+    let output = fixture.run(&[]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(20),
+        "stderr: {}",
+        combined(&output)
+    );
+    assert!(
+        combined(&output).contains("could not create upgrade state dir"),
+        "text: {}",
+        combined(&output)
+    );
+    fixture.assert_all_targets_restored_to_old();
+    assert!(
+        !fixture.home.join(".dvandva").exists(),
+        "state dir must never come into existence when its own creation fails"
+    );
+    let log = fixture.log_contents();
+    assert!(
+        !log.contains("cargo ") && !log.contains("claude ") && !log.contains("codex "),
+        "no engine stub should have been invoked when state dir creation fails; log:\n{log}"
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -566,6 +624,59 @@ fn w0_lock_held_by_another_process_blocks_before_any_mutation() {
     // The lock file we planted (not ours) must still be there — the CLI
     // must not have torn down a lock it does not own.
     assert!(lock_path.exists());
+}
+
+// ---------------------------------------------------------------------
+// Between snapshot and W1: write_breadcrumb fails
+// ---------------------------------------------------------------------
+
+/// `write_breadcrumb` runs immediately after `Snapshot::create` succeeds,
+/// and before `stage_binary` or any engine step. Pointing the breadcrumb
+/// path at a dangling symlink (whose target's parent directory never
+/// exists) isolates *just* that one write: `Path::exists()` follows
+/// symlinks and reports `false` for a dangling link, so the pre-flight
+/// `breadcrumb_path().exists()` recovery check at the top of
+/// `run_transactional_upgrade_inner` does not fire and a real snapshot gets
+/// taken first — but `write_breadcrumb`'s own `fs::write` follows the same
+/// symlink and fails with ENOENT, before any engine or the binary swap ever
+/// runs.
+#[cfg(unix)]
+#[test]
+fn write_breadcrumb_failure_after_successful_snapshot_exits_20_with_no_live_mutation() {
+    use std::os::unix::fs::symlink;
+
+    let fixture = TxnFixture::new(FAKE_CODEX_MODERN);
+    let breadcrumb_path = fixture.breadcrumb_path();
+    fs::create_dir_all(breadcrumb_path.parent().unwrap()).unwrap();
+    let unreachable_target = fixture
+        .tmp_path()
+        .join("breadcrumb-target-parent-does-not-exist")
+        .join("upgrade.breadcrumb.json");
+    symlink(&unreachable_target, &breadcrumb_path).unwrap();
+    assert!(
+        !breadcrumb_path.exists(),
+        "a dangling symlink must read as non-existent so the recovery path does not fire"
+    );
+
+    let output = fixture.run(&[]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(20),
+        "stderr: {}",
+        combined(&output)
+    );
+    assert!(
+        combined(&output).contains("could not write upgrade breadcrumb"),
+        "text: {}",
+        combined(&output)
+    );
+    fixture.assert_all_targets_restored_to_old();
+    let log = fixture.log_contents();
+    assert!(
+        !log.contains("cargo ") && !log.contains("claude ") && !log.contains("codex "),
+        "no engine stub should have been invoked before the breadcrumb write; log:\n{log}"
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -706,6 +817,93 @@ fn w4_codex_plugin_add_failure_after_marketplace_success_rolls_back_everything()
     assert!(log.contains("codex plugin marketplace add"), "log:\n{log}");
     assert!(log.contains("plugin add dvandva@dvandva"), "log:\n{log}");
     fixture.assert_all_targets_restored_to_old();
+}
+
+// ---------------------------------------------------------------------
+// Between W4 and W5: install_staged_binary_last fails
+// ---------------------------------------------------------------------
+
+/// The narrow window between "plugins fully committed" (past the W4
+/// boundary) and "post-commit verify runs" (W5): both engines succeed and
+/// mutate their live state, then `install_staged_binary_last`'s own
+/// `fs::rename(&tmp, live_binary)` fails — because the live binary path is
+/// (deliberately, for this test only) a non-empty directory rather than a
+/// regular file, so `rename` can never replace it — before `verify_committed`
+/// ever runs. Unlike making the live binary's *parent* directory read-only
+/// (which would also block `restore_snapshot`'s own remove-then-recopy of
+/// that very target during rollback, producing exit 21 instead of 20), this
+/// leaves the parent directory fully writable throughout, so rollback can
+/// cleanly `copy_dir_all` the snapshot back and the run still exits 20.
+/// Rollback must undo the already-committed plugin mutations in addition to
+/// restoring the live-binary directory to its exact pre-run contents.
+#[cfg(unix)]
+#[test]
+fn install_staged_binary_last_failure_rolls_back_committed_plugin_state() {
+    let fixture = TxnFixture::new(FAKE_CODEX_MODERN);
+
+    // Replace the live-binary *file* the fixture just seeded with a
+    // non-empty *directory* at the exact same path, so `install_staged_binary_last`'s
+    // `fs::rename` onto it fails (a file can never be renamed over a
+    // non-empty directory) while the containing `.cargo/bin` directory
+    // itself stays fully writable.
+    fs::remove_file(&fixture.live_binary).unwrap();
+    fs::create_dir_all(&fixture.live_binary).unwrap();
+    let marker = fixture.live_binary.join("marker.txt");
+    fs::write(&marker, "old-live-binary-dir-marker").unwrap();
+
+    let output = fixture.run(&[]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(20),
+        "stderr: {}",
+        combined(&output)
+    );
+    let text = combined(&output);
+    assert!(
+        text.contains("binary-commit"),
+        "must fail at the binary-commit stage, not verify-committed; text: {text}"
+    );
+    assert!(
+        !text.contains("verify-committed-binary"),
+        "verify_committed must never run once install_staged_binary_last fails; text: {text}"
+    );
+
+    let log = fixture.log_contents();
+    assert!(
+        log.contains("claude plugin install dvandva@dvandva"),
+        "claude must have fully committed before the binary swap; log:\n{log}"
+    );
+    assert!(
+        log.contains("codex plugin add dvandva@dvandva"),
+        "codex must have fully committed before the binary swap; log:\n{log}"
+    );
+    assert!(
+        log.contains("claude plugin update dvandva@dvandva"),
+        "claude's post-install update call must have run too; log:\n{log}"
+    );
+
+    // The money assertion: plugin state was genuinely mutated to "new" and
+    // then rolled back.
+    fixture.assert_plugin_targets_restored_to_old();
+
+    // ...and the live-binary directory itself is back to its exact pre-run
+    // shape: still a directory, still holding only the original marker with
+    // its original content — the swap never actually landed.
+    assert!(
+        fixture.live_binary.is_dir(),
+        "live binary path must still be the original directory, not a swapped-in file"
+    );
+    assert_eq!(
+        fs::read_to_string(&marker).unwrap(),
+        "old-live-binary-dir-marker",
+        "live binary directory's contents must be restored byte-identically"
+    );
+    assert_eq!(
+        fs::read_dir(&fixture.live_binary).unwrap().count(),
+        1,
+        "no stray entries should have been left inside the live binary directory"
+    );
 }
 
 // ---------------------------------------------------------------------
