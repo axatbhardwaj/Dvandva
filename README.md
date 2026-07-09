@@ -60,6 +60,8 @@ Claude: Review <diff or artifact> with Codex cross-checking. Start a Dvandva rev
 
 The `/dvandva:vadi` and `/dvandva:prativadi` slash commands start a walkaway run for that role by injecting the canonical `/goal` block from the corresponding skill (Codex auto-discovers them from `plugins/dvandva/commands/<role>.md`). The `$vadi` / `$prativadi` fallback invokes the skill directly when you do not want to start a `/goal` loop.
 
+**Upgrading.** `dvandva upgrade` refreshes the whole stack — binary + both engine plugin caches — as one all-or-nothing transaction: it lands fully on the new version or fully restores the prior one, never a partial mix. Exit `0` means committed and verified, `20` means it failed and rolled back cleanly, and `21` means rollback itself was incomplete (a precise residual report prints in that case). An advisory lock at `~/.dvandva/upgrade.lock` blocks concurrent upgrades, and a crash mid-upgrade leaves a breadcrumb that the next run detects and restores from before proceeding.
+
 ### Prerequisites
 
 | Prerequisite | Verify |
