@@ -449,3 +449,37 @@ fn unparseable_cargo_toml_fails_closed() {
     );
     assert!(r.fails_with("declares a package version"));
 }
+
+#[test]
+fn plugin_manifest_mismatch_fails_closed() {
+    let d = tmp();
+    base_fixture(d.path(), CRATE_VERSION, PLUGIN_VERSION);
+    edit(
+        d.path(),
+        "plugins/dvandva/.codex-plugin/plugin.json",
+        &format!("\"version\": \"{PLUGIN_VERSION}\""),
+        &format!("\"version\": \"{PLUGIN_VERSION_STALE}\""),
+    );
+    let r = stale_version_ref::report(d.path());
+    assert_eq!(r.failures(), 1, "expected exactly one manifest mismatch");
+    assert!(r.fails_with(&format!(
+        "plugins/dvandva/.codex-plugin/plugin.json plugin version matches {PLUGIN_VERSION}"
+    )));
+}
+
+#[test]
+fn versions_rs_plugin_version_mismatch_fails_closed() {
+    let d = tmp();
+    base_fixture(d.path(), CRATE_VERSION, PLUGIN_VERSION);
+    edit(
+        d.path(),
+        "rust/dvandva/src/versions.rs",
+        &format!("PLUGIN_VERSION: &str = \"{PLUGIN_VERSION}\""),
+        &format!("PLUGIN_VERSION: &str = \"{PLUGIN_VERSION_STALE}\""),
+    );
+    let r = stale_version_ref::report(d.path());
+    assert_eq!(r.failures(), 1, "expected exactly one const mismatch");
+    assert!(r.fails_with(&format!(
+        "rust/dvandva/src/versions.rs PLUGIN_VERSION matches manifests ({PLUGIN_VERSION})"
+    )));
+}
