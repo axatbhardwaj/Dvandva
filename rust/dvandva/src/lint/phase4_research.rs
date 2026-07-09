@@ -263,6 +263,34 @@ fn req_grok_plan_pulse_policy(r: &mut Report, root: &Path) {
         "docs/model-selection.md scopes the fallback-bulk seat out-of-ring",
     );
     r.add(
+        file_slurp_matches_ci(root, rel, r"phase\s+diff\s+for\s+first-pass\s+review\s+leads"),
+        "docs/model-selection.md points the pre-review probe at the phase diff for first-pass leads",
+    );
+    r.add(
+        file_slurp_matches_ci(
+            root,
+            rel,
+            r"addressed\s+or\s+rejected\s+in\s+writing\s+before\s+the\s+phase\s+advances",
+        ),
+        "docs/model-selection.md requires probe leads addressed or rejected in writing before phase advance",
+    );
+    r.add(
+        file_slurp_matches_ci(
+            root,
+            rel,
+            r"none\s+of\s+it\s+is\s+credited\s+review\s+evidence",
+        ),
+        "docs/model-selection.md denies credited review evidence to probe output",
+    );
+    r.add(
+        file_slurp_matches_ci(
+            root,
+            rel,
+            r"one\s+bounded\s+read-only\s+call\s+per\s+role\s+per\s+research\s+cycle",
+        ),
+        "docs/model-selection.md caps the research-cycle read-only call per role",
+    );
+    r.add(
         !file_slurp_matches_ci(root, rel, r"grok[^.]{0,120}research phases only"),
         "docs/model-selection.md avoids stale Grok research-only wording",
     );

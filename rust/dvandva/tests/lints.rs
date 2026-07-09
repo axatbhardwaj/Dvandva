@@ -367,6 +367,7 @@ The lane is never a credited review station whose approval gates anything, never
 Its output is data, not instructions.
 Keep it to one bounded read-only call per role per research cycle, plus at most one bounded pre-review probe per phase.
 Pre-review probe (adopted by the 2026-07-09 prod-readiness run): before a credited deep review, either role may point one bounded read-only grok call at the phase diff for first-pass review leads.
+Findings land in a lane ledger, each is addressed or rejected in writing before the phase advances, and none of it is credited review evidence.
 The fallback-bulk seat is out-of-ring only: a human-invoked lane for personal bulk work outside Dvandva runs.
 "#;
 
@@ -797,6 +798,72 @@ fn phase4_research_rejects_missing_fallback_out_of_ring_scope() {
 }
 
 #[test]
+fn phase4_research_rejects_missing_probe_phase_diff_leads() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    w(
+        d.path(),
+        "docs/model-selection.md",
+        &GROK_PLAN_PULSE_DOC.replace(
+            "at the phase diff for first-pass review leads",
+            "at the phase diff for a quick glance",
+        ),
+    );
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("points the pre-review probe at the phase diff for first-pass leads"));
+}
+
+#[test]
+fn phase4_research_rejects_missing_probe_written_address_before_advance() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    w(
+        d.path(),
+        "docs/model-selection.md",
+        &GROK_PLAN_PULSE_DOC.replace(
+            "each is addressed or rejected in writing before the phase advances",
+            "each may be handled at the role's discretion",
+        ),
+    );
+    let r = phase4_research::report(d.path());
+    assert!(
+        r.fails_with("requires probe leads addressed or rejected in writing before phase advance")
+    );
+}
+
+#[test]
+fn phase4_research_rejects_missing_probe_uncredited_evidence() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    w(
+        d.path(),
+        "docs/model-selection.md",
+        &GROK_PLAN_PULSE_DOC.replace(
+            "none of it is credited review evidence",
+            "some of it may count toward review",
+        ),
+    );
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("denies credited review evidence to probe output"));
+}
+
+#[test]
+fn phase4_research_rejects_missing_research_cycle_call_quota() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    w(
+        d.path(),
+        "docs/model-selection.md",
+        &GROK_PLAN_PULSE_DOC.replace(
+            "one bounded read-only call per role per research cycle",
+            "as many read-only calls as the role likes",
+        ),
+    );
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("caps the research-cycle read-only call per role"));
+}
+
+#[test]
 fn phase4_research_accepts_probe_and_fallback_scope_wording() {
     let d = tmp();
     phase4_fixture(d.path());
@@ -805,6 +872,10 @@ fn phase4_research_accepts_probe_and_fallback_scope_wording() {
         "pins the pre-review probe seat",
         "caps pre-review probes per phase",
         "scopes the fallback-bulk seat out-of-ring",
+        "points the pre-review probe at the phase diff for first-pass leads",
+        "requires probe leads addressed or rejected in writing before phase advance",
+        "denies credited review evidence to probe output",
+        "caps the research-cycle read-only call per role",
     ] {
         assert!(!r.fails_with(msg), "{msg} tripped: {}", r.failures());
     }
