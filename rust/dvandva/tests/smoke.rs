@@ -23,6 +23,7 @@ use dvandva::smoke::{
     require_exact_agent_roster, require_no_bundled_scripts_dir, roster_matches_expected,
     EXPECTED_AGENT_IDS, EXPECTED_DVANDVA_VERSION,
 };
+use dvandva::versions::PLUGIN_VERSION;
 
 fn write_json(path: &Path, value: &Value) {
     fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -74,6 +75,36 @@ fn version_parity_passes_when_all_three_match_expected_version() {
     fixture_repo_with_version(dir.path(), EXPECTED_DVANDVA_VERSION);
 
     assert!(assert_source_manifest_version_parity(dir.path()).is_ok());
+}
+
+// `EXPECTED_DVANDVA_VERSION` is `pub const EXPECTED_DVANDVA_VERSION: &str =
+// PLUGIN_VERSION;` (src/smoke.rs), but the test above builds its fixture
+// from the same symbol it then checks against, which is tautological and
+// would not notice `EXPECTED_DVANDVA_VERSION` silently re-pinning to a
+// frozen literal. This test builds the fixture from the independent
+// `versions::PLUGIN_VERSION` symbol instead, so a future partial refactor
+// that de-links `EXPECTED_DVANDVA_VERSION` from `PLUGIN_VERSION` fails here.
+#[test]
+fn version_parity_passes_when_fixture_built_from_plugin_version_constant() {
+    let dir = tempfile::tempdir().unwrap();
+    fixture_repo_with_version(dir.path(), PLUGIN_VERSION);
+
+    assert!(assert_source_manifest_version_parity(dir.path()).is_ok());
+}
+
+// The three real manifests in this repo, not a fixture: proves the shipped
+// `.claude-plugin/marketplace.json`, `plugins/dvandva/.claude-plugin/
+// plugin.json`, and `plugins/dvandva/.codex-plugin/plugin.json` all agree
+// with each other AND with the compiled `versions::PLUGIN_VERSION`, so a
+// release that bumps the constant but forgets a manifest (or vice versa)
+// fails the suite instead of shipping silently. Mirrors the
+// `parity_live_tree_passes` pattern in tests/lints.rs (same `resolve_root`
+// git-toplevel resolution, no fixture, no feature gate).
+#[test]
+fn source_manifests_match_plugin_version_in_live_tree() {
+    let root = dvandva::lint::resolve_root(&[]);
+    assert_source_manifest_version_parity(&root)
+        .unwrap_or_else(|e| panic!("live-tree manifest version parity failed: {e}"));
 }
 
 #[test]

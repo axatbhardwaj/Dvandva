@@ -134,6 +134,21 @@ fn parse_args(args: &[String]) -> Result<Mode, ParseError> {
 mod tests {
     use super::*;
 
+    // USAGE embeds the "(default: ...)" version as a literal (see the NOTE
+    // above USAGE), because a `const` cannot be interpolated into another
+    // `const &str` at compile time. This test is the drift guard the NOTE
+    // promises: it fails the moment USAGE's literal falls out of sync with
+    // the compiled `versions::PLUGIN_VERSION`, instead of silently going
+    // stale on the next version bump.
+    #[test]
+    fn usage_default_version_matches_plugin_version_constant() {
+        assert!(
+            USAGE.contains(dvandva::versions::PLUGIN_VERSION),
+            "USAGE help text must reference versions::PLUGIN_VERSION ({}); got:\n{USAGE}",
+            dvandva::versions::PLUGIN_VERSION
+        );
+    }
+
     #[test]
     fn parse_args_defaults_to_dry_run() {
         assert!(matches!(parse_args(&[]), Ok(Mode::DryRun)));
