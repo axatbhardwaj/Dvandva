@@ -86,6 +86,7 @@ pub fn report(root: &Path) -> Report {
     channel_doc_parity(root, &mut r);
     historical_markers(root, &mut r);
     reminder_hard_path_subset(root, &mut r);
+    disagreement_cap_default(root, &mut r);
     r
 }
 
@@ -283,6 +284,21 @@ fn reminder_hard_path_subset(root: &Path, r: &mut Report) {
     r.add(
         missing.is_empty(),
         "commit_gate reminder hard-path tokens all appear in write.rs hard-path source",
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Assertion 6 — the disagreement-loop cap default is pinned to 10.
+// ---------------------------------------------------------------------------
+
+/// The live v3 write-schema reference must carry the default disagreement cap of
+/// 10 (raised from 3 in 830e1d1). Reverting the default back to 3 on this
+/// surface — with no pin — would leave every parity check green; this fails
+/// closed instead.
+fn disagreement_cap_default(root: &Path, r: &mut Report) {
+    r.add(
+        file_contains(root, SCHEMA_V3, "\"disagreement_cap\": 10"),
+        "baton-schema-v3.json pins the disagreement cap default to 10",
     );
 }
 

@@ -723,6 +723,24 @@ pub fn report(root: &Path) -> Report {
             "subagent_tracks",
             format!("{role} records subagent tracks in baton evidence"),
         );
+        // The disagreement-loop cap default was raised to 10 (830e1d1). Pin both
+        // surfaces that carry it in each role skill — the seed baton value and
+        // the prose "(default 10)" statement — so a silent revert to the old
+        // default-3 fails closed (p4-tc3-default-cap-10-unpinned).
+        req(
+            &mut r,
+            root,
+            &skill,
+            "\"disagreement_cap\": 10",
+            format!("{role} seed baton pins the disagreement cap default to 10"),
+        );
+        req(
+            &mut r,
+            root,
+            &skill,
+            "(default 10)",
+            format!("{role} documents the default-10 disagreement cap"),
+        );
         rej(
             &mut r,
             root,

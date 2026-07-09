@@ -665,6 +665,15 @@ fn phase4_role_skill() -> String {
     s.push_str("Phase convention: implementation-chunk\n");
     s.push_str("same-status sync checkpoints\n");
     s.push_str("subagent_tracks\n");
+    // Default-10 disagreement cap: the seed baton value plus the prose default
+    // statement, both pinned so a silent revert to the old default-3 fails
+    // closed (p4-tc3-default-cap-10-unpinned).
+    s.push_str(
+        "Seed baton: \"disagreement_round\": 0, \"disagreement_cap\": 10, \"turn_cap\": 60.\n",
+    );
+    s.push_str(
+        "If `disagreement_round >= disagreement_cap` (default 10), route to human_decision.\n",
+    );
     // A realistic fenced `/goal` launch block. The SKILL liveness pins scope to
     // THIS block, so the same fallback wording repeated in a later F5 status-row
     // table cannot mask a regression in the executable goal text (p4-cr10).
@@ -1059,6 +1068,102 @@ fn phase4_research_rejects_skill_only_session_wording_outside_goal_block() {
         "whole-file anti-needle must bite stale only-session wording in an F5 row; failures: {}",
         r.failures()
     );
+}
+
+#[test]
+fn phase4_research_rejects_fenced_decoy_goal_block_before_heading() {
+    // FIX 1 (p4-tc3-fenced-decoy-goal-bypass): the goal extractor must anchor to
+    // the canonical launch HEADING, not merely to the first fenced `/goal` block
+    // anywhere in the file. A FENCED decoy `/goal` block carrying every liveness
+    // needle, placed BEFORE the canonical heading whose real block is stripped of
+    // the writer-of-pause fallback, satisfies a first-fenced-block extractor (it
+    // reads the decoy and PASSES — the bypass). The heading anchor reads the real
+    // (stripped) block and the pin bites; the resulting two `/goal` blocks also
+    // trip the duplicate fail-closed guard.
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/skills/vadi/SKILL.md");
+    let mut text = fs::read_to_string(&p).unwrap();
+    // Strip the fallback from the REAL fenced `/goal` block (after the heading).
+    text = text.replace(
+        "when no Claude Code-hosted session is part of the run, the role that wrote the pause surfaces it while the peer waits the pause out.",
+        "the sole session surfaces it.",
+    );
+    // Inject a FENCED decoy `/goal` block (all needle phrases intact) BEFORE the
+    // canonical launch heading.
+    let decoy = "```\n/goal decoy: Codex-hosted sessions append --through-human on the general wait; when no Claude Code-hosted session is part of the run, the role that wrote the pause surfaces it while the peer waits the pause out.\n```\n\n";
+    text = text.replace(
+        "## `/goal` condition (paste into your engine when launching)\n",
+        &format!("{decoy}## `/goal` condition (paste into your engine when launching)\n"),
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(
+        r.fails_with(
+            "plugins/dvandva/skills/vadi/SKILL.md carries the writer-of-pause F5 fallback"
+        ),
+        "heading-anchored extractor must read the stripped real /goal block, not the fenced decoy; failures: {}",
+        r.failures()
+    );
+}
+
+#[test]
+fn phase4_research_rejects_duplicate_fenced_goal_blocks() {
+    // FIX 1 (p4-tc3-fenced-decoy-goal-bypass): more than one fenced `/goal` block
+    // anywhere in a SKILL file is itself suspicious — a decoy alongside the real
+    // launch block. The extractor fails closed (returns None, so every
+    // goal-scoped positive pin fails) rather than guessing which block is
+    // canonical. Here the real `/goal` block is left fully intact and a second,
+    // complete fenced `/goal` block is appended: a single-block extractor reads
+    // the intact real block and PASSES; the fail-closed extractor rejects the
+    // ambiguity and the pin bites.
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/skills/vadi/SKILL.md");
+    let mut text = fs::read_to_string(&p).unwrap();
+    text.push_str(
+        "\n## Duplicate launch block\n\n```\n/goal You are Dvandva role. Codex-hosted sessions append --through-human on the general wait; when no Claude Code-hosted session is part of the run, the role that wrote the pause surfaces it while the peer waits the pause out.\n```\n",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(
+        r.fails_with(
+            "plugins/dvandva/skills/vadi/SKILL.md carries the writer-of-pause F5 fallback"
+        ),
+        "duplicate fenced /goal blocks must fail closed; failures: {}",
+        r.failures()
+    );
+}
+
+#[test]
+fn phase4_research_rejects_skill_seed_cap_reverted_to_3() {
+    // FIX 2 (p4-tc3-default-cap-10-unpinned): the seed baton's raised default-10
+    // disagreement cap is pinned per role. Revert the seed value to the old
+    // default-3 and the pin must bite.
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/skills/vadi/SKILL.md");
+    let text = fs::read_to_string(&p)
+        .unwrap()
+        .replace("\"disagreement_cap\": 10", "\"disagreement_cap\": 3");
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("vadi seed baton pins the disagreement cap default to 10"));
+}
+
+#[test]
+fn phase4_research_rejects_skill_default_cap_doc_reverted_to_3() {
+    // FIX 2 (p4-tc3-default-cap-10-unpinned): the prose "(default 10)" statement
+    // is pinned per role. Revert it to "(default 3)" and the pin must bite.
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/skills/prativadi/SKILL.md");
+    let text = fs::read_to_string(&p)
+        .unwrap()
+        .replace("(default 10)", "(default 3)");
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("prativadi documents the default-10 disagreement cap"));
 }
 
 #[test]
@@ -2037,7 +2142,7 @@ fn parity_status_catalog_json(schema: &str, tokens: &[&str], note: Option<&str>)
         .map(|note| format!("  \"_note\": \"{note}\",\n"))
         .unwrap_or_default();
     format!(
-        "{{\n{note_line}  \"schema\": \"{schema}\",\n  \"status_catalog\": [\n{}\n  ]\n}}\n",
+        "{{\n{note_line}  \"schema\": \"{schema}\",\n  \"disagreement_cap\": 10,\n  \"status_catalog\": [\n{}\n  ]\n}}\n",
         items.join(",\n")
     )
 }
@@ -2181,6 +2286,25 @@ fn parity_rejects_schema_catalog_missing_token() {
     );
     let r = schema_parity::report(d.path());
     assert!(r.fails_with("baton-schema-v2.json status_catalog"));
+}
+
+#[test]
+fn parity_rejects_schema_v3_disagreement_cap_reverted() {
+    // FIX 2 (p4-tc3-default-cap-10-unpinned): the v3 write-schema reference must
+    // carry the raised default-10 disagreement cap. Revert it to the old
+    // default-3 on this surface and the pin must bite (without the pin every
+    // parity check would stay green).
+    let d = tmp();
+    parity_fixture(d.path());
+    let text = parity_status_catalog_json("dvandva.baton.v3", PARITY_STATUS_TOKENS_V3, None)
+        .replace("\"disagreement_cap\": 10", "\"disagreement_cap\": 3");
+    w(
+        d.path(),
+        "plugins/dvandva/references/baton-schema-v3.json",
+        &text,
+    );
+    let r = schema_parity::report(d.path());
+    assert!(r.fails_with("baton-schema-v3.json pins the disagreement cap default to 10"));
 }
 
 #[test]

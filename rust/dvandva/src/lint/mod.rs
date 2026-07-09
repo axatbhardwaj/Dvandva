@@ -174,23 +174,52 @@ pub fn file_slurp_matches_ci(root: &Path, rel: &str, pattern: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// The fenced `/goal` launch block of a skill file: the run of lines inside the
-/// first fenced (```` ``` ````) code block whose first content line begins with
-/// the `/goal` marker, up to (but not including) the closing fence. `None` when
-/// the file has no such fenced `/goal` block.
+/// The canonical section heading that immediately precedes a SKILL file's
+/// executable fenced `/goal` launch block. Extraction is anchored to this
+/// heading (not merely to the first fenced `/goal` block) so a decoy fenced
+/// `/goal` block placed elsewhere in the file cannot masquerade as the real
+/// launch block.
+const GOAL_LAUNCH_HEADING: &str = "## `/goal` condition (paste into your engine when launching)";
+
+/// The fenced `/goal` launch block that immediately follows the canonical launch
+/// heading ([`GOAL_LAUNCH_HEADING`]): the run of lines inside the first fenced
+/// (```` ``` ````) code block AFTER that heading whose first content line begins
+/// with the `/goal` marker, up to (but not including) the closing fence.
 ///
-/// The extractor is anchored to the fence, not merely to the first `/goal`
-/// substring: any `/goal` text OUTSIDE a code fence — a prose mention or an
-/// unfenced decoy line — is ignored, so it cannot stand in for the executable
-/// fenced launch block. SKILL liveness pins scope to this block so neither a
-/// duplicate of the launch-text wording in a later status-row table (p4-cr10)
-/// nor an unfenced decoy `/goal` line ahead of the real block (p4-dr12) can mask
-/// a regression in the executable goal line.
+/// Returns `None` — so every goal-scoped positive pin fails closed — when the
+/// file has no such block, OR when MORE THAN ONE fenced `/goal` block exists
+/// anywhere in the file. Two mechanisms guard the executable launch line:
+///
+/// * **Heading anchor.** Only fences after the canonical launch heading are
+///   considered, so a fenced decoy `/goal` block placed BEFORE the heading
+///   (p4-tc3-fenced-decoy-goal-bypass) is ignored rather than read in place of
+///   the real block.
+/// * **Duplicate fail-closed.** A second fenced `/goal` block anywhere in the
+///   file is itself suspicious (a decoy alongside the real block), so the
+///   extractor refuses to guess which is canonical and returns `None`.
+///
+/// Any `/goal` text OUTSIDE a code fence — a prose mention or an unfenced decoy
+/// line (p4-dr12) — is ignored either way. SKILL liveness pins scope to this
+/// block so neither a duplicate of the launch-text wording in a later status-row
+/// table (p4-cr10) nor a decoy `/goal` block can mask a regression in the
+/// executable goal line.
 pub fn goal_block(root: &Path, rel: &str) -> Option<String> {
     let content = read(root, rel)?;
+
+    // Fail closed on ambiguity: a second fenced `/goal` block anywhere in the
+    // file is a decoy signal, so refuse to pick one.
+    if count_fenced_goal_blocks(&content) > 1 {
+        return None;
+    }
+
+    let mut past_heading = false;
     let mut in_fence = false;
     let mut block: Option<String> = None;
     for line in content.lines() {
+        if !past_heading {
+            past_heading = line.trim() == GOAL_LAUNCH_HEADING;
+            continue;
+        }
         let is_fence = line.trim_start().starts_with("```");
         match block {
             None => {
@@ -210,6 +239,27 @@ pub fn goal_block(root: &Path, rel: &str) -> Option<String> {
         }
     }
     block
+}
+
+/// Count the fenced code blocks that contain a line beginning with `/goal`.
+fn count_fenced_goal_blocks(content: &str) -> usize {
+    let mut count = 0;
+    let mut in_fence = false;
+    let mut this_fence_has_goal = false;
+    for line in content.lines() {
+        if line.trim_start().starts_with("```") {
+            if in_fence && this_fence_has_goal {
+                count += 1;
+            }
+            in_fence = !in_fence;
+            this_fence_has_goal = false;
+            continue;
+        }
+        if in_fence && line.trim_start().starts_with("/goal") {
+            this_fence_has_goal = true;
+        }
+    }
+    count
 }
 
 /// Case-insensitive slurp regex over a skill file's `/goal` launch block only.
