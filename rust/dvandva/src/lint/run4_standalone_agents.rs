@@ -1,7 +1,7 @@
 //! `lint run4-standalone-agents` — standalone-agent retirement contract.
 //!
-//! The manifest-version parity check follows the shared plugin release version
-//! (`crate::versions::PLUGIN_VERSION`). The retire helper
+//! The manifest-version parity check follows the shared published plugin
+//! version (`crate::versions::PLUGIN_VERSION`). The retire helper
 //! (`scripts/retire-standalone-agents.sh`) became `dvandva retire-agents`
 //! (`rust/dvandva/src/retire.rs`); its test suite, the smoke script, and the
 //! install test scripts became the Rust ports (`retire.rs` `#[cfg(test)]`,
