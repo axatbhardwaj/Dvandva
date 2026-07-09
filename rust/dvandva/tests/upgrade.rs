@@ -1,29 +1,58 @@
 //! Integration tests for `dvandva upgrade`, the one-command stack refresh
-//! that folds `cargo install dvandva`, `dvandva install`'s dual-engine
-//! plugin install, and a `claude plugin update dvandva@dvandva` cache bump
-//! into a single verb.
+//! that folds a staged `cargo install dvandva --root <tmp>`, the dual-engine
+//! plugin install (`dvandva install`'s code path), and a `claude plugin
+//! update dvandva@dvandva` cache bump into a single, all-or-nothing
+//! transaction (see `src/upgrade_txn.rs`): any hard failure at any step
+//! rolls back every reachable snapshot and the process exits with the
+//! transaction taxonomy — `0` committed, `20` rolled back cleanly, `21`
+//! rollback incomplete. A single plugin engine failing is a hard failure
+//! now; the old warn-and-continue-if-one-engine-succeeded tolerance is gone.
 //!
 //! Fake `cargo`/`claude`/`codex` executables are written as
 //! `#!/usr/bin/env bash` scripts into a per-test tempdir and prepended onto
-//! `PATH`, mirroring `tests/install.rs`'s `FAKE_BIN` fixture pattern. A fake
-//! `~/.cargo/bin/dvandva --version` binary and pre-seeded plugin cache
-//! directories exercise the final version-table report.
+//! `PATH`, mirroring `tests/install.rs`'s `FAKE_BIN` fixture pattern. The
+//! fake `cargo` stub stages a real `bin/dvandva` script under whatever
+//! `--root` it's given (the transactional flow checks the staged binary
+//! actually exists on disk before proceeding), standing in for what real
+//! `cargo install --root` produces.
 
 use std::ffi::OsString;
 use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-/// Fake `cargo` stub: `cargo install dvandva`. `CARGO_FAKE_ALREADY=1` makes it
-/// exit non-zero with cargo's real "already installed" wording (still a
-/// success case for `upgrade`).
+use dvandva::upgrade_txn::{
+    TransactionConfig, EXIT_COMMITTED, EXIT_ROLLBACK_INCOMPLETE, EXIT_ROLLED_BACK,
+};
+
+/// Fake `cargo` stub: `cargo install dvandva --root <stage>`. Stages a real
+/// `bin/dvandva` script under `<stage>` (so the staged-binary existence
+/// check the transactional flow performs passes), mirroring what real
+/// `cargo install --root` produces. `CARGO_FAKE_ALREADY=1` makes it exit
+/// non-zero with cargo's real "already installed" wording *after* staging
+/// the binary (still a success case for `upgrade`, matching
+/// `already_present_pattern`'s fallback). `CARGO_FAKE_FAIL=1` fails without
+/// staging anything, for the hard-failure case.
 const FAKE_CARGO: &str = r#"#!/usr/bin/env bash
 set -euo pipefail
 
 printf 'cargo %s\n' "$*" >> "$UPGRADE_TEST_LOG"
 
 case "$*" in
-  "install dvandva")
+  install\ dvandva\ --root\ *)
+    if [[ "${CARGO_FAKE_FAIL:-0}" == "1" ]]; then
+      echo "error: simulated cargo network failure" >&2
+      exit 101
+    fi
+    root="$4"
+    mkdir -p "$root/bin"
+    cat > "$root/bin/dvandva" <<'BIN'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "dvandva 3.1.0"
+BIN
+    chmod +x "$root/bin/dvandva"
     if [[ "${CARGO_FAKE_ALREADY:-0}" == "1" ]]; then
       echo "Ignored package \`dvandva v3.1.0\` is already installed, use --force to override" >&2
       exit 101
@@ -121,12 +150,22 @@ HELP
 esac
 "#;
 
-/// Fake `codex` stub that always fails, used to exercise "both engines
-/// failed" -> non-zero exit.
+/// Fake `codex` stub that always fails, used to exercise a codex-only plugin
+/// failure.
 const FAKE_CODEX_ALWAYS_FAILS: &str = r#"#!/usr/bin/env bash
 set -euo pipefail
 printf 'codex %s\n' "$*" >> "$UPGRADE_TEST_LOG"
 echo "codex is broken" >&2
+exit 1
+"#;
+
+/// Fake `claude` stub that always fails, used (alongside
+/// `FAKE_CODEX_ALWAYS_FAILS`) to exercise both plugin engines failing at
+/// once.
+const FAKE_CLAUDE_ALWAYS_FAILS: &str = r#"#!/usr/bin/env bash
+set -euo pipefail
+printf 'claude %s\n' "$*" >> "$UPGRADE_TEST_LOG"
+echo "claude is broken" >&2
 exit 1
 "#;
 
@@ -154,9 +193,8 @@ fn write_marketplace_fixture(dir: &Path) -> std::path::PathBuf {
 }
 
 /// Writes a fake `<home>/.cargo/bin/dvandva --version` binary that prints
-/// `dvandva <version>` to stdout, standing in for the freshly-`cargo
-/// install`ed binary the running (old) test process can't shell out to
-/// itself.
+/// `dvandva <version>` to stdout, standing in for a pre-existing installed
+/// binary (used as the pre-upgrade snapshot content in rollback tests).
 fn write_fake_installed_binary(home: &Path, version: &str) {
     let bin_dir = home.join(".cargo/bin");
     fs::create_dir_all(&bin_dir).unwrap();
@@ -177,6 +215,57 @@ fn prepend_path(dir: &Path) -> OsString {
     let mut paths = vec![dir.to_path_buf()];
     paths.extend(std::env::split_paths(&existing));
     std::env::join_paths(paths).expect("join PATH")
+}
+
+/// Reconstructs the same `TransactionConfig` that `upgrade::run_upgrade`
+/// builds internally (`state_dir = <home>/.dvandva`), purely to read its
+/// `lock_path()` / `breadcrumb_path()` / `live_binary_path()` derivations
+/// instead of hand-duplicating path literals that could silently drift from
+/// the source of truth. The marketplace value is irrelevant to these three
+/// accessors.
+fn txn_config(home: &Path, codex_home: &Path) -> TransactionConfig {
+    TransactionConfig::new("unused", home, codex_home, home.join(".dvandva"))
+}
+
+/// JSON-string-encodes a path the way `serde_json` would for these tests'
+/// plain-ASCII tempdir paths (Rust's `Debug` escaping for `&str` matches
+/// JSON's basic escaping closely enough here).
+fn json_path(path: &Path) -> String {
+    format!("{:?}", path.display().to_string())
+}
+
+/// Hand-writes a crash breadcrumb referencing exactly one snapshot record,
+/// as `upgrade_txn::Breadcrumb` serializes it — standing in for a previous
+/// `dvandva upgrade` process that died mid-transaction after taking its W0
+/// snapshot but before committing or cleaning up.
+fn write_breadcrumb(breadcrumb_path: &Path, snapshot_root: &Path, target: &Path, backup: &Path) {
+    fs::create_dir_all(breadcrumb_path.parent().unwrap()).unwrap();
+    let json = format!(
+        r#"{{"pid":1,"timestamp":1,"snapshot_root":{},"targets":[{{"target":{},"backup":{},"existed":true,"was_dir":false}}]}}"#,
+        json_path(snapshot_root),
+        json_path(target),
+        json_path(backup),
+    );
+    fs::write(breadcrumb_path, json).unwrap();
+}
+
+/// Hand-writes an `upgrade.lock` file in the shape `UpgradeLock` writes,
+/// standing in for a lock held by a concurrent (or crashed) `dvandva
+/// upgrade` process.
+fn write_lock(lock_path: &Path, pid: u32, timestamp: u64) {
+    fs::create_dir_all(lock_path.parent().unwrap()).unwrap();
+    fs::write(
+        lock_path,
+        format!("pid={pid}\ntimestamp={timestamp}\ntoken={pid}:{timestamp}\n"),
+    )
+    .unwrap();
+}
+
+fn now_secs() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
 }
 
 struct UpgradeRun {
@@ -261,19 +350,19 @@ fn base_fixture(
 
 // ---------------------------------------------------------------------
 // (a) happy path: cargo -> plugins (claude+codex) -> claude update, then the
-// version table.
+// version table. Exit taxonomy: EXIT_COMMITTED (0).
 // ---------------------------------------------------------------------
 #[test]
 fn happy_path_runs_cargo_then_plugins_then_claude_update_and_reports_table() {
     let (run, tmp, marketplace, home, codex_home) = base_fixture(FAKE_CODEX_MODERN);
-    write_fake_installed_binary(&home, "3.1.0");
+    write_fake_installed_binary(&home, "3.0.0");
     seed_cache_version(&home.join(".claude/plugins/cache/dvandva/dvandva"), "3.1.0");
     seed_cache_version(&codex_home.join("plugins/cache/dvandva/dvandva"), "3.1.0");
 
     let output = run.run(&[marketplace.to_str().unwrap()]);
     assert_eq!(
         output.status.code(),
-        Some(0),
+        Some(EXIT_COMMITTED),
         "stderr: {}",
         combined(&output)
     );
@@ -281,7 +370,7 @@ fn happy_path_runs_cargo_then_plugins_then_claude_update_and_reports_table() {
     let log = fs::read_to_string(tmp.join("upgrade.log")).unwrap_or_default();
     // Ordering: cargo, then claude+codex plugin install, then claude update.
     let cargo_pos = log
-        .find("cargo install dvandva")
+        .find("cargo install dvandva --root")
         .expect("cargo call logged");
     let claude_install_pos = log
         .find("claude plugin install dvandva@dvandva")
@@ -298,6 +387,8 @@ fn happy_path_runs_cargo_then_plugins_then_claude_update_and_reports_table() {
     assert!(codex_pos < claude_update_pos);
 
     let text = combined(&output);
+    // The live binary is swapped to whatever the staged cargo install
+    // produced, not the pre-upgrade fake binary's version.
     assert!(contains(&text, "dvandva 3.1.0"), "text: {text}");
 }
 
@@ -314,7 +405,7 @@ fn cargo_already_installed_counts_as_success() {
 
     assert_eq!(
         output.status.code(),
-        Some(0),
+        Some(EXIT_COMMITTED),
         "stderr: {}",
         combined(&output)
     );
@@ -333,7 +424,7 @@ fn claude_update_already_latest_counts_as_success() {
 
     assert_eq!(
         output.status.code(),
-        Some(0),
+        Some(EXIT_COMMITTED),
         "stderr: {}",
         combined(&output)
     );
@@ -353,7 +444,7 @@ fn claude_update_not_installed_falls_back_without_failing_run() {
 
     assert_eq!(
         output.status.code(),
-        Some(0),
+        Some(EXIT_COMMITTED),
         "stderr: {}",
         combined(&output)
     );
@@ -378,53 +469,279 @@ fn claude_update_not_installed_falls_back_without_failing_run() {
 }
 
 // ---------------------------------------------------------------------
-// (e) missing cache dirs degrade to "unknown" in the version table
+// (e) missing plugin cache dirs degrade to "unknown" in the version table.
+// The binary row can no longer degrade: a committed upgrade always ends
+// with a real staged binary swapped into `~/.cargo/bin/dvandva`.
 // ---------------------------------------------------------------------
 #[test]
-fn missing_cache_dirs_degrade_to_unknown_in_table() {
+fn missing_plugin_cache_dirs_degrade_to_unknown_in_table() {
     let (run, _tmp, marketplace, home, _codex_home) = base_fixture(FAKE_CODEX_MODERN);
-    // No fake installed binary, no seeded cache dirs: every row must degrade.
+    // No pre-seeded plugin cache dirs: both cache rows must degrade.
     let _ = &home;
 
     let output = run.run(&[marketplace.to_str().unwrap()]);
     assert_eq!(
         output.status.code(),
-        Some(0),
+        Some(EXIT_COMMITTED),
         "stderr: {}",
         combined(&output)
     );
     let text = combined(&output);
     assert!(
-        text.matches("unknown").count() >= 3,
-        "expected all three table rows to degrade to unknown; text: {text}"
+        text.matches("unknown").count() >= 2,
+        "expected both plugin-cache rows to degrade to unknown; text: {text}"
+    );
+    assert!(
+        !text.contains("binary (~/.cargo/bin/dvandva): unknown"),
+        "a committed upgrade must report a real binary version; text: {text}"
     );
 }
 
 // ---------------------------------------------------------------------
-// Both plugin engines failing is a hard failure (non-zero exit), even
-// when cargo itself succeeded.
+// Both plugin engines failing rolls back and exits EXIT_ROLLED_BACK (20).
 // ---------------------------------------------------------------------
 #[test]
-fn both_plugin_engines_failing_exits_nonzero() {
+fn both_plugin_engines_failing_rolls_back_and_exits_20() {
     let (run, _tmp, marketplace, home, _codex_home) = base_fixture(FAKE_CODEX_ALWAYS_FAILS);
-    write_fake_installed_binary(&home, "3.1.0");
-
-    // Force the claude side to fail too: the plugin marketplace add call
-    // reports "already registered" as a *failure* exit that isn't tolerated
-    // (simulate a hard failure via an unrecognized claude invocation by
-    // pointing CLAUDE_FAKE_UPDATE_NOT_INSTALLED at a marketplace that can't
-    // be installed). Simplest reliable failure: drop claude off PATH by
-    // shadowing it with a script that always errors on every call.
-    const FAKE_CLAUDE_ALWAYS_FAILS: &str = r#"#!/usr/bin/env bash
-set -euo pipefail
-printf 'claude %s\n' "$*" >> "$UPGRADE_TEST_LOG"
-echo "claude is broken" >&2
-exit 1
-"#;
+    write_fake_installed_binary(&home, "3.0.0");
     write_executable(&run.fake_bin.join("claude"), FAKE_CLAUDE_ALWAYS_FAILS);
 
     let output = run.run(&[marketplace.to_str().unwrap()]);
-    assert_ne!(output.status.code(), Some(0), "text: {}", combined(&output));
+
+    assert_eq!(
+        output.status.code(),
+        Some(EXIT_ROLLED_BACK),
+        "text: {}",
+        combined(&output)
+    );
+    let text = combined(&output);
+    assert!(
+        contains(&text, "rollback restored all reachable snapshots"),
+        "text: {text}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// A single plugin engine failing (codex only; claude fully succeeds,
+// including its update step) is now a hard failure too — the old
+// warn-and-exit-0-if-one-engine-succeeded tolerance is dead.
+// ---------------------------------------------------------------------
+#[test]
+fn single_engine_codex_failure_rolls_back_even_though_claude_fully_succeeds() {
+    let (run, tmp, marketplace, home, codex_home) = base_fixture(FAKE_CODEX_ALWAYS_FAILS);
+    write_fake_installed_binary(&home, "3.0.0");
+    let config = txn_config(&home, &codex_home);
+
+    let output = run.run(&[marketplace.to_str().unwrap()]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(EXIT_ROLLED_BACK),
+        "text: {}",
+        combined(&output)
+    );
+
+    let log = fs::read_to_string(tmp.join("upgrade.log")).unwrap_or_default();
+    assert!(
+        log.contains("claude plugin install dvandva@dvandva"),
+        "claude's install step must have run; log:\n{log}"
+    );
+    assert!(
+        log.contains("claude plugin update dvandva@dvandva"),
+        "claude's update step must have run (and succeeded) despite the overall rollback; log:\n{log}"
+    );
+    assert!(
+        log.lines().any(|line| line.starts_with("codex ")),
+        "codex must have been attempted; log:\n{log}"
+    );
+
+    // The live binary is swapped only after plugins commit, so a
+    // plugin-stage failure must leave it untouched.
+    assert_eq!(
+        fs::read_to_string(config.live_binary_path()).unwrap(),
+        "#!/usr/bin/env bash\nset -euo pipefail\necho \"dvandva 3.0.0\"\n",
+        "live binary must be untouched when the plugin step fails"
+    );
+}
+
+// ---------------------------------------------------------------------
+// A cargo staging failure rolls back before either plugin engine runs, and
+// exits EXIT_ROLLED_BACK (20).
+// ---------------------------------------------------------------------
+#[test]
+fn cargo_install_failure_rolls_back_before_touching_plugins() {
+    let (run, tmp, marketplace, home, codex_home) = base_fixture(FAKE_CODEX_MODERN);
+    write_fake_installed_binary(&home, "3.0.0");
+    let config = txn_config(&home, &codex_home);
+
+    let run = run.env("CARGO_FAKE_FAIL", "1");
+    let output = run.run(&[marketplace.to_str().unwrap()]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(EXIT_ROLLED_BACK),
+        "text: {}",
+        combined(&output)
+    );
+
+    let log = fs::read_to_string(tmp.join("upgrade.log")).unwrap_or_default();
+    assert!(
+        !log.lines()
+            .any(|line| line.starts_with("claude ") || line.starts_with("codex ")),
+        "neither plugin engine should run after a staging failure; log:\n{log}"
+    );
+    assert_eq!(
+        fs::read_to_string(config.live_binary_path()).unwrap(),
+        "#!/usr/bin/env bash\nset -euo pipefail\necho \"dvandva 3.0.0\"\n",
+        "live binary must be untouched when staging fails"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Lock contention: a concurrently-held (non-stale) lock refuses the
+// upgrade outright without running any step, and exits EXIT_ROLLED_BACK
+// (20) — the landed lock has no wait/retry loop, only a stale-timeout
+// takeover.
+// ---------------------------------------------------------------------
+#[test]
+fn concurrent_upgrade_lock_is_refused_without_running_any_step() {
+    let (run, tmp, marketplace, home, codex_home) = base_fixture(FAKE_CODEX_MODERN);
+    write_fake_installed_binary(&home, "3.0.0");
+    let config = txn_config(&home, &codex_home);
+    write_lock(&config.lock_path(), 999_999, now_secs());
+
+    let output = run.run(&[marketplace.to_str().unwrap()]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(EXIT_ROLLED_BACK),
+        "text: {}",
+        combined(&output)
+    );
+    let text = combined(&output);
+    assert!(contains(&text, "upgrade lock unavailable"), "text: {text}");
+
+    let log = fs::read_to_string(tmp.join("upgrade.log")).unwrap_or_default();
+    assert!(
+        log.is_empty(),
+        "no subprocess should run while a live lock is held; log:\n{log}"
+    );
+    // A foreign lock is left alone (only its own holder cleans it up).
+    assert!(config.lock_path().exists());
+}
+
+// ---------------------------------------------------------------------
+// Lock contention, contrast case: a *stale* lock (older than the 30-minute
+// default timeout) is reclaimed and the upgrade proceeds to commit — this
+// is what distinguishes "refused" above as genuine contention rather than
+// mere file presence.
+// ---------------------------------------------------------------------
+#[test]
+fn stale_lock_is_reclaimed_and_upgrade_proceeds() {
+    let (run, _tmp, marketplace, home, codex_home) = base_fixture(FAKE_CODEX_MODERN);
+    let config = txn_config(&home, &codex_home);
+    write_lock(&config.lock_path(), 999_999, 0); // unix epoch: far past any stale timeout
+
+    let output = run.run(&[marketplace.to_str().unwrap()]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(EXIT_COMMITTED),
+        "text: {}",
+        combined(&output)
+    );
+    assert!(
+        !config.lock_path().exists(),
+        "the reclaimed-then-released lock should be cleaned up on commit"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Breadcrumb detection: a valid crash breadcrumb left by a previous
+// (simulated) crashed attempt is detected on the next invocation, recovered
+// (restoring the referenced snapshot) before any fresh step runs, and exits
+// EXIT_ROLLED_BACK (20).
+// ---------------------------------------------------------------------
+#[test]
+fn existing_valid_breadcrumb_triggers_recovery_and_exits_rolled_back() {
+    let (run, tmp, marketplace, home, codex_home) = base_fixture(FAKE_CODEX_MODERN);
+    let config = txn_config(&home, &codex_home);
+    let live_binary = config.live_binary_path();
+    fs::create_dir_all(live_binary.parent().unwrap()).unwrap();
+    fs::write(&live_binary, "crashed-partial-binary").unwrap();
+
+    let snapshot_root = home.join(".dvandva/upgrade-snapshots/fake-crash");
+    fs::create_dir_all(&snapshot_root).unwrap();
+    let backup = snapshot_root.join("0");
+    fs::write(&backup, "old-committed-binary").unwrap();
+    write_breadcrumb(
+        &config.breadcrumb_path(),
+        &snapshot_root,
+        &live_binary,
+        &backup,
+    );
+
+    let output = run.run(&[marketplace.to_str().unwrap()]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(EXIT_ROLLED_BACK),
+        "text: {}",
+        combined(&output)
+    );
+    let text = combined(&output);
+    assert!(
+        contains(&text, "previous upgrade attempt did not commit"),
+        "text: {text}"
+    );
+    assert_eq!(
+        fs::read_to_string(&live_binary).unwrap(),
+        "old-committed-binary",
+        "recovery must restore the snapshotted content"
+    );
+    assert!(
+        !config.breadcrumb_path().exists(),
+        "a clean recovery removes the crash breadcrumb"
+    );
+
+    let log = fs::read_to_string(tmp.join("upgrade.log")).unwrap_or_default();
+    assert!(
+        log.is_empty(),
+        "breadcrumb recovery must short-circuit before any fresh subprocess runs; log:\n{log}"
+    );
+}
+
+// ---------------------------------------------------------------------
+// Breadcrumb detection, unrecoverable case: a corrupt breadcrumb (as if the
+// crash happened mid-write) cannot be parsed, so the run refuses to guess
+// and exits EXIT_ROLLBACK_INCOMPLETE (21), leaving the breadcrumb in place
+// for manual inspection.
+// ---------------------------------------------------------------------
+#[test]
+fn corrupt_breadcrumb_exits_rollback_incomplete_and_preserves_it_for_inspection() {
+    let (run, tmp, marketplace, home, codex_home) = base_fixture(FAKE_CODEX_MODERN);
+    let config = txn_config(&home, &codex_home);
+    fs::create_dir_all(config.breadcrumb_path().parent().unwrap()).unwrap();
+    fs::write(config.breadcrumb_path(), "not json").unwrap();
+
+    let output = run.run(&[marketplace.to_str().unwrap()]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(EXIT_ROLLBACK_INCOMPLETE),
+        "text: {}",
+        combined(&output)
+    );
+    assert!(
+        config.breadcrumb_path().exists(),
+        "an unparseable breadcrumb must remain for residual inspection"
+    );
+
+    let log = fs::read_to_string(tmp.join("upgrade.log")).unwrap_or_default();
+    assert!(
+        log.is_empty(),
+        "no fresh subprocess should run when the breadcrumb can't be read; log:\n{log}"
+    );
 }
 
 // ---------------------------------------------------------------------
