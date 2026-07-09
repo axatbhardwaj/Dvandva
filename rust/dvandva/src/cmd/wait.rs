@@ -37,8 +37,10 @@ old single-heartbeat exit-20 behavior.
 
 Use --since-checkpoint after installing a handoff checkpoint: the helper keeps
 polling while the selected baton remains at or below that checkpoint, even when
-the current team-owned state lists this role in active_roles. Terminal done,
-human_question, and human_decision still stop immediately.
+the current team-owned state lists this role in active_roles. Terminal done
+still stops immediately; human_question and human_decision stop a plain wait too,
+but a --through-human wait keeps polling through those two pauses (see
+--through-human below).
 
 Use --until-actionable in team-owned states to keep polling until this role has
 actionable work, not merely because active_roles names it. This prevents a
