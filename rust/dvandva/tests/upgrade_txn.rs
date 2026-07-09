@@ -353,6 +353,10 @@ impl TxnFixture {
         let envs = vec![
             ("HOME".to_string(), home.clone().into_os_string()),
             (
+                "CARGO_HOME".to_string(),
+                home.join(".cargo").into_os_string(),
+            ),
+            (
                 "CODEX_HOME".to_string(),
                 codex_home.clone().into_os_string(),
             ),
@@ -444,6 +448,7 @@ impl TxnFixture {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_dvandva"));
         cmd.arg("upgrade").arg(&self.marketplace);
         cmd.env("PATH", prepend_path(&self.fake_bin));
+        cmd.env_remove("CARGO_INSTALL_ROOT");
         for (key, value) in &self.envs {
             cmd.env(key, value);
         }

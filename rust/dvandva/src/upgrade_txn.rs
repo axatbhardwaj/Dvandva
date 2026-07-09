@@ -31,6 +31,7 @@ pub struct TransactionConfig {
     home: PathBuf,
     codex_home: PathBuf,
     state_dir: PathBuf,
+    live_binary_dir: PathBuf,
     stale_lock_timeout: Duration,
 }
 
@@ -41,9 +42,11 @@ impl TransactionConfig {
         codex_home: impl AsRef<Path>,
         state_dir: impl AsRef<Path>,
     ) -> Self {
+        let home = home.as_ref().to_path_buf();
         Self {
             marketplace: marketplace.into(),
-            home: home.as_ref().to_path_buf(),
+            live_binary_dir: home.join(".cargo/bin"),
+            home,
             codex_home: codex_home.as_ref().to_path_buf(),
             state_dir: state_dir.as_ref().to_path_buf(),
             stale_lock_timeout: DEFAULT_STALE_LOCK_TIMEOUT,
@@ -55,12 +58,17 @@ impl TransactionConfig {
         self
     }
 
+    pub fn with_live_binary_dir(mut self, dir: impl AsRef<Path>) -> Self {
+        self.live_binary_dir = dir.as_ref().to_path_buf();
+        self
+    }
+
     pub fn marketplace(&self) -> &str {
         &self.marketplace
     }
 
     pub fn live_binary_path(&self) -> PathBuf {
-        self.home.join(".cargo/bin/dvandva")
+        self.live_binary_dir.join("dvandva")
     }
 
     pub fn lock_path(&self) -> PathBuf {
@@ -199,7 +207,13 @@ fn run_transactional_upgrade_inner(
         return rollback_after_error(config, &snapshot, &stage_root, err);
     }
 
-    let _ = fs::remove_file(config.breadcrumb_path());
+    if let Err(err) = clear_committed_breadcrumb(&config.breadcrumb_path()) {
+        eprintln!(
+            "ERROR: committed upgrade but could not clear breadcrumb {}: {err}",
+            config.breadcrumb_path().display()
+        );
+        return Err(TxnFailure::RollbackIncomplete);
+    }
     let _ = fs::remove_dir_all(snapshot.root);
     let _ = fs::remove_dir_all(stage_root);
     Ok(())
@@ -311,7 +325,7 @@ impl UpgradeLock {
                     return Err(format!("{} is held by another upgrade", path.display()));
                 }
                 let _reclaim = StaleReclaimGuard::acquire(path, stale_timeout)?;
-                fs::remove_file(path).map_err(|err| err.to_string())?;
+                remove_stale_lock_under_guard(path, stale_timeout)?;
                 Self::acquire(path, stale_timeout)
             }
             Err(err) => Err(err.to_string()),
@@ -390,7 +404,41 @@ fn lock_is_stale(path: &Path, stale_timeout: Duration) -> Result<bool, String> {
     }) else {
         return Ok(true);
     };
-    Ok(unix_timestamp_secs().saturating_sub(timestamp) > stale_timeout.as_secs())
+    if unix_timestamp_secs().saturating_sub(timestamp) <= stale_timeout.as_secs() {
+        return Ok(false);
+    }
+    if let Some(pid) = lock_pid(&content) {
+        if process_is_live(pid) {
+            return Ok(false);
+        }
+    }
+    Ok(true)
+}
+
+fn remove_stale_lock_under_guard(path: &Path, stale_timeout: Duration) -> Result<(), String> {
+    if !lock_is_stale(path, stale_timeout)? {
+        return Err(format!(
+            "{} was refreshed while stale-lock reclaim was waiting",
+            path.display()
+        ));
+    }
+    fs::remove_file(path).map_err(|err| err.to_string())
+}
+
+fn lock_pid(content: &str) -> Option<u32> {
+    content
+        .lines()
+        .find_map(|line| line.strip_prefix("pid=")?.parse::<u32>().ok())
+}
+
+#[cfg(target_os = "linux")]
+fn process_is_live(pid: u32) -> bool {
+    Path::new("/proc").join(pid.to_string()).exists()
+}
+
+#[cfg(not(target_os = "linux"))]
+fn process_is_live(_pid: u32) -> bool {
+    false
 }
 
 #[derive(Debug)]
@@ -421,11 +469,13 @@ struct SnapshotRecord {
     backup: Option<PathBuf>,
     existed: bool,
     was_dir: bool,
+    #[serde(default)]
+    was_symlink: bool,
 }
 
 impl SnapshotRecord {
     fn capture(target: &Path, backup: &Path) -> io::Result<Self> {
-        let meta = match fs::metadata(target) {
+        let meta = match fs::symlink_metadata(target) {
             Ok(meta) => meta,
             Err(err) if err.kind() == io::ErrorKind::NotFound => {
                 return Ok(Self {
@@ -433,18 +483,29 @@ impl SnapshotRecord {
                     backup: None,
                     existed: false,
                     was_dir: false,
+                    was_symlink: false,
                 });
             }
             Err(err) => return Err(err),
         };
 
-        if meta.is_dir() {
+        if meta.file_type().is_symlink() {
+            copy_symlink(target, backup)?;
+            Ok(Self {
+                target: target.to_path_buf(),
+                backup: Some(backup.to_path_buf()),
+                existed: true,
+                was_dir: false,
+                was_symlink: true,
+            })
+        } else if meta.is_dir() {
             copy_dir_all(target, backup)?;
             Ok(Self {
                 target: target.to_path_buf(),
                 backup: Some(backup.to_path_buf()),
                 existed: true,
                 was_dir: true,
+                was_symlink: false,
             })
         } else {
             if let Some(parent) = backup.parent() {
@@ -457,6 +518,7 @@ impl SnapshotRecord {
                 backup: Some(backup.to_path_buf()),
                 existed: true,
                 was_dir: false,
+                was_symlink: false,
             })
         }
     }
@@ -531,11 +593,21 @@ fn restore_snapshot(record: &SnapshotRecord) -> io::Result<()> {
     if let Some(parent) = record.target.parent() {
         fs::create_dir_all(parent)?;
     }
-    if record.was_dir {
+    if record.was_symlink {
+        restore_symlink(backup, &record.target)
+    } else if record.was_dir {
         copy_dir_all(backup, &record.target)
     } else {
         fs::copy(backup, &record.target)?;
         fs::set_permissions(&record.target, fs::metadata(backup)?.permissions())
+    }
+}
+
+fn clear_committed_breadcrumb(path: &Path) -> io::Result<()> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(err) => Err(err),
     }
 }
 
@@ -570,7 +642,9 @@ fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
         let file_type = entry.file_type()?;
         let src_path = entry.path();
         let dst_path = dst.join(entry.file_name());
-        if file_type.is_dir() {
+        if file_type.is_symlink() {
+            copy_symlink(&src_path, &dst_path)?;
+        } else if file_type.is_dir() {
             copy_dir_all(&src_path, &dst_path)?;
         } else {
             fs::copy(&src_path, &dst_path)?;
@@ -578,6 +652,45 @@ fn copy_dir_all(src: &Path, dst: &Path) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(unix)]
+fn copy_symlink(src: &Path, dst: &Path) -> io::Result<()> {
+    use std::os::unix::fs::symlink;
+
+    if let Some(parent) = dst.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    symlink(fs::read_link(src)?, dst)
+}
+
+#[cfg(not(unix))]
+fn copy_symlink(src: &Path, _dst: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        format!(
+            "cannot snapshot symlink on this platform: {}",
+            src.display()
+        ),
+    ))
+}
+
+#[cfg(unix)]
+fn restore_symlink(backup: &Path, target: &Path) -> io::Result<()> {
+    use std::os::unix::fs::symlink;
+
+    symlink(fs::read_link(backup)?, target)
+}
+
+#[cfg(not(unix))]
+fn restore_symlink(_backup: &Path, target: &Path) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        format!(
+            "cannot restore symlink on this platform: {}",
+            target.display()
+        ),
+    ))
 }
 
 fn transaction_id() -> String {
@@ -657,6 +770,56 @@ mod tests {
             assert_eq!(live_binary, self.live_binary);
             assert_eq!(fs::read_to_string(live_binary).unwrap(), "new binary");
             Ok(())
+        }
+    }
+
+    #[cfg(unix)]
+    struct CleanupBlockingUpgrade {
+        live_binary: PathBuf,
+        state_dir: PathBuf,
+    }
+
+    #[cfg(unix)]
+    impl UpgradeExecutor for CleanupBlockingUpgrade {
+        fn stage_binary(&mut self, stage_root: &Path) -> Result<PathBuf, UpgradeStepError> {
+            let staged = stage_root.join("bin/dvandva");
+            fs::create_dir_all(staged.parent().unwrap()).unwrap();
+            fs::write(&staged, "new binary").unwrap();
+            Ok(staged)
+        }
+
+        fn verify_binary(&mut self, binary: &Path) -> Result<(), UpgradeStepError> {
+            assert_eq!(fs::read_to_string(binary).unwrap(), "new binary");
+            Ok(())
+        }
+
+        fn upgrade_plugins(&mut self, _marketplace: &str) -> Result<(), UpgradeStepError> {
+            assert_eq!(fs::read_to_string(&self.live_binary).unwrap(), "old binary");
+            Ok(())
+        }
+
+        fn verify_committed(&mut self, live_binary: &Path) -> Result<(), UpgradeStepError> {
+            use std::os::unix::fs::PermissionsExt;
+
+            assert_eq!(live_binary, self.live_binary);
+            assert_eq!(fs::read_to_string(live_binary).unwrap(), "new binary");
+            fs::set_permissions(&self.state_dir, fs::Permissions::from_mode(0o555)).unwrap();
+            Ok(())
+        }
+    }
+
+    #[cfg(unix)]
+    struct PermGuard {
+        path: PathBuf,
+        mode: u32,
+    }
+
+    #[cfg(unix)]
+    impl Drop for PermGuard {
+        fn drop(&mut self) {
+            use std::os::unix::fs::PermissionsExt;
+
+            let _ = fs::set_permissions(&self.path, fs::Permissions::from_mode(self.mode));
         }
     }
 
@@ -771,6 +934,39 @@ mod tests {
         assert!(!config.lock_path().exists());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn committed_upgrade_exits_21_if_breadcrumb_cleanup_fails() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let codex_home = tmp.path().join("codex-home");
+        let state_dir = tmp.path().join("state");
+        let live_binary = home.join(".cargo/bin/dvandva");
+        fs::create_dir_all(live_binary.parent().unwrap()).unwrap();
+        fs::write(&live_binary, "old binary").unwrap();
+
+        let config = TransactionConfig::new("local-marketplace", &home, &codex_home, &state_dir);
+        fs::create_dir_all(&state_dir).unwrap();
+        let _guard = PermGuard {
+            path: state_dir.clone(),
+            mode: fs::metadata(&state_dir).unwrap().permissions().mode(),
+        };
+        let mut executor = CleanupBlockingUpgrade {
+            live_binary,
+            state_dir: state_dir.clone(),
+        };
+
+        let code = run_transactional_upgrade(&config, &mut executor);
+
+        assert_eq!(code, EXIT_ROLLBACK_INCOMPLETE);
+        assert!(
+            config.breadcrumb_path().exists(),
+            "commit marker cleanup failed, so the breadcrumb must remain for inspection"
+        );
+    }
+
     #[test]
     fn invalid_existing_breadcrumb_exits_21_without_starting_steps() {
         let tmp = tempfile::tempdir().unwrap();
@@ -839,7 +1035,11 @@ mod tests {
     fn stale_lock_reclaim_guard_blocks_competing_reclaimer() {
         let tmp = tempfile::tempdir().unwrap();
         let lock_path = tmp.path().join("upgrade.lock");
-        fs::write(&lock_path, "pid=1\ntimestamp=0\ntoken=1:0\n").unwrap();
+        fs::write(
+            &lock_path,
+            "pid=999999999\ntimestamp=0\ntoken=999999999:0\n",
+        )
+        .unwrap();
         fs::write(
             tmp.path().join("upgrade.lock.reclaim"),
             format!(
@@ -859,8 +1059,39 @@ mod tests {
         );
         assert_eq!(
             fs::read_to_string(&lock_path).unwrap(),
-            "pid=1\ntimestamp=0\ntoken=1:0\n",
+            "pid=999999999\ntimestamp=0\ntoken=999999999:0\n",
             "competing reclaimer must not remove the stale lock while a guard exists"
+        );
+    }
+
+    #[test]
+    fn stale_reclaim_revalidates_lock_under_guard_before_delete() {
+        let tmp = tempfile::tempdir().unwrap();
+        let lock_path = tmp.path().join("upgrade.lock");
+        fs::write(
+            &lock_path,
+            "pid=999999999\ntimestamp=0\ntoken=999999999:0\n",
+        )
+        .unwrap();
+        let _guard = StaleReclaimGuard::acquire(&lock_path, DEFAULT_STALE_LOCK_TIMEOUT).unwrap();
+        let refreshed = format!(
+            "pid=2\ntimestamp={}\ntoken=2:{}\n",
+            unix_timestamp_secs(),
+            unix_timestamp_secs()
+        );
+        fs::write(&lock_path, &refreshed).unwrap();
+
+        let err = remove_stale_lock_under_guard(&lock_path, DEFAULT_STALE_LOCK_TIMEOUT)
+            .expect_err("fresh lock must not be deleted by a late stale-lock reclaimer");
+
+        assert!(
+            err.contains("refreshed"),
+            "error should name the revalidation failure; got: {err}"
+        );
+        assert_eq!(
+            fs::read_to_string(&lock_path).unwrap(),
+            refreshed,
+            "late reclaimer must leave the fresh lock intact"
         );
     }
 
@@ -869,8 +1100,16 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let lock_path = tmp.path().join("upgrade.lock");
         let reclaim_path = tmp.path().join("upgrade.lock.reclaim");
-        fs::write(&lock_path, "pid=1\ntimestamp=0\ntoken=1:0\n").unwrap();
-        fs::write(&reclaim_path, "pid=2\ntimestamp=0\ntoken=2:0\n").unwrap();
+        fs::write(
+            &lock_path,
+            "pid=999999999\ntimestamp=0\ntoken=999999999:0\n",
+        )
+        .unwrap();
+        fs::write(
+            &reclaim_path,
+            "pid=999999999\ntimestamp=0\ntoken=999999999:0\n",
+        )
+        .unwrap();
 
         let lock = UpgradeLock::acquire(&lock_path, DEFAULT_STALE_LOCK_TIMEOUT)
             .expect("stale reclaim guard should be replaceable");
@@ -881,6 +1120,68 @@ mod tests {
             "successful stale-lock reclaim must clean up its reclaim guard"
         );
         drop(lock);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn stale_lock_with_live_pid_is_not_reclaimed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let lock_path = tmp.path().join("upgrade.lock");
+        fs::write(
+            &lock_path,
+            format!("pid={}\ntimestamp=0\ntoken=live:0\n", std::process::id()),
+        )
+        .unwrap();
+
+        let err = UpgradeLock::acquire(&lock_path, DEFAULT_STALE_LOCK_TIMEOUT)
+            .expect_err("a live holder must not be reclaimed solely because its timestamp is old");
+
+        assert!(
+            err.contains("held by another upgrade"),
+            "expected a live-holder lock refusal; got: {err}"
+        );
+        assert!(
+            fs::read_to_string(&lock_path)
+                .unwrap()
+                .contains(&format!("pid={}", std::process::id())),
+            "live holder's lock file must remain intact"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn snapshot_restore_preserves_symlink_inside_directory() {
+        use std::os::unix::fs::symlink;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = tmp.path().join("cache");
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join("real.txt"), "old").unwrap();
+        symlink("real.txt", cache.join("link.txt")).unwrap();
+
+        let snapshot =
+            Snapshot::create(&tmp.path().join("snapshot"), std::slice::from_ref(&cache)).unwrap();
+        fs::remove_dir_all(&cache).unwrap();
+        fs::create_dir_all(&cache).unwrap();
+        fs::write(cache.join("link.txt"), "mutated regular file").unwrap();
+
+        let report = restore_snapshots(&snapshot.records);
+
+        assert!(
+            report.residuals.is_empty(),
+            "restore should not report residuals: {:?}",
+            report.residuals
+        );
+        let meta = fs::symlink_metadata(cache.join("link.txt")).unwrap();
+        assert!(
+            meta.file_type().is_symlink(),
+            "restored link must remain a symlink"
+        );
+        assert_eq!(
+            fs::read_link(cache.join("link.txt")).unwrap(),
+            PathBuf::from("real.txt")
+        );
+        assert_eq!(fs::read_to_string(cache.join("real.txt")).unwrap(), "old");
     }
 
     #[test]

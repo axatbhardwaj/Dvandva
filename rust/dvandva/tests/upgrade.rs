@@ -196,10 +196,13 @@ fn write_marketplace_fixture(dir: &Path) -> std::path::PathBuf {
 /// `dvandva <version>` to stdout, standing in for a pre-existing installed
 /// binary (used as the pre-upgrade snapshot content in rollback tests).
 fn write_fake_installed_binary(home: &Path, version: &str) {
-    let bin_dir = home.join(".cargo/bin");
-    fs::create_dir_all(&bin_dir).unwrap();
+    write_fake_installed_binary_at(&home.join(".cargo/bin/dvandva"), version);
+}
+
+fn write_fake_installed_binary_at(path: &Path, version: &str) {
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
     write_executable(
-        &bin_dir.join("dvandva"),
+        path,
         &format!("#!/usr/bin/env bash\nset -euo pipefail\necho \"dvandva {version}\"\n"),
     );
 }
@@ -299,6 +302,7 @@ impl UpgradeRun {
         let mut cmd = Command::new(env!("CARGO_BIN_EXE_dvandva"));
         cmd.arg("upgrade").args(args);
         cmd.env("PATH", prepend_path(&self.fake_bin));
+        cmd.env_remove("CARGO_INSTALL_ROOT");
         for (key, value) in &self.envs {
             cmd.env(key, value);
         }
@@ -343,6 +347,7 @@ fn base_fixture(
     let log = tmp.join("upgrade.log");
     let run = run
         .env("HOME", &home)
+        .env("CARGO_HOME", home.join(".cargo"))
         .env("CODEX_HOME", &codex_home)
         .env("UPGRADE_TEST_LOG", &log);
     (run, tmp, marketplace, home, codex_home)
@@ -390,6 +395,101 @@ fn happy_path_runs_cargo_then_plugins_then_claude_update_and_reports_table() {
     // The live binary is swapped to whatever the staged cargo install
     // produced, not the pre-upgrade fake binary's version.
     assert!(contains(&text, "dvandva 3.1.0"), "text: {text}");
+}
+
+#[test]
+fn cargo_home_selects_live_binary_target_and_version_table() {
+    let (run, tmp, marketplace, home, _codex_home) = base_fixture(FAKE_CODEX_MODERN);
+    let cargo_home = tmp.join("custom-cargo");
+    let custom_binary = cargo_home.join("bin/dvandva");
+    write_fake_installed_binary_at(&custom_binary, "3.0.0");
+
+    let run = run.env("CARGO_HOME", &cargo_home);
+    let output = run.run(&[marketplace.to_str().unwrap()]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(EXIT_COMMITTED),
+        "text: {}",
+        combined(&output)
+    );
+    assert!(
+        fs::read_to_string(&custom_binary)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "could not read custom CARGO_HOME binary {}: {err}; output: {}",
+                    custom_binary.display(),
+                    combined(&output)
+                )
+            })
+            .contains("dvandva 3.1.0"),
+        "custom CARGO_HOME binary should receive the staged upgrade"
+    );
+    assert!(
+        !home.join(".cargo/bin/dvandva").exists(),
+        "upgrade must not create a default HOME cargo binary when CARGO_HOME is set"
+    );
+    let text = combined(&output);
+    assert!(
+        text.contains(&format!(
+            "binary ({}): dvandva 3.1.0",
+            custom_binary.display()
+        )),
+        "version table should report the selected live binary path; text: {text}"
+    );
+}
+
+#[test]
+fn cargo_install_root_takes_precedence_over_cargo_home() {
+    let (run, tmp, marketplace, home, _codex_home) = base_fixture(FAKE_CODEX_MODERN);
+    let cargo_home = tmp.join("custom-cargo");
+    let cargo_home_binary = cargo_home.join("bin/dvandva");
+    write_fake_installed_binary_at(&cargo_home_binary, "wrong-target");
+    let install_root = tmp.join("install-root");
+    let install_root_binary = install_root.join("bin/dvandva");
+    write_fake_installed_binary_at(&install_root_binary, "3.0.0");
+
+    let run = run
+        .env("CARGO_HOME", &cargo_home)
+        .env("CARGO_INSTALL_ROOT", &install_root);
+    let output = run.run(&[marketplace.to_str().unwrap()]);
+
+    assert_eq!(
+        output.status.code(),
+        Some(EXIT_COMMITTED),
+        "text: {}",
+        combined(&output)
+    );
+    assert!(
+        fs::read_to_string(&install_root_binary)
+            .unwrap_or_else(|err| {
+                panic!(
+                    "could not read CARGO_INSTALL_ROOT binary {}: {err}; output: {}",
+                    install_root_binary.display(),
+                    combined(&output)
+                )
+            })
+            .contains("dvandva 3.1.0"),
+        "CARGO_INSTALL_ROOT binary should receive the staged upgrade"
+    );
+    assert!(
+        fs::read_to_string(&cargo_home_binary)
+            .unwrap()
+            .contains("dvandva wrong-target"),
+        "CARGO_HOME binary should be left untouched when CARGO_INSTALL_ROOT is set"
+    );
+    assert!(
+        !home.join(".cargo/bin/dvandva").exists(),
+        "upgrade must not create a default HOME cargo binary when cargo env overrides are set"
+    );
+    let text = combined(&output);
+    assert!(
+        text.contains(&format!(
+            "binary ({}): dvandva 3.1.0",
+            install_root_binary.display()
+        )),
+        "version table should report the install-root live binary path; text: {text}"
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -471,7 +571,7 @@ fn claude_update_not_installed_falls_back_without_failing_run() {
 // ---------------------------------------------------------------------
 // (e) missing plugin cache dirs degrade to "unknown" in the version table.
 // The binary row can no longer degrade: a committed upgrade always ends
-// with a real staged binary swapped into `~/.cargo/bin/dvandva`.
+// with a real staged binary swapped into the selected live binary path.
 // ---------------------------------------------------------------------
 #[test]
 fn missing_plugin_cache_dirs_degrade_to_unknown_in_table() {
@@ -491,8 +591,12 @@ fn missing_plugin_cache_dirs_degrade_to_unknown_in_table() {
         text.matches("unknown").count() >= 2,
         "expected both plugin-cache rows to degrade to unknown; text: {text}"
     );
+    let binary_line = text
+        .lines()
+        .find(|line| line.trim_start().starts_with("binary ("))
+        .expect("version table should include a binary row");
     assert!(
-        !text.contains("binary (~/.cargo/bin/dvandva): unknown"),
+        !binary_line.contains("unknown"),
         "a committed upgrade must report a real binary version; text: {text}"
     );
 }

@@ -28,10 +28,12 @@ pub fn run_upgrade(marketplace: &str) -> i32 {
     let home = home_dir();
     let codex_home = installers::codex_home_dir();
     let state_dir = home.join(".dvandva");
-    let config = TransactionConfig::new(marketplace, &home, &codex_home, &state_dir);
+    let live_binary_dir = cargo_bin_dir(&home);
+    let config = TransactionConfig::new(marketplace, &home, &codex_home, &state_dir)
+        .with_live_binary_dir(&live_binary_dir);
     let mut executor = RealUpgradeExecutor;
     let code = run_transactional_upgrade(&config, &mut executor);
-    print_version_table(&home, &codex_home);
+    print_version_table(&live_binary_dir.join("dvandva"), &home, &codex_home);
     code
 }
 
@@ -249,8 +251,24 @@ fn home_dir() -> PathBuf {
     PathBuf::from(env::var_os("HOME").unwrap_or_default())
 }
 
-fn print_version_table(home: &Path, codex_home: &Path) {
-    let binary_version = installed_binary_version(home);
+fn cargo_bin_dir(home: &Path) -> PathBuf {
+    if let Some(root) = non_empty_env_path("CARGO_INSTALL_ROOT") {
+        return root.join("bin");
+    }
+    if let Some(cargo_home) = non_empty_env_path("CARGO_HOME") {
+        return cargo_home.join("bin");
+    }
+    home.join(".cargo/bin")
+}
+
+fn non_empty_env_path(key: &str) -> Option<PathBuf> {
+    env::var_os(key)
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from)
+}
+
+fn print_version_table(live_binary: &Path, home: &Path, codex_home: &Path) {
+    let binary_version = installed_binary_version(live_binary);
     let claude_cache_version =
         newest_cache_version(&home.join(".claude/plugins/cache/dvandva/dvandva"));
     let codex_cache_version =
@@ -258,17 +276,16 @@ fn print_version_table(home: &Path, codex_home: &Path) {
 
     println!();
     println!("Upgrade summary:");
-    println!("  binary (~/.cargo/bin/dvandva): {binary_version}");
+    println!("  binary ({}): {binary_version}", live_binary.display());
     println!("  Claude plugin cache:           {claude_cache_version}");
     println!("  Codex plugin cache:            {codex_cache_version}");
 }
 
-/// Runs `~/.cargo/bin/dvandva --version` as a subprocess — the *installed*
+/// Runs the selected live `dvandva --version` as a subprocess — the *installed*
 /// binary, not this (potentially stale) running process — and returns its
 /// trimmed stdout, or `"unknown"` when the binary is missing or fails.
-fn installed_binary_version(home: &Path) -> String {
-    let bin = home.join(".cargo/bin/dvandva");
-    match Command::new(&bin).arg("--version").output() {
+fn installed_binary_version(binary: &Path) -> String {
+    match Command::new(binary).arg("--version").output() {
         Ok(output) if output.status.success() => {
             let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
             if text.is_empty() {
