@@ -339,6 +339,38 @@ fn write_custom_parallel_baton(
     .unwrap();
 }
 
+fn write_team_baton_with_findings(
+    file: &Path,
+    run_id: &str,
+    status: &str,
+    work_split: &str,
+    findings: &str,
+) {
+    mkparent(file);
+    std::fs::write(
+        file,
+        format!(
+            r#"{{
+  "schema": "dvandva.baton.v2",
+  "run_id": "{run_id}",
+  "assignee": "team",
+  "active_roles": ["vadi", "prativadi"],
+  "status": "{status}",
+  "phase": 1,
+  "checkpoint": 80,
+  "question": null,
+  "resume_assignee": null,
+  "resume_status": null,
+  "updated_at": "2026-07-01T10:09:00Z",
+  "current_engine": "codex",
+  "work_split": {work_split},
+  "findings": {findings}
+}}"#
+        ),
+    )
+    .unwrap();
+}
+
 fn tmp() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
 }
@@ -559,6 +591,195 @@ fn until_actionable_returns_ready_when_team_owned_work_is_actionable() {
         BUDGET_FAST,
     );
     assert_eq!(o.code, Some(0), "{}", o.out);
+}
+
+#[test]
+fn until_actionable_open_owner_role_finding_wakes_owner_in_cross_fixing() {
+    let d = tmp();
+    write_team_baton_with_findings(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "cross_fixing",
+        "[]",
+        r#"[{"id":"f1","status":"open","owner_role":"prativadi","summary":"fix this"}]"#,
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "prativadi",
+            "--until-actionable",
+            "--interval",
+            "0",
+            "--max-wait",
+            "0",
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(0), "{}", o.out);
+    assert!(o.contains("ready") || o.contains("actionable"), "{}", o.out);
+}
+
+#[test]
+fn until_actionable_open_peer_finding_suppresses_advance_owner() {
+    let d = tmp();
+    write_team_baton_with_findings(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "cross_fixing",
+        "[]",
+        r#"[{"id":"f1","status":"open","owner_role":"prativadi","summary":"fix this"}]"#,
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "vadi",
+            "--until-actionable",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_POLL,
+    );
+    assert!(
+        o.kept_polling(),
+        "expected keeps-polling, got {:?}\n{}",
+        o.code,
+        o.out
+    );
+    assert!(o.contains("no_actionable_work"), "{}", o.out);
+}
+
+#[test]
+fn until_actionable_resolved_owner_role_finding_does_not_wake_owner() {
+    let d = tmp();
+    write_team_baton_with_findings(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "cross_fixing",
+        "[]",
+        r#"[{"id":"f1","status":"resolved","owner_role":"prativadi","summary":"done"}]"#,
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "prativadi",
+            "--until-actionable",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_POLL,
+    );
+    assert!(
+        o.kept_polling(),
+        "expected keeps-polling, got {:?}\n{}",
+        o.code,
+        o.out
+    );
+    assert!(o.contains("no_actionable_work"), "{}", o.out);
+}
+
+#[test]
+fn until_actionable_missing_owner_role_finding_preserves_chunk_scan() {
+    let d = tmp();
+    write_team_baton_with_findings(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "cross_fixing",
+        "[]",
+        r#"[{"id":"f1","status":"open","summary":"owner missing"}]"#,
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "prativadi",
+            "--until-actionable",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_POLL,
+    );
+    assert!(
+        o.kept_polling(),
+        "expected keeps-polling, got {:?}\n{}",
+        o.code,
+        o.out
+    );
+    assert!(o.contains("no_actionable_work"), "{}", o.out);
+}
+
+#[test]
+fn until_actionable_owner_without_owner_role_preserves_chunk_scan() {
+    let d = tmp();
+    write_team_baton_with_findings(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "cross_fixing",
+        "[]",
+        r#"[{"id":"f1","status":"open","owner":"prativadi","summary":"legacy owner only"}]"#,
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "prativadi",
+            "--until-actionable",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_POLL,
+    );
+    assert!(
+        o.kept_polling(),
+        "expected keeps-polling, got {:?}\n{}",
+        o.code,
+        o.out
+    );
+    assert!(o.contains("no_actionable_work"), "{}", o.out);
+}
+
+#[test]
+fn until_actionable_idle_detail_names_chunk_and_finding_scans() {
+    let d = tmp();
+    write_team_baton_with_findings(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "cross_fixing",
+        "[]",
+        r#"[{"id":"f1","status":"resolved","owner_role":"prativadi","summary":"done"}]"#,
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "prativadi",
+            "--until-actionable",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_POLL,
+    );
+    assert!(o.kept_polling(), "expected keeps-polling\n{}", o.out);
+    assert!(o.contains("scanned_chunks="), "{}", o.out);
+    assert!(o.contains("scanned_findings="), "{}", o.out);
 }
 
 // ── Case 8 ───────────────────────────────────────────────────────────────────

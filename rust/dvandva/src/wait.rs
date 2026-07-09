@@ -397,7 +397,7 @@ pub fn run(cfg: &WaitConfig) -> i32 {
                             println!("DVANDVA_WAIT actionable role={} phase={phase} status={status} checkpoint={checkpoint} since_checkpoint={since} assignee={assignee} active_roles={active_roles}", cfg.role);
                             return 0;
                         }
-                        wait_detail = " no_actionable_work=true".to_string();
+                        wait_detail = no_actionable_detail(&value, &cfg.role, &status, &phase);
                     }
                 } else {
                     println!("DVANDVA_WAIT checkpoint_advanced role={} phase={phase} status={status} checkpoint={checkpoint} since_checkpoint={since} assignee={assignee} active_roles={active_roles}", cfg.role);
@@ -413,7 +413,7 @@ pub fn run(cfg: &WaitConfig) -> i32 {
                 if cfg.until_actionable
                     && !role_has_actionable_work(&value, &cfg.role, &status, &phase)
                 {
-                    wait_detail = " no_actionable_work=true".to_string();
+                    wait_detail = no_actionable_detail(&value, &cfg.role, &status, &phase);
                 } else {
                     println!("DVANDVA_WAIT ready role={} phase={phase} status={status} checkpoint={checkpoint} assignee={assignee} active_roles={active_roles}", cfg.role);
                     return 0;
@@ -1103,7 +1103,9 @@ type FileId = std::path::PathBuf;
 /// other active team states stay unconditionally actionable.
 fn role_has_actionable_work(baton: &Value, role: &str, status: &str, phase: &str) -> bool {
     match status {
-        "parallel_implementing" | "cross_fixing" => actionable_chunks(baton, role, status, phase),
+        "parallel_implementing" | "cross_fixing" => {
+            actionable_chunks(baton, role, status, phase) || role_has_open_finding(baton, role)
+        }
         _ => true,
     }
 }
@@ -1129,12 +1131,23 @@ fn actionable_chunks(baton: &Value, role: &str, status: &str, phase: &str) -> bo
 
     // Advance-owner wake: when no implementation chunk is unblocked and
     // non-terminal for EITHER role, vadi wakes to write the outbound transition.
+    // Owner-role findings are actionable work too, so they suppress this
+    // shortcut until the named role handles them.
     role == "vadi"
         && !work_split.iter().any(|chunk| {
             is_impl_chunk(chunk, status, phase)
                 && !is_terminal_status(&chunk_status(chunk))
                 && chunk_unblocked(chunk, work_split, &ids, status)
         })
+        && !has_any_open_owner_role_finding(baton)
+}
+
+fn no_actionable_detail(baton: &Value, role: &str, status: &str, phase: &str) -> String {
+    format!(
+        " no_actionable_work=true scanned_chunks={} scanned_findings={}",
+        chunk_scan_summary(baton, role, status, phase),
+        finding_scan_summary(baton, role),
+    )
 }
 
 fn is_terminal_status(status: &str) -> bool {
@@ -1149,6 +1162,107 @@ fn is_terminal_status(status: &str) -> bool {
             | "collapsed"
             | "skipped"
             | "cancelled"
+    )
+}
+
+fn role_has_open_finding(baton: &Value, role: &str) -> bool {
+    findings(baton)
+        .iter()
+        .any(|finding| finding_owner_role(finding) == role && finding_is_open(finding))
+}
+
+fn has_any_open_owner_role_finding(baton: &Value) -> bool {
+    findings(baton).iter().any(|finding| {
+        matches!(finding_owner_role(finding).as_str(), "vadi" | "prativadi")
+            && finding_is_open(finding)
+    })
+}
+
+fn findings(baton: &Value) -> &[Value] {
+    baton
+        .get("findings")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[])
+}
+
+fn finding_owner_role(finding: &Value) -> String {
+    coalesce(finding.get("owner_role"))
+        .map(jq_scalar_string)
+        .unwrap_or_default()
+}
+
+fn finding_status(finding: &Value) -> String {
+    coalesce(finding.get("status"))
+        .map(jq_scalar_string)
+        .unwrap_or_default()
+}
+
+fn finding_is_open(finding: &Value) -> bool {
+    matches!(
+        finding_status(finding).as_str(),
+        "" | "open" | "new" | "active" | "reopened" | "changes_requested" | "needs_fix"
+    )
+}
+
+fn chunk_scan_summary(baton: &Value, role: &str, status: &str, phase: &str) -> String {
+    let work_split = baton
+        .get("work_split")
+        .and_then(Value::as_array)
+        .map(Vec::as_slice)
+        .unwrap_or(&[]);
+    let ids: Vec<String> = work_split.iter().filter_map(chunk_id).collect();
+    let mut owned = 0usize;
+    let mut unblocked = 0usize;
+    let mut terminal = 0usize;
+    let mut by_type = std::collections::BTreeMap::<String, usize>::new();
+    for chunk in work_split
+        .iter()
+        .filter(|chunk| is_impl_chunk(chunk, status, phase) && chunk_owner(chunk) == role)
+    {
+        owned += 1;
+        let chunk_status = chunk_status(chunk);
+        if is_terminal_status(&chunk_status) {
+            terminal += 1;
+        }
+        if chunk_unblocked(chunk, work_split, &ids, status) {
+            unblocked += 1;
+        }
+        *by_type.entry(chunk_type(chunk)).or_insert(0) += 1;
+    }
+    let types = if by_type.is_empty() {
+        "none".to_string()
+    } else {
+        by_type
+            .into_iter()
+            .map(|(kind, count)| format!("{kind}:{count}"))
+            .collect::<Vec<_>>()
+            .join(",")
+    };
+    format!("owned:{owned},unblocked:{unblocked},terminal:{terminal},types:{types}")
+}
+
+fn finding_scan_summary(baton: &Value, role: &str) -> String {
+    let mut owned_open = 0usize;
+    let mut owned_closed = 0usize;
+    let mut peer_open = 0usize;
+    let mut without_owner = 0usize;
+    for finding in findings(baton) {
+        let owner = finding_owner_role(finding);
+        if owner.is_empty() {
+            without_owner += 1;
+        } else if owner == role {
+            if finding_is_open(finding) {
+                owned_open += 1;
+            } else {
+                owned_closed += 1;
+            }
+        } else if finding_is_open(finding) {
+            peer_open += 1;
+        }
+    }
+    format!(
+        "owned_open:{owned_open},owned_closed:{owned_closed},peer_open:{peer_open},without_owner:{without_owner}"
     )
 }
 
