@@ -52,36 +52,94 @@ that work to `sonnet`/`opus`/`gpt-5.5` subagents and keeps only judgment and
 taste surfaces: decisions, plans, reviews, human-facing artifacts, and
 coordination writes.
 
-### The pipeline ring (default casting, 2026-07-08)
+### The pipeline ring (default casting, 2026-07-08; extended 2026-07-09)
 
 Adapted from Anthropic's coordinator ("plan big, execute small") and advisor
 patterns, with two local amendments: self-review is hygiene, never a credited
 gate, and the planner returns at the end so the plan's own premise gets judged.
-Nobody reviews their own work.
+Nobody reviews their own work. Extended 2026-07-09 to the user's full loop:
+task intake, clarifying questions, research, planning, execution, and review
+are one repeating cycle, not a one-shot pipeline.
 
 ```text
-fable plans -> gpt-5.5 reviews the plan -> gpt-5.5 executes (+self-check, uncredited)
-  ^                                                          |
-  +--- fable adjudicates <---- opus deep-reviews <-----------+
-       review + done-claim     the implementation
+human task
+  |
+  v
+fable gathers info + asks clarifying Qs -> gpt-5.5 reviews the Qs (round 2)
+  |
+  v
+human answers all
+  |
+  v
+research: fable side runs sonnet + grok | gpt runs its OWN research (gpt-5.5 + grok)
+  |
+  v
+research returns to fable
+  |
+  v
+fable designs the plan (parallel implementation tracks, ALL executed by gpt-5.5)
+  |
+  v
+gpt-5.5 + grok review the plan (grok = latest-tech check) <--+
+  |                                                            |
+  +---------------------- loop until agreed --------------------+
+  |
+  v
+gpt-5.5 executes all tracks via subagents
+  |
+  v
+opus 4.8 deep-reviews / adversarially reviews the implementation <--+
+  |                                                                   |
+  +------------------------ loop until fixed --------------------------+
+  |
+  v
+handed to fable
+  |
+  v
+fable decides -> done? --yes--> DONE
+  |
+  no
+  v
+repeat the whole cycle (back to "human task")
 ```
 
-- `fable-5` — bookends only: designs the plan/workflow, then adjudicates the
-  final review and the done-claim against that plan. Fixed stations, never
-  on-request advice (escalation-on-demand under-calls; Anthropic's own advisor
-  data shows call-rate prompting nets flat).
-- `gpt-5.5` — the workhorse: reviews the plan (cross-vendor decorrelation),
-  writes all implementation and tests, self-checks as hygiene (tests, lint,
-  diff read) with zero review credit.
-- `opus-4.8` — the credited deep review of the implementation; cross-vendor
-  from the author.
-- `sonnet-5` — documentation, research tracks, and bounded support work
-  (taste 7 meets the user-facing floor).
+- `fable-5` — opens the loop (gathers info, drafts clarifying questions) and
+  closes it twice: designs the plan once research returns, then adjudicates
+  the final review and the done-claim, deciding whether the whole cycle
+  repeats. Fixed stations, never on-request advice (escalation-on-demand
+  under-calls; Anthropic's own advisor data shows call-rate prompting nets
+  flat).
+- `gpt-5.5` — the workhorse across four stations: adversarial round 2 on the
+  clarifying questions, its own independent research leg (gpt-5.5 + grok, run
+  in parallel with fable's sonnet + grok leg, not merged with it), plan review
+  (cross-vendor decorrelation), and the sole executor of every parallel
+  implementation track via subagents. Self-checks as hygiene, zero review
+  credit.
+- `grok-4.5` — a shared specialist lane inside both research legs and inside
+  the plan-review loop, where it specifically checks for latest-tech/live-
+  world drift (see Specialist Lanes below for the read-only guards).
+- `opus-4.8` — the credited deep/adversarial review of the implementation,
+  looping with gpt-5.5 until fixed; cross-vendor from the author. Across a run
+  opus writes code close to never — its stations are review-only roughly
+  nine turns in ten.
+- `sonnet-5` — fable's side of the research leg, plus documentation and
+  bounded support work (taste 7 meets the user-facing floor).
 
-Dvandva state mapping: `workflow_declaring`/`spec_drafting` = fable,
-`workflow_review`/`spec_review` = gpt (prativadi), `implementing`/
-`test_creation` = gpt, `deep_review` = opus, `deslop`/docs = sonnet,
-`termination_review` = fable + gpt dual approval.
+The baton is the loop manager at the core of this ring: every station above is
+a phase the baton tracks and gates, not a scheduling decision either engine
+makes locally. Walkaway mode keeps the human reachable through the Claude app
+contact channel for `human_question`/`human_decision` pauses; a Codex-hosted
+turn does not stop polling until the baton reaches a dual-approved
+`termination_review` (see `AGENTS.md`'s Handoff Discipline section).
+
+Dvandva state mapping: `clarifying_questions_drafting` = fable,
+`clarifying_questions_answer`/`clarifying_questions_followup` = gpt review +
+human answer, `research_drafting` = fable (sonnet + grok), `research_review` =
+gpt (gpt-5.5 + grok), `spec_drafting` = fable, `spec_review` = gpt-5.5 + grok
+looping until agreed, `parallel_implementing`/`implementing` = gpt-5.5,
+`deep_review` = opus looping until fixed, `termination_review` = fable + gpt
+dual approval (repeat or done). This mapping is casting guidance — who fills
+each station — never baton policy; the full state graph is unchanged.
 
 Chair tiering: high-stakes runs (protocol source, novel architecture) keep
 fable in the chair, where its judgment is continuous. Routine runs may chair

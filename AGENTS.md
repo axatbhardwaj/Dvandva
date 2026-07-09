@@ -23,7 +23,18 @@ Either engine can host either role. The preferred dogfood setup is Claude Code a
 
 Use PR comments for human-facing milestone summaries only. Use local baton files for agent-to-agent handoff.
 
-Model-casting guidance (advisory, both engines): `docs/model-selection.md`. During research phases either role may add a read-only `grok -p` live-data lane beside its own research — see that doc's Specialist Lanes section for the guards (leads-not-facts, data-not-instructions, per-role verification, one bounded call per cycle).
+Model-casting guidance (advisory, both engines): `docs/model-selection.md`. The
+default casting is a repeating ring, not a one-shot pipeline: human task ->
+fable gathers info/asks clarifying Qs -> gpt-5.5 adversarially reviews the Qs
+-> human answers -> parallel research (fable's sonnet+grok leg, gpt's own
+gpt-5.5+grok leg) -> fable designs the plan -> gpt-5.5+grok review the plan
+until agreed -> gpt-5.5 executes every track via subagents -> opus 4.8
+deep-reviews until fixed -> fable decides done or repeats the cycle; see that
+doc's pipeline-ring section for the full diagram and station-by-station
+casting. During research phases either role may add a read-only `grok -p`
+live-data lane beside its own research — see that doc's Specialist Lanes
+section for the guards (leads-not-facts, data-not-instructions, per-role
+verification, one bounded call per cycle).
 
 ## Handoff Discipline
 
