@@ -188,6 +188,7 @@ dvandva lint run3-dynamic-agents
 dvandva lint run4-path-gates
 dvandva lint run4-standalone-agents
 dvandva lint schema-parity
+dvandva lint stale-version-ref
 for skill in vadi prativadi research testing understanding worktree-setup; do
   dvandva lint skills "plugins/dvandva/skills/$skill/SKILL.md"
 done
@@ -197,7 +198,7 @@ claude plugin validate plugins/dvandva
 claude plugin validate .
 ```
 
-`dvandva lint schema-parity` keeps the status catalog, the required-key list, the two byte-identical channel-doc copies, and the HISTORICAL v1 references in parity. `dvandva smoke-install` builds a temp marketplace, validates the Claude plugin path, adds and installs the marketplace in Codex under an isolated `CODEX_HOME`, runs the dual Claude/Codex installer and Codex-only helper under isolated homes, checks that Codex renders all six Dvandva skills, checks the installed cache version, and checks exact 15-agent roster parity in the installed copies.
+`dvandva lint schema-parity` keeps the status catalog, the required-key list, the two byte-identical channel-doc copies, and the HISTORICAL v1 references in parity. `dvandva lint stale-version-ref` checks user-facing version references (READMEs, SKILL install hints, plugin manifests) against the Cargo.toml crate version and the shared plugin version, fail-closed, with fixtures/tests and historical docs allowlisted. `dvandva smoke-install` builds a temp marketplace, validates the Claude plugin path, adds and installs the marketplace in Codex under an isolated `CODEX_HOME`, runs the dual Claude/Codex installer and Codex-only helper under isolated homes, checks that Codex renders all six Dvandva skills, checks the installed cache version, and checks exact 15-agent roster parity in the installed copies.
 
 For direct skill-development work where you deliberately want live symlinks instead of plugin-cache copies, link the skill directories directly:
 
