@@ -1,6 +1,6 @@
 # Model Selection
 
-As-of date: 2026-07-06.
+As-of date: 2026-07-09.
 
 This page records the user's advisory model preferences for Dvandva runs. It is
 not the same thing as the protocol's machine-readable model-class contract:
@@ -15,18 +15,34 @@ reviewed run.
 
 ## Ranking Table
 
-Higher is better.
+Higher is better on every axis.
 
-Cost is the user's effective local cost, not provider list price. Intelligence
-means how hard a problem the model can handle unsupervised. Taste covers UI/UX,
-code quality, API design, and copy.
+Cost is the user's effective local cost per use, not provider list price.
+Intelligence means how hard a problem the model can handle unsupervised. Taste
+covers UI/UX, code quality, API design, and copy. Quota is the user's stock of
+the resource — how much can be spent before hitting subscription limits: HIGH
+means abundant (route volume here freely), LOW means scarce (ration it for the
+model's unique strengths). Cost prices a single call; quota is the budget the
+week has to live inside — for flat subscriptions quota, not cost, is usually
+the binding constraint.
 
-| Model | Cost | Intelligence | Taste |
-|---|---:|---:|---:|
-| `gpt-5.5` | 9 | 8 | 5 |
-| `sonnet-5` | 5 | 5 | 7 |
-| `opus-4.8` | 4 | 7 | 8 |
-| `fable-5` | 2 | 9 | 9 |
+| Model | Cost | Intelligence | Taste | Quota |
+|---|---:|---:|---:|---:|
+| `gpt-5.5` | 9 | 8 | 5 | 9 |
+| `sonnet-5` | 5 | 5 | 7 | 7 |
+| `opus-4.8` | 4 | 7 | 8 | 6 |
+| `grok-4.5` | 9 | 7 | 4 | 3 |
+| `fable-5` | 2 | 9 | 9 | 2 |
+
+Grok 4.5 row basis (2026-07-09, day-one — re-score when independent
+replication lands): intelligence 7 from Artificial Analysis Intelligence
+Index 54 vs GPT-5.5's 55 (Coding Agent Index tied at 76) while trailing
+Fable/Opus on hard long-horizon coding; taste 4 pending evidence (no
+production retros, one small-N UI-task miss); cost 9 (cheap flat sub plus
+~3-4x token efficiency per task); quota 3 (the user holds >10x more GPT-5.5
+than Grok — the efficiency edge claws back only part of that gap).
+Unresolved: one aggregator datum shows hallucination rate roughly doubling
+vs Grok 4.3 — keep it off credited review stations until settled.
 
 ## How To Apply
 
@@ -82,6 +98,17 @@ Cost is only a tie-breaker. When axes conflict for anything that ships, use:
 intelligence > taste > cost
 ```
 
+Quota is not part of that quality ordering — it never makes a weaker model
+"better." It governs volume routing: when two models both clear a task's
+quality bar, route the volume toward abundant quota, and spend scarce quota
+only where the model is unique or maximally differentiated. Concretely:
+`fable-5` (quota 2) spends on judgment bookends nobody else can hold;
+`grok-4.5` (quota 3) spends on its live-data monopoly and steps in as the
+fallback bulk lane only when `gpt-5.5` quota is exhausted or down;
+`gpt-5.5` (quota 9) absorbs routine volume precisely because it is abundant.
+If the quota ratios change (subscription upgrades or cuts), the volume
+allocation flips with them — re-check the ratios monthly.
+
 Use `gpt-5.5` for bulk or mechanical work where the specification is clear:
 implementation, data analysis, migrations, and other high-volume tasks. In this
 workspace it is effectively free and strong enough to clear most mechanical
@@ -118,10 +145,15 @@ not silently reinterpret the task.
 ## Specialist Lanes
 
 `grok` (xAI, reached headlessly via `grok -p "..."`, `--prompt-file`, or
-`--output-format json`) is a research-freshness specialist, not a general
-tier. Its edge is real-time grounding — the X.com firehose and live
-news/feeds that other models cannot reach — so it is cast by modality, not by
-the cost/intelligence/taste table, and deliberately has no row there.
+`--output-format json`) is first a research-freshness specialist. Its edge is
+real-time grounding — the X.com firehose and live news/feeds that other
+models cannot reach. Since 2026-07-09 it also carries a scored row above
+(Grok 4.5 reached benchmark parity with `gpt-5.5` on independent coding-agent
+measurement), which adds exactly one general-purpose seat: **fallback bulk
+lane** when `gpt-5.5` quota is exhausted or Codex is down — never the default
+bulk route, because its quota is the scarce one (see the quota rule). The
+grok-placement run's other rejections (triage, glue, critique-as-station)
+stand.
 
 Rules for the grok lane:
 
