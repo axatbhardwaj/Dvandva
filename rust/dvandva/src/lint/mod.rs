@@ -174,26 +174,34 @@ pub fn file_slurp_matches_ci(root: &Path, rel: &str, pattern: &str) -> bool {
         .unwrap_or(false)
 }
 
-/// The fenced `/goal` launch block of a skill file: the run of lines from the
-/// `/goal …` marker up to (but not including) the closing ``` fence or the next
-/// `## ` section heading, whichever comes first. `None` when the file has no
-/// `/goal` marker.
+/// The fenced `/goal` launch block of a skill file: the run of lines inside the
+/// first fenced (```` ``` ````) code block whose first content line begins with
+/// the `/goal` marker, up to (but not including) the closing fence. `None` when
+/// the file has no such fenced `/goal` block.
 ///
-/// SKILL liveness pins scope to this block so a duplicate of the launch-text
-/// wording in a later status-row table cannot mask a regression in the
-/// executable goal line (p4-cr10).
+/// The extractor is anchored to the fence, not merely to the first `/goal`
+/// substring: any `/goal` text OUTSIDE a code fence — a prose mention or an
+/// unfenced decoy line — is ignored, so it cannot stand in for the executable
+/// fenced launch block. SKILL liveness pins scope to this block so neither a
+/// duplicate of the launch-text wording in a later status-row table (p4-cr10)
+/// nor an unfenced decoy `/goal` line ahead of the real block (p4-dr12) can mask
+/// a regression in the executable goal line.
 pub fn goal_block(root: &Path, rel: &str) -> Option<String> {
     let content = read(root, rel)?;
+    let mut in_fence = false;
     let mut block: Option<String> = None;
     for line in content.lines() {
+        let is_fence = line.trim_start().starts_with("```");
         match block {
             None => {
-                if line.trim_start().starts_with("/goal") {
+                if is_fence {
+                    in_fence = !in_fence;
+                } else if in_fence && line.trim_start().starts_with("/goal") {
                     block = Some(format!("{line}\n"));
                 }
             }
             Some(ref mut b) => {
-                if line.trim() == "```" || line.starts_with("## ") {
+                if is_fence {
                     break;
                 }
                 b.push_str(line);

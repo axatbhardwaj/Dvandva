@@ -1811,11 +1811,17 @@ pub fn report(root: &Path) -> Report {
     // and the F5 rows to their d153fd4 state fails these pins closed.
     //
     // For the commands the whole file IS the goal surface, so they stay
-    // file-scoped. For the SKILL files the pins scope to the fenced `/goal`
-    // launch block only (p4-cr10): both SKILL files repeat the writer-of-pause
-    // fallback in a later `human_question` F5 status-row table, so a file-scoped
-    // pin passes even when the executable `/goal` line loses the fallback. The
-    // scoped check reads only the launch block, so that bypass fails closed.
+    // file-scoped. For the SKILL files the POSITIVE pins scope to the fenced
+    // `/goal` launch block only (p4-cr10): both SKILL files repeat the
+    // writer-of-pause fallback in a later `human_question` F5 status-row table,
+    // so a file-scoped positive pin passes even when the executable `/goal` line
+    // loses the fallback. The scoped check reads only the launch block, so that
+    // bypass fails closed.
+    //
+    // The only-session ANTI-needle stays WHOLE-FILE for every surface (p4-dr12):
+    // the retired only-session wording is wrong ANYWHERE, including a later F5
+    // human_question status row, so scoping it to the `/goal` block would leave a
+    // regression window where the stale wording resurfaces outside the block.
     for (file, scoped) in [
         ("plugins/dvandva/commands/vadi.md", false),
         ("plugins/dvandva/commands/prativadi.md", false),
@@ -1838,7 +1844,7 @@ pub fn report(root: &Path) -> Report {
             format!("{file} carries the writer-of-pause F5 fallback"),
         );
         r.add(
-            !matches(r"only\s+when\s+it\s+is\s+the\s+only\s+session"),
+            !file_slurp_matches_ci(root, file, r"only\s+when\s+it\s+is\s+the\s+only\s+session"),
             format!("{file} avoids the stale only-session pause fallback"),
         );
     }

@@ -999,6 +999,69 @@ fn phase4_research_rejects_skill_goal_stripped_despite_f5_row_duplicate() {
 }
 
 #[test]
+fn phase4_research_rejects_unfenced_decoy_goal_line_bypass() {
+    // Finding 1 (p4-dr12): the goal extractor must anchor to the canonical FENCED
+    // launch block. An UNFENCED decoy `/goal ...` line placed BEFORE the fenced
+    // block — carrying every liveness needle — would satisfy the goal-scoped pins
+    // while the real fenced `/goal` line silently regressed. Here the fenced block
+    // is stripped of the writer-of-pause fallback and the decoy carries it: a
+    // first-`/goal`-line extractor reads the decoy and PASSES (the bypass); a
+    // fence-anchored extractor reads the stripped fenced block and the pin bites.
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/skills/vadi/SKILL.md");
+    let mut text = fs::read_to_string(&p).unwrap();
+    // Strip the fallback from the executable fenced `/goal` block.
+    text = text.replace(
+        "when no Claude Code-hosted session is part of the run, the role that wrote the pause surfaces it while the peer waits the pause out.",
+        "the sole session surfaces it.",
+    );
+    // Inject an UNFENCED decoy `/goal` line (all needle phrases intact) BEFORE the
+    // canonical fenced launch block.
+    text = text.replace(
+        "## `/goal` condition (paste into your engine when launching)\n",
+        "/goal decoy line: Codex-hosted sessions append --through-human on the general wait; when no Claude Code-hosted session is part of the run, the role that wrote the pause surfaces it while the peer waits the pause out.\n\n## `/goal` condition (paste into your engine when launching)\n",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(
+        r.fails_with(
+            "plugins/dvandva/skills/vadi/SKILL.md carries the writer-of-pause F5 fallback"
+        ),
+        "fence-anchored extractor must read the stripped fenced /goal block, not the unfenced decoy; failures: {}",
+        r.failures()
+    );
+}
+
+#[test]
+fn phase4_research_rejects_skill_only_session_wording_outside_goal_block() {
+    // Finding 2 (p4-dr12): the only-session ANTI-needle stays WHOLE-FILE for SKILL
+    // files. fb4ba8e scoped all three liveness checks (incl. the anti-needle) to
+    // the /goal block; the stale only-session wording is wrong ANYWHERE, including
+    // a later human_question F5 status row. Here the /goal block is clean but the
+    // stale wording resurfaces in an F5 row: a goal-scoped anti-needle misses it
+    // (the regression window); a whole-file anti-needle bites.
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/skills/prativadi/SKILL.md");
+    let mut text = fs::read_to_string(&p).unwrap();
+    // /goal block untouched; reintroduce the stale wording only in a later F5
+    // human_question status-row table (outside the fenced /goal block).
+    text.push_str(
+        "\n## Failure modes\n\n| Failure | What to do |\n|---|---|\n| `status` is `human_question` | F5: the Claude Code-hosted session surfaces this; a Codex-hosted role surfaces the pause itself only when it is the only session. |\n",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(
+        r.fails_with(
+            "plugins/dvandva/skills/prativadi/SKILL.md avoids the stale only-session pause fallback"
+        ),
+        "whole-file anti-needle must bite stale only-session wording in an F5 row; failures: {}",
+        r.failures()
+    );
+}
+
+#[test]
 fn phase4_research_rejects_stale_only_session_pause_fallback() {
     // The OLD narrow fallback ("it surfaces the pause itself only when it is the
     // only session") is what 683406e retired. If it ever reappears — exactly what
