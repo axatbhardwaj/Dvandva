@@ -466,6 +466,34 @@ fn plugin_manifest_mismatch_fails_closed() {
 }
 
 #[test]
+fn missing_plugin_manifest_fails_closed() {
+    let d = tmp();
+    base_fixture(d.path(), CRATE_VERSION, PLUGIN_VERSION);
+    fs::remove_file(d.path().join("plugins/dvandva/.claude-plugin/plugin.json")).unwrap();
+    let r = stale_version_ref::report(d.path());
+    assert!(!r.passed(), "missing plugin manifest must fail closed");
+    assert!(r.fails_with(
+        "plugins/dvandva/.claude-plugin/plugin.json declares a Dvandva plugin version"
+    ));
+}
+
+#[test]
+fn unparseable_plugin_manifest_fails_closed() {
+    let d = tmp();
+    base_fixture(d.path(), CRATE_VERSION, PLUGIN_VERSION);
+    w(
+        d.path(),
+        "plugins/dvandva/.codex-plugin/plugin.json",
+        "{ not json",
+    );
+    let r = stale_version_ref::report(d.path());
+    assert!(!r.passed(), "unparseable plugin manifest must fail closed");
+    assert!(
+        r.fails_with("plugins/dvandva/.codex-plugin/plugin.json declares a Dvandva plugin version")
+    );
+}
+
+#[test]
 fn versions_rs_plugin_version_mismatch_fails_closed() {
     let d = tmp();
     base_fixture(d.path(), CRATE_VERSION, PLUGIN_VERSION);
@@ -483,6 +511,33 @@ fn versions_rs_plugin_version_mismatch_fails_closed() {
 }
 
 #[test]
+fn missing_versions_rs_plugin_version_fails_closed() {
+    let d = tmp();
+    base_fixture(d.path(), CRATE_VERSION, PLUGIN_VERSION);
+    fs::remove_file(d.path().join("rust/dvandva/src/versions.rs")).unwrap();
+    let r = stale_version_ref::report(d.path());
+    assert!(!r.passed(), "missing versions.rs must fail closed");
+    assert!(r.fails_with("rust/dvandva/src/versions.rs declares PLUGIN_VERSION"));
+}
+
+#[test]
+fn unparseable_versions_rs_plugin_version_fails_closed() {
+    let d = tmp();
+    base_fixture(d.path(), CRATE_VERSION, PLUGIN_VERSION);
+    w(
+        d.path(),
+        "rust/dvandva/src/versions.rs",
+        "pub const OTHER_VERSION: &str = \"8.8.8\";\n",
+    );
+    let r = stale_version_ref::report(d.path());
+    assert!(
+        !r.passed(),
+        "versions.rs without PLUGIN_VERSION must fail closed"
+    );
+    assert!(r.fails_with("rust/dvandva/src/versions.rs declares PLUGIN_VERSION"));
+}
+
+#[test]
 fn missing_crate_truth_still_scans_plugin_anchors() {
     let d = tmp();
     base_fixture(d.path(), CRATE_VERSION, PLUGIN_VERSION);
@@ -497,6 +552,26 @@ fn missing_crate_truth_still_scans_plugin_anchors() {
     assert!(r.fails_with("declares a package version"));
     assert!(r.fails_with(&format!(
         "installable plugin prose uses {PLUGIN_VERSION_STALE}, expected {PLUGIN_VERSION}"
+    )));
+}
+
+#[test]
+fn missing_plugin_truth_still_scans_crate_anchors() {
+    let d = tmp();
+    base_fixture(d.path(), CRATE_VERSION, PLUGIN_VERSION);
+    fs::remove_file(d.path().join("plugins/dvandva/.codex-plugin/plugin.json")).unwrap();
+    edit(
+        d.path(),
+        "README.md",
+        &format!("cargo install dvandva --version {CRATE_VERSION}"),
+        &format!("cargo install dvandva --version {CRATE_VERSION_STALE}"),
+    );
+    let r = stale_version_ref::report(d.path());
+    assert!(
+        r.fails_with("plugins/dvandva/.codex-plugin/plugin.json declares a Dvandva plugin version")
+    );
+    assert!(r.fails_with(&format!(
+        "cargo install dvandva uses {CRATE_VERSION_STALE}, expected {CRATE_VERSION}"
     )));
 }
 
