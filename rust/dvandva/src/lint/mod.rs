@@ -181,15 +181,17 @@ pub fn file_slurp_matches_ci(root: &Path, rel: &str, pattern: &str) -> bool {
 /// launch block.
 const GOAL_LAUNCH_HEADING: &str = "## `/goal` condition (paste into your engine when launching)";
 
-/// The fenced `/goal` launch block that immediately follows the canonical launch
-/// heading ([`GOAL_LAUNCH_HEADING`]): the run of lines inside the first fenced
-/// (```` ``` ````) code block AFTER that heading whose first content line begins
-/// with the `/goal` marker, up to (but not including) the closing fence.
+/// The canonical fenced `/goal` launch block that immediately follows the launch
+/// heading ([`GOAL_LAUNCH_HEADING`]). By contract — verified against both live
+/// SKILL launch sections — the block is EXACTLY: the heading, an opener fence, ONE
+/// content line beginning with the `/goal` marker, and the bare closing fence on
+/// the VERY NEXT line. The extractor returns just that single `/goal` content line.
 ///
-/// Returns `None` — so every goal-scoped positive pin fails closed — when the
-/// file has no such block, when MORE THAN ONE fenced `/goal` block exists
-/// anywhere in the file, OR when the launch fence is never closed. Three
-/// mechanisms guard the executable launch line:
+/// Returns `None` — so every goal-scoped positive pin fails closed — whenever the
+/// file departs from that canonical shape: no such block, MORE THAN ONE fenced
+/// `/goal` block anywhere in the file, or a `/goal` line whose next line is not the
+/// bare closer (a second content line, a heading, an info-string fence, a later
+/// bare fence, or EOF). Three mechanisms guard the executable launch line:
 ///
 /// * **Heading anchor.** Only fences after the canonical launch heading are
 ///   considered, so a fenced decoy `/goal` block placed BEFORE the heading
@@ -198,11 +200,16 @@ const GOAL_LAUNCH_HEADING: &str = "## `/goal` condition (paste into your engine 
 /// * **Duplicate fail-closed.** A second fenced `/goal` block anywhere in the
 ///   file is itself suspicious (a decoy alongside the real block), so the
 ///   extractor refuses to guess which is canonical and returns `None`.
-/// * **Unclosed-fence fail-closed.** A `/goal` fence whose closing fence is
-///   missing runs to EOF and would otherwise capture unrelated later text — e.g.
-///   a status row that repeats the launch wording (p4-tc4-unclosed-goal-fence-
-///   tail-capture) — so the extractor returns `None` rather than read past the
-///   intended block.
+/// * **Immediate-close contract.** The line after `/goal` MUST be the bare closing
+///   fence; anything else fails closed. This ends the fence-closer whack-a-mole
+///   permanently: because the block is bounded to exactly one content line, no
+///   later fence of ANY kind — a bare fence opening a baton-seed block
+///   (p4-cr11-later-plain-fence-tail-capture), an info-string fence
+///   (p4-tc5-fence-closer-confusion), or an unclosed fence running to EOF
+///   (p4-tc4-unclosed-goal-fence-tail-capture) — can be reinterpreted as this
+///   block's closer to tail-capture unrelated later text (e.g. an F5 status row
+///   that repeats the launch wording, p4-cr10). Multi-line capture is impossible
+///   by construction.
 ///
 /// Any `/goal` text OUTSIDE a code fence — a prose mention or an unfenced decoy
 /// line (p4-dr12) — is ignored either way. SKILL liveness pins scope to this
@@ -236,33 +243,29 @@ pub fn goal_block(root: &Path, rel: &str) -> Option<String> {
                     block = Some(format!("{line}\n"));
                 }
             }
-            Some(ref mut b) => {
-                if is_fence {
-                    // A Markdown code fence closes only on a *bare* closing fence.
-                    // A fence line carrying an info string (```json, ```text, …)
-                    // OPENS a new block — it can never close the `/goal` block. If
-                    // the canonical block's bare closer is missing but a later
-                    // info-string fence opens (the `json` baton-seed block that
-                    // follows every SKILL `/goal` block is exactly this shape), an
-                    // extractor that treats any fence as the closer mistakes that
-                    // opener for the closer and tail-captures everything between —
-                    // passing goal-scoped pins against text that is NOT the launch
-                    // block. Fail closed instead: the canonical block never closed.
-                    if is_bare_fence(line) {
-                        closed = true;
-                        break;
-                    }
-                    return None;
-                }
-                b.push_str(line);
-                b.push('\n');
+            Some(_) => {
+                // Canonical shape: the single `/goal` content line is IMMEDIATELY
+                // followed by the bare closing fence. The very next line after the
+                // `/goal` line MUST be that bare closer; a second content line, a
+                // heading, an info-string fence (```json, ```text, …), a later bare
+                // fence opening a new block, or EOF all mean this is not the
+                // canonical launch block, so fail closed (`closed` stays false and
+                // the trailing guard returns `None`). Bounding the block to exactly
+                // one content line makes multi-line tail capture impossible by
+                // construction: no later fence of ANY kind — bare or info-string —
+                // can be reinterpreted as this block's closer to sweep unrelated
+                // later text (an F5 status row repeating the launch wording, a
+                // baton-seed block) into the captured block.
+                closed = is_bare_fence(line);
+                break;
             }
         }
     }
-    // An unclosed `/goal` fence runs to EOF and would capture unrelated later
-    // text (e.g. an F5 status row repeating the launch wording), so fail closed
-    // — same policy as a duplicate block — rather than pass goal-scoped pins
-    // against text that is not the launch block.
+    // A `/goal` line not immediately followed by its bare closing fence fails
+    // closed (the `Some` arm broke with `closed` still false) — the same
+    // fail-closed policy as a duplicate block — so a malformed block never passes
+    // goal-scoped pins against text that is not the launch block, including the
+    // EOF case where the `/goal` line has no next line at all.
     if block.is_some() && !closed {
         return None;
     }
