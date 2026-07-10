@@ -145,7 +145,11 @@ Authority guardrail: `gpt-5.6-sol` never holds credited-review authority and
 never holds done, merge, or terminal authority (invariant I4). Credited deep
 review of the implementation stays with the cross-vendor `opus-4.8` (invariant
 I3); Sol's plan-review and adversarial work never substitutes for that credited
-Opus deep review.
+Opus deep review. Because Codex maps `opus` to `gpt-5.6-sol` (hygiene only,
+earning no review credit), when Codex hosts the prativadi the credited
+cross-vendor Anthropic-Opus deep review is physically dispatched by the
+Claude-side vadi session as fresh `opus` subagents; the Codex reviewer cannot
+itself stand in for that gate.
 
 The baton is the loop manager at the core of this ring: every station above is
 a phase the baton tracks and gates, not a scheduling decision either engine
@@ -203,11 +207,18 @@ precisely because that pool is abundant. If the quota ratios change
 (subscription upgrades or cuts), the volume allocation flips with them —
 re-check the ratios monthly.
 
-Use `gpt-5.6-terra`, with `gpt-5.5` as the runtime fallback, for bulk or
-mechanical work where the specification is clear: implementation, data
-analysis, migrations, and other high-volume tasks. In this workspace the
-shared Codex pool is effectively free and strong enough to clear most
-mechanical work without supervision.
+Within the gpt-class dispatch default, tier by task, with `gpt-5.5` as the
+runtime fallback for all three tiers. `gpt-5.6-sol` takes the adversarial and
+hard-bounded uncredited stations (plan review, its own research leg, tightly
+specified tracks); `gpt-5.6-terra` is the routine default for implementation,
+tests, and fixes; and `gpt-5.6-luna` takes high-volume mechanical bulk where
+taste does not bind — data analysis, log digging, migrations, and formatting or
+transform sweeps. Route the largest mechanical sweeps to `gpt-5.6-luna`
+(shared-pool quota 9), reserving `gpt-5.6-terra` for bulk that still needs
+judgment. `gpt-5.6-luna` output never reaches a user-facing surface without a
+taste `>= 7` reviewer (`sonnet-5`, `opus-4.8`, or `fable-5`) checking it first.
+In this workspace the shared Codex pool is effectively free and strong enough to
+clear most mechanical work without supervision.
 
 Anything user-facing needs taste `>= 7`: UI, copy, docs intended for a human,
 API design, examples, and polish passes. That makes `sonnet-5`, `opus-4.8`, or
@@ -249,7 +260,8 @@ real-time grounding — the X.com firehose and live news/feeds that other
 models cannot reach. Since 2026-07-09 it also carries a scored row above
 (Grok 4.5 reached benchmark parity with `gpt-5.5` on independent coding-agent
 measurement), which adds exactly one general-purpose seat: **fallback bulk
-lane** when `gpt-5.5` quota is exhausted or Codex is down — never the default
+lane** when the shared Codex 5.6-family pool (including the `gpt-5.5` fallback)
+is exhausted or Codex is down — never the default
 bulk route, because its quota is the scarce one (see the quota rule). The
 fallback-bulk seat is out-of-ring only: it is a human-invoked lane for personal
 bulk work outside Dvandva runs, and inside a run the lane rules below still bar
@@ -300,7 +312,10 @@ A Grok lane may take routine read-only work when it clears the quality bar — a
   grok call at the phase diff for first-pass review leads. Same guards as
   plan-pulse: findings land in a lane ledger, each is addressed or rejected
   in writing before the phase advances, and none of it is credited review
-  evidence — `opus-4.8` remains the credited deep/adversarial gate.
+  evidence — `opus-4.8` remains the credited deep/adversarial gate. Sequenced
+  across the ring, this is: grok produces the leads, the gpt-class executor
+  addresses or rejects each in the ledger, and `opus-4.8` remains the credited
+  gate.
 
 ## Dvandva Class Boundary
 
