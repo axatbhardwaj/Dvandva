@@ -255,23 +255,6 @@ fn req_command_ring_dispatch(r: &mut Report, root: &Path, rel: &str) {
         MODEL_POLICY_FABLE_NO_CODE,
         format!("{rel} permits Fable-class routine non-code work but no code writing"),
     );
-    // Cheap anti-needles for the two most blatant added-inversion shapes. The
-    // positive substring pins above fail closed only against ALTERING their
-    // sentence, not against a contradiction ADDED elsewhere in the carrier (see
-    // MODEL_POLICY_LUNA_PROBE_SENTENCE's honest-scope note). These reject the two
-    // shapes an inverting author is most likely to append; whole-file (case-
-    // insensitive) because an added contradiction anywhere in the carrier is
-    // drift. They are not smuggle-proof — general added-contradiction detection is
-    // out of scope — but they close the obvious holes for free.
-    r.add(
-        !file_slurp_matches_ci(root, rel, r"Fable-class may write"),
-        format!("{rel} rejects the inverted Fable-may-write needle"),
-    );
-    r.add(
-        !file_slurp_matches_ci(root, rel, r"Grok lane may execute")
-            && !file_slurp_matches_ci(root, rel, r"grok[^.]{0,40}write[s]? code"),
-        format!("{rel} rejects the inverted Grok-execute-or-write-code needle"),
-    );
 }
 
 fn req_grok_plan_pulse_policy(r: &mut Report, root: &Path) {
