@@ -729,10 +729,15 @@ pub(crate) struct TransitionOption {
     pub(crate) clears_amendment: bool,
     /// Set on the same-status `deep_review` dispatch-ack option to the role whose
     /// OPEN dispatch request this option acknowledges (open->acknowledged). `next`
-    /// keys the ack flip and the `--role` ownership filter off it; `None` for every
-    /// ordinary transition. Ownership (assignee/active_roles) is unchanged by an
-    /// ack, so this is the only field that identifies the addressed role.
+    /// keys the `--role` ownership filter off it; `None` for every ordinary
+    /// transition. Ownership (assignee/active_roles) is unchanged by an ack, so this
+    /// is the only field that identifies the addressed role.
     pub(crate) dispatch_ack_role: Option<String>,
+    /// Set alongside `dispatch_ack_role` to the id of the ONE open dispatch request
+    /// this ack option flips. One ack option is emitted PER open addressed request,
+    /// so the id is what distinguishes two options that share a role; `next` flips
+    /// exactly this id (one wake, one ack). `None` for every ordinary transition.
+    pub(crate) dispatch_ack_request_id: Option<String>,
 }
 
 /// The expected `(assignee, active_roles)` for a status under the v2 owner table
@@ -1096,6 +1101,7 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
             },
             clears_amendment: is_exit,
             dispatch_ack_role: None,
+            dispatch_ack_request_id: None,
         });
     }
 
@@ -1112,17 +1118,20 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
             sets_amendment_from_phase: None,
             clears_amendment: false,
             dispatch_ack_role: None,
+            dispatch_ack_request_id: None,
         });
     }
 
-    // Same-status deep_review dispatch-ack (FIX 2a): when a role's OWN dispatch
-    // request is OPEN, that role acknowledges its wake with a same-status
+    // Same-status deep_review dispatch-ack (FIX 2a; r5 P2): when a role's OWN
+    // dispatch request is OPEN, that role acknowledges its wake with a same-status
     // open->acknowledged rewrite that leaves ownership untouched (deep_review stays
-    // prativadi-owned). One ack option per distinct role with an open request; the
-    // write-side ack carve is the arbiter of which installs (DVANDVA_ROLE must
-    // equal the entry's role). assignee/active_roles/review_target are preserved
-    // verbatim from the current baton so the generated candidate is
-    // identical-except-dispatch — exactly what the ack carve requires.
+    // prativadi-owned). ONE ack option per OPEN request (keyed by its id), not one
+    // per distinct role — a single ack flips exactly one request (one wake, one
+    // ack), so two open requests need two ack writes. The write-side ack carve is
+    // the arbiter of which installs (DVANDVA_ROLE must equal the entry's role).
+    // assignee/active_roles/review_target are preserved verbatim from the current
+    // baton so the generated candidate is identical-except-dispatch — exactly what
+    // the ack carve requires.
     if is_v2 && cur_eff_mode == "development" && cur_status == "deep_review" {
         let cur_assignee = str_field(current, "assignee");
         let cur_active_roles: Vec<String> = arr(field(current, "active_roles"))
@@ -1133,13 +1142,12 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
             Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
             _ => None,
         };
-        let mut ack_roles: Vec<String> = Vec::new();
         for req in arr(field(current, "dispatch_requests")) {
             let role = str_field(req, "role");
-            if role.is_empty() || ack_roles.contains(&role) || str_field(req, "status") != "open" {
+            let id = str_field(req, "id");
+            if role.is_empty() || id.is_empty() || str_field(req, "status") != "open" {
                 continue;
             }
-            ack_roles.push(role.clone());
             out.push(TransitionOption {
                 to_status: cur_status.clone(),
                 to_phase: PhaseMove::Same,
@@ -1150,6 +1158,7 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
                 sets_amendment_from_phase: None,
                 clears_amendment: false,
                 dispatch_ack_role: Some(role),
+                dispatch_ack_request_id: Some(id),
             });
         }
     }
@@ -1166,6 +1175,7 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
             sets_amendment_from_phase: None,
             clears_amendment: false,
             dispatch_ack_role: None,
+            dispatch_ack_request_id: None,
         });
     }
 
@@ -1202,6 +1212,7 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
             sets_amendment_from_phase: None,
             clears_amendment: false,
             dispatch_ack_role: None,
+            dispatch_ack_request_id: None,
         });
     }
 
@@ -1223,6 +1234,7 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
                 sets_amendment_from_phase: None,
                 clears_amendment: false,
                 dispatch_ack_role: None,
+                dispatch_ack_request_id: None,
             });
         }
     }
@@ -1242,6 +1254,7 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
             sets_amendment_from_phase: None,
             clears_amendment: false,
             dispatch_ack_role: None,
+            dispatch_ack_request_id: None,
         });
     }
 
@@ -1258,6 +1271,7 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
             sets_amendment_from_phase: None,
             clears_amendment: false,
             dispatch_ack_role: None,
+            dispatch_ack_request_id: None,
         });
     }
 
@@ -2420,9 +2434,10 @@ fn decide_transition(
     if legal
         && cx.is_v2
         && cur_effective_mode == "development"
+        && cur_status != "deep_review"
         && cx.new_status == "deep_review"
         && cx.new_assignee == "prativadi"
-        && !has_open_dispatch_request_with_exact_purpose(
+        && !has_fresh_dispatch_request_with_exact_purpose(
             cand,
             "vadi",
             CANONICAL_OPUS_DISPATCH_PURPOSE,
@@ -5007,30 +5022,36 @@ fn has_open_dispatch_request(cand: &Value, role: &str) -> bool {
     })
 }
 
-/// Whether the candidate carries at least one OPEN `dispatch_requests` entry
-/// naming `role` whose `purpose` is EXACTLY `purpose`. The entry gate binds to the
-/// canonical credited-Opus-dispatch purpose so an unrelated open request for the
-/// same role cannot pose as the dispatch signal — the identity of the paid
-/// dispatch is part of what the gate requires, not merely "some open vadi request
-/// exists". The match is exact string equality, not a substring: a negated or
+/// Whether the candidate carries at least one FRESH `dispatch_requests` entry
+/// naming `role` whose `purpose` is EXACTLY `purpose` and whose status is EXACTLY
+/// `"open"`. The deep_review ENTRY gate binds to this: a fresh entry must record
+/// the canonical credited-Opus-dispatch request UNACKNOWLEDGED, because the wait
+/// surface's wake is strict (`role_has_open_dispatch_request` fires only on
+/// `== "open"`). Entering with a pre-`acknowledged` canonical request would install
+/// deep_review while the vadi's waiter never wakes — the credited-dispatch wake
+/// silently skipped — so it is a contract violation (r5 P1). This is why the check
+/// is strict `"open"`, NOT the tolerant [`util::is_open_finding_status`] set that
+/// [`has_open_dispatch_request`] (the EXIT closure gate) uses.
+///
+/// The purpose match is exact string equality, not a substring: a negated or
 /// decorated purpose that merely CONTAINS the canonical string ("DO NOT run
 /// credited cross-vendor Anthropic-Opus dispatch — unrelated maintenance only") is
-/// not the signal. Open/closed reuses the same tolerant token set as
-/// [`has_open_dispatch_request`] (so `acknowledged` still counts as open here).
-fn has_open_dispatch_request_with_exact_purpose(cand: &Value, role: &str, purpose: &str) -> bool {
+/// not the signal — the identity of the paid dispatch is part of what the gate
+/// requires, not merely "some open vadi request exists".
+fn has_fresh_dispatch_request_with_exact_purpose(cand: &Value, role: &str, purpose: &str) -> bool {
     arr(field(cand, "dispatch_requests")).iter().any(|req| {
         str_field(req, "role") == role
             && str_field(req, "purpose") == purpose
-            && util::is_open_finding_status(Some(&str_field(req, "status")))
+            && str_field(req, "status") == "open"
     })
 }
 
 /// tc-dispatch-request-no-one-shot-ack: whether `cand` is the narrow same-status
 /// `deep_review` ack rewrite — the writer is vadi|prativadi, the ONLY substantive
-/// change from `cur_doc` is dispatch_requests entries flipping open->acknowledged
-/// on existing ids, and every other field is identical except the mechanical
-/// metadata a checkpoint write always bumps (checkpoint/updated_at/summary/
-/// next_action).
+/// change from `cur_doc` is exactly ONE dispatch_requests entry flipping
+/// open->acknowledged (r5 P2: one wake, one ack), and every other field is
+/// identical except the mechanical metadata a checkpoint write always bumps
+/// (checkpoint/updated_at/summary/next_action).
 fn dispatch_ack_rewrite_ok(cur_doc: &Value, cand: &Value, writer_role: &str) -> bool {
     matches!(writer_role, "vadi" | "prativadi")
         && dispatch_requests_ack_only_delta(cur_doc, cand)
@@ -5070,18 +5091,20 @@ fn dispatch_ack_flips_owned_by(cur_doc: &Value, cand: &Value, writer_role: &str)
 }
 
 /// Whether the `dispatch_requests` delta between `cur_doc` and `cand` is EXACTLY
-/// one or more open->acknowledged status flips on existing ids and nothing else:
-/// the id-set is identical (no add, no drop, same order), at least one entry
-/// actually flips open->acknowledged, and every other entry is byte-identical.
-/// A no-op (nothing flipped) returns false so a plain same-status rewrite stays
-/// rejected.
+/// ONE open->acknowledged status flip on an existing id and nothing else: the
+/// id-set is identical (no add, no drop, same order), exactly one entry flips
+/// open->acknowledged, and every other entry is byte-identical. One wake, one ack
+/// (r5 P2) — a single ack write claims exactly one paid dispatch, so two open
+/// requests need two separate ack writes; a candidate flipping two at once is
+/// rejected here. A no-op (nothing flipped) also returns false so a plain
+/// same-status rewrite stays rejected.
 fn dispatch_requests_ack_only_delta(cur_doc: &Value, cand: &Value) -> bool {
     let cur = arr(field(cur_doc, "dispatch_requests"));
     let new = arr(field(cand, "dispatch_requests"));
     if cur.is_empty() || cur.len() != new.len() {
         return false;
     }
-    let mut any_flip = false;
+    let mut flips = 0usize;
     for (c, n) in cur.iter().zip(new.iter()) {
         let c_id = str_field(c, "id");
         if c_id.is_empty() || c_id != str_field(n, "id") {
@@ -5105,10 +5128,10 @@ fn dispatch_requests_ack_only_delta(cur_doc: &Value, cand: &Value) -> bool {
             if &probe != c {
                 return false;
             }
-            any_flip = true;
+            flips += 1;
         }
     }
-    any_flip
+    flips == 1
 }
 
 /// Whether `cur_doc` and `cand` are identical objects on every key EXCEPT those

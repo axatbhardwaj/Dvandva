@@ -444,6 +444,130 @@ fn generate_deep_review_scaffolds_canonical_alongside_unrelated_open_vadi_reques
     run(&baton, &candidate).assert("write accepts the candidate with both requests", 0);
 }
 
+// tc-dispatch-request-composition-r5 (P2): an ack write flips EXACTLY ONE request.
+// With two OPEN vadi requests on a deep_review baton, `dvandva next --to deep_review`
+// acks only ONE (the deterministic lowest id), leaving the other open — one wake,
+// one ack. Before the fix the scaffold flipped EVERY open vadi request in a single
+// write, claiming both paid dispatches at once.
+#[test]
+fn generate_deep_review_ack_flips_exactly_one_of_two_open_vadi_requests() {
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    let candidate = dir.path().join("baton.next.json");
+    make_baton_v3(&baton, "deep_review", "prativadi", 4, |b| {
+        b["review_target"] = json!("implementation");
+        b["dispatch_requests"] = json!([
+            {"id": "dr-1-canonical", "role": "vadi", "purpose": "credited cross-vendor Anthropic-Opus dispatch", "status": "open"},
+            {"id": "dr-2-unrelated", "role": "vadi", "purpose": "unrelated maintenance sweep", "status": "open"}
+        ]);
+    });
+
+    let (code, stdout, stderr) = run_next_env(
+        &[
+            "--file",
+            baton.to_str().unwrap(),
+            "--to",
+            "deep_review",
+            "--summary",
+            "Vadi claims exactly one paid cross-vendor Opus dispatch.",
+            "--next-action",
+            "vadi: dispatch the credited reviewers for the acked request; prativadi holds deep_review.",
+        ],
+        &[("DVANDVA_ROLE", "vadi")],
+    );
+    assert_eq!(code, 0, "single-ack generate exits 0\nstderr:\n{stderr}");
+    assert!(
+        stdout.contains("to=deep_review checkpoint=5"),
+        "ok line names the target + checkpoint\n{stdout}"
+    );
+
+    let cand = read_json(&candidate);
+    let reqs = cand["dispatch_requests"]
+        .as_array()
+        .expect("dispatch_requests array");
+    assert_eq!(reqs.len(), 2, "both requests survive\n{cand}");
+    let acked: Vec<&str> = reqs
+        .iter()
+        .filter(|r| r["status"] == "acknowledged")
+        .map(|r| r["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        acked,
+        vec!["dr-1-canonical"],
+        "exactly one request (the lowest id) is acked, the other stays open\n{cand}"
+    );
+
+    // The single-flip candidate round-trips through `write` under the vadi role.
+    run_env(&baton, &candidate, &[("DVANDVA_ROLE", "vadi")])
+        .assert("write accepts the single-request ack candidate", 0);
+    assert_eq!(read_json(&baton)["checkpoint"], 5);
+}
+
+// tc-dispatch-request-composition-r5 (P3): GENERATE selection honors --role. With a
+// prativadi-addressed request FIRST in the list, `next --role vadi --to deep_review`
+// acks the VADI's request, not the first-listed prativadi one. Before the fix,
+// selection matched on to_status alone, picked the prativadi ack, and self-failed 23
+// (a vadi cannot ack a prativadi request).
+#[test]
+fn generate_deep_review_ack_honors_role_with_prativadi_request_first() {
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    let candidate = dir.path().join("baton.next.json");
+    make_baton_v3(&baton, "deep_review", "prativadi", 4, |b| {
+        b["review_target"] = json!("implementation");
+        b["dispatch_requests"] = json!([
+            {"id": "dr-prativadi", "role": "prativadi", "purpose": "prativadi-side maintenance dispatch", "status": "open"},
+            {"id": "dr-vadi", "role": "vadi", "purpose": "credited cross-vendor Anthropic-Opus dispatch", "status": "open"}
+        ]);
+    });
+
+    let (code, stdout, stderr) = run_next_env(
+        &[
+            "--file",
+            baton.to_str().unwrap(),
+            "--role",
+            "vadi",
+            "--to",
+            "deep_review",
+            "--summary",
+            "Vadi acks its own request despite a prativadi request listed first.",
+            "--next-action",
+            "vadi: dispatch the credited reviewers; prativadi holds its own open request.",
+        ],
+        &[("DVANDVA_ROLE", "vadi")],
+    );
+    assert_eq!(code, 0, "role-scoped generate exits 0\nstderr:\n{stderr}");
+    assert!(
+        stdout.contains("to=deep_review checkpoint=5"),
+        "ok line\n{stdout}"
+    );
+
+    let cand = read_json(&candidate);
+    let reqs = cand["dispatch_requests"]
+        .as_array()
+        .expect("dispatch_requests array");
+    let by_id = |id: &str| {
+        reqs.iter()
+            .find(|r| r["id"] == id)
+            .expect("request present")
+            .clone()
+    };
+    assert_eq!(
+        by_id("dr-vadi")["status"],
+        "acknowledged",
+        "the vadi request is acked\n{cand}"
+    );
+    assert_eq!(
+        by_id("dr-prativadi")["status"],
+        "open",
+        "the prativadi request is untouched\n{cand}"
+    );
+
+    run_env(&baton, &candidate, &[("DVANDVA_ROLE", "vadi")])
+        .assert("write accepts the role-scoped vadi ack candidate", 0);
+    assert_eq!(read_json(&baton)["checkpoint"], 5);
+}
+
 #[test]
 fn generate_workflow_declaring_candidate_and_write_accepts_it() {
     let dir = tempfile::tempdir().unwrap();

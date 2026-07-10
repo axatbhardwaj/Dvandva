@@ -150,6 +150,11 @@ fn run_list(baton: &Value, role_filter: Option<&str>) -> i32 {
         if let Some(target) = &option.review_target {
             line.push_str(&format!(" review_target={target}"));
         }
+        // Distinguish the per-request deep_review ack options (one per open dispatch
+        // request) — otherwise two same-role acks print byte-identical lines.
+        if let Some(id) = &option.dispatch_ack_request_id {
+            line.push_str(&format!(" dispatch_ack={id}"));
+        }
         println!("{line}");
     }
     // Fixed token: the surface over-approximates content gates (evidence tracks,
@@ -206,9 +211,23 @@ fn run_generate(baton_file: &Path, baton: &Value, args: &Args) -> i32 {
     };
 
     // Select the matching legal transition (one source of truth with the engine).
+    // Selection honors --role (r5 P3): a bare to_status match is not enough when
+    // several options share it (e.g. one same-status deep_review ack option PER open
+    // dispatch request). Filter to the options this role owns, then disambiguate
+    // deterministically by the ack request id — lowest lexicographically — so a
+    // multi-open-request deep_review resolves to one specific request without a
+    // selector flag. Non-ack options carry id `None`, which sorts first, and there
+    // is at most one per to_status, so the tie-break is inert for them.
     let options = legal_transitions(baton);
-    let option = match options.iter().find(|o| o.to_status == to) {
-        Some(option) => option,
+    let role_filter = args.role.as_deref();
+    let mut matches: Vec<&TransitionOption> = options
+        .iter()
+        .filter(|o| o.to_status == to)
+        .filter(|o| role_filter.is_none_or(|role| role_owns(o, role)))
+        .collect();
+    matches.sort_by(|a, b| a.dispatch_ack_request_id.cmp(&b.dispatch_ack_request_id));
+    let option = match matches.first() {
+        Some(option) => *option,
         None => {
             let mut legal: Vec<&str> = options.iter().map(|o| o.to_status.as_str()).collect();
             legal.dedup();
@@ -345,8 +364,15 @@ fn run_generate(baton_file: &Path, baton: &Value, args: &Args) -> i32 {
         return 2;
     }
 
+    // Note the acked request id when an ack option was selected (r5 P3): with
+    // several same-role open requests the deterministic lowest-id choice is
+    // otherwise invisible, so surface exactly which one this write claims.
+    let ack_note = match &option.dispatch_ack_request_id {
+        Some(id) => format!(" dispatch_ack={id}"),
+        None => String::new(),
+    };
     println!(
-        "DVANDVA_NEXT ok wrote={} to={to} checkpoint={new_checkpoint}",
+        "DVANDVA_NEXT ok wrote={} to={to} checkpoint={new_checkpoint}{ack_note}",
         out_path.display()
     );
     0
@@ -414,13 +440,18 @@ fn scaffold_dispatch_request(
         .push(entry);
 }
 
-/// Flip the addressed role's OPEN dispatch request(s) to `acknowledged` for the
-/// same-status deep_review ack option (FIX 2a). `option.dispatch_ack_role` names
-/// the role whose wake is being claimed; only that role's OPEN entries flip, and
-/// only their `status` changes — producing the identical-except-dispatch delta the
-/// write-side ack carve accepts. A no-op for every ordinary (non-ack) option.
+/// Flip EXACTLY the one selected OPEN dispatch request to `acknowledged` for the
+/// same-status deep_review ack option (FIX 2a; r5 P2). The option carries the id
+/// (`dispatch_ack_request_id`) and role (`dispatch_ack_role`) of the single request
+/// whose wake is being claimed; only that entry flips, and only its `status`
+/// changes — producing the identical-except-one-flip delta the write-side ack carve
+/// requires (one wake, one ack; ids are unique per the shape gate, so this matches
+/// at most one entry). A no-op for every ordinary (non-ack) option.
 fn scaffold_dispatch_ack(candidate: &mut Value, option: &TransitionOption) {
-    let Some(role) = option.dispatch_ack_role.as_deref() else {
+    let (Some(role), Some(id)) = (
+        option.dispatch_ack_role.as_deref(),
+        option.dispatch_ack_request_id.as_deref(),
+    ) else {
         return;
     };
     if let Some(reqs) = candidate
@@ -428,7 +459,8 @@ fn scaffold_dispatch_ack(candidate: &mut Value, option: &TransitionOption) {
         .and_then(Value::as_array_mut)
     {
         for req in reqs.iter_mut() {
-            if req.get("role").and_then(Value::as_str) == Some(role)
+            if req.get("id").and_then(Value::as_str) == Some(id)
+                && req.get("role").and_then(Value::as_str) == Some(role)
                 && req.get("status").and_then(Value::as_str) == Some("open")
             {
                 req["status"] = Value::from("acknowledged");

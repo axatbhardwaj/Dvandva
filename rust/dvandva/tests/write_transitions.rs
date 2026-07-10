@@ -1137,6 +1137,34 @@ fn v2_deep_review_ack_by_wrong_role_rejected() {
     );
 }
 
+// tc-dispatch-request-composition-r5 (P1): the deep_review ENTRY gate requires the
+// canonical vadi request to start EXACTLY `open`. A fresh entry that pre-supplies
+// it as `acknowledged` used to install deep_review (the old tolerant open predicate
+// counted `acknowledged` as open) while the wait surface — strict `== "open"` —
+// never wakes the vadi, so the credited-dispatch wake is silently skipped. Entering
+// deep_review with a pre-acknowledged canonical request is a contract violation.
+#[test]
+fn v2_cross_review_to_deep_review_rejects_preacknowledged_canonical_request() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v3(&n, "deep_review", "prativadi", 5, |v| {
+        cross_review_tracks(v);
+        // Exact canonical purpose, addressed to the vadi, but pre-acknowledged — the
+        // strict wait wake never fires on it, so the entry must be rejected.
+        v["dispatch_requests"] = json!([
+            {"id": "dr-opus", "role": "vadi", "purpose": "credited cross-vendor Anthropic-Opus dispatch", "status": "acknowledged"}
+        ]);
+    });
+    run(&b, &n).assert_contains(
+        "v2 cross_review->deep_review entry with a pre-acknowledged canonical request is rejected",
+        23,
+        "missing_dispatch_request",
+    );
+}
+
 #[test]
 fn v2_cross_review_cross_fixing_after_team_sync() {
     let d = tmp();
