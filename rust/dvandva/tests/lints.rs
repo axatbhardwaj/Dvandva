@@ -347,7 +347,7 @@ write-helper validation exit 23
 
 const MODEL_CLASSES: &str = r#"Dvandva model classes are vendor-neutral.
 Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available.
-Codex maps `opus` and `fable` to `gpt-5.5` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.5` with `high` reasoning.
+Codex maps `opus` and `fable` to `gpt-5.6-sol` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.6-terra` with `high` reasoning, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface.
 Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it.
 Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.
 Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
@@ -357,8 +357,8 @@ Do not use `haiku` for Dvandva subagents.
 const RING_DISPATCH: &str = r#"Seed-roster class vocabulary keeps these legacy routing needles, but they are not the concrete ring dispatch rule.
 Implementation, tests, and fixes default to gpt-class dispatch.
 GPT self-review is hygiene only and earns no review credit.
-A Grok lane may run only as read-only, uncredited triage for live-world/plan-pulse or first-pass review leads.
-Fable-class owns plan authorship and terminal adjudication only, never code.
+A Grok lane may take routine read-only work when it clears the quality bar — always uncredited, never execute, never code-touching, never baton-writing.
+Fable-class owns plan authorship and terminal adjudication, may take routine non-code work when it clears the quality bar, and never writes code.
 "#;
 
 const GROK_PLAN_PULSE_DOC: &str = r#"Research phases, plus the plan-review loop's uncredited latest-tech pulse.
@@ -1480,6 +1480,64 @@ fn phase4_research_rejects_transition_table_missing_model_policy() {
 }
 
 #[test]
+fn phase4_research_rejects_pre_5_6_codex_model_mapping() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("product.md");
+    let text = fs::read_to_string(&p).unwrap().replace(
+        "Codex maps `opus` and `fable` to `gpt-5.6-sol` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.6-terra` with `high` reasoning, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface.\n",
+        "Codex maps `opus` and `fable` to `gpt-5.5` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.5` with `high` reasoning.\n",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("product.md documents Codex model-class mapping"));
+}
+
+#[test]
+fn phase4_research_rejects_retired_fable_no_code_needle() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/commands/vadi.md");
+    let text = fs::read_to_string(&p).unwrap().replace(
+        "Fable-class owns plan authorship and terminal adjudication, may take routine non-code work when it clears the quality bar, and never writes code.\n",
+        "Fable-class owns plan authorship and terminal adjudication only, never code.\n",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("plugins/dvandva/commands/vadi.md pins Fable-class to plan/done judgment"));
+}
+
+#[test]
+fn phase4_research_rejects_retired_grok_uncredited_needle() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/commands/vadi.md");
+    let text = fs::read_to_string(&p).unwrap().replace(
+        "A Grok lane may take routine read-only work when it clears the quality bar — always uncredited, never execute, never code-touching, never baton-writing.\n",
+        "A Grok lane may run only as read-only, uncredited triage for live-world/plan-pulse or first-pass review leads.\n",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(
+        r.fails_with("plugins/dvandva/commands/vadi.md pins Grok as uncredited read-only triage")
+    );
+}
+
+#[test]
+fn phase4_research_rejects_codex_mapping_without_fallback() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("product.md");
+    let text = fs::read_to_string(&p).unwrap().replace(
+        ", falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface",
+        "",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("product.md documents Codex model-class mapping"));
+}
+
+#[test]
 fn phase4_research_rejects_retired_codex_model_mapping() {
     let d = tmp();
     phase4_fixture(d.path());
@@ -1558,7 +1616,7 @@ Dynamic write-path disjointness is required unless conflict_group serialization 
 There is no daemon and no mailbox.
 There is no hidden scheduler or hidden central process.
 Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available.
-Codex maps `opus` and `fable` to `gpt-5.5` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.5` with `high` reasoning.
+Codex maps `opus` and `fable` to `gpt-5.6-sol` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.6-terra` with `high` reasoning, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface.
 Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it.
 Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.
 Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
@@ -1574,7 +1632,7 @@ Dynamic write-path disjointness is required when instances share base_checkpoint
 There is no daemon and no mailbox.
 There is no hidden scheduler or hidden central process.
 Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available.
-Codex maps `opus` and `fable` to `gpt-5.5` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.5` with `high` reasoning.
+Codex maps `opus` and `fable` to `gpt-5.6-sol` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.6-terra` with `high` reasoning, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface.
 Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it.
 Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.
 Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
