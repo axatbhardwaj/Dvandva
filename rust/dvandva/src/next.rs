@@ -36,7 +36,7 @@ Usage:
   dvandva next [--file <baton>] --to <status> [--phase N]
                --summary <text> --next-action <text>
                [--question <t> --resume-assignee <r> --resume-status <s>]
-               [--out <file>]                                      # generate a candidate
+               [--dispatch-request <id>] [--out <file>]            # generate a candidate
 
 LIST prints one line per legal transition from the current baton:
   DVANDVA_NEXT <status> owner=<assignee> phase=<same|advance|spec> [loop=<k>/<cap>] [review_target=<t>]
@@ -50,6 +50,11 @@ the same pipeline `dvandva write` runs, and writes the candidate (default
 --phase N is required when the target is ambiguous (a phase advancement or an
 amendment exit). --summary and --next-action are required. human_question
 additionally requires --question, --resume-assignee, and --resume-status.
+
+For a same-status `--to deep_review` ack, the effective role (--role, else
+DVANDVA_ROLE) selects which OPEN dispatch request is acknowledged: the CANONICAL
+credited-Opus request is preferred, else the sole open request for that role. If
+several non-canonical requests tie, pass --dispatch-request <id> to choose one.
 
 Default baton resolution: --file, else DVANDVA_BATON_FILE,
 DVANDVA_RUN_DIR/baton.json, DVANDVA_RUN_ID mapped to
@@ -74,6 +79,7 @@ struct Args {
     resume_assignee: Option<String>,
     resume_status: Option<String>,
     out: Option<String>,
+    dispatch_request: Option<String>,
 }
 
 enum ParseError {
@@ -211,31 +217,15 @@ fn run_generate(baton_file: &Path, baton: &Value, args: &Args) -> i32 {
     };
 
     // Select the matching legal transition (one source of truth with the engine).
-    // Selection honors --role (r5 P3): a bare to_status match is not enough when
-    // several options share it (e.g. one same-status deep_review ack option PER open
-    // dispatch request). Filter to the options this role owns, then disambiguate
-    // deterministically by the ack request id — lowest lexicographically — so a
-    // multi-open-request deep_review resolves to one specific request without a
-    // selector flag. Non-ack options carry id `None`, which sorts first, and there
-    // is at most one per to_status, so the tie-break is inert for them.
+    // Selection splits into two regimes (r6): an ORDINARY transition has at most one
+    // option per to_status; a same-status `deep_review` ack emits ONE option PER open
+    // dispatch request, so it needs an explicit, role-bound, canonical-first choice.
     let options = legal_transitions(baton);
-    let role_filter = args.role.as_deref();
-    let mut matches: Vec<&TransitionOption> = options
-        .iter()
-        .filter(|o| o.to_status == to)
-        .filter(|o| role_filter.is_none_or(|role| role_owns(o, role)))
-        .collect();
-    matches.sort_by(|a, b| a.dispatch_ack_request_id.cmp(&b.dispatch_ack_request_id));
-    let option = match matches.first() {
-        Some(option) => *option,
-        None => {
-            let mut legal: Vec<&str> = options.iter().map(|o| o.to_status.as_str()).collect();
-            legal.dedup();
-            eprintln!(
-                "DVANDVA_NEXT illegal_target to={to} legal={}",
-                legal.join(",")
-            );
-            return 2;
+    let option = match select_option(baton, &options, to, args) {
+        Ok(option) => option,
+        Err((code, message)) => {
+            eprintln!("{message}");
+            return code;
         }
     };
 
@@ -378,6 +368,230 @@ fn run_generate(baton_file: &Path, baton: &Value, args: &Args) -> i32 {
     0
 }
 
+// ===========================================================================
+// Transition selection (ordinary vs deep_review ack)
+// ===========================================================================
+
+/// Pick the one legal transition to materialise for `--to <to>`.
+///
+/// Two regimes:
+/// * ORDINARY — every non-ack target. There is at most one option per to_status;
+///   the explicit `--role` flag filters, and the ack-id tie-break (always `None`
+///   here) is inert.
+/// * DEEP_REVIEW ACK — a same-status `deep_review` rewrite emits one option PER
+///   open dispatch request. The effective role (`--role`, else `DVANDVA_ROLE`, else
+///   argv0 — the CLI-wide precedence) binds the choice; among that role's open
+///   requests the CANONICAL credited-Opus request wins, else the sole candidate.
+///   `--dispatch-request <id>` overrides with an explicit, validated selection.
+fn select_option<'a>(
+    baton: &Value,
+    options: &'a [TransitionOption],
+    to: &str,
+    args: &Args,
+) -> Result<&'a TransitionOption, (i32, String)> {
+    let by_status: Vec<&TransitionOption> = options.iter().filter(|o| o.to_status == to).collect();
+    let ack_options: Vec<&TransitionOption> = by_status
+        .iter()
+        .copied()
+        .filter(|o| o.dispatch_ack_request_id.is_some())
+        .collect();
+
+    // The explicit selector is meaningful only for a deep_review ack.
+    if let Some(id) = args.dispatch_request.as_deref() {
+        return select_explicit_ack(baton, &ack_options, to, id, args.role.as_deref());
+    }
+
+    if !ack_options.is_empty() {
+        return select_default_ack(baton, &ack_options, args.role.as_deref());
+    }
+
+    // Ordinary regime: filter by the explicit --role flag, exactly as before.
+    let role_filter = args.role.as_deref();
+    let mut matches: Vec<&TransitionOption> = by_status
+        .into_iter()
+        .filter(|o| role_filter.is_none_or(|role| role_owns(o, role)))
+        .collect();
+    matches.sort_by(|a, b| a.dispatch_ack_request_id.cmp(&b.dispatch_ack_request_id));
+    match matches.first() {
+        Some(option) => Ok(*option),
+        None => {
+            let mut legal: Vec<&str> = options.iter().map(|o| o.to_status.as_str()).collect();
+            legal.dedup();
+            Err((
+                2,
+                format!(
+                    "DVANDVA_NEXT illegal_target to={to} legal={}",
+                    legal.join(",")
+                ),
+            ))
+        }
+    }
+}
+
+/// Explicit `--dispatch-request <id>` selection: the invoking role names exactly
+/// one OPEN dispatch request to ack. Errors clearly when the flag is misused (a
+/// non-deep_review target), the id is unknown, the request is not open, or it is
+/// owned by another role.
+fn select_explicit_ack<'a>(
+    baton: &Value,
+    ack_options: &[&'a TransitionOption],
+    to: &str,
+    id: &str,
+    role_flag: Option<&str>,
+) -> Result<&'a TransitionOption, (i32, String)> {
+    if to != "deep_review" {
+        return Err((
+            2,
+            format!(
+                "DVANDVA_NEXT dispatch_request={id}: --dispatch-request applies only to a deep_review ack, not to={to}"
+            ),
+        ));
+    }
+    let effective_role = effective_ack_role(role_flag);
+    if let Some(option) = ack_options
+        .iter()
+        .copied()
+        .find(|o| o.dispatch_ack_request_id.as_deref() == Some(id))
+    {
+        if let Some(role) = effective_role.as_deref() {
+            if option.dispatch_ack_role.as_deref() != Some(role) {
+                let owner = option.dispatch_ack_role.as_deref().unwrap_or("?");
+                return Err((
+                    2,
+                    format!(
+                        "DVANDVA_NEXT dispatch_request={id}: request is owned by {owner}, not the invoking role {role}; a role may only ack its own dispatch request"
+                    ),
+                ));
+            }
+        }
+        return Ok(option);
+    }
+    // Not an open ack option — report precisely from the baton's request list.
+    match dispatch_request_status(baton, id) {
+        Some(status) => Err((
+            2,
+            format!(
+                "DVANDVA_NEXT dispatch_request={id}: request status is '{status}', not open; only an open dispatch request can be acked"
+            ),
+        )),
+        None => Err((
+            2,
+            format!(
+                "DVANDVA_NEXT dispatch_request={id}: no dispatch request with id '{id}' exists on the baton"
+            ),
+        )),
+    }
+}
+
+/// Default (no explicit selector) deep_review ack selection: role-bound and
+/// canonical-first. Among the effective role's open requests, prefer the canonical
+/// credited-Opus request; else take the sole open request. A tie of non-canonical
+/// requests requires --dispatch-request.
+fn select_default_ack<'a>(
+    baton: &Value,
+    ack_options: &[&'a TransitionOption],
+    role_flag: Option<&str>,
+) -> Result<&'a TransitionOption, (i32, String)> {
+    let effective_role = effective_ack_role(role_flag);
+    let candidates: Vec<&TransitionOption> = match effective_role.as_deref() {
+        Some(role) => ack_options
+            .iter()
+            .copied()
+            .filter(|o| o.dispatch_ack_role.as_deref() == Some(role))
+            .collect(),
+        None => ack_options.to_vec(),
+    };
+    if candidates.is_empty() {
+        let role = effective_role.as_deref().unwrap_or("?");
+        return Err((
+            2,
+            format!(
+                "DVANDVA_NEXT no open dispatch request for role={role}; open dispatch-ack ids: {}",
+                ack_ids(ack_options).join(",")
+            ),
+        ));
+    }
+    // Canonical-first: the credited-Opus wake the protocol produces on entry.
+    let mut canonical: Vec<&TransitionOption> = candidates
+        .iter()
+        .copied()
+        .filter(|o| {
+            o.dispatch_ack_request_id
+                .as_deref()
+                .is_some_and(|id| request_is_canonical(baton, id))
+        })
+        .collect();
+    if !canonical.is_empty() {
+        canonical.sort_by(|a, b| a.dispatch_ack_request_id.cmp(&b.dispatch_ack_request_id));
+        return Ok(canonical[0]);
+    }
+    if candidates.len() == 1 {
+        return Ok(candidates[0]);
+    }
+    // No canonical present and several candidates tie — refuse to guess.
+    let role = effective_role.as_deref().unwrap_or("?");
+    Err((
+        2,
+        format!(
+            "DVANDVA_NEXT ambiguous dispatch ack: {} open non-canonical requests for role={role} ({}); pass --dispatch-request <id> to select one",
+            candidates.len(),
+            ack_ids(&candidates).join(",")
+        ),
+    ))
+}
+
+/// Effective role for ack selection: `--role` flag, else `DVANDVA_ROLE`, else the
+/// argv0-derived role — the same precedence every other subcommand uses
+/// ([`crate::Role::resolve`]) — restricted to the two peer roles. `None` when
+/// unresolvable (the write-side ack carve is the backstop that still requires
+/// `DVANDVA_ROLE` to equal the acked request's role).
+fn effective_ack_role(role_flag: Option<&str>) -> Option<String> {
+    let env_role = std::env::var("DVANDVA_ROLE").ok();
+    let argv0 = std::env::args().next().unwrap_or_default();
+    crate::Role::resolve(role_flag, env_role.as_deref(), &argv0)
+        .filter(|r| matches!(r, crate::Role::Vadi | crate::Role::Prativadi))
+        .map(|r| r.as_str().to_string())
+}
+
+/// The `status` of the dispatch request with `id`, if one exists on the baton.
+fn dispatch_request_status(baton: &Value, id: &str) -> Option<String> {
+    baton
+        .get("dispatch_requests")
+        .and_then(Value::as_array)?
+        .iter()
+        .find(|req| req.get("id").and_then(Value::as_str) == Some(id))
+        .and_then(|req| req.get("status").and_then(Value::as_str))
+        .map(str::to_string)
+}
+
+/// Whether the dispatch request with `id` carries EXACTLY the canonical
+/// credited-Opus purpose — the wake the deep_review entry gate produces. Exact
+/// string equality, shared with the write-side entry gate via
+/// [`crate::write::CANONICAL_OPUS_DISPATCH_PURPOSE`].
+fn request_is_canonical(baton: &Value, id: &str) -> bool {
+    baton
+        .get("dispatch_requests")
+        .and_then(Value::as_array)
+        .is_some_and(|reqs| {
+            reqs.iter().any(|req| {
+                req.get("id").and_then(Value::as_str) == Some(id)
+                    && req.get("purpose").and_then(Value::as_str)
+                        == Some(crate::write::CANONICAL_OPUS_DISPATCH_PURPOSE)
+            })
+        })
+}
+
+/// The ack-request ids carried by a set of ack options (for error listings),
+/// sorted for a stable message.
+fn ack_ids(options: &[&TransitionOption]) -> Vec<String> {
+    let mut ids: Vec<String> = options
+        .iter()
+        .filter_map(|o| o.dispatch_ack_request_id.clone())
+        .collect();
+    ids.sort_unstable();
+    ids
+}
+
 /// Scaffold the vadi dispatch request that a development-mode prativadi-owned
 /// `deep_review` entry MUST carry. `dvandva write`'s producer gate rejects such
 /// an entry (exit 23 `missing_dispatch_request`) unless an OPEN
@@ -386,8 +600,12 @@ fn run_generate(baton_file: &Path, baton: &Value, args: &Args) -> i32 {
 /// Opus reviewers. Without this, the canonical `dvandva next --to deep_review`
 /// scaffold self-fails validation and never emits, so the tooling path the
 /// walkaway loop is built on is broken. Scoped to exactly the gate's orientation
-/// (development mode + deep_review + assignee prativadi), and idempotent: if the
-/// copied baton already carries an open vadi request, nothing is added.
+/// (development mode + deep_review + assignee prativadi), and to an ENTRY only:
+/// when the current baton is ALREADY in deep_review the `--to deep_review` write is
+/// a same-status ACK (open->acknowledged), which must leave the request set
+/// untouched — scaffolding a fresh entry there would add a second request and break
+/// the one-flip ack delta the write-side carve requires. Idempotent: if the copied
+/// baton already carries an open CANONICAL vadi request, nothing is added.
 fn scaffold_dispatch_request(
     candidate: &mut Value,
     baton: &Value,
@@ -403,7 +621,8 @@ fn scaffold_dispatch_request(
     )
     .as_deref()
         == Some("development");
-    if !(development && to == "deep_review" && assignee == "prativadi") {
+    let entering = baton.get("status").and_then(Value::as_str) != Some("deep_review");
+    if !(development && to == "deep_review" && assignee == "prativadi" && entering) {
         return;
     }
     // Idempotence keys on the CANONICAL open vadi request specifically, not "any
@@ -618,6 +837,10 @@ fn parse_args(args: &[String]) -> Result<Args, ParseError> {
             }
             "--out" => {
                 parsed.out = Some(take_value(args, index)?);
+                index += 2;
+            }
+            "--dispatch-request" => {
+                parsed.dispatch_request = Some(take_value(args, index)?);
                 index += 2;
             }
             "-h" | "--help" => return Err(ParseError::Help),

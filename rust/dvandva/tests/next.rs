@@ -568,6 +568,486 @@ fn generate_deep_review_ack_honors_role_with_prativadi_request_first() {
     assert_eq!(read_json(&baton)["checkpoint"], 5);
 }
 
+// The exact canonical credited-Opus dispatch purpose (mirrors write.rs's
+// CANONICAL_OPUS_DISPATCH_PURPOSE, which is pub(crate) and unreachable from this
+// integration crate). A request whose purpose is EXACTLY this string is the
+// canonical wake the protocol produces on deep_review entry.
+const CANONICAL_PURPOSE: &str = "credited cross-vendor Anthropic-Opus dispatch";
+
+/// A `dispatch_requests` entry: canonical=true stamps the exact canonical purpose,
+/// false a distinct unrelated purpose.
+fn ack_req(id: &str, role: &str, canonical: bool, status: &str) -> Value {
+    let purpose = if canonical {
+        CANONICAL_PURPOSE
+    } else {
+        "unrelated maintenance sweep"
+    };
+    json!({"id": id, "role": role, "purpose": purpose, "status": status})
+}
+
+// tc-dispatch-request-selection-order-r6 (probe a): with two OPEN vadi requests
+// where a NON-canonical id sorts lexicographically BEFORE the canonical one, the
+// role-scoped `next --role vadi --to deep_review` must ack the CANONICAL wake, not
+// the lowest id. Before the fix, selection sorted by id and acked `aaa-unrelated`,
+// leaving the credited-Opus wake open — the wait surface kept re-firing.
+#[test]
+fn generate_deep_review_ack_prefers_canonical_over_lower_sorting_id() {
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    let candidate = dir.path().join("baton.next.json");
+    make_baton_v3(&baton, "deep_review", "prativadi", 4, |b| {
+        b["review_target"] = json!("implementation");
+        b["dispatch_requests"] = json!([
+            ack_req("aaa-unrelated", "vadi", false, "open"),
+            ack_req("credited-opus-dispatch-49", "vadi", true, "open"),
+        ]);
+    });
+
+    let (code, stdout, stderr) = run_next_env(
+        &[
+            "--file",
+            baton.to_str().unwrap(),
+            "--role",
+            "vadi",
+            "--to",
+            "deep_review",
+            "--summary",
+            "Vadi claims the canonical credited-Opus dispatch despite a lower-sorting id.",
+            "--next-action",
+            "vadi: dispatch the credited reviewers for the canonical wake.",
+        ],
+        &[("DVANDVA_ROLE", "vadi")],
+    );
+    assert_eq!(
+        code, 0,
+        "canonical-first generate exits 0\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("dispatch_ack=credited-opus-dispatch-49"),
+        "ok line names the canonical acked id\n{stdout}"
+    );
+
+    let cand = read_json(&candidate);
+    let reqs = cand["dispatch_requests"].as_array().unwrap();
+    let by_id = |id: &str| reqs.iter().find(|r| r["id"] == id).unwrap().clone();
+    assert_eq!(
+        by_id("credited-opus-dispatch-49")["status"],
+        "acknowledged",
+        "the canonical request is acked\n{cand}"
+    );
+    assert_eq!(
+        by_id("aaa-unrelated")["status"],
+        "open",
+        "the lower-sorting unrelated request stays open\n{cand}"
+    );
+    run_env(&baton, &candidate, &[("DVANDVA_ROLE", "vadi")])
+        .assert("write accepts the canonical-first ack candidate", 0);
+}
+
+// tc-dispatch-request-selection-order-r6 (probe b): the BARE documented command
+// `DVANDVA_ROLE=vadi dvandva next --to deep_review` (no --role flag) must honor the
+// environment role for selection and ack the VADI's canonical wake, even when a
+// prativadi request sorts first. Before the fix, the bare command ignored
+// DVANDVA_ROLE, sorted by id, selected the prativadi request, and self-failed 23
+// (a vadi cannot ack a prativadi request).
+#[test]
+fn generate_deep_review_ack_bare_command_honors_env_role() {
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    let candidate = dir.path().join("baton.next.json");
+    make_baton_v3(&baton, "deep_review", "prativadi", 4, |b| {
+        b["review_target"] = json!("implementation");
+        b["dispatch_requests"] = json!([
+            ack_req("aaa-prativadi", "prativadi", false, "open"),
+            ack_req("zzz-vadi-canonical", "vadi", true, "open"),
+        ]);
+    });
+
+    // Bare command: no --role flag; DVANDVA_ROLE=vadi is the only role source.
+    let (code, stdout, stderr) = run_next_env(
+        &[
+            "--file",
+            baton.to_str().unwrap(),
+            "--to",
+            "deep_review",
+            "--summary",
+            "Bare command acks the vadi wake using the environment role.",
+            "--next-action",
+            "vadi: dispatch the credited reviewers for the env-role wake.",
+        ],
+        &[("DVANDVA_ROLE", "vadi")],
+    );
+    assert_eq!(code, 0, "bare env-role generate exits 0\nstderr:\n{stderr}");
+    assert!(
+        stdout.contains("dispatch_ack=zzz-vadi-canonical"),
+        "ok line names the vadi acked id\n{stdout}"
+    );
+
+    let cand = read_json(&candidate);
+    let reqs = cand["dispatch_requests"].as_array().unwrap();
+    let by_id = |id: &str| reqs.iter().find(|r| r["id"] == id).unwrap().clone();
+    assert_eq!(
+        by_id("zzz-vadi-canonical")["status"],
+        "acknowledged",
+        "the vadi request is acked via the env role\n{cand}"
+    );
+    assert_eq!(
+        by_id("aaa-prativadi")["status"],
+        "open",
+        "the first-sorting prativadi request stays open\n{cand}"
+    );
+    run_env(&baton, &candidate, &[("DVANDVA_ROLE", "vadi")])
+        .assert("write accepts the env-role ack candidate", 0);
+}
+
+// --dispatch-request only selects a deep_review ack; on any other --to it errors.
+#[test]
+fn generate_dispatch_request_flag_rejected_on_non_deep_review_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    make_baton_v3(&baton, "deep_review", "prativadi", 4, |b| {
+        b["review_target"] = json!("implementation");
+        b["dispatch_requests"] = json!([ack_req("d1", "vadi", true, "open")]);
+    });
+    let (code, _stdout, stderr) = run_next_env(
+        &[
+            "--file",
+            baton.to_str().unwrap(),
+            "--to",
+            "phase_fixing",
+            "--dispatch-request",
+            "d1",
+            "--summary",
+            "Route findings to phase_fixing.",
+            "--next-action",
+            "vadi: address the deep_review findings.",
+        ],
+        &[("DVANDVA_ROLE", "vadi")],
+    );
+    assert_eq!(
+        code, 2,
+        "flag on a non-ack target exits 2\nstderr:\n{stderr}"
+    );
+    assert!(
+        stderr.contains("applies only to"),
+        "error explains the flag is deep_review-ack only\n{stderr}"
+    );
+}
+
+// tc-dispatch-request-selection-order-r6 (P6): the exhaustive composition matrix.
+// Sweeps {1..3 requests} x {vadi/prativadi owners} x {open/acknowledged/completed}
+// x {bare / --role / --dispatch-request selection}, asserting for every row either
+// the ack targets EXACTLY the expected request (exit 0, single open->acknowledged
+// flip, others preserved, and write accepts the candidate) or the command errors
+// with the expected reason. This enumerated table is the completeness proof future
+// rounds check against.
+#[test]
+fn dispatch_ack_selection_composition_matrix() {
+    // (id, owner-role, canonical?, status)
+    type Req = (&'static str, &'static str, bool, &'static str);
+    enum Expect {
+        // exit 0; this id flips open->acknowledged, every other entry preserved.
+        Ack(&'static str),
+        // exit code + a stderr needle.
+        Err(i32, &'static str),
+    }
+    struct Case {
+        name: &'static str,
+        requests: &'static [Req],
+        env_role: &'static str,
+        role_flag: Option<&'static str>,
+        dispatch_request: Option<&'static str>,
+        expect: Expect,
+    }
+    use Expect::{Ack, Err};
+
+    let cases: &[Case] = &[
+        // ---- single request, bare command --------------------------------
+        Case {
+            name: "1req-open-canonical-vadi-bare",
+            requests: &[("d1", "vadi", true, "open")],
+            env_role: "vadi",
+            role_flag: None,
+            dispatch_request: None,
+            expect: Ack("d1"),
+        },
+        Case {
+            name: "1req-open-noncanonical-vadi-bare",
+            requests: &[("d1", "vadi", false, "open")],
+            env_role: "vadi",
+            role_flag: None,
+            dispatch_request: None,
+            expect: Ack("d1"),
+        },
+        Case {
+            name: "1req-open-canonical-prativadi-bare",
+            requests: &[("d1", "prativadi", true, "open")],
+            env_role: "prativadi",
+            role_flag: None,
+            dispatch_request: None,
+            expect: Ack("d1"),
+        },
+        // ---- two same-role requests, canonical-first ---------------------
+        Case {
+            name: "2req-vadi-canonical-sorts-last-bare",
+            requests: &[
+                ("aaa", "vadi", false, "open"),
+                ("zzz-canon", "vadi", true, "open"),
+            ],
+            env_role: "vadi",
+            role_flag: None,
+            dispatch_request: None,
+            expect: Ack("zzz-canon"),
+        },
+        Case {
+            name: "2req-vadi-canonical-sorts-last-role-flag",
+            requests: &[
+                ("aaa", "vadi", false, "open"),
+                ("zzz-canon", "vadi", true, "open"),
+            ],
+            env_role: "vadi",
+            role_flag: Some("vadi"),
+            dispatch_request: None,
+            expect: Ack("zzz-canon"),
+        },
+        // ---- two same-role non-canonical: ambiguous without a selector ---
+        Case {
+            name: "2req-vadi-noncanonical-ambiguous-bare",
+            requests: &[("d1", "vadi", false, "open"), ("d2", "vadi", false, "open")],
+            env_role: "vadi",
+            role_flag: None,
+            dispatch_request: None,
+            expect: Err(2, "ambiguous dispatch ack"),
+        },
+        Case {
+            name: "2req-vadi-noncanonical-explicit-d2",
+            requests: &[("d1", "vadi", false, "open"), ("d2", "vadi", false, "open")],
+            env_role: "vadi",
+            role_flag: None,
+            dispatch_request: Some("d2"),
+            expect: Ack("d2"),
+        },
+        Case {
+            name: "2req-vadi-noncanonical-explicit-d1",
+            requests: &[("d1", "vadi", false, "open"), ("d2", "vadi", false, "open")],
+            env_role: "vadi",
+            role_flag: None,
+            dispatch_request: Some("d1"),
+            expect: Ack("d1"),
+        },
+        // ---- mixed-role: env/flag role binds the selection ---------------
+        Case {
+            name: "2req-mixed-prativadi-first-vadi-canonical-bare",
+            requests: &[
+                ("aaa-prati", "prativadi", false, "open"),
+                ("zzz-vadi", "vadi", true, "open"),
+            ],
+            env_role: "vadi",
+            role_flag: None,
+            dispatch_request: None,
+            expect: Ack("zzz-vadi"),
+        },
+        Case {
+            name: "2req-mixed-invoking-prativadi-bare",
+            requests: &[
+                ("aaa-prati", "prativadi", false, "open"),
+                ("zzz-vadi", "vadi", true, "open"),
+            ],
+            env_role: "prativadi",
+            role_flag: None,
+            dispatch_request: None,
+            expect: Ack("aaa-prati"),
+        },
+        Case {
+            name: "2req-mixed-explicit-cross-role-rejected",
+            requests: &[
+                ("aaa-prati", "prativadi", false, "open"),
+                ("zzz-vadi", "vadi", true, "open"),
+            ],
+            env_role: "vadi",
+            role_flag: None,
+            dispatch_request: Some("aaa-prati"),
+            expect: Err(2, "not the invoking role"),
+        },
+        // ---- explicit selector error surfaces ----------------------------
+        Case {
+            name: "explicit-nonexistent-id",
+            requests: &[("d1", "vadi", true, "open")],
+            env_role: "vadi",
+            role_flag: None,
+            dispatch_request: Some("nope"),
+            expect: Err(2, "no dispatch request with id"),
+        },
+        Case {
+            name: "explicit-acknowledged-not-open",
+            requests: &[
+                ("d1", "vadi", true, "open"),
+                ("d2", "vadi", false, "acknowledged"),
+            ],
+            env_role: "vadi",
+            role_flag: None,
+            dispatch_request: Some("d2"),
+            expect: Err(2, "not open"),
+        },
+        Case {
+            name: "explicit-completed-not-open",
+            requests: &[
+                ("d1", "vadi", true, "open"),
+                ("d2", "vadi", false, "completed"),
+            ],
+            env_role: "vadi",
+            role_flag: None,
+            dispatch_request: Some("d2"),
+            expect: Err(2, "not open"),
+        },
+        // ---- role has no open request ------------------------------------
+        Case {
+            name: "role-has-no-open-request",
+            requests: &[("p1", "prativadi", false, "open")],
+            env_role: "vadi",
+            role_flag: None,
+            dispatch_request: None,
+            expect: Err(2, "no open dispatch request for role"),
+        },
+        // ---- three requests ----------------------------------------------
+        Case {
+            name: "3req-canonical-among-vadi-role-flag",
+            requests: &[
+                ("aaa-vadi", "vadi", false, "open"),
+                ("mmm-vadi-canon", "vadi", true, "open"),
+                ("prati", "prativadi", false, "open"),
+            ],
+            env_role: "vadi",
+            role_flag: Some("vadi"),
+            dispatch_request: None,
+            expect: Ack("mmm-vadi-canon"),
+        },
+        Case {
+            name: "3req-prativadi-single-candidate",
+            requests: &[
+                ("aaa-vadi", "vadi", false, "open"),
+                ("mmm-vadi-canon", "vadi", true, "open"),
+                ("prati", "prativadi", false, "open"),
+            ],
+            env_role: "prativadi",
+            role_flag: Some("prativadi"),
+            dispatch_request: None,
+            expect: Ack("prati"),
+        },
+        // ---- closed companions do not block the open ack -----------------
+        Case {
+            name: "open-canonical-with-acknowledged-companion-bare",
+            requests: &[
+                ("d1", "vadi", true, "open"),
+                ("d2", "vadi", false, "acknowledged"),
+            ],
+            env_role: "vadi",
+            role_flag: None,
+            dispatch_request: None,
+            expect: Ack("d1"),
+        },
+        // ---- no open request at all: same-status ack is not a legal edge --
+        Case {
+            name: "all-acknowledged-no-open-illegal-target",
+            requests: &[("d1", "vadi", true, "acknowledged")],
+            env_role: "vadi",
+            role_flag: None,
+            dispatch_request: None,
+            expect: Err(2, "illegal_target"),
+        },
+    ];
+
+    for case in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let baton = dir.path().join("baton.json");
+        let candidate = dir.path().join("baton.next.json");
+        let reqs: Vec<Value> = case
+            .requests
+            .iter()
+            .map(|(id, role, canon, status)| ack_req(id, role, *canon, status))
+            .collect();
+        make_baton_v3(&baton, "deep_review", "prativadi", 4, |b| {
+            b["review_target"] = json!("implementation");
+            b["dispatch_requests"] = Value::Array(reqs);
+        });
+
+        let mut args: Vec<String> = vec![
+            "--file".into(),
+            baton.to_str().unwrap().into(),
+            "--to".into(),
+            "deep_review".into(),
+            "--summary".into(),
+            format!("matrix case {}", case.name),
+            "--next-action".into(),
+            "vadi/prativadi acks its dispatch wake.".into(),
+        ];
+        if let Some(role) = case.role_flag {
+            args.push("--role".into());
+            args.push(role.into());
+        }
+        if let Some(id) = case.dispatch_request {
+            args.push("--dispatch-request".into());
+            args.push(id.into());
+        }
+        let arg_refs: Vec<&str> = args.iter().map(String::as_str).collect();
+        let (code, stdout, stderr) = run_next_env(&arg_refs, &[("DVANDVA_ROLE", case.env_role)]);
+
+        match case.expect {
+            Ack(id) => {
+                assert_eq!(
+                    code, 0,
+                    "case '{}': expected ack exit 0, got {code}\nstderr:\n{stderr}",
+                    case.name
+                );
+                assert!(
+                    stdout.contains(&format!("dispatch_ack={id}")),
+                    "case '{}': ok line must name acked id {id}\nstdout:\n{stdout}",
+                    case.name
+                );
+                let cand = read_json(&candidate);
+                let creqs = cand["dispatch_requests"].as_array().unwrap();
+                for r in creqs {
+                    let rid = r["id"].as_str().unwrap();
+                    let want = if rid == id {
+                        "acknowledged"
+                    } else {
+                        case.requests
+                            .iter()
+                            .find(|(cid, ..)| *cid == rid)
+                            .unwrap()
+                            .3
+                    };
+                    assert_eq!(
+                        r["status"], want,
+                        "case '{}': request {rid} status\n{cand}",
+                        case.name
+                    );
+                }
+                // End-to-end: `write` accepts the ack candidate under the same role.
+                run_env(&baton, &candidate, &[("DVANDVA_ROLE", case.env_role)])
+                    .assert(case.name, 0);
+            }
+            Err(expected_code, needle) => {
+                assert_eq!(
+                    code, expected_code,
+                    "case '{}': expected err exit {expected_code}, got {code}\nstderr:\n{stderr}",
+                    case.name
+                );
+                assert!(
+                    stderr.contains(needle),
+                    "case '{}': stderr must contain '{needle}'\nstderr:\n{stderr}",
+                    case.name
+                );
+                assert!(
+                    !candidate.exists(),
+                    "case '{}': no candidate must be written on error",
+                    case.name
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn generate_workflow_declaring_candidate_and_write_accepts_it() {
     let dir = tempfile::tempdir().unwrap();
