@@ -101,6 +101,8 @@ const MODEL_POLICY_GPT_SELF_REVIEW_NO_CREDIT: &str =
     "GPT self-review is hygiene only and earns no review credit";
 const MODEL_POLICY_GROK_UNCREDITED: &str =
     "A Grok lane may take routine read-only work when it clears the quality bar — always uncredited, never execute, never code-touching, never baton-writing.";
+const MODEL_POLICY_OPUS_CREDITED_REVIEW: &str =
+    "Opus-class remains the credited deep/adversarial review gate.";
 const MODEL_POLICY_FABLE_NO_CODE: &str =
     "Fable-class owns plan authorship and terminal adjudication, may take routine non-code work when it clears the quality bar, and never writes code.";
 
@@ -219,6 +221,13 @@ fn req_command_ring_dispatch(r: &mut Report, root: &Path, rel: &str) {
         format!(
             "{rel} permits Grok routine uncredited read-only work but no execution or code touching"
         ),
+    );
+    req(
+        r,
+        root,
+        rel,
+        MODEL_POLICY_OPUS_CREDITED_REVIEW,
+        format!("{rel} preserves Opus-class as the credited deep/adversarial review gate"),
     );
     req(
         r,

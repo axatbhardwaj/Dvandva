@@ -358,6 +358,7 @@ const RING_DISPATCH: &str = r#"Seed-roster class vocabulary keeps these legacy r
 Implementation, tests, and fixes default to gpt-class dispatch.
 GPT self-review is hygiene only and earns no review credit.
 A Grok lane may take routine read-only work when it clears the quality bar — always uncredited, never execute, never code-touching, never baton-writing.
+Opus-class remains the credited deep/adversarial review gate.
 Fable-class owns plan authorship and terminal adjudication, may take routine non-code work when it clears the quality bar, and never writes code.
 "#;
 
@@ -1525,6 +1526,22 @@ fn phase4_research_rejects_retired_grok_uncredited_needle() {
             "plugins/dvandva/commands/vadi.md permits Grok routine uncredited read-only work but no execution or code touching"
         )
     );
+}
+
+#[test]
+fn phase4_research_rejects_missing_opus_credited_review_gate() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/commands/vadi.md");
+    let text = fs::read_to_string(&p).unwrap().replace(
+        "Opus-class remains the credited deep/adversarial review gate.\n",
+        "",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with(
+        "plugins/dvandva/commands/vadi.md preserves Opus-class as the credited deep/adversarial review gate"
+    ));
 }
 
 #[test]
