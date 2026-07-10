@@ -993,6 +993,150 @@ fn v2_deep_review_ack_write_touching_another_field_rejected() {
     );
 }
 
+// ---------------------------------------------------------------------------
+// Round-4 dispatch-request hardening (tc-dispatch-request-identity-
+// authorization-r4). The FIX 1a-e probes below each reproduce a peer bypass of
+// the round-3 dispatch surface: the entry gate must bind to the EXACT canonical
+// purpose (not a substring), identity (role+purpose) is immutable for the life
+// of an id, per-id status transitions follow the open->ack->closed lifecycle,
+// ids are unique within a candidate, and only the ADDRESSED role may ack.
+// ---------------------------------------------------------------------------
+
+// FIX 1a: the entry gate binds to the EXACT canonical purpose. A negated/decorated
+// purpose that merely CONTAINS the canonical substring ("DO NOT run credited
+// cross-vendor Anthropic-Opus dispatch -- unrelated maintenance only") is NOT the
+// credited-dispatch signal and must no longer satisfy the gate.
+#[test]
+fn v2_cross_review_to_deep_review_rejects_substring_negation_purpose() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v3(&n, "deep_review", "prativadi", 5, |v| {
+        cross_review_tracks(v);
+        // OPEN, addressed to the vadi, and the purpose CONTAINS the canonical
+        // string verbatim -- but it is a negation, not the credited dispatch.
+        v["dispatch_requests"] = json!([
+            {"id": "dr-x", "role": "vadi",
+             "purpose": "DO NOT run credited cross-vendor Anthropic-Opus dispatch -- unrelated maintenance only",
+             "status": "open"}
+        ]);
+    });
+    run(&b, &n).assert_contains(
+        "v2 cross_review->deep_review with a substring-negation purpose is rejected",
+        23,
+        "missing_dispatch_request",
+    );
+}
+
+// FIX 1b: identity (role+purpose) is immutable for the life of a dispatch-request
+// id -- only status may change. A deep_review exit that RETAINS the installed id
+// but mutates its role (vadi->prativadi) and purpose evades the closure gate (no
+// OPEN vadi request remains to see) while silently repurposing the paid token;
+// the identity guard now rejects it.
+#[test]
+fn v2_deep_review_exit_mutating_dispatch_identity_is_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(
+        &b,
+        "deep_review",
+        "prativadi",
+        4,
+        dispatch_request_open_vadi,
+    );
+    make_baton_v3(&n, "deslop", "vadi", 5, |v| {
+        review_angles(v);
+        // Same id, mutated role + purpose (and left open -- which the closure gate
+        // would flag were the role still vadi).
+        v["dispatch_requests"] = json!([
+            {"id": "dr-opus", "role": "prativadi", "purpose": "unrelated maintenance", "status": "open"}
+        ]);
+    });
+    run(&b, &n).assert_contains(
+        "v2 deep_review exit mutating a dispatch request's identity is rejected",
+        23,
+        "dispatch_identity_mutated",
+    );
+}
+
+// FIX 1c: completed/cancelled are terminal -- no resurrection and no terminal-to-
+// terminal mutation. A deep_review exit that flips an installed COMPLETED request
+// to cancelled evades the closure gate (neither is open) but is not a legal per-id
+// transition.
+#[test]
+fn v2_deep_review_exit_mutating_terminal_dispatch_status_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "deep_review", "prativadi", 4, |v| {
+        v["dispatch_requests"] = json!([
+            {"id": "dr-opus", "role": "vadi", "purpose": "credited cross-vendor Anthropic-Opus dispatch", "status": "completed"}
+        ]);
+    });
+    make_baton_v3(&n, "deslop", "vadi", 5, |v| {
+        review_angles(v);
+        v["dispatch_requests"] = json!([
+            {"id": "dr-opus", "role": "vadi", "purpose": "credited cross-vendor Anthropic-Opus dispatch", "status": "cancelled"}
+        ]);
+    });
+    run(&b, &n).assert_contains(
+        "v2 deep_review exit mutating a terminal dispatch status is rejected",
+        23,
+        "bad_dispatch_transition",
+    );
+}
+
+// FIX 1d: dispatch-request ids are unique within a candidate. Duplicate ids are a
+// shape violation (bad_dispatch_requests) -- a second entry sharing an id could
+// shadow the first and defeat the per-id identity/transition checks.
+#[test]
+fn v2_deep_review_entry_rejects_duplicate_dispatch_request_ids() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v3(&n, "deep_review", "prativadi", 5, |v| {
+        cross_review_tracks(v);
+        v["dispatch_requests"] = json!([
+            {"id": "dup", "role": "vadi", "purpose": "credited cross-vendor Anthropic-Opus dispatch", "status": "open"},
+            {"id": "dup", "role": "vadi", "purpose": "credited cross-vendor Anthropic-Opus dispatch", "status": "cancelled"}
+        ]);
+    });
+    run(&b, &n).assert_contains(
+        "v2 deep_review entry with duplicate dispatch-request ids is rejected",
+        23,
+        "bad_dispatch_requests",
+    );
+}
+
+// FIX 1e: the open->acknowledged ack write is authorized ONLY for the addressed
+// role (DVANDVA_ROLE == the entry's role). A prativadi acking the vadi's dispatch
+// request is not the addressed role and is rejected as an illegal same-status
+// rewrite (exit 24).
+#[test]
+fn v2_deep_review_ack_by_wrong_role_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(
+        &b,
+        "deep_review",
+        "prativadi",
+        4,
+        dispatch_request_open_vadi,
+    );
+    make_baton_v3(&n, "deep_review", "prativadi", 5, |v| {
+        v["dispatch_requests"] = json!([
+            {"id": "dr-opus", "role": "vadi", "purpose": "credited cross-vendor Anthropic-Opus dispatch", "status": "acknowledged"}
+        ]);
+    });
+    run_env(&b, &n, &[("DVANDVA_ROLE", "prativadi")]).assert(
+        "v2 deep_review ack by the wrong role (prativadi acking a vadi request) is rejected",
+        24,
+    );
+}
+
 #[test]
 fn v2_cross_review_cross_fixing_after_team_sync() {
     let d = tmp();

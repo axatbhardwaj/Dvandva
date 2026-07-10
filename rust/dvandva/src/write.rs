@@ -727,6 +727,12 @@ pub(crate) struct TransitionOption {
     pub(crate) sets_amendment_from_phase: Option<u64>,
     /// True on the amendment exit edge while an amendment loop is active.
     pub(crate) clears_amendment: bool,
+    /// Set on the same-status `deep_review` dispatch-ack option to the role whose
+    /// OPEN dispatch request this option acknowledges (open->acknowledged). `next`
+    /// keys the ack flip and the `--role` ownership filter off it; `None` for every
+    /// ordinary transition. Ownership (assignee/active_roles) is unchanged by an
+    /// ack, so this is the only field that identifies the addressed role.
+    pub(crate) dispatch_ack_role: Option<String>,
 }
 
 /// The expected `(assignee, active_roles)` for a status under the v2 owner table
@@ -1089,6 +1095,7 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
                 None
             },
             clears_amendment: is_exit,
+            dispatch_ack_role: None,
         });
     }
 
@@ -1104,7 +1111,47 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
             loop_key: None,
             sets_amendment_from_phase: None,
             clears_amendment: false,
+            dispatch_ack_role: None,
         });
+    }
+
+    // Same-status deep_review dispatch-ack (FIX 2a): when a role's OWN dispatch
+    // request is OPEN, that role acknowledges its wake with a same-status
+    // open->acknowledged rewrite that leaves ownership untouched (deep_review stays
+    // prativadi-owned). One ack option per distinct role with an open request; the
+    // write-side ack carve is the arbiter of which installs (DVANDVA_ROLE must
+    // equal the entry's role). assignee/active_roles/review_target are preserved
+    // verbatim from the current baton so the generated candidate is
+    // identical-except-dispatch — exactly what the ack carve requires.
+    if is_v2 && cur_eff_mode == "development" && cur_status == "deep_review" {
+        let cur_assignee = str_field(current, "assignee");
+        let cur_active_roles: Vec<String> = arr(field(current, "active_roles"))
+            .iter()
+            .filter_map(|r| r.as_str().map(str::to_string))
+            .collect();
+        let cur_review_target = match field(current, "review_target") {
+            Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+            _ => None,
+        };
+        let mut ack_roles: Vec<String> = Vec::new();
+        for req in arr(field(current, "dispatch_requests")) {
+            let role = str_field(req, "role");
+            if role.is_empty() || ack_roles.contains(&role) || str_field(req, "status") != "open" {
+                continue;
+            }
+            ack_roles.push(role.clone());
+            out.push(TransitionOption {
+                to_status: cur_status.clone(),
+                to_phase: PhaseMove::Same,
+                assignee: cur_assignee.clone(),
+                active_roles: cur_active_roles.clone(),
+                review_target: cur_review_target.clone(),
+                loop_key: None,
+                sets_amendment_from_phase: None,
+                clears_amendment: false,
+                dispatch_ack_role: Some(role),
+            });
+        }
     }
 
     // Universal escalation to human_decision (never from a terminal state).
@@ -1118,6 +1165,7 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
             loop_key: None,
             sets_amendment_from_phase: None,
             clears_amendment: false,
+            dispatch_ack_role: None,
         });
     }
 
@@ -1153,6 +1201,7 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
             loop_key: None,
             sets_amendment_from_phase: None,
             clears_amendment: false,
+            dispatch_ack_role: None,
         });
     }
 
@@ -1173,6 +1222,7 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
                 loop_key: None,
                 sets_amendment_from_phase: None,
                 clears_amendment: false,
+                dispatch_ack_role: None,
             });
         }
     }
@@ -1191,6 +1241,7 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
             loop_key: None,
             sets_amendment_from_phase: None,
             clears_amendment: false,
+            dispatch_ack_role: None,
         });
     }
 
@@ -1206,6 +1257,7 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
             loop_key: None,
             sets_amendment_from_phase: None,
             clears_amendment: false,
+            dispatch_ack_role: None,
         });
     }
 
@@ -2370,7 +2422,11 @@ fn decide_transition(
         && cur_effective_mode == "development"
         && cx.new_status == "deep_review"
         && cx.new_assignee == "prativadi"
-        && !has_open_dispatch_request_with_purpose(cand, "vadi", CANONICAL_OPUS_DISPATCH_PURPOSE)
+        && !has_open_dispatch_request_with_exact_purpose(
+            cand,
+            "vadi",
+            CANONICAL_OPUS_DISPATCH_PURPOSE,
+        )
     {
         return Err((23, format!(
             "DVANDVA_WRITE missing_dispatch_request deep_review entry requires an open dispatch_requests entry for vadi with the canonical purpose ({CANONICAL_OPUS_DISPATCH_PURPOSE}) candidate={cf}"
@@ -4904,17 +4960,36 @@ pub(crate) const CANONICAL_OPUS_DISPATCH_PURPOSE: &str =
 fn dispatch_requests_shape_ok(cand: &Value) -> bool {
     match field(cand, "dispatch_requests") {
         None | Some(Value::Null) => true,
-        Some(Value::Array(entries)) => entries.iter().all(|req| {
-            let str_nonempty =
-                |k: &str| matches!(field(req, k), Some(Value::String(s)) if !s.is_empty());
-            str_nonempty("id")
-                && str_nonempty("role")
-                && str_nonempty("purpose")
-                && matches!(
-                    field(req, "status"),
-                    Some(Value::String(s)) if matches!(s.as_str(), "open" | "acknowledged" | "completed" | "cancelled")
-                )
-        }),
+        Some(Value::Array(entries)) => {
+            let well_formed = entries.iter().all(|req| {
+                let str_nonempty =
+                    |k: &str| matches!(field(req, k), Some(Value::String(s)) if !s.is_empty());
+                str_nonempty("id")
+                    && str_nonempty("role")
+                    && str_nonempty("purpose")
+                    && matches!(
+                        field(req, "status"),
+                        Some(Value::String(s)) if matches!(s.as_str(), "open" | "acknowledged" | "completed" | "cancelled")
+                    )
+            });
+            // Ids identify a request across the whole lifecycle (identity guard,
+            // per-id transition gate, closure gate); a duplicate id could shadow a
+            // sibling and slip past every per-id check, so ids must be unique.
+            let mut seen: Vec<&str> = Vec::with_capacity(entries.len());
+            let unique_ids = entries.iter().all(|req| {
+                let id = match field(req, "id") {
+                    Some(Value::String(s)) => s.as_str(),
+                    _ => return true, // shape already rejected a missing/empty id
+                };
+                if seen.contains(&id) {
+                    false
+                } else {
+                    seen.push(id);
+                    true
+                }
+            });
+            well_formed && unique_ids
+        }
         Some(_) => false,
     }
 }
@@ -4933,16 +5008,19 @@ fn has_open_dispatch_request(cand: &Value, role: &str) -> bool {
 }
 
 /// Whether the candidate carries at least one OPEN `dispatch_requests` entry
-/// naming `role` whose `purpose` contains `purpose_needle`. The entry gate binds
-/// to the canonical credited-Opus-dispatch purpose so an unrelated open request
-/// for the same role cannot pose as the dispatch signal — the identity of the
-/// paid dispatch is part of what the gate requires, not merely "some open vadi
-/// request exists". Open/closed reuses the same tolerant token set as
+/// naming `role` whose `purpose` is EXACTLY `purpose`. The entry gate binds to the
+/// canonical credited-Opus-dispatch purpose so an unrelated open request for the
+/// same role cannot pose as the dispatch signal — the identity of the paid
+/// dispatch is part of what the gate requires, not merely "some open vadi request
+/// exists". The match is exact string equality, not a substring: a negated or
+/// decorated purpose that merely CONTAINS the canonical string ("DO NOT run
+/// credited cross-vendor Anthropic-Opus dispatch — unrelated maintenance only") is
+/// not the signal. Open/closed reuses the same tolerant token set as
 /// [`has_open_dispatch_request`] (so `acknowledged` still counts as open here).
-fn has_open_dispatch_request_with_purpose(cand: &Value, role: &str, purpose_needle: &str) -> bool {
+fn has_open_dispatch_request_with_exact_purpose(cand: &Value, role: &str, purpose: &str) -> bool {
     arr(field(cand, "dispatch_requests")).iter().any(|req| {
         str_field(req, "role") == role
-            && str_field(req, "purpose").contains(purpose_needle)
+            && str_field(req, "purpose") == purpose
             && util::is_open_finding_status(Some(&str_field(req, "status")))
     })
 }
@@ -4956,6 +5034,7 @@ fn has_open_dispatch_request_with_purpose(cand: &Value, role: &str, purpose_need
 fn dispatch_ack_rewrite_ok(cur_doc: &Value, cand: &Value, writer_role: &str) -> bool {
     matches!(writer_role, "vadi" | "prativadi")
         && dispatch_requests_ack_only_delta(cur_doc, cand)
+        && dispatch_ack_flips_owned_by(cur_doc, cand, writer_role)
         && fields_identical_except(
             cur_doc,
             cand,
@@ -4967,6 +5046,27 @@ fn dispatch_ack_rewrite_ok(cur_doc: &Value, cand: &Value, writer_role: &str) -> 
                 "dispatch_requests",
             ],
         )
+}
+
+/// FIX 1e (ack authorization): every entry that flips open->acknowledged in this
+/// ack rewrite must be ADDRESSED to `writer_role` — the addressed role
+/// acknowledges its OWN wake, so a prativadi cannot claim the vadi's paid
+/// dispatch (or vice versa). Runs after [`dispatch_requests_ack_only_delta`] has
+/// confirmed the delta is exactly open->acknowledged flips on preserved ids, so
+/// the candidate's entry role equals the installed one; checking the candidate
+/// side is sufficient.
+fn dispatch_ack_flips_owned_by(cur_doc: &Value, cand: &Value, writer_role: &str) -> bool {
+    let cur = arr(field(cur_doc, "dispatch_requests"));
+    let new = arr(field(cand, "dispatch_requests"));
+    for (c, n) in cur.iter().zip(new.iter()) {
+        if str_field(c, "status") == "open"
+            && str_field(n, "status") == "acknowledged"
+            && str_field(n, "role") != writer_role
+        {
+            return false;
+        }
+    }
+    true
 }
 
 /// Whether the `dispatch_requests` delta between `cur_doc` and `cand` is EXACTLY
@@ -5389,23 +5489,72 @@ fn lost_update_violation(cur_doc: &Value, cand: &Value) -> String {
     String::new()
 }
 
-/// dispatch_requests preservation (identity guard): unlike the team-owned S4-T4
-/// id-sets above, a dispatch request is a paid, cross-role liveness token that
-/// must survive EVERY write in EVERY state — not only the team-owned ones.
-/// Dropping an id silently discards the vadi's wake signal and, at `deep_review`
-/// exit, sneaks past the closure gate (which only sees whether an OPEN entry
-/// REMAINS, not whether one was deleted). Every id in the installed baton's
-/// `dispatch_requests` must persist in the candidate; the first dropped id yields
-/// `lost_update field=dispatch_requests missing=<id>` (empty string when clean).
-/// Status may still change per the vocabulary and new entries may be added — only
-/// dropping an installed id is forbidden.
+/// dispatch_requests preservation + per-id integrity (identity guard): unlike the
+/// team-owned S4-T4 id-sets above, a dispatch request is a paid, cross-role
+/// liveness token whose IDENTITY must survive EVERY write in EVERY state — not
+/// only the team-owned ones. For every id in the installed baton's
+/// `dispatch_requests` this checks three things against the candidate's same-id
+/// entry:
+///  * **Preservation** — the id must still be present. Dropping it silently
+///    discards the vadi's wake signal and, at `deep_review` exit, sneaks past the
+///    closure gate (which only sees whether an OPEN entry REMAINS, not whether one
+///    was deleted). First dropped id -> `lost_update field=dispatch_requests
+///    missing=<id>`.
+///  * **Immutable identity** — `role` and `purpose` are fixed for the life of the
+///    id; only `status` may change. Retaining an id while mutating its role/purpose
+///    lets a candidate repurpose a paid token and evade the closure gate (which
+///    keys on the vadi role). First mutation -> `dispatch_identity_mutated
+///    field=dispatch_requests id=<id>`.
+///  * **Legal per-id status transition** — `open -> acknowledged|completed|
+///    cancelled`, `acknowledged -> completed|cancelled`, and `completed`/`cancelled`
+///    are terminal (no resurrection, no terminal-to-terminal mutation). First
+///    illegal transition -> `bad_dispatch_transition field=dispatch_requests
+///    id=<id> from=<s> to=<s>`.
+///
+/// New entries (ids not in the installed baton) are unconstrained here beyond the
+/// shape gate. Returns the empty string when clean.
 fn dispatch_requests_preservation_violation(cur_doc: &Value, cand: &Value) -> String {
-    let installed = id_set(field(cur_doc, "dispatch_requests"));
-    let candidate = id_set(field(cand, "dispatch_requests"));
-    if let Some(missing) = installed.iter().find(|id| !candidate.contains(id)) {
-        return format!("lost_update field=dispatch_requests missing={missing}");
+    let installed = arr(field(cur_doc, "dispatch_requests"));
+    let candidate = arr(field(cand, "dispatch_requests"));
+    for cur in installed.iter() {
+        let id = str_field(cur, "id");
+        if id.is_empty() {
+            continue; // shape gate rejects empty ids on the candidate side
+        }
+        let Some(new) = candidate.iter().find(|e| str_field(e, "id") == id) else {
+            return format!("lost_update field=dispatch_requests missing={id}");
+        };
+        if str_field(new, "role") != str_field(cur, "role")
+            || str_field(new, "purpose") != str_field(cur, "purpose")
+        {
+            return format!("dispatch_identity_mutated field=dispatch_requests id={id}");
+        }
+        let from = str_field(cur, "status");
+        let to = str_field(new, "status");
+        if !dispatch_status_transition_ok(&from, &to) {
+            return format!(
+                "bad_dispatch_transition field=dispatch_requests id={id} from={from} to={to}"
+            );
+        }
     }
     String::new()
+}
+
+/// Legal per-id `dispatch_requests` status lifecycle: `open` may be acknowledged
+/// or closed; `acknowledged` may only be closed; `completed`/`cancelled` are
+/// terminal (no resurrection, no terminal-to-terminal flip). A no-op (unchanged
+/// status) is always legal. Mirrors the wait-consumer/write-producer split: the
+/// producer refuses to CREATE an illegal transition even though the wait consumer
+/// fails open on unknown tokens.
+fn dispatch_status_transition_ok(from: &str, to: &str) -> bool {
+    if from == to {
+        return true;
+    }
+    match from {
+        "open" => matches!(to, "acknowledged" | "completed" | "cancelled"),
+        "acknowledged" => matches!(to, "completed" | "cancelled"),
+        _ => false,
+    }
 }
 
 // ===========================================================================

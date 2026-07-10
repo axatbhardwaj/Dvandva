@@ -160,10 +160,14 @@ fn run_list(baton: &Value, role_filter: Option<&str>) -> i32 {
 }
 
 /// `--role` filter: keep transitions this role owns directly, or a team
-/// transition whose `active_roles` include it.
+/// transition whose `active_roles` include it. The same-status deep_review
+/// dispatch-ack is owned by the ADDRESSED role (the one whose open request it
+/// acknowledges), not the unchanged phase assignee, so it is matched by
+/// `dispatch_ack_role`.
 fn role_owns(option: &TransitionOption, role: &str) -> bool {
     option.assignee == role
         || (option.assignee == "team" && option.active_roles.iter().any(|r| r == role))
+        || option.dispatch_ack_role.as_deref() == Some(role)
 }
 
 fn phase_move_token(move_: PhaseMove) -> &'static str {
@@ -305,6 +309,7 @@ fn run_generate(baton_file: &Path, baton: &Value, args: &Args) -> i32 {
     apply_amendment(&mut candidate, option);
     apply_loop_counts(&mut candidate, baton, option);
     scaffold_dispatch_request(&mut candidate, baton, to, &option.assignee, new_checkpoint);
+    scaffold_dispatch_ack(&mut candidate, option);
 
     // ---- validate the generated candidate in-process (never emit invalid) --
     let baton_dir = baton_dir_of(baton_file);
@@ -375,12 +380,19 @@ fn scaffold_dispatch_request(
     if !(development && to == "deep_review" && assignee == "prativadi") {
         return;
     }
+    // Idempotence keys on the CANONICAL open vadi request specifically, not "any
+    // open vadi request" (FIX 2b). An unrelated open vadi request is not the
+    // credited-dispatch signal — with the exact-purpose entry gate it would leave
+    // the candidate failing `missing_dispatch_request` — so it must NOT suppress
+    // scaffolding of the canonical entry.
     if candidate
         .get("dispatch_requests")
         .and_then(Value::as_array)
         .is_some_and(|reqs| {
             reqs.iter().any(|req| {
                 req.get("role").and_then(Value::as_str) == Some("vadi")
+                    && req.get("purpose").and_then(Value::as_str)
+                        == Some(crate::write::CANONICAL_OPUS_DISPATCH_PURPOSE)
                     && util::is_open_finding_status(req.get("status").and_then(Value::as_str))
             })
         })
@@ -400,6 +412,29 @@ fn scaffold_dispatch_request(
         .as_array_mut()
         .expect("dispatch_requests array")
         .push(entry);
+}
+
+/// Flip the addressed role's OPEN dispatch request(s) to `acknowledged` for the
+/// same-status deep_review ack option (FIX 2a). `option.dispatch_ack_role` names
+/// the role whose wake is being claimed; only that role's OPEN entries flip, and
+/// only their `status` changes — producing the identical-except-dispatch delta the
+/// write-side ack carve accepts. A no-op for every ordinary (non-ack) option.
+fn scaffold_dispatch_ack(candidate: &mut Value, option: &TransitionOption) {
+    let Some(role) = option.dispatch_ack_role.as_deref() else {
+        return;
+    };
+    if let Some(reqs) = candidate
+        .get_mut("dispatch_requests")
+        .and_then(Value::as_array_mut)
+    {
+        for req in reqs.iter_mut() {
+            if req.get("role").and_then(Value::as_str) == Some(role)
+                && req.get("status").and_then(Value::as_str) == Some("open")
+            {
+                req["status"] = Value::from("acknowledged");
+            }
+        }
+    }
 }
 
 /// Apply the amendment field per the edge: entry sets it to the current numeric

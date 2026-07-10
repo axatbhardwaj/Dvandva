@@ -12,7 +12,7 @@ mod common;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use common::{cross_review_tracks, make_baton_v3, run};
+use common::{cross_review_tracks, make_baton_v3, run, run_env};
 use serde_json::{json, Value};
 
 fn bin() -> PathBuf {
@@ -31,6 +31,27 @@ fn run_next(args: &[&str]) -> (i32, String, String) {
         .env_remove("DVANDVA_RUN_ID")
         .output()
         .expect("spawn dvandva next");
+    (
+        output.status.code().unwrap_or(-1),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+/// Spawn `dvandva next <args>` with explicit env overrides (e.g. `DVANDVA_ROLE`),
+/// otherwise clearing the selector env vars like [`run_next`].
+fn run_next_env(args: &[&str], envs: &[(&str, &str)]) -> (i32, String, String) {
+    let mut cmd = Command::new(bin());
+    cmd.arg("next")
+        .args(args)
+        .env_remove("DVANDVA_ROLE")
+        .env_remove("DVANDVA_BATON_FILE")
+        .env_remove("DVANDVA_RUN_DIR")
+        .env_remove("DVANDVA_RUN_ID");
+    for (k, v) in envs {
+        cmd.env(k, v);
+    }
+    let output = cmd.output().expect("spawn dvandva next");
     (
         output.status.code().unwrap_or(-1),
         String::from_utf8_lossy(&output.stdout).into_owned(),
@@ -297,6 +318,130 @@ fn generate_cross_review_to_deep_review_scaffolds_dispatch_request_and_write_acc
     // Strongest property: the SAME binary's `write` accepts the generated file.
     run(&baton, &candidate).assert("write accepts the generated deep_review candidate", 0);
     assert_eq!(read_json(&baton)["checkpoint"], 5);
+}
+
+// tc-dispatch-request-ack-producer-wiring-r4 (FIX 2a): on a deep_review baton
+// where the addressed role's own dispatch request is OPEN, `dvandva next --to
+// deep_review` emits the same-status ack candidate (open->acknowledged) that the
+// write-side ack carve accepts. Before wiring, next had no same-status deep_review
+// target and exited 2 (illegal_target), so the addressed role had no tooling path
+// to the ack write and the wait surface kept re-firing.
+#[test]
+fn generate_deep_review_ack_candidate_and_write_accepts_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    let candidate = dir.path().join("baton.next.json");
+    make_baton_v3(&baton, "deep_review", "prativadi", 4, |b| {
+        b["review_target"] = json!("implementation");
+        // The vadi's own dispatch request is open -- the wake it just answered.
+        b["dispatch_requests"] = json!([
+            {"id": "dr-opus", "role": "vadi", "purpose": "credited cross-vendor Anthropic-Opus dispatch", "status": "open"}
+        ]);
+    });
+
+    // LIST surfaces the same-status ack target (owned by the addressed vadi).
+    let (lcode, lout, _lerr) = run_next(&["--file", baton.to_str().unwrap()]);
+    assert_eq!(lcode, 0);
+    assert!(
+        lout.contains("DVANDVA_NEXT deep_review owner=prativadi phase=same"),
+        "LIST offers the same-status deep_review ack\n{lout}"
+    );
+
+    let (code, stdout, stderr) = run_next_env(
+        &[
+            "--file",
+            baton.to_str().unwrap(),
+            "--to",
+            "deep_review",
+            "--summary",
+            "Vadi claims the paid cross-vendor Opus dispatch before spawning reviewers.",
+            "--next-action",
+            "vadi: dispatch the credited cross-vendor Opus reviewers; prativadi holds deep_review.",
+        ],
+        &[("DVANDVA_ROLE", "vadi")],
+    );
+    assert_eq!(
+        code, 0,
+        "deep_review ack generate exits 0\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("to=deep_review checkpoint=5"),
+        "ok line names the deep_review target + checkpoint\n{stdout}"
+    );
+
+    let cand = read_json(&candidate);
+    assert_eq!(cand["status"], "deep_review");
+    // The ack does not change ownership -- deep_review stays prativadi-owned.
+    assert_eq!(cand["assignee"], "prativadi");
+    let reqs = cand["dispatch_requests"]
+        .as_array()
+        .expect("dispatch_requests array");
+    assert_eq!(reqs.len(), 1);
+    assert_eq!(reqs[0]["id"], "dr-opus");
+    assert_eq!(reqs[0]["status"], "acknowledged");
+
+    // The generated ack candidate round-trips through `write` under the vadi role.
+    run_env(&baton, &candidate, &[("DVANDVA_ROLE", "vadi")])
+        .assert("write accepts the generated deep_review ack candidate", 0);
+    assert_eq!(read_json(&baton)["checkpoint"], 5);
+}
+
+// tc-dispatch-request-ack-producer-wiring-r4 (FIX 2b): scaffold idempotence keys
+// on the CANONICAL vadi request specifically, not "any open vadi request". An
+// UNRELATED open vadi request must not suppress scaffolding of the credited
+// dispatch entry -- before the fix, scaffold skipped, the exact-purpose entry gate
+// then rejected the candidate, and next self-failed 23 with no file emitted.
+#[test]
+fn generate_deep_review_scaffolds_canonical_alongside_unrelated_open_vadi_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    let candidate = dir.path().join("baton.next.json");
+    make_baton_v3(&baton, "cross_review", "team", 4, |b| {
+        b["active_roles"] = json!(["vadi", "prativadi"]);
+        cross_review_tracks(b);
+        // An unrelated open vadi request already rides the baton.
+        b["dispatch_requests"] = json!([
+            {"id": "unrelated-1", "role": "vadi", "purpose": "unrelated maintenance sweep", "status": "open"}
+        ]);
+    });
+
+    let (code, stdout, stderr) = run_next(&[
+        "--file",
+        baton.to_str().unwrap(),
+        "--to",
+        "deep_review",
+        "--summary",
+        "Cross-review approved; entering deep_review with the canonical dispatch scaffolded.",
+        "--next-action",
+        "prativadi: run deep_review; vadi: dispatch the credited cross-vendor opus reviewers.",
+    ]);
+    assert_eq!(
+        code, 0,
+        "deep_review generate exits 0 despite an unrelated open vadi request\nstderr:\n{stderr}"
+    );
+    assert!(
+        stdout.contains("to=deep_review checkpoint=5"),
+        "ok line\n{stdout}"
+    );
+
+    let cand = read_json(&candidate);
+    let reqs = cand["dispatch_requests"]
+        .as_array()
+        .expect("dispatch_requests array");
+    // Both survive: the unrelated one untouched, the canonical scaffolded.
+    assert_eq!(
+        reqs.len(),
+        2,
+        "canonical scaffolded alongside the unrelated request\n{cand}"
+    );
+    assert!(
+        reqs.iter().any(|r| r["id"] == "credited-opus-dispatch-5"
+            && r["purpose"] == "credited cross-vendor Anthropic-Opus dispatch"
+            && r["status"] == "open"),
+        "the canonical open vadi request was scaffolded\n{cand}"
+    );
+
+    run(&baton, &candidate).assert("write accepts the candidate with both requests", 0);
 }
 
 #[test]
