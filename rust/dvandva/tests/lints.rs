@@ -915,6 +915,45 @@ fn phase4_research_rejects_grok_may_can_credited_review_authority() {
 }
 
 #[test]
+fn phase4_research_rejects_added_fable_may_write_contradiction() {
+    // FIX 2b shape (A): the positive substring pins fail closed only against
+    // ALTERING the pinned "never writes code" sentence, NOT against a
+    // contradiction ADDED elsewhere in the carrier. Appending "Fable-class may
+    // write ..." leaves every positive needle intact (they still match), so it
+    // slips past the substring pins; the cheap whole-file anti-needle catches the
+    // blatant inversion shape.
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/skills/vadi/SKILL.md");
+    let mut text = fs::read_to_string(&p).unwrap();
+    // Positive RING_DISPATCH needles stay present; this is an ADDED contradiction.
+    text.push_str("\nEscape hatch: in a pinch a Fable-class may write a one-line fix itself.\n");
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with(
+        "plugins/dvandva/skills/vadi/SKILL.md rejects the inverted Fable-may-write needle"
+    ));
+}
+
+#[test]
+fn phase4_research_rejects_added_grok_execute_contradiction() {
+    // FIX 2b shape (C): the same added-contradiction drift for the Grok lane. An
+    // ADDED "the Grok lane may execute ... may write code" caveat leaves the
+    // positive never-execute/never-code-touching needle intact, so the substring
+    // pins pass it; the whole-file anti-needle rejects the inversion.
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/commands/prativadi.md");
+    let mut text = fs::read_to_string(&p).unwrap();
+    text.push_str("\nCaveat: the Grok lane may execute a fast fix and may write code inline.\n");
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with(
+        "plugins/dvandva/commands/prativadi.md rejects the inverted Grok-execute-or-write-code needle"
+    ));
+}
+
+#[test]
 fn phase4_research_accepts_grok_uncredited_review_lead_wording() {
     // "uncredited review" contains the substring "credited review"; the negative
     // credited-review pattern must not false-positive on legitimate uncredited

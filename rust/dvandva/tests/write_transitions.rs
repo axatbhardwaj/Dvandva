@@ -834,6 +834,90 @@ fn v2_deep_review_exit_to_escape_state_exempt_from_dispatch_closure() {
     );
 }
 
+// dr-dispatch-closure-escape-orphan (FIX 1): the closure obligation is
+// REQUEST-scoped, not state-scoped. The reviewer's 3-step escape carries the
+// OPEN canonical vadi request out of the deep_review lifecycle WITHOUT closing
+// it, because the old gate only fired at cur_status==deep_review:
+//   1. deep_review -> human_decision   (escape; request rides through — exit 0)
+//   2. human_decision -> deslop        (hand-authored resume; the request is now
+//      ORPHANED — no downstream state closes it, so the strict-open wake re-fires
+//      through deslop/termination_review/done and pays the dispatch again)
+//   3. deslop -> termination_review    (the orphaned request keeps waking)
+// Before the fix every step exits 0. The request-scoped gate rejects step 2: any
+// write installing a non-deep_review, non-escape status while the canonical vadi
+// request stays open|acknowledged must close it first.
+#[test]
+fn v2_deep_review_escape_then_resume_orphans_open_dispatch_request() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+
+    // Step 1: the mid-review escape parks the run in human_decision, the request
+    // riding through intact (exempt — unchanged by the fix).
+    make_baton_v3(
+        &b,
+        "deep_review",
+        "prativadi",
+        4,
+        dispatch_request_open_vadi,
+    );
+    make_baton_v3(&n, "human_decision", "human", 5, dispatch_request_open_vadi);
+    run(&b, &n).assert(
+        "step 1: deep_review->human_decision escape rides the open request through",
+        0,
+    );
+
+    // Step 2: the hand-authored resume leaves the deep_review lifecycle for a
+    // working state while the request is STILL open. Pre-fix this exits 0 and
+    // orphans the paid wake token; the request-scoped closure gate rejects it.
+    make_baton_v3(&b, "human_decision", "human", 5, dispatch_request_open_vadi);
+    make_baton_v3(&n, "deslop", "vadi", 6, dispatch_request_open_vadi);
+    run(&b, &n).assert_contains(
+        "step 2: human_decision resume to deslop with an orphaned open request is rejected",
+        23,
+        "open_dispatch_request",
+    );
+}
+
+// FIX 1 companion: resuming BACK into deep_review from the escape stays legal —
+// the reviews have not landed, so the request legitimately stays open and the
+// request-scoped gate exempts deep_review just as it exempts the escapes.
+#[test]
+fn v2_human_decision_resume_back_to_deep_review_keeps_open_request_legal() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "human_decision", "human", 5, dispatch_request_open_vadi);
+    make_baton_v3(
+        &n,
+        "deep_review",
+        "prativadi",
+        6,
+        dispatch_request_open_vadi,
+    );
+    run(&b, &n).assert(
+        "v2 human_decision resume back into deep_review keeps the open request legal",
+        0,
+    );
+}
+
+// FIX 1 companion: a resume out of the lifecycle that CLOSES the request first is
+// legal — the reviews landed before the pause, so leaving deep_review for a
+// working state carries a completed request.
+#[test]
+fn v2_human_decision_resume_to_deslop_with_closed_dispatch_request_passes() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "human_decision", "human", 5, dispatch_request_open_vadi);
+    make_baton_v3(&n, "deslop", "vadi", 6, |v| {
+        v["dispatch_requests"] = json!([
+            {"id": "dr-opus", "role": "vadi", "purpose": "credited cross-vendor Anthropic-Opus dispatch", "status": "completed"}
+        ]);
+    });
+    run(&b, &n).assert(
+        "v2 human_decision resume to deslop with a completed request passes",
+        0,
+    );
+}
+
 // tc-dispatch-request-identity-preservation-bypass (FIX 1a): the deep_review
 // entry gate is bound to the CANONICAL vadi dispatch purpose next.rs scaffolds
 // ("credited cross-vendor Anthropic-Opus dispatch"). An OPEN vadi request whose

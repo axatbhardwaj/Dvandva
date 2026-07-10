@@ -106,9 +106,18 @@ const MODEL_POLICY_FABLE_NO_CODE: &str =
 /// The full literal Luna-gate policy sentence, pinned by exact substring rather
 /// than an ordered-token regex (dr-luna-semantic-inversion-bypass). A `.*`-gap
 /// regex matched an inverting narrative that kept the anchor words in order
-/// (Terra retired, luna ungated, probe deleted, 5.5 dropped); the substring pin
-/// fails closed against any inversion, since deleting or altering the sentence
-/// breaks the match.
+/// (Terra retired, luna ungated, probe deleted, 5.5 dropped).
+///
+/// Honest scope (do not over-claim): the substring pin fails closed only against
+/// DELETING or ALTERING this exact sentence — either breaks the match. It does
+/// NOT catch a contradiction ADDED elsewhere in the doc that leaves this sentence
+/// verbatim. These phase4 needles are DRIFT lints over cooperatively-maintained
+/// docs, not an adversarial-smuggle-proof gate: a motivated author who keeps the
+/// pinned sentences intact and appends contradicting prose passes them. The cheap
+/// whole-file anti-needles in `req_command_ring_dispatch` reject only the two most
+/// blatant added-inversion shapes (Fable-may-write, Grok-may-execute/write-code);
+/// general added-contradiction detection is deliberately out of scope (it would
+/// require comment/fence-region semantic parsing, not a substring/regex pin).
 const MODEL_POLICY_LUNA_PROBE_SENTENCE: &str = "`gpt-5.6-terra` remains the routine default; `gpt-5.6-luna` may take taste-light mechanical work only after a representative task-class quality probe passes; `gpt-5.5` is the runtime fallback.";
 const STATE_TABLE_CODEX_MAPPING: &str = r#"| `opus` | `opus-class\|gpt-5.5-xhigh` | Opus-class | gpt-5.6-sol xhigh (fallback gpt-5.5) |
 | `sonnet` | `sonnet-class\|gpt-5.5-high` | Sonnet-class | gpt-5.6-terra high (fallback gpt-5.5) |
@@ -245,6 +254,23 @@ fn req_command_ring_dispatch(r: &mut Report, root: &Path, rel: &str) {
         rel,
         MODEL_POLICY_FABLE_NO_CODE,
         format!("{rel} permits Fable-class routine non-code work but no code writing"),
+    );
+    // Cheap anti-needles for the two most blatant added-inversion shapes. The
+    // positive substring pins above fail closed only against ALTERING their
+    // sentence, not against a contradiction ADDED elsewhere in the carrier (see
+    // MODEL_POLICY_LUNA_PROBE_SENTENCE's honest-scope note). These reject the two
+    // shapes an inverting author is most likely to append; whole-file (case-
+    // insensitive) because an added contradiction anywhere in the carrier is
+    // drift. They are not smuggle-proof — general added-contradiction detection is
+    // out of scope — but they close the obvious holes for free.
+    r.add(
+        !file_slurp_matches_ci(root, rel, r"Fable-class may write"),
+        format!("{rel} rejects the inverted Fable-may-write needle"),
+    );
+    r.add(
+        !file_slurp_matches_ci(root, rel, r"Grok lane may execute")
+            && !file_slurp_matches_ci(root, rel, r"grok[^.]{0,40}write[s]? code"),
+        format!("{rel} rejects the inverted Grok-execute-or-write-code needle"),
     );
 }
 
