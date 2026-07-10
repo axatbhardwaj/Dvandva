@@ -1504,7 +1504,9 @@ fn phase4_research_rejects_retired_fable_no_code_needle() {
     );
     fs::write(&p, text).unwrap();
     let r = phase4_research::report(d.path());
-    assert!(r.fails_with("plugins/dvandva/commands/vadi.md pins Fable-class to plan/done judgment"));
+    assert!(r.fails_with(
+        "plugins/dvandva/commands/vadi.md permits Fable-class routine non-code work but no code writing"
+    ));
 }
 
 #[test]
@@ -1519,7 +1521,9 @@ fn phase4_research_rejects_retired_grok_uncredited_needle() {
     fs::write(&p, text).unwrap();
     let r = phase4_research::report(d.path());
     assert!(
-        r.fails_with("plugins/dvandva/commands/vadi.md pins Grok as uncredited read-only triage")
+        r.fails_with(
+            "plugins/dvandva/commands/vadi.md permits Grok routine uncredited read-only work but no execution or code touching"
+        )
     );
 }
 

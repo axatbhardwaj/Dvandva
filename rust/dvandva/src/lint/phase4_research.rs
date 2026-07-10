@@ -216,14 +216,16 @@ fn req_command_ring_dispatch(r: &mut Report, root: &Path, rel: &str) {
         root,
         rel,
         MODEL_POLICY_GROK_UNCREDITED,
-        format!("{rel} pins Grok as uncredited read-only triage"),
+        format!(
+            "{rel} permits Grok routine uncredited read-only work but no execution or code touching"
+        ),
     );
     req(
         r,
         root,
         rel,
         MODEL_POLICY_FABLE_NO_CODE,
-        format!("{rel} pins Fable-class to plan/done judgment"),
+        format!("{rel} permits Fable-class routine non-code work but no code writing"),
     );
 }
 
