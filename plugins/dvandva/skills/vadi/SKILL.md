@@ -282,7 +282,7 @@ Actions:
 1. Use `dvandva-cross-reviewer` or direct review to inspect prativadi-owned implementation chunks; do not review your own chunks.
 2. Record vadi's cross-review result in `subagent_tracks` with `track: "cross-review"`, `owner_role: "vadi"`, non-empty `outputs`, and non-empty `evidence_refs`.
 3. If peer-owned chunks need fixes, write `status: "cross_fixing"`, `assignee: "team"`, `active_roles: ["vadi", "prativadi"]`, and route exact findings.
-4. If both vadi and prativadi cross-review tracks are completed and approved, write `status: "deep_review"`, `assignee: "prativadi"`, `active_roles: []`, and `review_target: "implementation"`.
+4. If both vadi and prativadi cross-review tracks are completed and approved, write `status: "deep_review"`, `assignee: "prativadi"`, `active_roles: []`, and `review_target: "implementation"`. This deep_review-entering write also records an open `dispatch_requests` entry (`role: "vadi"`, purpose: credited cross-vendor Anthropic-Opus dispatch); the vadi's waiter wakes on it (`DVANDVA_WAIT dispatch_requested`) and the entry is completed when the credited reviews land.
 
 ## Mode D — phase fixing
 

@@ -714,6 +714,23 @@ pub fn cross_review_tracks(b: &mut Value) {
     );
 }
 
+/// One OPEN `dispatch_requests` entry naming the vadi — the producer half of
+/// the wait-surface `dispatch_requested` wake that a prativadi-owned
+/// `deep_review` entry must record so the vadi can dispatch the credited
+/// cross-vendor Opus reviewers.
+pub fn dispatch_request_open_vadi(b: &mut Value) {
+    push(
+        b,
+        "dispatch_requests",
+        json!({
+            "id": "dr-opus",
+            "role": "vadi",
+            "purpose": "credited cross-vendor Anthropic-Opus dispatch",
+            "status": "open"
+        }),
+    );
+}
+
 /// `v2_cross_review_finding_filter` — one changes-requested cross-review track.
 pub fn cross_review_finding(b: &mut Value) {
     push(

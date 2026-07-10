@@ -140,6 +140,7 @@ fn v2_edges_legal() {
             }
             if edge == "cross_review:deep_review" {
                 cross_review_tracks(v);
+                dispatch_request_open_vadi(v);
             }
             if edge == "termination_review:done" {
                 v["run_explainer_ref"] =
@@ -685,10 +686,74 @@ fn v2_cross_review_deep_review_after_team_sync() {
         "v2 cross_review same-status sync can record first review role",
         0,
     );
-    make_baton_v3(&n, "deep_review", "prativadi", 6, cross_review_tracks);
+    make_baton_v3(&n, "deep_review", "prativadi", 6, |v| {
+        cross_review_tracks(v);
+        dispatch_request_open_vadi(v);
+    });
     run(&b, &n).assert(
         "v2 cross_review->deep_review accepts review-cycle checkpoint after team sync",
         0,
+    );
+}
+
+// dr-dispatch-request-not-produced: the write ENTERING prativadi-owned
+// deep_review must PRODUCE the open `dispatch_requests` entry that `dvandva
+// wait` already consumes (the `dispatch_requested` wake). These three probe the
+// producer gate: without the entry the transition is rejected, an open entry
+// passes, and completed/cancelled-only entries do not count as open.
+#[test]
+fn v2_cross_review_to_deep_review_requires_open_dispatch_request() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    // A fully valid cross_review->deep_review candidate, but NOTHING records the
+    // dispatch request the wait surface wakes on.
+    make_baton_v3(&n, "deep_review", "prativadi", 5, cross_review_tracks);
+    run(&b, &n).assert_contains(
+        "v2 cross_review->deep_review without a dispatch request is rejected",
+        23,
+        "missing_dispatch_request",
+    );
+}
+
+#[test]
+fn v2_cross_review_to_deep_review_accepts_open_dispatch_request() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v3(&n, "deep_review", "prativadi", 5, |v| {
+        cross_review_tracks(v);
+        dispatch_request_open_vadi(v);
+    });
+    run(&b, &n).assert(
+        "v2 cross_review->deep_review with an open vadi dispatch request passes",
+        0,
+    );
+}
+
+#[test]
+fn v2_cross_review_to_deep_review_rejects_closed_dispatch_request() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v3(&n, "deep_review", "prativadi", 5, |v| {
+        cross_review_tracks(v);
+        // Only completed/cancelled entries: nothing OPEN for the vadi to act on.
+        v["dispatch_requests"] = json!([
+            {"id": "dr-1", "role": "vadi", "purpose": "credited cross-vendor Anthropic-Opus dispatch", "status": "completed"},
+            {"id": "dr-2", "role": "vadi", "purpose": "credited cross-vendor Anthropic-Opus dispatch", "status": "cancelled"}
+        ]);
+    });
+    run(&b, &n).assert_contains(
+        "v2 cross_review->deep_review with only closed dispatch requests is rejected",
+        23,
+        "missing_dispatch_request",
     );
 }
 

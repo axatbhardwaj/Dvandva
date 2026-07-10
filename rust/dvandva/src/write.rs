@@ -2319,6 +2319,28 @@ fn decide_transition(
         }
     }
 
+    // dr-dispatch-request-not-produced: the write ENTERING a prativadi-owned
+    // deep_review must PRODUCE the open `dispatch_requests` entry that `dvandva
+    // wait` already consumes (`role_has_open_dispatch_request` -> the
+    // `dispatch_requested` wake). Without a producer that wake has no source, so
+    // a Codex-hosted deep_review (assignee=prativadi, active_roles=[]) cannot
+    // signal the Claude-side vadi to dispatch the credited cross-vendor Opus
+    // reviewers and the walkaway loop stalls with nobody holding the baton.
+    // Scoped to the prativadi orientation only: a vadi-owned deep_review is the
+    // dispatcher itself and needs no request. Fail-closed at 23, in the style of
+    // the F6 risk-angle gate above.
+    if legal
+        && cx.is_v2
+        && cur_effective_mode == "development"
+        && cx.new_status == "deep_review"
+        && cx.new_assignee == "prativadi"
+        && !has_open_dispatch_request(cand, "vadi")
+    {
+        return Err((23, format!(
+            "DVANDVA_WRITE missing_dispatch_request deep_review entry requires an open dispatch_requests entry for vadi (credited cross-vendor opus dispatch) candidate={cf}"
+        )));
+    }
+
     // ---- P1: clarifying-questions per-state non-null gates -----------------
     if legal
         && cx.is_v2
@@ -4795,6 +4817,19 @@ fn cross_review_to_deep_review_ok(cand: &Value, required: i64) -> bool {
         })
     };
     done_cross("vadi") && done_cross("prativadi")
+}
+
+/// Whether the candidate carries at least one OPEN `dispatch_requests` entry
+/// naming `role`. Mirrors wait.rs's `role_has_open_dispatch_request` consumer:
+/// a `{id, role, purpose, status}` entry is actionable while its status stays
+/// open per the shared [`util::is_open_finding_status`] token set, so the
+/// producer gate and the wait wake agree on what "still needs dispatching"
+/// means — one open/closed rule across the two surfaces.
+fn has_open_dispatch_request(cand: &Value, role: &str) -> bool {
+    arr(field(cand, "dispatch_requests")).iter().any(|req| {
+        str_field(req, "role") == role
+            && util::is_open_finding_status(Some(&str_field(req, "status")))
+    })
 }
 
 fn narrow_fixups_ok(cand: &Value) -> bool {
