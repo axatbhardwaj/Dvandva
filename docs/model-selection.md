@@ -1,6 +1,6 @@
 # Model Selection
 
-As-of date: 2026-07-09.
+As-of date: 2026-07-10.
 
 This page records the user's advisory model preferences for Dvandva runs. It is
 not the same thing as the protocol's machine-readable model-class contract:
@@ -28,11 +28,21 @@ the binding constraint.
 
 | Model | Cost | Intelligence | Taste | Quota |
 |---|---:|---:|---:|---:|
-| `gpt-5.5` | 9 | 8 | 5 | 9 |
+| `gpt-5.6-sol` | 9 | 9 | 6 | 9 |
+| `gpt-5.6-terra` | 9 | 8 | 5 | 9 |
+| `gpt-5.6-luna` | 9 | 7 | 4 | 9 |
+| `gpt-5.5` (fallback) | 9 | 8 | 5 | 9 |
 | `sonnet-5` | 5 | 5 | 7 | 7 |
 | `opus-4.8` | 4 | 7 | 8 | 6 |
 | `grok-4.5` | 9 | 7 | 4 | 3 |
 | `fable-5` | 2 | 9 | 9 | 2 |
+
+GPT-5.6 row basis (2026-07-10, day one): the taste scores for
+`gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna` are provisional and should
+be re-scored when independent evals land. Quota 9 for those three rows and the
+`gpt-5.5` fallback is one shared Codex pool across the entire 5.6 family plus
+GPT-5.5, not four independent quota-9 budgets; all four draw from the same
+vendor pool.
 
 Grok 4.5 row basis (2026-07-09, day-one — re-score when independent
 replication lands): intelligence 7 from Artificial Analysis Intelligence
@@ -46,10 +56,12 @@ vs Grok 4.3 — keep it off credited review stations until settled.
 
 ## How To Apply
 
-A Fable-class model hosting a session (for example the vadi chair) never writes
-code itself — no implementation, tests, or fixes, however small. It dispatches
-that work to `sonnet`/`opus`/`gpt-5.5` subagents and keeps only judgment and
-taste surfaces: decisions, plans, reviews, human-facing artifacts, and
+Fable-class owns plan authorship and terminal adjudication, may take routine non-code work when it clears the quality bar, and never writes code.
+
+A Fable-class model hosting a session (for example the vadi chair) dispatches
+all implementation, tests, and fixes, however small, to
+`sonnet`/`opus`/`gpt-5.6-sol`/`gpt-5.6-terra` subagents and keeps only judgment
+and taste surfaces: decisions, plans, reviews, human-facing artifacts, and
 coordination writes.
 
 ### The pipeline ring (default casting, 2026-07-08; extended 2026-07-09)
@@ -65,27 +77,27 @@ are one repeating cycle, not a one-shot pipeline.
 human task
   |
   v
-fable gathers info + asks clarifying Qs -> gpt-5.5 reviews the Qs (round 2)
+fable gathers info + asks clarifying Qs -> gpt-5.6-sol reviews the Qs (round 2)
   |
   v
 human answers all
   |
   v
-research: fable side runs sonnet + grok | gpt runs its OWN research (gpt-5.5 + grok)
+research: fable side runs sonnet + grok | gpt runs its OWN research (gpt-5.6-sol + grok)
   |
   v
 research returns to fable
   |
   v
-fable designs the plan (parallel implementation tracks, ALL executed by gpt-5.5)
+fable designs the plan (parallel implementation tracks, ALL executed by gpt-5.6-terra (hard bounded tracks: gpt-5.6-sol))
   |
   v
-gpt-5.5 + grok review the plan (grok = latest-tech check) <--+
+gpt-5.6-sol + grok review the plan (grok = latest-tech check) <--+
   |                                                            |
   +---------------------- loop until agreed --------------------+
   |
   v
-gpt-5.5 executes all tracks via subagents
+gpt-5.6-terra executes routine tracks via subagents (gpt-5.6-sol: hard bounded tracks)
   |
   v
 opus 4.8 deep-reviews / adversarially reviews the implementation <--+
@@ -109,23 +121,31 @@ repeat the whole cycle (back to "human task")
   repeats. Fixed stations, never on-request advice (escalation-on-demand
   under-calls; Anthropic's own advisor data shows call-rate prompting nets
   flat).
-- `gpt-5.5` — the workhorse across four stations: adversarial round 2 on the
-  clarifying questions, its own independent research leg (gpt-5.5 + grok, run
-  in parallel with fable's sonnet + grok leg, not merged with it), plan review
-  (cross-vendor decorrelation), and the sole executor of every parallel
-  implementation track via subagents. Self-checks as hygiene, zero review
-  credit.
+- `gpt-5.6-sol` and `gpt-5.6-terra` — together the gpt-class workhorse across
+  four stations. Sol owns adversarial round 2 on the clarifying questions, its
+  own independent research leg (`gpt-5.6-sol` + grok, run in parallel with
+  fable's sonnet + grok leg, not merged with it), plan review (cross-vendor
+  decorrelation), and hard bounded implementation tracks. Terra is the sole
+  executor of every routine or bulk parallel implementation track via
+  subagents. When a 5.6 model is unavailable, this work falls back to
+  `gpt-5.5`. Self-checks are hygiene and earn zero review credit.
 - `grok-4.5` — a shared specialist lane inside both research legs and inside
   the plan-review loop, where it specifically checks for latest-tech/live-
   world drift (uncredited — plan-pulse findings stay quarantined until a
   Claude-family role confirms them; see Specialist Lanes below for the
   read-only guards).
 - `opus-4.8` — the credited deep/adversarial review of the implementation,
-  looping with gpt-5.5 until fixed; cross-vendor from the author. Across a run
-  opus writes code close to never — its stations are review-only roughly
-  nine turns in ten.
+  looping with the responsible `gpt-5.6-sol` or `gpt-5.6-terra` executor until
+  fixed; cross-vendor from the author. Across a run opus writes code close to
+  never — its stations are review-only roughly nine turns in ten.
 - `sonnet-5` — fable's side of the research leg, plus documentation and
   bounded support work (taste 7 meets the user-facing floor).
+
+Authority guardrail: `gpt-5.6-sol` never holds credited-review authority and
+never holds done, merge, or terminal authority (invariant I4). Credited deep
+review of the implementation stays with the cross-vendor `opus-4.8` (invariant
+I3); Sol's plan-review and adversarial work never substitutes for that credited
+Opus deep review.
 
 The baton is the loop manager at the core of this ring: every station above is
 a phase the baton tracks and gates, not a scheduling decision either engine
@@ -135,13 +155,16 @@ turn does not stop polling until the baton reaches a dual-approved
 `termination_review` (see `AGENTS.md`'s Handoff Discipline section).
 
 Dvandva state mapping: `clarifying_questions_drafting` = fable,
-`clarifying_questions_answer`/`clarifying_questions_followup` = gpt review +
+`clarifying_questions_answer`/`clarifying_questions_followup` =
+`gpt-5.6-sol` review +
 human answer, `research_drafting` = fable (sonnet + grok), `research_review` =
-gpt (gpt-5.5 + grok), `spec_drafting` = fable, `spec_review` = gpt-5.5 + grok
-looping until agreed, `parallel_implementing`/`implementing` = gpt-5.5,
-`deep_review` = opus looping until fixed, `termination_review` = fable + gpt
-dual approval (repeat or done). This mapping is casting guidance — who fills
-each station — never baton policy; the full state graph is unchanged.
+gpt (`gpt-5.6-sol` + grok), `spec_drafting` = fable, `spec_review` =
+`gpt-5.6-sol` + grok looping until agreed,
+`parallel_implementing`/`implementing` = `gpt-5.6-terra` for routine execution
+and `gpt-5.6-sol` for hard bounded tracks, `deep_review` = opus looping until
+fixed, `termination_review` = fable + gpt dual approval (repeat or done). This
+mapping is casting guidance — who fills each station — never baton policy; the
+full state graph is unchanged.
 
 Chair tiering: high-stakes runs (protocol source, novel architecture) keep
 fable in the chair, where its judgment is continuous. Routine runs may chair
@@ -159,30 +182,41 @@ intelligence > taste > cost
 ```
 
 Quota is not part of that quality ordering — it never makes a weaker model
-"better." It governs volume routing: when two models both clear a task's
-quality bar, route the volume toward abundant quota, and spend scarce quota
-only where the model is unique or maximally differentiated. Concretely:
-`fable-5` (quota 2) spends on judgment bookends nobody else can hold;
-`grok-4.5` (quota 3) spends on its live-data monopoly and steps in as the
-fallback bulk lane (out-of-ring only, human-invoked) only when `gpt-5.5` quota
-is exhausted or down;
-`gpt-5.5` (quota 9) absorbs routine volume precisely because it is abundant.
-If the quota ratios change (subscription upgrades or cuts), the volume
-allocation flips with them — re-check the ratios monthly.
+"better." The quality-first router from Q3 and the code block above remains
+`intelligence > taste > cost`; this Q4 rebalance widens quota eligibility, not
+the ranking rule. Fable and Grok are now quality-eligible for routine volume
+beyond their bookend and live-data-monopoly seats, reversing the prior
+categorical exclusion. `fable-5` routine eligibility is limited to non-code
+docs, research, and judgment work — fable still never writes code.
+`grok-4.5` routine eligibility is limited to read-only work — the lane remains
+barred from execution, code-touching, and baton writes. Their quotas remain
+small: fable quota 2 and grok quota 3 (the 0.1x usage-economics framing). The
+rebalance widens which work they may take, not either quota's size. Only
+`opus-4.8`'s credited deep-review station remains categorically excluded from
+the elastic quality-eligible pool, preserving cross-vendor decorrelation.
+Apply the numeric 57.7/38.5/3.8 allocator split over this quality-eligible
+elastic volume pool, which now includes fable and grok alongside the
+gpt-class, sonnet, and opus lanes, but only among models that clear the task's
+quality bar; never route to a worse-quality model merely to burn quota.
+`gpt-5.6-terra` (quota 9 in the shared Codex pool) absorbs routine volume
+precisely because that pool is abundant. If the quota ratios change
+(subscription upgrades or cuts), the volume allocation flips with them —
+re-check the ratios monthly.
 
-Use `gpt-5.5` for bulk or mechanical work where the specification is clear:
-implementation, data analysis, migrations, and other high-volume tasks. In this
-workspace it is effectively free and strong enough to clear most mechanical
-work without supervision.
+Use `gpt-5.6-terra`, with `gpt-5.5` as the runtime fallback, for bulk or
+mechanical work where the specification is clear: implementation, data
+analysis, migrations, and other high-volume tasks. In this workspace the
+shared Codex pool is effectively free and strong enough to clear most
+mechanical work without supervision.
 
 Anything user-facing needs taste `>= 7`: UI, copy, docs intended for a human,
 API design, examples, and polish passes. That makes `sonnet-5`, `opus-4.8`, or
-`fable-5` the normal choices for those surfaces. Do not rely on `gpt-5.5` alone
-for final taste-sensitive output unless another tasteful reviewer has checked
-it.
+`fable-5` the normal choices for those surfaces. Do not rely on a gpt-5.6
+family model alone for final taste-sensitive output unless another tasteful
+reviewer has checked it.
 
 For review stations, follow the ring instead of a generic preference rule:
-`gpt-5.5` reviews plans, with an optional read-only Grok plan-pulse for
+`gpt-5.6-sol` reviews plans, with an optional read-only Grok plan-pulse for
 latest-tech drift; `opus-4.8` owns credited implementation deep review; and
 `fable-5` adjudicates whether the done-claim closes the loop or sends the work
 back for another cycle.
@@ -191,19 +225,21 @@ Never use Haiku for Dvandva subagents or workflow work.
 
 ## Mechanics
 
-`gpt-5.5` is reached through the Codex CLI, for example `codex exec` or
-`codex review`. When using a Codex skill that already wraps the needed surface,
-use that skill. For work the skills do not cover, such as investigation or data
-analysis, run `codex exec -s read-only` with a self-contained prompt.
+The gpt-5.6 family (`gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`), with
+`gpt-5.5` as its runtime fallback, is reached through the Codex CLI, for
+example `codex exec` or `codex review`. When using a Codex skill that already
+wraps the needed surface, use that skill. For work the skills do not cover,
+such as investigation or data analysis, run `codex exec -s read-only` with a
+self-contained prompt.
 
 Claude models (`sonnet-5`, `opus-4.8`, `fable-5`) run through the Agent or
 Workflow model parameter where that surface exposes them.
 
 When a workflow or subagent surface only accepts Claude model parameters but a
-run needs `gpt-5.5`, spawn a thin Claude wrapper agent with a cheap acceptable
-model and low effort. The wrapper's job is only to write a self-contained Codex
-prompt, run `codex exec` through Bash, and return the result. The wrapper must
-not silently reinterpret the task.
+run needs the gpt-5.6 family or its `gpt-5.5` fallback, spawn a thin Claude
+wrapper agent with a cheap acceptable model and low effort. The wrapper's job
+is only to write a self-contained Codex prompt, run `codex exec` through Bash,
+and return the result. The wrapper must not silently reinterpret the task.
 
 ## Specialist Lanes
 
@@ -222,6 +258,8 @@ rejections (triage, glue, critique-as-station) stand.
 
 Rules for the grok lane:
 
+A Grok lane may take routine read-only work when it clears the quality bar — always uncredited, never execute, never code-touching, never baton-writing.
+
 - Research phases, the plan-review loop's uncredited latest-tech pulse, and
   the pre-review probe (both the plan-pulse and pre-review-probe patterns
   below) — never a credited review station whose approval gates anything,
@@ -236,6 +274,8 @@ Rules for the grok lane:
   tool use, or baton writes directly.
 - Read-only invocation: restrict tools (`--disallowed-tools`) and never use
   `--always-approve`/`--yolo` for research lanes.
+- Headless hygiene: pass `--no-memory` on every grok invocation so no session
+  memory persists across lane invocations.
 - Both Dvandva roles may open the lane. Independent research means independent
   lanes: the vadi queries from the planning angle during `research_drafting`,
   the prativadi from the adversarial angle (plan-pulse is naturally the
