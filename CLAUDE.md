@@ -2,7 +2,7 @@
 
 ## Model discipline
 
-- **Fable never writes code.** When this session runs on a Fable-class model (e.g. hosting the Dvandva vadi), all code — implementation, tests, even one-line fixes — is dispatched to subagents (`sonnet` floor; `opus` for interlocking constraints; `gpt-5.5` via the Codex CLI for mechanical bulk). Fable's job in the chair is judgment and taste only: decisions, plans, reviews, human-facing artifacts, and coordination writes (baton candidates, memory, todos). "Too small to dispatch" is the rationalization this rule exists to override.
+- **Fable never writes code.** When this session runs on a Fable-class model (e.g. hosting the Dvandva vadi), all code — implementation, tests, even one-line fixes — is dispatched to subagents. Dispatch code to `gpt-5.6-terra` for routine work, `gpt-5.6-sol` for hard bounded work, and `gpt-5.6-luna` only for mechanically proven task classes; `gpt-5.5` is the fallback. Fable's job in the chair is judgment and taste only: decisions, plans, reviews, human-facing artifacts, and coordination writes (baton candidates, memory, todos). "Too small to dispatch" is the rationalization this rule exists to override.
 - Model casting guidance lives in `docs/model-selection.md` (advisory scored table; `intelligence > taste > cost`; never haiku). The enforced protocol surface is the four workload classes (`opus`/`sonnet`/`fable`/`gpt`) — the table never becomes baton policy.
 
 ## Release checklist (learned 2026-07-07)

@@ -213,12 +213,20 @@ hard-bounded uncredited stations (plan review, its own research leg, tightly
 specified tracks); `gpt-5.6-terra` is the routine default for implementation,
 tests, and fixes; and `gpt-5.6-luna` takes high-volume mechanical bulk where
 taste does not bind — data analysis, log digging, migrations, and formatting or
-transform sweeps. Route the largest mechanical sweeps to `gpt-5.6-luna`
-(shared-pool quota 9), reserving `gpt-5.6-terra` for bulk that still needs
-judgment. `gpt-5.6-luna` output never reaches a user-facing surface without a
+transform sweeps — once its task class has cleared a quality probe.
+
+`gpt-5.6-terra` remains the routine default; `gpt-5.6-luna` may take taste-light mechanical work only after a representative task-class quality probe passes; `gpt-5.5` is the runtime fallback.
+
+The probe runs one representative task from the class on `gpt-5.6-luna` and
+has a taste `>= 7` model review the result; only once that probe passes is the
+whole task class routed to `gpt-5.6-luna` — one probe per task class, not per
+task. Once a task class has passed its probe, route its largest mechanical
+sweeps to `gpt-5.6-luna` (shared-pool quota 9), reserving `gpt-5.6-terra` for
+bulk that still needs judgment or whose task class has not yet cleared its
+probe. `gpt-5.6-luna` output never reaches a user-facing surface without a
 taste `>= 7` reviewer (`sonnet-5`, `opus-4.8`, or `fable-5`) checking it first.
-In this workspace the shared Codex pool is effectively free and strong enough to
-clear most mechanical work without supervision.
+In this workspace the shared Codex pool is effectively free and strong enough
+to clear most mechanical work without supervision.
 
 Anything user-facing needs taste `>= 7`: UI, copy, docs intended for a human,
 API design, examples, and polish passes. That makes `sonnet-5`, `opus-4.8`, or
