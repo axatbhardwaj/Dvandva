@@ -26,7 +26,8 @@ use serde_json::Value;
 
 use crate::util::{self, is_safe_run_id};
 use crate::write::{
-    expected_phase_for, legal_transitions, validate_candidate, PhaseMove, TransitionOption,
+    canonical_mode, expected_phase_for, legal_transitions, validate_candidate, PhaseMove,
+    TransitionOption,
 };
 
 const USAGE: &str = "\
@@ -303,6 +304,7 @@ fn run_generate(baton_file: &Path, baton: &Value, args: &Args) -> i32 {
 
     apply_amendment(&mut candidate, option);
     apply_loop_counts(&mut candidate, baton, option);
+    scaffold_dispatch_request(&mut candidate, baton, to, &option.assignee, new_checkpoint);
 
     // ---- validate the generated candidate in-process (never emit invalid) --
     let baton_dir = baton_dir_of(baton_file);
@@ -343,6 +345,61 @@ fn run_generate(baton_file: &Path, baton: &Value, args: &Args) -> i32 {
         out_path.display()
     );
     0
+}
+
+/// Scaffold the vadi dispatch request that a development-mode prativadi-owned
+/// `deep_review` entry MUST carry. `dvandva write`'s producer gate rejects such
+/// an entry (exit 23 `missing_dispatch_request`) unless an OPEN
+/// `dispatch_requests` entry names the vadi — the signal the vadi's waiter wakes
+/// on (`DVANDVA_WAIT dispatch_requested`) to dispatch the credited cross-vendor
+/// Opus reviewers. Without this, the canonical `dvandva next --to deep_review`
+/// scaffold self-fails validation and never emits, so the tooling path the
+/// walkaway loop is built on is broken. Scoped to exactly the gate's orientation
+/// (development mode + deep_review + assignee prativadi), and idempotent: if the
+/// copied baton already carries an open vadi request, nothing is added.
+fn scaffold_dispatch_request(
+    candidate: &mut Value,
+    baton: &Value,
+    to: &str,
+    assignee: &str,
+    checkpoint: i64,
+) {
+    let development = canonical_mode(
+        baton
+            .get("mode")
+            .and_then(Value::as_str)
+            .unwrap_or_default(),
+    )
+    .as_deref()
+        == Some("development");
+    if !(development && to == "deep_review" && assignee == "prativadi") {
+        return;
+    }
+    if candidate
+        .get("dispatch_requests")
+        .and_then(Value::as_array)
+        .is_some_and(|reqs| {
+            reqs.iter().any(|req| {
+                req.get("role").and_then(Value::as_str) == Some("vadi")
+                    && util::is_open_finding_status(req.get("status").and_then(Value::as_str))
+            })
+        })
+    {
+        return;
+    }
+    let entry = serde_json::json!({
+        "id": format!("credited-opus-dispatch-{checkpoint}"),
+        "role": "vadi",
+        "purpose": "credited cross-vendor Anthropic-Opus dispatch",
+        "status": "open"
+    });
+    if !candidate["dispatch_requests"].is_array() {
+        candidate["dispatch_requests"] = Value::Array(Vec::new());
+    }
+    candidate["dispatch_requests"]
+        .as_array_mut()
+        .expect("dispatch_requests array")
+        .push(entry);
 }
 
 /// Apply the amendment field per the edge: entry sets it to the current numeric

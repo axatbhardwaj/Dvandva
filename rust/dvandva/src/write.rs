@@ -325,6 +325,17 @@ fn validate_candidate_shape(
                 format!("DVANDVA_WRITE bad_phase_profiles candidate={cf}"),
             ));
         }
+        // dr-dispatch-request-shape: dispatch_requests is additive/nullable, but
+        // every present entry must be a well-formed `{id, role, purpose, status}`
+        // object with a status in the closed producer vocabulary
+        // open|completed|cancelled. Shape only here; the deep_review entry/exit
+        // lifecycle (production, closure) is enforced in decide_transition.
+        if !dispatch_requests_shape_ok(cand) {
+            return Err((
+                23,
+                format!("DVANDVA_WRITE bad_dispatch_requests candidate={cf}"),
+            ));
+        }
 
         if new_effective_mode == "development" {
             // profile field/shape validation
@@ -2341,6 +2352,31 @@ fn decide_transition(
         )));
     }
 
+    // dr-open-dispatch-request-not-closed: the mirror of the producer gate. The
+    // write LEAVING a development-mode `deep_review` for a real protocol state
+    // must have CLOSED the vadi dispatch request the entry produced — the
+    // credited cross-vendor reviews have landed by the time the reviewer leaves
+    // the gate (whether it advances to `deslop` or hands back to `phase_fixing`),
+    // so an entry left `open` would re-wake the vadi's waiter after the work is
+    // done. Closure is `status: completed|cancelled`, written by either role in
+    // the exit write. Escape states (human_question/human_decision/abandoned) are
+    // exempt: a mid-review pause/escalation does not mean the reviews landed, so
+    // the open request rides through and resumes intact. Fail-closed at 23.
+    if legal
+        && cx.is_v2
+        && cur_effective_mode == "development"
+        && cur_status == "deep_review"
+        && !matches!(
+            cx.new_status,
+            "deep_review" | "human_question" | "human_decision" | "abandoned"
+        )
+        && has_open_dispatch_request(cand, "vadi")
+    {
+        return Err((23, format!(
+            "DVANDVA_WRITE open_dispatch_request deep_review exit requires closing the vadi dispatch_requests entry (status completed|cancelled once the credited reviews land) candidate={cf}"
+        )));
+    }
+
     // ---- P1: clarifying-questions per-state non-null gates -----------------
     if legal
         && cx.is_v2
@@ -2843,7 +2879,7 @@ fn review_target_ok(cand: &Value) -> bool {
     }
 }
 
-fn canonical_mode(mode: &str) -> Option<String> {
+pub(crate) fn canonical_mode(mode: &str) -> Option<String> {
     match mode {
         "development" | "feature-pr" => Some("development".to_string()),
         "research" | "review" => Some(mode.to_string()),
@@ -4817,6 +4853,33 @@ fn cross_review_to_deep_review_ok(cand: &Value, required: i64) -> bool {
         })
     };
     done_cross("vadi") && done_cross("prativadi")
+}
+
+/// Whether the candidate's `dispatch_requests` field (if present) is well
+/// formed: an array whose every entry is a `{id, role, purpose, status}` object
+/// with non-empty string id/role/purpose and a status in the CLOSED producer
+/// vocabulary `open|completed|cancelled`. This is the strict-producer half of
+/// the strict-producer/tolerant-consumer split — wait.rs's consumer fails OPEN
+/// on unknown status tokens so a future token still wakes the owner, but the
+/// write producer refuses to CREATE an unknown token, so the two surfaces never
+/// disagree about a token that should not exist. Absent/`null` is fine (the
+/// field is additive); a non-array, or any malformed entry, is rejected.
+fn dispatch_requests_shape_ok(cand: &Value) -> bool {
+    match field(cand, "dispatch_requests") {
+        None | Some(Value::Null) => true,
+        Some(Value::Array(entries)) => entries.iter().all(|req| {
+            let str_nonempty =
+                |k: &str| matches!(field(req, k), Some(Value::String(s)) if !s.is_empty());
+            str_nonempty("id")
+                && str_nonempty("role")
+                && str_nonempty("purpose")
+                && matches!(
+                    field(req, "status"),
+                    Some(Value::String(s)) if matches!(s.as_str(), "open" | "completed" | "cancelled")
+                )
+        }),
+        Some(_) => false,
+    }
 }
 
 /// Whether the candidate carries at least one OPEN `dispatch_requests` entry

@@ -12,7 +12,7 @@ mod common;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use common::{make_baton_v3, run};
+use common::{cross_review_tracks, make_baton_v3, run};
 use serde_json::{json, Value};
 
 fn bin() -> PathBuf {
@@ -238,6 +238,64 @@ fn custom_graph_generate_declared_edge_and_write_accepts_it() {
     assert_v3_candidate(&cand, "custom");
 
     run(&baton, &candidate).assert("write accepts the generated custom-graph candidate", 0);
+    assert_eq!(read_json(&baton)["checkpoint"], 5);
+}
+
+// dr-dispatch-request-not-produced (round 2, GAP 1): the canonical tooling path
+// into a development-mode prativadi-owned deep_review must produce a scaffold
+// that `dvandva write` ACCEPTS. `next` re-validates its own candidate in-process
+// through the same write pipeline, so before the scaffold learned to record the
+// vadi dispatch request this GENERATE failed 23 (`missing_dispatch_request`) and
+// never emitted a file — the one command a walkaway loop is supposed to use was
+// broken. Post-fix: next scaffolds the canonical open entry, self-validation
+// passes, and the emitted candidate round-trips through `write` at exit 0.
+#[test]
+fn generate_cross_review_to_deep_review_scaffolds_dispatch_request_and_write_accepts_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    let candidate = dir.path().join("baton.next.json");
+    // Development-mode cross_review, ready to advance: both cross-review tracks
+    // are recorded (required review_checkpoint == current checkpoint 4).
+    make_baton_v3(&baton, "cross_review", "team", 4, |b| {
+        b["active_roles"] = serde_json::json!(["vadi", "prativadi"]);
+        cross_review_tracks(b);
+    });
+
+    let (code, stdout, stderr) = run_next(&[
+        "--file",
+        baton.to_str().unwrap(),
+        "--to",
+        "deep_review",
+        "--summary",
+        "Cross-review approved by both roles; entering deep_review under prativadi.",
+        "--next-action",
+        "prativadi: run deep_review; vadi: dispatch the credited cross-vendor opus reviewers.",
+    ]);
+    assert_eq!(code, 0, "deep_review generate exits 0\nstderr:\n{stderr}");
+    assert!(
+        stdout.contains("to=deep_review checkpoint=5"),
+        "ok line names the deep_review target + checkpoint\n{stdout}"
+    );
+
+    let cand = read_json(&candidate);
+    assert_eq!(cand["status"], "deep_review");
+    assert_eq!(cand["assignee"], "prativadi");
+    // The scaffold recorded exactly one OPEN dispatch request naming the vadi,
+    // id keyed to the new checkpoint.
+    let reqs = cand["dispatch_requests"]
+        .as_array()
+        .expect("dispatch_requests array");
+    assert_eq!(reqs.len(), 1, "one scaffolded dispatch request\n{cand}");
+    assert_eq!(reqs[0]["id"], "credited-opus-dispatch-5");
+    assert_eq!(reqs[0]["role"], "vadi");
+    assert_eq!(reqs[0]["status"], "open");
+    assert!(
+        reqs[0]["purpose"].as_str().is_some_and(|p| !p.is_empty()),
+        "non-empty purpose\n{cand}"
+    );
+
+    // Strongest property: the SAME binary's `write` accepts the generated file.
+    run(&baton, &candidate).assert("write accepts the generated deep_review candidate", 0);
     assert_eq!(read_json(&baton)["checkpoint"], 5);
 }
 

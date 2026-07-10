@@ -757,6 +757,83 @@ fn v2_cross_review_to_deep_review_rejects_closed_dispatch_request() {
     );
 }
 
+// dr-open-dispatch-request-not-closed: the write EXITING a development-mode
+// deep_review to any non-escape state must have CLOSED the vadi dispatch
+// request the deep_review entry produced — the credited cross-vendor reviews
+// have landed by the time the reviewer leaves the gate, so an open request left
+// dangling would re-wake the vadi after the work is done. Closure = status
+// completed or cancelled. Escape states (human_question/human_decision/
+// abandoned) are exempt: a mid-review human pause does not mean the reviews
+// landed. These three probe the exit gate.
+#[test]
+fn v2_deep_review_exit_with_open_dispatch_request_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(
+        &b,
+        "deep_review",
+        "prativadi",
+        4,
+        dispatch_request_open_vadi,
+    );
+    // A fully valid deep_review->deslop exit, but the vadi dispatch request the
+    // entry produced is STILL open — the credited reviews have landed, so it
+    // must be closed on the way out.
+    make_baton_v3(&n, "deslop", "vadi", 5, |v| {
+        review_angles(v);
+        dispatch_request_open_vadi(v);
+    });
+    run(&b, &n).assert_contains(
+        "v2 deep_review exit with an open vadi dispatch request is rejected",
+        23,
+        "open_dispatch_request",
+    );
+}
+
+#[test]
+fn v2_deep_review_exit_with_closed_dispatch_request_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(
+        &b,
+        "deep_review",
+        "prativadi",
+        4,
+        dispatch_request_open_vadi,
+    );
+    make_baton_v3(&n, "deslop", "vadi", 5, |v| {
+        review_angles(v);
+        // The credited reviews landed and the request was completed on exit.
+        v["dispatch_requests"] = json!([
+            {"id": "dr-opus", "role": "vadi", "purpose": "credited cross-vendor Anthropic-Opus dispatch", "status": "completed"}
+        ]);
+    });
+    run(&b, &n).assert(
+        "v2 deep_review exit with a completed vadi dispatch request passes",
+        0,
+    );
+}
+
+#[test]
+fn v2_deep_review_exit_to_escape_state_exempt_from_dispatch_closure() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(
+        &b,
+        "deep_review",
+        "prativadi",
+        4,
+        dispatch_request_open_vadi,
+    );
+    // A mid-review escalation to human_decision is exempt: the reviews have NOT
+    // necessarily landed, so the still-open request rides through the escape.
+    make_baton_v3(&n, "human_decision", "human", 5, dispatch_request_open_vadi);
+    run(&b, &n).assert(
+        "v2 deep_review exit to human_decision is exempt from dispatch closure",
+        0,
+    );
+}
+
 #[test]
 fn v2_cross_review_cross_fixing_after_team_sync() {
     let d = tmp();

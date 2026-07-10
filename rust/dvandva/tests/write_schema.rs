@@ -1777,6 +1777,86 @@ fn f9_phase_profiles_non_object_rejected() {
     run(&b, &n).assert_contains("f9 phase_profiles non-object", 23, "bad_phase_profiles");
 }
 
+// ===================== dispatch_requests shape =====================
+// dr-dispatch-request-shape: `dispatch_requests` is additive/nullable, but when
+// PRESENT every entry must be a `{id, role, purpose, status}` object with
+// non-empty string id/role/purpose and a status in the closed vocabulary
+// open|completed|cancelled. This is the STRICT producer half of the strict-
+// producer/tolerant-consumer split: the wait consumer fails open on unknown
+// status tokens (so a future token still wakes the owner), but the write
+// producer refuses to CREATE an unknown token in the first place, so the two
+// surfaces never disagree about a token that should not exist. Reason
+// `bad_dispatch_requests`, checked on any transition that carries the field.
+
+/// A dispatch request with a status outside open|completed|cancelled is rejected.
+#[test]
+fn dispatch_requests_unknown_status_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "spec_drafting", "vadi", 4, |_| {});
+    make_baton_v3(&n, "spec_review", "prativadi", 5, |v| {
+        v["dispatch_requests"] = json!([
+            {"id": "dr-1", "role": "vadi", "purpose": "credited opus dispatch", "status": "pending"}
+        ]);
+    });
+    run(&b, &n).assert_contains(
+        "dispatch_requests unknown status token is rejected",
+        23,
+        "bad_dispatch_requests",
+    );
+}
+
+/// A dispatch request missing the `purpose` field is rejected.
+#[test]
+fn dispatch_requests_missing_purpose_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "spec_drafting", "vadi", 4, |_| {});
+    make_baton_v3(&n, "spec_review", "prativadi", 5, |v| {
+        v["dispatch_requests"] = json!([
+            {"id": "dr-1", "role": "vadi", "status": "open"}
+        ]);
+    });
+    run(&b, &n).assert_contains(
+        "dispatch_requests missing purpose is rejected",
+        23,
+        "bad_dispatch_requests",
+    );
+}
+
+/// A dispatch request whose `id` is not a non-empty string is rejected.
+#[test]
+fn dispatch_requests_non_string_id_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "spec_drafting", "vadi", 4, |_| {});
+    make_baton_v3(&n, "spec_review", "prativadi", 5, |v| {
+        v["dispatch_requests"] = json!([
+            {"id": 1, "role": "vadi", "purpose": "credited opus dispatch", "status": "open"}
+        ]);
+    });
+    run(&b, &n).assert_contains(
+        "dispatch_requests non-string id is rejected",
+        23,
+        "bad_dispatch_requests",
+    );
+}
+
+/// A well-formed dispatch_requests field (closed-vocabulary status) rides
+/// through a transition that neither produces nor closes it.
+#[test]
+fn dispatch_requests_valid_shape_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "spec_drafting", "vadi", 4, |_| {});
+    make_baton_v3(&n, "spec_review", "prativadi", 5, |v| {
+        v["dispatch_requests"] = json!([
+            {"id": "dr-1", "role": "vadi", "purpose": "credited opus dispatch", "status": "completed"}
+        ]);
+    });
+    run(&b, &n).assert("dispatch_requests valid shape is accepted", 0);
+}
+
 /// F9: phase_profiles keys must be stringified numeric phases.
 #[test]
 fn f9_phase_profiles_non_numeric_key_rejected() {
