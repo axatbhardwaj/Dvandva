@@ -1,17 +1,21 @@
 //! CLI wrapper for `dvandva stop-guard` — the Claude Code Stop hook that keeps
-//! a walkaway Dvandva role from silently ending its turn on a live baton.
+//! a walkaway Dvandva role from silently ending its turn while bound to a live
+//! baton.
 //!
 //! Reads a single Stop-hook payload (JSON) from stdin, collects the repo's
-//! active-run batons, resolves `DVANDVA_ROLE`, and blocks the stop (exit 2 with
-//! a stderr message, per the Claude Code Stop-hook contract — matching the
-//! `baton-guard` hard-block form) when a walkaway baton still holds this
-//! session. See [`dvandva::stop_guard::decide`] for the pure decision logic.
+//! active-run batons, tags each with whether this session (per the payload's
+//! `session_id`) is bound to its run, resolves `DVANDVA_ROLE`, and blocks the
+//! stop (exit 2 with a stderr message, per the Claude Code Stop-hook contract —
+//! matching the `baton-guard` hard-block form) when a bound walkaway baton still
+//! holds this session. See [`dvandva::stop_guard::decide`] for the pure logic.
 
 use std::io::Read;
 
+use dvandva::baton_guard::payload_session_id;
 use dvandva::commit_gate::collect_baton_paths;
 use dvandva::gitcfg::repo_toplevel;
-use dvandva::stop_guard::{decide, StopDecision};
+use dvandva::session_marker;
+use dvandva::stop_guard::{decide, BoundBaton, StopDecision};
 use dvandva::util::read_json_lenient;
 
 /// Run the `stop-guard` subcommand, returning the process exit code.
@@ -32,9 +36,21 @@ pub fn run(args: &[String]) -> i32 {
         return 0;
     };
     let role = std::env::var("DVANDVA_ROLE").ok().filter(|s| !s.is_empty());
-    let batons: Vec<_> = collect_baton_paths(&repo_root)
-        .iter()
-        .filter_map(|path| read_json_lenient(path).ok())
+    let session_id = payload_session_id(&payload);
+    let batons: Vec<BoundBaton> = collect_baton_paths(&repo_root)
+        .into_iter()
+        .filter_map(|path| {
+            let baton = read_json_lenient(&path).ok()?;
+            let bound = session_id.as_deref().is_some_and(|sid| {
+                path.parent()
+                    .is_some_and(|run_dir| session_marker::is_bound(run_dir, sid))
+            });
+            Some(BoundBaton {
+                bound,
+                path: path.to_string_lossy().into_owned(),
+                baton,
+            })
+        })
         .collect();
     match decide(&payload, role.as_deref(), &batons) {
         StopDecision::Allow => 0,

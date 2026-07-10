@@ -15,7 +15,7 @@ use dvandva::baton_guard::{
 };
 use dvandva::gitcfg::repo_toplevel;
 use dvandva::resolve::{resolve_active_run, ResolveEnv, ResolveOutcome};
-use dvandva::{sla_marker, Role};
+use dvandva::{session_marker, sla_marker, Role};
 use serde_json::Value;
 
 /// Default baton-creation SLA threshold in seconds, overridable via
@@ -37,6 +37,9 @@ pub fn run(args: &[String]) -> i32 {
     if std::io::stdin().read_to_end(&mut payload).is_err() {
         return 0;
     }
+    // Session/run binding: stamp a marker under every run this tool call touches
+    // so the Stop hook can tell a participant from a stranger. Side-effect only.
+    bind_referenced_runs(&payload);
     let sla = sla_state(&payload);
     match should_block(&payload, &sla) {
         Decision::Allow => 0,
@@ -49,6 +52,27 @@ pub fn run(args: &[String]) -> i32 {
             println!("{}", warn_hook_response(&reason));
             0
         }
+    }
+}
+
+/// Bind this session to every run its tool call references, so the Stop hook
+/// can later distinguish a participant from a stranger. Best-effort and
+/// side-effect-only: any miss (no `session_id`, not in a repo, run dir absent)
+/// silently skips — a binding failure must never brick the tool call.
+fn bind_referenced_runs(payload: &[u8]) {
+    let Some(session_id) = payload_session_id(payload) else {
+        return;
+    };
+    let Some(repo_root) = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| repo_toplevel(&cwd))
+    else {
+        return;
+    };
+    let text = String::from_utf8_lossy(payload);
+    for run in session_marker::referenced_run_dirs(&text) {
+        let run_dir = repo_root.join(".dvandva").join("runs").join(&run);
+        session_marker::bind(&run_dir, &session_id);
     }
 }
 

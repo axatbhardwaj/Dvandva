@@ -31,6 +31,7 @@ pub mod next;
 pub mod preflight;
 pub mod resolve;
 pub mod retire;
+pub mod session_marker;
 pub mod sla_marker;
 pub mod smoke;
 pub mod snapshot;
