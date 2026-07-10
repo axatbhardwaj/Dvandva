@@ -18,6 +18,7 @@ use serde_json::Value;
 use crate::baton_guard::payload_session_id;
 use crate::commit_gate::is_gate_terminal;
 use crate::util::coalesce;
+use crate::workflow::{self, StateClass};
 
 /// The outcome of a [`decide`] call.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -102,10 +103,53 @@ fn baton_blocks_stop(baton: &Value, baton_path: &str, role: Option<&str>) -> Opt
     // Terminal (done/abandoned) or a human-assigned pause/gate
     // (human_question/human_decision/clarifying-answers): the surfacing session
     // legitimately idles in AskUserQuestion, not in `wait`, so never nudge it.
-    if status.is_empty() || is_gate_terminal(&status) {
+    // A v3 baton derives this from its declared state *class*, so a custom-graph
+    // state whose class is terminal/human_gate/pause is honored even under a
+    // non-reserved name; v1/v2 (and partial v3) fall back to the token set. An
+    // empty status carries no class to read, so it fails open (never nudge).
+    if status.is_empty() || baton_is_inactive(baton, &status) {
         return None;
     }
     Some(block_reason(baton, baton_path, role, &status))
+}
+
+/// Whether `baton` (at `status`) sits in a terminal, human-gate, or human-pause
+/// state — the states a bound session may legitimately stop on. A v3 baton
+/// derives this from its declared state *class* (so a custom-graph state whose
+/// class marks it inactive is honored under any name); v1/v2 and partial v3
+/// batons fall back to [`is_gate_terminal`]'s token set. Mirrors the commit
+/// gate's class model so the two guards agree on what "inactive" means.
+fn baton_is_inactive(baton: &Value, status: &str) -> bool {
+    if str_field(baton, "schema") == "dvandva.baton.v3" {
+        if let Some(class) = v3_status_class(baton, status) {
+            return matches!(
+                class,
+                StateClass::HumanGate | StateClass::Pause | StateClass::Terminal
+            );
+        }
+    }
+    is_gate_terminal(status)
+}
+
+/// The declared [`StateClass`] of `status` in a v3 baton's `run_workflow`,
+/// resolved from a named preset (`source = "preset:<name>"`) or from the inline
+/// `states` list of a custom graph. `None` when the workflow, the matching
+/// state, or its class token is absent/unrecognized.
+fn v3_status_class(baton: &Value, status: &str) -> Option<StateClass> {
+    let rw = baton.get("run_workflow")?;
+    let source = str_field(rw, "source");
+    if let Some(preset_name) = source.strip_prefix("preset:") {
+        return workflow::preset(preset_name)?
+            .states
+            .into_iter()
+            .find(|state| state.name == status)
+            .map(|state| state.class);
+    }
+    rw.get("states")?.as_array()?.iter().find_map(|state| {
+        (str_field(state, "name") == status)
+            .then(|| StateClass::from_token(&str_field(state, "class")))
+            .flatten()
+    })
 }
 
 /// The model-visible nudge: names the run and status, and spells the canonical
@@ -135,12 +179,33 @@ fn block_reason(baton: &Value, baton_path: &str, role: Option<&str>, status: &st
 }
 
 /// The canonical `dvandva wait` resume command for `role` against `baton_path`,
-/// carrying the exact interval/max-wait/stall-max flags the loop expects.
+/// carrying the exact interval/max-wait/stall-max flags the loop expects. The
+/// path is shell-quoted so a baton dir with spaces still yields one runnable
+/// `--file` argument.
 fn wait_command(role: &str, baton_path: &str) -> String {
     format!(
-        "dvandva wait --role {role} --file {baton_path} --interval 60 --max-wait 540 \
-         --stall-max 1800 --until-actionable"
+        "dvandva wait --role {role} --file {file} --interval 60 --max-wait 540 \
+         --stall-max 1800 --until-actionable",
+        file = shell_quote(baton_path)
     )
+}
+
+/// POSIX-shell-quote `arg` so a value with spaces (or other shell-special
+/// characters) survives as a single argument when the nudge is copied into a
+/// shell. A value made only of shell-safe characters is returned bare (so the
+/// common space-free path stays readable); anything else is wrapped in single
+/// quotes with embedded single quotes escaped as `'\''`.
+fn shell_quote(arg: &str) -> String {
+    let safe = !arg.is_empty()
+        && arg.chars().all(|c| {
+            c.is_ascii_alphanumeric()
+                || matches!(c, '.' | '_' | '-' | '/' | '@' | '%' | '+' | '=' | ':' | ',')
+        });
+    if safe {
+        arg.to_string()
+    } else {
+        format!("'{}'", arg.replace('\'', "'\\''"))
+    }
 }
 
 /// A top-level string field, `""` when absent/null/false/non-string (jq

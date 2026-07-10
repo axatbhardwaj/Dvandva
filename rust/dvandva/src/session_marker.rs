@@ -139,22 +139,35 @@ fn env_selector_run_names(text: &str) -> Vec<String> {
 }
 
 /// The value tokens immediately following each occurrence of `prefix` in
-/// `text`, each read up to the first whitespace, `"`, or `\` — the shell / JSON
-/// terminators of an unquoted assignment value. Empty tokens are dropped.
+/// `text`, each parsed by [`read_value`]. Empty tokens are dropped.
 fn values_after(text: &str, prefix: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut rest = text;
     while let Some(idx) = rest.find(prefix) {
         rest = &rest[idx + prefix.len()..];
-        let token: String = rest
-            .chars()
-            .take_while(|&c| c != '"' && c != '\\' && !c.is_whitespace())
-            .collect();
+        let token = read_value(rest);
         if !token.is_empty() {
             out.push(token);
         }
     }
     out
+}
+
+/// Read a single assignment value from the start of `rest`. A value wrapped in
+/// matching single or double quotes (the shell forms `KEY='v'` / `KEY="v"`)
+/// yields its unquoted interior, so a quoted selector like
+/// `DVANDVA_RUN_ID='live'` binds like the bare form; an unquoted value runs up
+/// to the first whitespace, `"`, or `\` — the shell / JSON terminators of a
+/// bare assignment value.
+fn read_value(rest: &str) -> String {
+    let mut chars = rest.chars();
+    match chars.next() {
+        Some(quote @ ('\'' | '"')) => chars.take_while(|&c| c != quote).collect(),
+        _ => rest
+            .chars()
+            .take_while(|&c| c != '"' && c != '\\' && !c.is_whitespace())
+            .collect(),
+    }
 }
 
 /// The non-empty, non-`.`/`..` path segments of `path`, split on `/`.
