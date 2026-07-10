@@ -11,7 +11,7 @@
       "name": "dvandva",
       "source": "./plugins/dvandva",
       "description": "Two-agent baton protocol for paired coding agents.",
-      "version": "1.5.2",
+      "version": "1.5.3",
       "author": {
         "name": "Dvandva",
         "url": "https://github.com/axatbhardwaj"
