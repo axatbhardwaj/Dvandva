@@ -200,7 +200,8 @@ small: fable quota 2 and grok quota 3 (the 0.1x usage-economics framing). The
 rebalance widens which work they may take, not either quota's size. Only
 `opus-4.8`'s credited deep-review station remains categorically excluded from
 the elastic quality-eligible pool, preserving cross-vendor decorrelation.
-Apply the numeric 57.7/38.5/3.8 allocator split over this quality-eligible
+Apply the numeric Codex 57.7% / Claude 38.5% / Grok 3.8% allocator split (the
+normalized 1.5 : 1 : 0.1 capacity weighting) over this quality-eligible
 elastic volume pool, which now includes fable and grok alongside the
 gpt-class, sonnet, and opus lanes, but only among models that clear the task's
 quality bar; never route to a worse-quality model merely to burn quota.

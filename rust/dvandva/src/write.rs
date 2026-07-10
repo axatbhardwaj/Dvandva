@@ -4972,9 +4972,9 @@ fn cross_review_to_deep_review_ok(cand: &Value, required: i64) -> bool {
 /// The canonical `purpose` of the vadi dispatch request a development-mode
 /// prativadi-owned `deep_review` entry must carry. `next.rs`'s
 /// `scaffold_dispatch_request` writes exactly this string, and the entry gate
-/// binds to it (a substring match) so an UNRELATED open vadi request cannot pose
-/// as the credited-Opus-dispatch signal. Shared to keep producer and gate from
-/// drifting apart.
+/// binds to it (an exact-purpose match) so an UNRELATED open vadi request cannot
+/// pose as the credited-Opus-dispatch signal. Shared to keep producer and gate
+/// from drifting apart.
 pub(crate) const CANONICAL_OPUS_DISPATCH_PURPOSE: &str =
     "credited cross-vendor Anthropic-Opus dispatch";
 

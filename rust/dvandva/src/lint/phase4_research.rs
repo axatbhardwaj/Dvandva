@@ -113,11 +113,13 @@ const MODEL_POLICY_FABLE_NO_CODE: &str =
 /// NOT catch a contradiction ADDED elsewhere in the doc that leaves this sentence
 /// verbatim. These phase4 needles are DRIFT lints over cooperatively-maintained
 /// docs, not an adversarial-smuggle-proof gate: a motivated author who keeps the
-/// pinned sentences intact and appends contradicting prose passes them. The cheap
-/// whole-file anti-needles in `req_command_ring_dispatch` reject only the two most
-/// blatant added-inversion shapes (Fable-may-write, Grok-may-execute/write-code);
-/// general added-contradiction detection is deliberately out of scope (it would
-/// require comment/fence-region semantic parsing, not a substring/regex pin).
+/// pinned sentences intact and appends contradicting prose passes them.
+/// `req_command_ring_dispatch` once carried cheap whole-file anti-needles for the
+/// two most blatant added-inversion shapes (Fable-may-write, Grok-may-execute/
+/// write-code); those were dropped as negation-blind (e4c9e63), so only the
+/// positive substring pins above remain. General added-contradiction detection
+/// is deliberately out of scope (it would require comment/fence-region semantic
+/// parsing, not a substring/regex pin).
 const MODEL_POLICY_LUNA_PROBE_SENTENCE: &str = "`gpt-5.6-terra` remains the routine default; `gpt-5.6-luna` may take taste-light mechanical work only after a representative task-class quality probe passes; `gpt-5.5` is the runtime fallback.";
 const STATE_TABLE_CODEX_MAPPING: &str = r#"| `opus` | `opus-class\|gpt-5.5-xhigh` | Opus-class | gpt-5.6-sol xhigh (fallback gpt-5.5) |
 | `sonnet` | `sonnet-class\|gpt-5.5-high` | Sonnet-class | gpt-5.6-terra high (fallback gpt-5.5) |
