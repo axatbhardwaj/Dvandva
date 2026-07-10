@@ -681,10 +681,10 @@ Model classes are durable workload-routing classes, not a literal ranked model t
 
 | Routing class | Accepted class string | Claude Code mapping | Codex mapping |
 |---|---|---|---|
-| `opus` | `opus-class\|gpt-5.5-xhigh` | Opus-class | gpt-5.5 xhigh |
-| `sonnet` | `sonnet-class\|gpt-5.5-high` | Sonnet-class | gpt-5.5 high |
-| `fable` | `fable-class\|gpt-5.5-xhigh` | Fable-class | gpt-5.5 xhigh |
-| `gpt` | `gpt-class\|gpt-5.5-high` | Sonnet-class wrapper shells to Codex | gpt-5.5 high |
+| `opus` | `opus-class\|gpt-5.5-xhigh` | Opus-class | gpt-5.6-sol xhigh (fallback gpt-5.5) |
+| `sonnet` | `sonnet-class\|gpt-5.5-high` | Sonnet-class | gpt-5.6-terra high (fallback gpt-5.5) |
+| `fable` | `fable-class\|gpt-5.5-xhigh` | Fable-class | gpt-5.6-sol xhigh (fallback gpt-5.5) |
+| `gpt` | `gpt-class\|gpt-5.5-high` | Sonnet-class wrapper shells to Codex | gpt-5.6-terra high (fallback gpt-5.5) |
 
 Legacy validator-compatible aliases for existing batons are `opus-class|gpt-5.5`, `sonnet-class|gpt-5.4`, `gpt-5.5`, and `gpt-5.4`; `gpt-5.5` now resolves as a legacy alias of the `gpt` class. New generated instances should emit the canonical effort-tier strings.
 

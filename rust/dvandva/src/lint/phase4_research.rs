@@ -18,7 +18,7 @@ use std::path::Path;
 
 use crate::lint::{
     count_lines_matching, file_contains, file_has_exact_line, file_slurp_matches_ci,
-    goal_block_matches_ci, list_md, output_contract_contains, resolve_root, Report,
+    goal_block_matches_ci, list_md, output_contract_contains, read, resolve_root, Report,
     MODEL_POLICY_CLAUDE_MAPPING, MODEL_POLICY_CODEX_EFFORT, MODEL_POLICY_CODEX_MAPPING,
     MODEL_POLICY_CODEX_REVIEW_AUTHORITY, MODEL_POLICY_NO_HAIKU_COMMANDS,
     MODEL_POLICY_NO_HAIKU_SUBAGENTS, MODEL_POLICY_OPUS_ROUTING, MODEL_POLICY_SONNET_ROUTING,
@@ -103,6 +103,11 @@ const MODEL_POLICY_GROK_UNCREDITED: &str =
     "A Grok lane may take routine read-only work when it clears the quality bar — always uncredited, never execute, never code-touching, never baton-writing.";
 const MODEL_POLICY_FABLE_NO_CODE: &str =
     "Fable-class owns plan authorship and terminal adjudication, may take routine non-code work when it clears the quality bar, and never writes code.";
+const STATE_TABLE_CODEX_MAPPING: &str = r#"| `opus` | `opus-class\|gpt-5.5-xhigh` | Opus-class | gpt-5.6-sol xhigh (fallback gpt-5.5) |
+| `sonnet` | `sonnet-class\|gpt-5.5-high` | Sonnet-class | gpt-5.6-terra high (fallback gpt-5.5) |
+| `fable` | `fable-class\|gpt-5.5-xhigh` | Fable-class | gpt-5.6-sol xhigh (fallback gpt-5.5) |
+| `gpt` | `gpt-class\|gpt-5.5-high` | Sonnet-class wrapper shells to Codex | gpt-5.6-terra high (fallback gpt-5.5) |
+"#;
 
 fn req(r: &mut Report, root: &Path, rel: &str, needle: &str, msg: impl Into<String>) {
     r.add(file_contains(root, rel, needle), msg);
@@ -322,6 +327,75 @@ fn req_grok_plan_pulse_policy(r: &mut Report, root: &Path) {
     );
 }
 
+fn req_current_model_routing(r: &mut Report, root: &Path) {
+    let model_selection = "docs/model-selection.md";
+    r.add(
+        file_slurp_matches_ci(
+            root,
+            model_selection,
+            r"gpt-5\.6-terra.*routine default.*gpt-5\.6-luna.*taste-light mechanical.*only after.*representative task-class quality probe.*gpt-5\.5.*runtime fallback",
+        ),
+        "docs/model-selection.md pins Luna behind a representative task-class quality probe",
+    );
+    let normalized_model_selection = read(root, model_selection)
+        .map(|text| {
+            text.split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .to_ascii_lowercase()
+        })
+        .unwrap_or_default();
+    r.add(
+        (normalized_model_selection.contains("grok produces the leads")
+            || normalized_model_selection
+                .contains("grok produces uncredited first-pass review leads"))
+            && (normalized_model_selection.contains("`gpt-class` executor")
+                || normalized_model_selection.contains("gpt-class executor"))
+            && normalized_model_selection.contains("addresses or rejects each")
+            && (normalized_model_selection.contains("`opus-4.8` remains the credited gate")
+                || normalized_model_selection
+                    .contains("cross-vendor anthropic opus performs the credited deep review")),
+        "docs/model-selection.md pins Grok leads through GPT handling to Anthropic Opus review",
+    );
+    r.add(
+        file_slurp_matches_ci(
+            root,
+            model_selection,
+            r"Codex hosts the prativadi.*Claude-side vadi.*(fresh )?(Anthropic Opus|opus) subagents.*credited (deep )?review.*Codex(-side| reviewer).*uncredited|Codex hosts the prativadi.*credited cross-vendor Anthropic-Opus deep review.*Claude-side vadi.*fresh `opus` subagents.*Codex reviewer cannot itself stand in for that gate",
+        ),
+        "docs/model-selection.md pins Claude-side Anthropic Opus dispatch for Codex-hosted prativadi",
+    );
+
+    let agents = "AGENTS.md";
+    r.add(
+        file_contains(root, agents, "gpt-5.6-sol")
+            && file_contains(root, agents, "gpt-5.6-terra")
+            && file_slurp_matches_ci(
+                root,
+                agents,
+                r"gpt-5\.5.*(fallback|when a 5\.6 model is unavailable)",
+            ),
+        "AGENTS.md pins the Sol/Terra ring and GPT-5.5 fallback",
+    );
+
+    let claude = "CLAUDE.md";
+    r.add(
+        file_contains(root, claude, "gpt-5.6-sol")
+            && file_contains(root, claude, "gpt-5.6-terra")
+            && file_contains(root, claude, "gpt-5.6-luna")
+            && file_slurp_matches_ci(root, claude, r"gpt-5\.5.*fallback"),
+        "CLAUDE.md pins the Sol/Terra/Luna dispatch and GPT-5.5 fallback",
+    );
+
+    req(
+        r,
+        root,
+        "plugins/dvandva/references/state-transition-table.md",
+        STATE_TABLE_CODEX_MAPPING,
+        "state-transition-table.md pins current Codex mapping cells",
+    );
+}
+
 fn require_agent_model(
     r: &mut Report,
     root: &Path,
@@ -352,6 +426,7 @@ pub fn report(root: &Path) -> Report {
 
     let research = "plugins/dvandva/skills/research/SKILL.md";
     req_grok_plan_pulse_policy(&mut r, root);
+    req_current_model_routing(&mut r, root);
     req(
         &mut r,
         root,
@@ -1813,9 +1888,16 @@ pub fn report(root: &Path) -> Report {
     for file in [
         "plugins/dvandva/commands/vadi.md",
         "plugins/dvandva/commands/prativadi.md",
+        "plugins/dvandva/skills/vadi/SKILL.md",
+        "plugins/dvandva/skills/prativadi/SKILL.md",
+    ] {
+        req_command_ring_dispatch(&mut r, root, file);
+    }
+    for file in [
+        "plugins/dvandva/commands/vadi.md",
+        "plugins/dvandva/commands/prativadi.md",
     ] {
         req_model_policy_common(&mut r, root, file, MODEL_POLICY_VENDOR_NEUTRAL_COMMANDS);
-        req_command_ring_dispatch(&mut r, root, file);
         req(
             &mut r,
             root,
