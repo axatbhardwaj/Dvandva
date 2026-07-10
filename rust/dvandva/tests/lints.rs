@@ -373,6 +373,17 @@ Findings land in a lane ledger, each is addressed or rejected in writing before 
 The fallback-bulk seat is out-of-ring only: a human-invoked lane for personal bulk work outside Dvandva runs.
 "#;
 
+const LUNA_PROBE_POLICY: &str = "`gpt-5.6-terra` remains the routine default; `gpt-5.6-luna` may take taste-light mechanical work only after a representative task-class quality probe passes; `gpt-5.5` is the runtime fallback.";
+const GROK_GPT_OPUS_SEQUENCE: &str = "Grok produces uncredited first-pass review leads; a gpt-class executor addresses or rejects each lead in writing; cross-vendor Anthropic Opus performs the credited deep review.";
+const CODEX_HOSTED_OPUS_DISPATCH: &str = "When Codex hosts the prativadi, the Claude-side vadi dispatches fresh Anthropic Opus subagents for the credited deep review; Codex-side opus execution remains uncredited GPT hygiene.";
+const AGENTS_GPT56_RING: &str = "gpt-5.6-sol reviews hard and adversarial work; gpt-5.6-terra executes routine tracks; gpt-5.5 is the fallback when a 5.6 model is unavailable.";
+const CLAUDE_GPT56_DISPATCH: &str = "Dispatch code to gpt-5.6-terra for routine work, gpt-5.6-sol for hard bounded work, and gpt-5.6-luna only for mechanically proven task classes; gpt-5.5 is the fallback.";
+const STATE_TABLE_CODEX_MAPPING: &str = r#"| `opus` | `opus-class\|gpt-5.5-xhigh` | Opus-class | gpt-5.6-sol xhigh (fallback gpt-5.5) |
+| `sonnet` | `sonnet-class\|gpt-5.5-high` | Sonnet-class | gpt-5.6-terra high (fallback gpt-5.5) |
+| `fable` | `fable-class\|gpt-5.5-xhigh` | Fable-class | gpt-5.6-sol xhigh (fallback gpt-5.5) |
+| `gpt` | `gpt-class\|gpt-5.5-high` | Sonnet-class wrapper shells to Codex | gpt-5.6-terra high (fallback gpt-5.5) |
+"#;
+
 const SUPERPOWERS: &str = "Superpowers is a hard runtime dependency.\nDvandva owns baton state.\n";
 
 const NEW5: &str = "dvandva-adversarial-analyst dvandva-security-auditor dvandva-integration-checker dvandva-debugger dvandva-doc-verifier dvandva-pattern-mapper\n";
@@ -508,7 +519,16 @@ fn phase4_fixture(root: &Path) {
     w(root, "README.md", &readme);
 
     // model-selection policy
-    w(root, "docs/model-selection.md", GROK_PLAN_PULSE_DOC);
+    w(
+        root,
+        "docs/model-selection.md",
+        &format!(
+            "{GROK_PLAN_PULSE_DOC}\n{LUNA_PROBE_POLICY}\n{GROK_GPT_OPUS_SEQUENCE}\n{CODEX_HOSTED_OPUS_DISPATCH}\n"
+        ),
+    );
+
+    w(root, "AGENTS.md", AGENTS_GPT56_RING);
+    w(root, "CLAUDE.md", CLAUDE_GPT56_DISPATCH);
 
     // product.md
     let mut product = String::new();
@@ -538,7 +558,7 @@ fn phase4_fixture(root: &Path) {
     w(
         root,
         "plugins/dvandva/references/state-transition-table.md",
-        &format!("{BIG_LIST}{MODEL_CLASSES}dvandva.baton.v3 is the sole writable schema; v1/v2 are retired from the WRITE path.\n"),
+        &format!("{BIG_LIST}{STATE_TABLE_CODEX_MAPPING}{MODEL_CLASSES}dvandva.baton.v3 is the sole writable schema; v1/v2 are retired from the WRITE path.\n"),
     );
 
     // vadi skill
@@ -549,6 +569,7 @@ fn phase4_fixture(root: &Path) {
     vadi.push_str("When only terminal batons exist, auto-create a new named run.\n");
     vadi.push_str("For active batons, ask the user whether to continue.\n");
     vadi.push_str(MODEL_CLASSES);
+    vadi.push_str(RING_DISPATCH);
     w(root, "plugins/dvandva/skills/vadi/SKILL.md", &vadi);
 
     // prativadi skill
@@ -557,6 +578,7 @@ fn phase4_fixture(root: &Path) {
     prativadi.push_str(&phase4_role_skill());
     prativadi.push_str("Add `dvandva-adversarial-analyst` for boundary, state/concurrency, error-handling, or bypass-logic attack hypotheses.\n");
     prativadi.push_str(MODEL_CLASSES);
+    prativadi.push_str(RING_DISPATCH);
     w(
         root,
         "plugins/dvandva/skills/prativadi/SKILL.md",
@@ -693,6 +715,100 @@ fn phase4_research_accepts_complete_fixture() {
     phase4_fixture(d.path());
     let r = phase4_research::report(d.path());
     assert!(r.passed(), "expected clean, failures: {}", r.failures());
+}
+
+#[test]
+fn phase4_research_rejects_luna_without_task_class_quality_probe() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("docs/model-selection.md");
+    let text = fs::read_to_string(&p).unwrap().replace(
+        LUNA_PROBE_POLICY,
+        "Route mechanical work to `gpt-5.6-luna`.",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("pins Luna behind a representative task-class quality probe"));
+}
+
+#[test]
+fn phase4_research_rejects_unpinned_agents_ring_casting() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    w(d.path(), "AGENTS.md", "The default ring uses gpt-5.5.\n");
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("AGENTS.md pins the Sol/Terra ring and GPT-5.5 fallback"));
+}
+
+#[test]
+fn phase4_research_rejects_stale_claude_gpt55_bulk_dispatch() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    w(
+        d.path(),
+        "CLAUDE.md",
+        "Dispatch mechanical bulk to gpt-5.5 via the Codex CLI.\n",
+    );
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("CLAUDE.md pins the Sol/Terra/Luna dispatch and GPT-5.5 fallback"));
+}
+
+#[test]
+fn phase4_research_rejects_role_skill_missing_ring_dispatch_defaults() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/skills/vadi/SKILL.md");
+    let text = fs::read_to_string(&p).unwrap().replace(
+        "Implementation, tests, and fixes default to gpt-class dispatch.",
+        "Implementation follows the seed model label.",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with(
+        "plugins/dvandva/skills/vadi/SKILL.md pins gpt-class implementation/test/fix defaults"
+    ));
+}
+
+#[test]
+fn phase4_research_rejects_stale_state_table_codex_mapping_cells() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d
+        .path()
+        .join("plugins/dvandva/references/state-transition-table.md");
+    let text = fs::read_to_string(&p)
+        .unwrap()
+        .replace("gpt-5.6-sol xhigh (fallback gpt-5.5)", "gpt-5.5 xhigh");
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("state-transition-table.md pins current Codex mapping cells"));
+}
+
+#[test]
+fn phase4_research_rejects_missing_grok_gpt_opus_sequence() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("docs/model-selection.md");
+    let text = fs::read_to_string(&p)
+        .unwrap()
+        .replace(GROK_GPT_OPUS_SEQUENCE, "Grok supplies review leads.");
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("pins Grok leads through GPT handling to Anthropic Opus review"));
+}
+
+#[test]
+fn phase4_research_rejects_missing_codex_hosted_opus_dispatch_mechanics() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("docs/model-selection.md");
+    let text = fs::read_to_string(&p).unwrap().replace(
+        CODEX_HOSTED_OPUS_DISPATCH,
+        "Anthropic Opus reviews the implementation.",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("pins Claude-side Anthropic Opus dispatch for Codex-hosted prativadi"));
 }
 
 #[test]
