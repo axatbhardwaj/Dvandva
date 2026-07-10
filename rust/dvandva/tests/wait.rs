@@ -404,6 +404,38 @@ fn write_deep_review_dispatch_baton(file: &Path, run_id: &str, dispatch_status: 
     .unwrap();
 }
 
+/// A human-paused baton (`human_question`/`human_decision`, assignee=human,
+/// empty active_roles) that ALSO carries an OPEN `dispatch_requests` entry
+/// addressed to the vadi. Under `--through-human` the human pause is watched
+/// through rather than exited, so the loop reaches the dispatch-wake check —
+/// which must NOT fire in a human-gate/pause state (only in active Work/
+/// ReviewGate states). Models the dr-opus-dispatch-liveness-gap wake token
+/// arriving while the run is legitimately parked for a human.
+fn write_human_pause_dispatch_baton(file: &Path, run_id: &str, status: &str) {
+    mkparent(file);
+    std::fs::write(
+        file,
+        format!(
+            r#"{{
+  "schema": "dvandva.baton.v2",
+  "run_id": "{run_id}",
+  "assignee": "human",
+  "active_roles": [],
+  "status": "{status}",
+  "phase": 1,
+  "checkpoint": 80,
+  "question": "Which scope should Dvandva choose?",
+  "resume_assignee": "prativadi",
+  "resume_status": "spec_review",
+  "dispatch_requests": [
+    {{"id": "dr1", "role": "vadi", "purpose": "dispatch credited opus deep review", "status": "open"}}
+  ]
+}}"#
+        ),
+    )
+    .unwrap();
+}
+
 fn tmp() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
 }
@@ -936,6 +968,85 @@ fn until_actionable_acknowledged_dispatch_request_does_not_wake_named_role() {
         o.kept_polling(),
         "expected keeps-polling, got {:?}\n{}",
         o.code,
+        o.out
+    );
+}
+
+#[test]
+fn through_human_open_dispatch_request_does_not_wake_on_human_decision() {
+    // The dispatch wake is an ACTIVE-work signal: it may fire only in Work/
+    // ReviewGate states. A baton parked at `human_decision` is a Pause — under
+    // `--through-human` the loop watches the pause through instead of exiting
+    // 11, so it reaches the dispatch-wake check. An OPEN vadi dispatch request
+    // must NOT hijack that pause into a `dispatch_requested` exit-0 wake: that
+    // would break zero-touch walkaway watch and risk a duplicate PAID
+    // credited-Opus dispatch. It must ride out the human pause (finite -> 20).
+    let d = tmp();
+    let f = d.path().join(".dvandva/runs/alpha/baton.json");
+    write_human_pause_dispatch_baton(&f, "alpha", "human_decision");
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+            "--finite",
+            "--through-human",
+        ],
+        BUDGET_SLOW,
+    );
+    assert_eq!(
+        o.code,
+        Some(20),
+        "must ride out the human pause, not wake on the dispatch request: {}",
+        o.out
+    );
+    assert!(
+        !o.contains("dispatch_requested"),
+        "the dispatch wake must not fire at a human pause: {}",
+        o.out
+    );
+}
+
+#[test]
+fn through_human_open_dispatch_request_does_not_wake_on_human_question() {
+    // The same guard for the `human_question` pause: a Pause state carrying an
+    // OPEN vadi dispatch request must not wake under `--through-human`.
+    let d = tmp();
+    let f = d.path().join(".dvandva/runs/alpha/baton.json");
+    write_human_pause_dispatch_baton(&f, "alpha", "human_question");
+    let o = run_wait(
+        None,
+        &[],
+        &[
+            "--role",
+            "vadi",
+            "--file",
+            f.to_str().unwrap(),
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+            "--finite",
+            "--through-human",
+        ],
+        BUDGET_SLOW,
+    );
+    assert_eq!(
+        o.code,
+        Some(20),
+        "must ride out the human pause, not wake on the dispatch request: {}",
+        o.out
+    );
+    assert!(
+        !o.contains("dispatch_requested"),
+        "the dispatch wake must not fire at a human pause: {}",
         o.out
     );
 }

@@ -378,16 +378,20 @@ pub fn run(cfg: &WaitConfig) -> i32 {
         }
 
         // Dispatch-request wake (dr-opus-dispatch-liveness-gap): a role named by
-        // an OPEN `dispatch_requests` entry is actionable in ANY non-terminal
+        // an OPEN `dispatch_requests` entry is actionable in an ACTIVE-work
         // state, even when it is neither the assignee nor a member of
-        // active_roles. Terminal/Pause/HumanGate statuses already returned above
-        // and sibling human-pause / split-brain already took priority, so
-        // reaching here means a Work/ReviewGate state that needs this role to
-        // act. This is the machine-actionable signal that lets a Codex-hosted
-        // `deep_review` (assignee=prativadi, active_roles=[]) wake the
-        // Claude-side vadi to dispatch the credited Opus reviewers instead of
-        // the walkaway loop stalling with nobody holding the baton.
-        if role_has_open_dispatch_request(&value, &cfg.role) {
+        // active_roles. The gate is the SAME `status_class` the exit dispatch
+        // above uses: Terminal returned above, but Pause/HumanGate do NOT return
+        // under `--through-human` (they fall through to keep watching the human
+        // pause), so this line is reached while parked for a human. Firing the
+        // wake there would exit 0 mid-pause — breaking zero-touch walkaway watch
+        // and risking a duplicate PAID credited-Opus dispatch. Restrict it to
+        // Work/ReviewGate so only a genuinely active state (e.g. a Codex-hosted
+        // `deep_review` with assignee=prativadi, active_roles=[]) wakes the
+        // Claude-side vadi to dispatch the credited Opus reviewers.
+        if matches!(status_class, StateClass::Work | StateClass::ReviewGate)
+            && role_has_open_dispatch_request(&value, &cfg.role)
+        {
             println!(
                 "DVANDVA_WAIT dispatch_requested role={} phase={phase} status={status} checkpoint={checkpoint} assignee={assignee} active_roles={active_roles}",
                 cfg.role
