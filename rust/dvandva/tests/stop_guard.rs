@@ -509,3 +509,146 @@ fn p2_marker_role_renders_valid_command_without_role_env() {
         "the invalid --through-human note must be dropped, got: {stderr}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// Prativadi boundary attacks (ckpt-102): declared workflow classes, ordinary
+// shell quoting, and a copy-runnable resume command outside space-free paths.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn custom_v3_inactive_state_classes_allow_a_bound_session_to_stop() {
+    for (status, class, owner) in [
+        ("implementing", "human_gate", "human"),
+        ("phase_fixing", "pause", "human"),
+        ("deslop", "terminal", "team"),
+    ] {
+        let dir = tempfile::tempdir().expect("tempdir");
+        init_git_repo(dir.path());
+        seed_baton(
+            dir.path(),
+            "custom-flow",
+            &json!({
+                "schema": "dvandva.baton.v3",
+                "run_id": "custom-flow",
+                "run_mode": "walkaway",
+                "status": status,
+                "assignee": owner,
+                "active_roles": [],
+                "checkpoint": 14,
+                "run_workflow": {
+                    "source": "custom",
+                    "declared_by": "vadi",
+                    "declared_at_checkpoint": 1,
+                    "approved_by": "prativadi",
+                    "approved_at_checkpoint": 2,
+                    "revision_round": 0,
+                    "states": [
+                        { "name": "implementing", "owner": if status == "implementing" { owner } else { "vadi" }, "class": if status == "implementing" { class } else { "work" } },
+                        { "name": "phase_fixing", "owner": if status == "phase_fixing" { owner } else { "vadi" }, "class": if status == "phase_fixing" { class } else { "work" } },
+                        { "name": "deslop", "owner": if status == "deslop" { owner } else { "vadi" }, "class": if status == "deslop" { class } else { "work" } },
+                        { "name": "research_review", "owner": "prativadi", "class": "review_gate" },
+                        { "name": "human_question", "owner": "human", "class": "pause" },
+                        { "name": "human_decision", "owner": "human", "class": "pause" },
+                        { "name": "abandoned", "owner": "human", "class": "terminal" },
+                        { "name": "done", "owner": "team", "class": "terminal" }
+                    ],
+                    "edges": [
+                        { "from": "implementing", "to": "phase_fixing" },
+                        { "from": "implementing", "to": "research_review" },
+                        { "from": "phase_fixing", "to": "research_review" },
+                        { "from": "deslop", "to": "research_review" },
+                        { "from": "research_review", "to": "done" },
+                        { "from": "implementing", "to": "human_question" },
+                        { "from": "implementing", "to": "human_decision" },
+                        { "from": "implementing", "to": "abandoned" },
+                        { "from": "phase_fixing", "to": "human_question" },
+                        { "from": "phase_fixing", "to": "human_decision" },
+                        { "from": "phase_fixing", "to": "abandoned" },
+                        { "from": "deslop", "to": "human_question" },
+                        { "from": "deslop", "to": "human_decision" },
+                        { "from": "deslop", "to": "abandoned" },
+                        { "from": "research_review", "to": "human_question" },
+                        { "from": "research_review", "to": "human_decision" },
+                        { "from": "research_review", "to": "abandoned" },
+                        { "from": "human_question", "to": "research_review" },
+                        { "from": "human_question", "to": "human_decision" },
+                        { "from": "human_question", "to": "abandoned" },
+                        { "from": "human_decision", "to": "research_review" },
+                        { "from": "human_decision", "to": "human_question" },
+                        { "from": "human_decision", "to": "abandoned" }
+                    ],
+                    "amendments": []
+                }
+            }),
+        );
+        stamp_session(dir.path(), "custom-flow", "sess-custom");
+
+        let out = run_guard_in(
+            dir.path(),
+            &[],
+            stop_payload_with_session(false, "sess-custom").as_bytes(),
+        );
+        assert_allowed(&out);
+    }
+}
+
+#[test]
+fn quoted_env_selector_call_binds_and_persists_its_role() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_git_repo(dir.path());
+    seed_baton(
+        dir.path(),
+        "quoted-run",
+        &live_baton("quoted-run", "team", json!(["vadi", "prativadi"])),
+    );
+
+    let pre = json!({
+        "session_id": "sess-quoted",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "DVANDVA_RUN_ID='quoted-run' DVANDVA_ROLE='prativadi' dvandva preflight"
+        }
+    })
+    .to_string();
+    assert_allowed(&run_baton_guard_in(dir.path(), &[], pre.as_bytes()));
+
+    let out = run_guard_in(
+        dir.path(),
+        &[],
+        stop_payload_with_session(false, "sess-quoted").as_bytes(),
+    );
+    assert_blocked(&out);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("dvandva wait --role prativadi"),
+        "quoted selector role must roundtrip through the marker, got: {stderr}"
+    );
+}
+
+#[test]
+fn resume_command_shell_quotes_a_baton_path_with_spaces() {
+    let dir = tempfile::Builder::new()
+        .prefix("dvandva stop guard ")
+        .tempdir()
+        .expect("tempdir with spaces");
+    init_git_repo(dir.path());
+    seed_baton(
+        dir.path(),
+        "space-path",
+        &live_baton("space-path", "team", json!(["vadi", "prativadi"])),
+    );
+    stamp_session_with_role(dir.path(), "space-path", "sess-space", "vadi");
+
+    let out = run_guard_in(
+        dir.path(),
+        &[],
+        stop_payload_with_session(false, "sess-space").as_bytes(),
+    );
+    assert_blocked(&out);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let baton_path = dir.path().join(".dvandva/runs/space-path/baton.json");
+    assert!(
+        stderr.contains(&format!("--file '{}'", baton_path.display())),
+        "the displayed resume command must keep a spaced path in one shell argument, got: {stderr}"
+    );
+}
