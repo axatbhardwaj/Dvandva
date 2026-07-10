@@ -3,13 +3,15 @@
 //! A Claude-hosted walkaway Dvandva role must never silently end its turn while
 //! it is bound to a live baton (the never-silent-stop invariant). Binding is
 //! session/run-scoped: the `baton-guard` PreToolUse hook stamps a
-//! [`crate::session_marker`] under a run the moment this session touches it, so
-//! the Stop hook can tell a participant from a stranger. Given a Stop hook
-//! payload, the resolved role, and each discoverable baton tagged with whether
-//! this session is bound to it, [`decide`] returns whether the session may stop
-//! or must be nudged back into `dvandva wait`. The I/O boundary (reading stdin,
-//! collecting batons, resolving the role and session binding, printing, and the
-//! process exit code) lives in [`crate::cmd::stop_guard`].
+//! [`crate::session_marker`] under a run the moment this session touches it —
+//! recording the binding role in the marker — so the Stop hook can tell a
+//! participant from a stranger and name that role without a `DVANDVA_ROLE` env
+//! of its own. Given a Stop hook payload and each discoverable baton tagged with
+//! whether this session is bound to it and the role its marker records,
+//! [`decide`] returns whether the session may stop or must be nudged back into
+//! `dvandva wait`. The I/O boundary (reading stdin, collecting batons, resolving
+//! the session binding and its marker role, printing, and the process exit code)
+//! lives in [`crate::cmd::stop_guard`].
 
 use serde_json::Value;
 
@@ -34,6 +36,11 @@ pub enum StopDecision {
 pub struct BoundBaton {
     /// Whether this session is stamped as bound to this baton's run.
     pub bound: bool,
+    /// The peer role (`vadi`/`prativadi`) persisted in this session's marker for
+    /// the run, or `None` when the marker records none — the Stop nudge then
+    /// lists both roles' commands. Sourced from the marker, not the process
+    /// environment, so it survives the unset-`DVANDVA_ROLE` Claude Stop-hook env.
+    pub role: Option<String>,
     /// The baton's `baton.json` path (for the resume command's `--file` arg).
     pub path: String,
     /// The parsed baton (read leniently).
@@ -41,9 +48,10 @@ pub struct BoundBaton {
 }
 
 /// Decide the Stop-hook outcome for `payload` (raw JSON bytes from stdin) given
-/// the resolved `role` (`None` = `DVANDVA_ROLE` unset/unknown → named as
-/// `<your-role>` in the nudge) and the repo's `batons` (each tagged with this
-/// session's binding).
+/// the repo's `batons` (each tagged with this session's binding and the peer
+/// role persisted in its marker). The resume command's role comes from the
+/// bound baton's marker, so it stays correct in the real Claude Stop-hook
+/// environment, where `DVANDVA_ROLE` is unset.
 ///
 /// Fails open (returns [`StopDecision::Allow`]) on a hook-continuation
 /// (`stop_hook_active`, so the guard is a one-shot nudge that can never loop the
@@ -52,7 +60,7 @@ pub struct BoundBaton {
 /// Blocks only when a baton this session is bound to is walkaway and in a
 /// non-terminal / non-human-paused status, regardless of who the current
 /// assignee is: for a bound session, waiting IS the job.
-pub fn decide(payload: &[u8], role: Option<&str>, batons: &[BoundBaton]) -> StopDecision {
+pub fn decide(payload: &[u8], batons: &[BoundBaton]) -> StopDecision {
     if stop_hook_active(payload) {
         return StopDecision::Allow;
     }
@@ -66,7 +74,7 @@ pub fn decide(payload: &[u8], role: Option<&str>, batons: &[BoundBaton]) -> Stop
         if !bound.bound {
             continue;
         }
-        if let Some(reason) = baton_blocks_stop(&bound.baton, &bound.path, role) {
+        if let Some(reason) = baton_blocks_stop(&bound.baton, &bound.path, bound.role.as_deref()) {
             return StopDecision::Block(reason);
         }
     }
@@ -101,19 +109,37 @@ fn baton_blocks_stop(baton: &Value, baton_path: &str, role: Option<&str>) -> Opt
 }
 
 /// The model-visible nudge: names the run and status, and spells the canonical
-/// `dvandva wait` resume command (with the exact interval/max-wait/stall-max
-/// flags and the `--through-human` note for Codex-hosted sessions).
+/// `dvandva wait` resume command from the marker's persisted `role`. When the
+/// role is unknown it lists both peers' commands. A Claude Stop hook is
+/// definitionally Claude-hosted, so no `--through-human` note is emitted (that
+/// flag is a Codex-hosted concern, and it takes no argument — the old `note`
+/// token was invalid).
 fn block_reason(baton: &Value, baton_path: &str, role: Option<&str>, status: &str) -> String {
     let run_id = str_field(baton, "run_id");
-    let role_arg = role.unwrap_or("<your-role>");
+    let resume = match role {
+        Some(r) => wait_command(r, baton_path),
+        None => format!(
+            "(use the line matching your role)\n  {}\n  {}",
+            wait_command("vadi", baton_path),
+            wait_command("prativadi", baton_path),
+        ),
+    };
     format!(
         "dvandva stop-guard: walkaway run '{run_id}' is still live (status={status}) and this \
          session is bound to it. A walkaway session must never end its turn on a non-terminal \
          baton (never-silent-stop) — waiting IS the job. Re-enter `dvandva wait` to hold the \
          loop, or surface a human_question/human_decision:\n  \
-         dvandva wait --role {role_arg} --file {baton_path} --interval 60 --max-wait 540 \
-         --stall-max 1800 --until-actionable\n\
-         (Codex-hosted sessions append `--through-human note`.) This nudge fires once per stop."
+         {resume}\n\
+         This nudge fires once per stop."
+    )
+}
+
+/// The canonical `dvandva wait` resume command for `role` against `baton_path`,
+/// carrying the exact interval/max-wait/stall-max flags the loop expects.
+fn wait_command(role: &str, baton_path: &str) -> String {
+    format!(
+        "dvandva wait --role {role} --file {baton_path} --interval 60 --max-wait 540 \
+         --stall-max 1800 --until-actionable"
     )
 }
 
@@ -156,10 +182,17 @@ mod tests {
         })
     }
 
-    /// Wrap `baton` as bound to this session.
+    /// Wrap `baton` as bound to this session with a `vadi` marker role.
     fn bound(baton: Value) -> BoundBaton {
+        bound_with(baton, Some("vadi"))
+    }
+
+    /// Wrap `baton` as bound to this session, carrying `role` as its marker role
+    /// (`None` = the marker records no known role).
+    fn bound_with(baton: Value, role: Option<&str>) -> BoundBaton {
         BoundBaton {
             bound: true,
+            role: role.map(str::to_string),
             path: ".dvandva/runs/demo/baton.json".to_string(),
             baton,
         }
@@ -174,22 +207,22 @@ mod tests {
     }
 
     #[test]
-    fn blocks_bound_walkaway_work_for_any_role() {
-        let batons = [bound(team_work_baton("cross_review"))];
+    fn blocks_bound_walkaway_work_for_any_marker_role() {
         for role in [Some("vadi"), Some("prativadi"), None] {
+            let batons = [bound_with(team_work_baton("cross_review"), role)];
             assert!(
                 matches!(
-                    decide(&stop_payload(false), role, &batons),
+                    decide(&stop_payload(false), &batons),
                     StopDecision::Block(_)
                 ),
-                "a session bound to a live walkaway baton must not stop (role {role:?})"
+                "a session bound to a live walkaway baton must not stop (marker role {role:?})"
             );
         }
     }
 
     #[test]
     fn blocks_bound_regardless_of_assignee() {
-        // P1: assignee/active_roles name only the peer; the bound session's own
+        // assignee/active_roles name only the peer; the bound session's own
         // role is not the assignee, but it is bound — so it must still block.
         let batons = [bound(json!({
             "schema": "dvandva.baton.v3",
@@ -201,28 +234,25 @@ mod tests {
             "checkpoint": 4
         }))];
         assert!(matches!(
-            decide(&stop_payload(false), Some("vadi"), &batons),
+            decide(&stop_payload(false), &batons),
             StopDecision::Block(_)
         ));
     }
 
     #[test]
     fn allows_unbound_stranger_even_with_active_role() {
-        // P2: the baton names vadi as active, but this session never touched the
+        // The baton names vadi as active, but this session never touched the
         // run (unbound) — a stranger must be free to stop.
         let batons = [unbound(team_work_baton("implementing"))];
-        assert_eq!(
-            decide(&stop_payload(false), Some("vadi"), &batons),
-            StopDecision::Allow
-        );
+        assert_eq!(decide(&stop_payload(false), &batons), StopDecision::Allow);
     }
 
     #[test]
     fn block_reason_names_run_and_canonical_command() {
-        // P4: the nudge carries the exact resume command with its full flag set.
+        // The nudge carries the exact resume command with its full flag set,
+        // and the role from the marker — with no invalid --through-human note.
         let batons = [bound(team_work_baton("implementing"))];
-        let StopDecision::Block(reason) = decide(&stop_payload(false), Some("vadi"), &batons)
-        else {
+        let StopDecision::Block(reason) = decide(&stop_payload(false), &batons) else {
             panic!("expected a block");
         };
         assert!(reason.contains("demo"), "reason names the run: {reason}");
@@ -232,27 +262,36 @@ mod tests {
         );
         assert!(
             reason.contains("dvandva wait --role vadi --file .dvandva/runs/demo/baton.json"),
-            "reason names the role and baton path: {reason}"
+            "reason names the marker role and baton path: {reason}"
         );
         assert!(
             reason.contains("--interval 60 --max-wait 540 --stall-max 1800 --until-actionable"),
             "reason carries the canonical wait flags: {reason}"
         );
         assert!(
-            reason.contains("--through-human"),
-            "reason mentions --through-human for Codex-hosted: {reason}"
+            !reason.contains("--through-human"),
+            "a Claude Stop hook is Claude-hosted; no --through-human note: {reason}"
         );
     }
 
     #[test]
-    fn block_reason_uses_role_placeholder_when_unknown() {
-        let batons = [bound(team_work_baton("implementing"))];
-        let StopDecision::Block(reason) = decide(&stop_payload(false), None, &batons) else {
+    fn block_reason_lists_both_roles_when_marker_role_unknown() {
+        let batons = [bound_with(team_work_baton("implementing"), None)];
+        let StopDecision::Block(reason) = decide(&stop_payload(false), &batons) else {
             panic!("expected a block");
         };
         assert!(
-            reason.contains("dvandva wait --role <your-role> --file"),
-            "unknown role uses a placeholder: {reason}"
+            !reason.contains("<your-role>"),
+            "an unknown marker role lists both commands, not a placeholder: {reason}"
+        );
+        assert!(
+            reason.contains("dvandva wait --role vadi --file")
+                && reason.contains("dvandva wait --role prativadi --file"),
+            "both peers' commands are listed: {reason}"
+        );
+        assert!(
+            !reason.contains("--through-human"),
+            "no --through-human note in the unknown-role form either: {reason}"
         );
     }
 
@@ -261,7 +300,7 @@ mod tests {
         for status in ["done", "abandoned"] {
             let batons = [bound(team_work_baton(status))];
             assert_eq!(
-                decide(&stop_payload(false), None, &batons),
+                decide(&stop_payload(false), &batons),
                 StopDecision::Allow,
                 "terminal status {status} must never block a stop"
             );
@@ -281,7 +320,7 @@ mod tests {
                 "checkpoint": 9
             }))];
             assert_eq!(
-                decide(&stop_payload(false), Some("vadi"), &batons),
+                decide(&stop_payload(false), &batons),
                 StopDecision::Allow,
                 "human-assigned status {status} must not block"
             );
@@ -296,7 +335,7 @@ mod tests {
         ] {
             let batons = [bound(team_work_baton(status))];
             assert_eq!(
-                decide(&stop_payload(false), None, &batons),
+                decide(&stop_payload(false), &batons),
                 StopDecision::Allow,
                 "human-gate status {status} must not block"
             );
@@ -309,7 +348,7 @@ mod tests {
         baton["run_mode"] = json!("supervised");
         let batons = [bound(baton)];
         assert_eq!(
-            decide(&stop_payload(false), Some("vadi"), &batons),
+            decide(&stop_payload(false), &batons),
             StopDecision::Allow,
             "supervised runs are human-driven and never nudge"
         );
@@ -321,7 +360,7 @@ mod tests {
         baton.as_object_mut().unwrap().remove("run_mode");
         let batons = [bound(baton)];
         assert_eq!(
-            decide(&stop_payload(false), Some("vadi"), &batons),
+            decide(&stop_payload(false), &batons),
             StopDecision::Allow,
             "a baton with no run_mode is not a declared walkaway run"
         );
@@ -333,7 +372,7 @@ mod tests {
         // an infinite continue loop, even with a bound live walkaway baton.
         let batons = [bound(team_work_baton("cross_review"))];
         assert_eq!(
-            decide(&stop_payload(true), Some("vadi"), &batons),
+            decide(&stop_payload(true), &batons),
             StopDecision::Allow,
             "a hook-continuation must always be allowed"
         );
@@ -341,13 +380,10 @@ mod tests {
 
     #[test]
     fn allows_malformed_payload() {
-        // P3: unparseable stdin fails open — no session id can be read, so a
-        // bound live baton must not block.
+        // Unparseable stdin fails open — no session id can be read, so a bound
+        // live baton must not block.
         let batons = [bound(team_work_baton("implementing"))];
-        assert_eq!(
-            decide(b"{ not json", Some("vadi"), &batons),
-            StopDecision::Allow
-        );
+        assert_eq!(decide(b"{ not json", &batons), StopDecision::Allow);
     }
 
     #[test]
@@ -357,15 +393,12 @@ mod tests {
             .to_string()
             .into_bytes();
         let batons = [bound(team_work_baton("implementing"))];
-        assert_eq!(decide(&payload, Some("vadi"), &batons), StopDecision::Allow);
+        assert_eq!(decide(&payload, &batons), StopDecision::Allow);
     }
 
     #[test]
     fn allows_with_no_batons() {
-        assert_eq!(
-            decide(&stop_payload(false), Some("vadi"), &[]),
-            StopDecision::Allow
-        );
+        assert_eq!(decide(&stop_payload(false), &[]), StopDecision::Allow);
     }
 
     #[test]
@@ -381,7 +414,7 @@ mod tests {
         ];
         assert!(
             matches!(
-                decide(&stop_payload(false), Some("prativadi"), &batons),
+                decide(&stop_payload(false), &batons),
                 StopDecision::Block(_)
             ),
             "one bound live walkaway baton still blocks"
@@ -398,10 +431,7 @@ mod tests {
             "status": "human_question",
             "assignee": "human"
         }));
-        assert_eq!(
-            decide(&stop_payload(false), Some("vadi"), &[paused]),
-            StopDecision::Allow
-        );
+        assert_eq!(decide(&stop_payload(false), &[paused]), StopDecision::Allow);
         let working = bound(json!({
             "schema": "dvandva.baton.v2",
             "run_id": "v2",
@@ -410,7 +440,7 @@ mod tests {
             "assignee": "vadi"
         }));
         assert!(matches!(
-            decide(&stop_payload(false), Some("vadi"), &[working]),
+            decide(&stop_payload(false), &[working]),
             StopDecision::Block(_)
         ));
     }

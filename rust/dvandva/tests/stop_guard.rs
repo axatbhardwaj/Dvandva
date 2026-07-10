@@ -14,8 +14,25 @@ use serde_json::{json, Value};
 /// Spawn `dvandva stop-guard` with `cwd` as its working directory and `envs`
 /// applied, write `stdin_bytes` to its stdin, and return the completed `Output`.
 fn run_guard_in(cwd: &Path, envs: &[(&str, &str)], stdin_bytes: &[u8]) -> Output {
+    run_subcommand_in("stop-guard", cwd, envs, stdin_bytes)
+}
+
+/// Spawn `dvandva baton-guard` (the PreToolUse hook that stamps session/run
+/// markers) with `cwd`/`envs` applied and `stdin_bytes` piped in.
+fn run_baton_guard_in(cwd: &Path, envs: &[(&str, &str)], stdin_bytes: &[u8]) -> Output {
+    run_subcommand_in("baton-guard", cwd, envs, stdin_bytes)
+}
+
+/// Spawn `dvandva <subcommand>` with `cwd` as its working directory and `envs`
+/// applied, write `stdin_bytes` to its stdin, and return the completed `Output`.
+fn run_subcommand_in(
+    subcommand: &str,
+    cwd: &Path,
+    envs: &[(&str, &str)],
+    stdin_bytes: &[u8],
+) -> Output {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_dvandva"));
-    cmd.arg("stop-guard")
+    cmd.arg(subcommand)
         .current_dir(cwd)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -23,16 +40,18 @@ fn run_guard_in(cwd: &Path, envs: &[(&str, &str)], stdin_bytes: &[u8]) -> Output
     for (key, value) in envs {
         cmd.env(key, value);
     }
-    let mut child = cmd.spawn().expect("failed to spawn dvandva stop-guard");
+    let mut child = cmd
+        .spawn()
+        .unwrap_or_else(|e| panic!("failed to spawn dvandva {subcommand}: {e}"));
     child
         .stdin
         .take()
         .expect("piped stdin")
         .write_all(stdin_bytes)
-        .expect("failed to write stdin to dvandva stop-guard");
+        .unwrap_or_else(|e| panic!("failed to write stdin to dvandva {subcommand}: {e}"));
     child
         .wait_with_output()
-        .expect("failed to wait on dvandva stop-guard")
+        .unwrap_or_else(|e| panic!("failed to wait on dvandva {subcommand}: {e}"))
 }
 
 fn init_git_repo(dir: &Path) {
@@ -56,9 +75,16 @@ fn seed_baton(dir: &Path, run_id: &str, baton: &Value) {
 /// mirroring what the `baton-guard` PreToolUse hook writes when a session
 /// touches the run.
 fn stamp_session(dir: &Path, run_id: &str, session_id: &str) {
+    stamp_session_with_role(dir, run_id, session_id, "vadi");
+}
+
+/// Stamp a session marker whose content records the binding role, mirroring what
+/// the `baton-guard` PreToolUse hook persists when a role-carrying call binds
+/// the run.
+fn stamp_session_with_role(dir: &Path, run_id: &str, session_id: &str, role: &str) {
     let sessions = dir.join(".dvandva/runs").join(run_id).join(".sessions");
     std::fs::create_dir_all(&sessions).expect("create .sessions dir");
-    std::fs::write(sessions.join(session_id), b"").expect("write session marker");
+    std::fs::write(sessions.join(session_id), role.as_bytes()).expect("write session marker");
 }
 
 /// A Stop-hook payload with the given `stop_hook_active` flag.
@@ -386,7 +412,100 @@ fn p4_block_reason_names_canonical_resume_command() {
         "reason should carry the canonical wait flags, got: {stderr}"
     );
     assert!(
-        stderr.contains("--through-human"),
-        "reason should mention --through-human for Codex-hosted, got: {stderr}"
+        !stderr.contains("--through-human"),
+        "a Claude Stop hook is Claude-hosted; the invalid --through-human note must be gone, got: {stderr}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Round-5 corrections (ckpt-99): env-selector binding + role persisted in the
+// marker so the Stop nudge renders a valid command in the real unset-role env.
+// ---------------------------------------------------------------------------
+
+/// P1: a canonical env-selector call names the run only via a `DVANDVA_RUN_ID=`
+/// assignment in the command string — no `.dvandva/runs/<id>/` path — so the
+/// old path-only scan bound nothing and a later Stop wrongly exited 0. Drives
+/// the real baton-guard -> stop-guard lifecycle with no manual marker.
+#[test]
+fn p1_env_selector_call_binds_then_stop_blocks() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_git_repo(dir.path());
+    seed_baton(
+        dir.path(),
+        "model-table-5.6",
+        &live_baton("model-table-5.6", "team", json!(["vadi", "prativadi"])),
+    );
+
+    // PreToolUse: the run is named only by DVANDVA_RUN_ID and the role only by
+    // DVANDVA_ROLE, both as env assignments in the command string (no path).
+    let pre = json!({
+        "session_id": "sess-env",
+        "tool_name": "Bash",
+        "tool_input": {
+            "command": "DVANDVA_RUN_ID=model-table-5.6 DVANDVA_ROLE=vadi dvandva preflight"
+        }
+    })
+    .to_string();
+    let guard = run_baton_guard_in(dir.path(), &[], pre.as_bytes());
+    assert_eq!(
+        guard.status.code(),
+        Some(0),
+        "baton-guard should allow the env-form preflight, stderr: {}",
+        String::from_utf8_lossy(&guard.stderr)
+    );
+
+    // Stop: same session, no DVANDVA_ROLE env — must block because the
+    // env-selector call bound it, and render the role persisted at bind time.
+    let out = run_guard_in(
+        dir.path(),
+        &[],
+        stop_payload_with_session(false, "sess-env").as_bytes(),
+    );
+    assert_blocked(&out);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("dvandva wait --role vadi"),
+        "role comes from the marker persisted by the env-selector bind, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("--through-human"),
+        "no invalid --through-human note, got: {stderr}"
+    );
+}
+
+/// P2: a real Claude Stop hook has NO DVANDVA_ROLE env. The resume command's
+/// role must come from the marker persisted at bind time (here `prativadi`, to
+/// prove it is not a `vadi` default), with no `<your-role>` placeholder and no
+/// invalid `--through-human` token.
+#[test]
+fn p2_marker_role_renders_valid_command_without_role_env() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    init_git_repo(dir.path());
+    seed_baton(
+        dir.path(),
+        "p2m",
+        &live_baton("p2m", "team", json!(["vadi", "prativadi"])),
+    );
+    stamp_session_with_role(dir.path(), "p2m", "sess-p2m", "prativadi");
+
+    // No DVANDVA_ROLE in env — mirrors the real Claude Stop-hook environment.
+    let out = run_guard_in(
+        dir.path(),
+        &[],
+        stop_payload_with_session(false, "sess-p2m").as_bytes(),
+    );
+    assert_blocked(&out);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("dvandva wait --role prativadi --file"),
+        "role must come from the marker, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("<your-role>"),
+        "no role placeholder when the marker records the role, got: {stderr}"
+    );
+    assert!(
+        !stderr.contains("--through-human"),
+        "the invalid --through-human note must be dropped, got: {stderr}"
     );
 }

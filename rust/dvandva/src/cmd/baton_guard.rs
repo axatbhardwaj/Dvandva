@@ -56,9 +56,12 @@ pub fn run(args: &[String]) -> i32 {
 }
 
 /// Bind this session to every run its tool call references, so the Stop hook
-/// can later distinguish a participant from a stranger. Best-effort and
-/// side-effect-only: any miss (no `session_id`, not in a repo, run dir absent)
-/// silently skips — a binding failure must never brick the tool call.
+/// can later distinguish a participant from a stranger, recording the role the
+/// call declared (`DVANDVA_ROLE=`/`--role`) so the Stop nudge can name it even
+/// when its own environment has no `DVANDVA_ROLE`. Runs referenced only by an
+/// env selector (`DVANDVA_RUN_ID=`/`RUN_DIR`/`BATON_FILE`) bind too. Best-effort
+/// and side-effect-only: any miss (no `session_id`, not in a repo, run dir
+/// absent) silently skips — a binding failure must never brick the tool call.
 fn bind_referenced_runs(payload: &[u8]) {
     let Some(session_id) = payload_session_id(payload) else {
         return;
@@ -70,9 +73,10 @@ fn bind_referenced_runs(payload: &[u8]) {
         return;
     };
     let text = String::from_utf8_lossy(payload);
+    let role = session_marker::referenced_role(&text);
     for run in session_marker::referenced_run_dirs(&text) {
         let run_dir = repo_root.join(".dvandva").join("runs").join(&run);
-        session_marker::bind(&run_dir, &session_id);
+        session_marker::bind(&run_dir, &session_id, role.as_deref());
     }
 }
 

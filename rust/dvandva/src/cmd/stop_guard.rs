@@ -4,10 +4,13 @@
 //!
 //! Reads a single Stop-hook payload (JSON) from stdin, collects the repo's
 //! active-run batons, tags each with whether this session (per the payload's
-//! `session_id`) is bound to its run, resolves `DVANDVA_ROLE`, and blocks the
-//! stop (exit 2 with a stderr message, per the Claude Code Stop-hook contract —
-//! matching the `baton-guard` hard-block form) when a bound walkaway baton still
-//! holds this session. See [`dvandva::stop_guard::decide`] for the pure logic.
+//! `session_id`) is bound to its run and the peer role persisted in that run's
+//! marker, and blocks the stop (exit 2 with a stderr message, per the Claude
+//! Code Stop-hook contract — matching the `baton-guard` hard-block form) when a
+//! bound walkaway baton still holds this session. The resume command's role is
+//! read from the marker, not `DVANDVA_ROLE`, which is absent from the real
+//! Claude Stop-hook environment. See [`dvandva::stop_guard::decide`] for the
+//! pure logic.
 
 use std::io::Read;
 
@@ -35,24 +38,31 @@ pub fn run(args: &[String]) -> i32 {
     else {
         return 0;
     };
-    let role = std::env::var("DVANDVA_ROLE").ok().filter(|s| !s.is_empty());
     let session_id = payload_session_id(&payload);
     let batons: Vec<BoundBaton> = collect_baton_paths(&repo_root)
         .into_iter()
         .filter_map(|path| {
             let baton = read_json_lenient(&path).ok()?;
-            let bound = session_id.as_deref().is_some_and(|sid| {
-                path.parent()
-                    .is_some_and(|run_dir| session_marker::is_bound(run_dir, sid))
-            });
+            let run_dir = path.parent();
+            let bound = session_id
+                .as_deref()
+                .zip(run_dir)
+                .is_some_and(|(sid, dir)| session_marker::is_bound(dir, sid));
+            // The role rendered in the nudge comes from the marker (persisted at
+            // bind time), so it survives the unset-DVANDVA_ROLE Stop-hook env.
+            let role = session_id
+                .as_deref()
+                .zip(run_dir)
+                .and_then(|(sid, dir)| session_marker::bound_role(dir, sid));
             Some(BoundBaton {
                 bound,
+                role,
                 path: path.to_string_lossy().into_owned(),
                 baton,
             })
         })
         .collect();
-    match decide(&payload, role.as_deref(), &batons) {
+    match decide(&payload, &batons) {
         StopDecision::Allow => 0,
         StopDecision::Block(reason) => {
             eprintln!("{reason}");
