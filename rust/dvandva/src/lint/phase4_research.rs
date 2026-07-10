@@ -100,9 +100,9 @@ const MODEL_POLICY_RING_DEFAULTS: &str =
 const MODEL_POLICY_GPT_SELF_REVIEW_NO_CREDIT: &str =
     "GPT self-review is hygiene only and earns no review credit";
 const MODEL_POLICY_GROK_UNCREDITED: &str =
-    "A Grok lane may run only as read-only, uncredited triage for live-world/plan-pulse or first-pass review leads";
+    "A Grok lane may take routine read-only work when it clears the quality bar — always uncredited, never execute, never code-touching, never baton-writing.";
 const MODEL_POLICY_FABLE_NO_CODE: &str =
-    "Fable-class owns plan authorship and terminal adjudication only, never code";
+    "Fable-class owns plan authorship and terminal adjudication, may take routine non-code work when it clears the quality bar, and never writes code.";
 
 fn req(r: &mut Report, root: &Path, rel: &str, needle: &str, msg: impl Into<String>) {
     r.add(file_contains(root, rel, needle), msg);

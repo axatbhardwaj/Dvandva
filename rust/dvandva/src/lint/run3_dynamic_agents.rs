@@ -97,7 +97,7 @@ pub fn report(root: &Path) -> Report {
     );
     r.add(
         surface_contains(&surface, MODEL_POLICY_CODEX_MAPPING),
-        "surface documents Codex gpt-5.5 effort-tier model-class mapping",
+        "surface documents Codex model-class mapping",
     );
     r.add(
         surface_contains(&surface, MODEL_POLICY_CODEX_EFFORT),

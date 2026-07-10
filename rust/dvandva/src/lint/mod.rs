@@ -29,7 +29,7 @@ pub(crate) const MODEL_POLICY_VENDOR_NEUTRAL_COMMANDS: &str =
 pub(crate) const MODEL_POLICY_CLAUDE_MAPPING: &str =
     "Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available";
 pub(crate) const MODEL_POLICY_CODEX_MAPPING: &str =
-    "Codex maps `opus` and `fable` to `gpt-5.5` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.5` with `high` reasoning";
+    "Codex maps `opus` and `fable` to `gpt-5.6-sol` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.6-terra` with `high` reasoning, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface";
 pub(crate) const MODEL_POLICY_CODEX_EFFORT: &str =
     "Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it";
 pub(crate) const MODEL_POLICY_OPUS_ROUTING: &str =
