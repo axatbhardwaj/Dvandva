@@ -906,6 +906,40 @@ fn until_actionable_completed_dispatch_request_does_not_wake_named_role() {
     );
 }
 
+#[test]
+fn until_actionable_acknowledged_dispatch_request_does_not_wake_named_role() {
+    // tc-dispatch-request-no-one-shot-ack: the wake token is strict `open`. Once
+    // the vadi ACKNOWLEDGES the paid dispatch, the wait must stop re-firing the
+    // `dispatch_requested` wake — a duplicate paid dispatch is worse than a
+    // missed wake — so an `acknowledged` request keeps polling like a closed one.
+    let d = tmp();
+    write_deep_review_dispatch_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "acknowledged",
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "vadi",
+            "--until-actionable",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_POLL,
+    );
+    assert!(
+        o.kept_polling(),
+        "expected keeps-polling, got {:?}\n{}",
+        o.code,
+        o.out
+    );
+}
+
 // ── Case 8 ───────────────────────────────────────────────────────────────────
 #[test]
 fn newer_sibling_human_decision_stops_action_aware_team_state_waiter() {

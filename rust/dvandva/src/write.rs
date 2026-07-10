@@ -1824,6 +1824,16 @@ fn decide_transition(
         lost_update_reason = lost_update_violation(cur_doc, cand);
     }
 
+    // dispatch_requests identity preservation: applies in ALL states (unlike the
+    // team-owned S4-T4 guard above, and with NO escape exemption — a request must
+    // ride an escape through intact, never be dropped by it). Its own check, its
+    // own reason (`field=dispatch_requests` distinguishes it from the team-owned
+    // reasons).
+    let mut dispatch_preservation_reason = String::new();
+    if cx.is_v2 {
+        dispatch_preservation_reason = dispatch_requests_preservation_violation(cur_doc, cand);
+    }
+
     // ---- compact done phase-review checkpoint gate (baton exists) ----------
     if cx.is_v2
         && cx.new_effective_mode == "development"
@@ -1931,6 +1941,11 @@ fn decide_transition(
         // S4-T4: positioned after the checkpoint gates, before the whitelist —
         // a legal edge cannot rescue a candidate that lost installed peer data.
         return Err((23, format!("DVANDVA_WRITE {lost_update_reason}")));
+    } else if !dispatch_preservation_reason.is_empty() {
+        // dispatch_requests identity preservation: same placement rationale as
+        // S4-T4 (a legal edge — including an escape — cannot rescue a candidate
+        // that dropped an installed dispatch-request id).
+        return Err((23, format!("DVANDVA_WRITE {dispatch_preservation_reason}")));
     } else if approval_reason.starts_with("approval_out_of_band")
         || approval_reason.starts_with("stale_approval")
     {
@@ -1959,6 +1974,16 @@ fn decide_transition(
                 } else {
                     reason = "same-status team sync requires team assignee, both active_roles, summary, and next_action".to_string();
                 }
+            } else if cur_status == "deep_review"
+                && dispatch_ack_rewrite_ok(cur_doc, cand, &writer_role)
+            {
+                // tc-dispatch-request-no-one-shot-ack: the narrow ack carve. A
+                // same-status `deep_review` rewrite whose ONLY substantive change
+                // is dispatch_requests entries flipping open->acknowledged lets the
+                // waking role (vadi|prativadi) claim the paid dispatch so the wait
+                // surface stops re-firing — WITHOUT completing the request (closure
+                // belongs to the status-changing exit write).
+                legal = true;
             } else {
                 reason = "same-status rewrite (only v2 team sync checkpoints may keep status)"
                     .to_string();
@@ -2345,10 +2370,10 @@ fn decide_transition(
         && cur_effective_mode == "development"
         && cx.new_status == "deep_review"
         && cx.new_assignee == "prativadi"
-        && !has_open_dispatch_request(cand, "vadi")
+        && !has_open_dispatch_request_with_purpose(cand, "vadi", CANONICAL_OPUS_DISPATCH_PURPOSE)
     {
         return Err((23, format!(
-            "DVANDVA_WRITE missing_dispatch_request deep_review entry requires an open dispatch_requests entry for vadi (credited cross-vendor opus dispatch) candidate={cf}"
+            "DVANDVA_WRITE missing_dispatch_request deep_review entry requires an open dispatch_requests entry for vadi with the canonical purpose ({CANONICAL_OPUS_DISPATCH_PURPOSE}) candidate={cf}"
         )));
     }
 
@@ -4855,15 +4880,27 @@ fn cross_review_to_deep_review_ok(cand: &Value, required: i64) -> bool {
     done_cross("vadi") && done_cross("prativadi")
 }
 
+/// The canonical `purpose` of the vadi dispatch request a development-mode
+/// prativadi-owned `deep_review` entry must carry. `next.rs`'s
+/// `scaffold_dispatch_request` writes exactly this string, and the entry gate
+/// binds to it (a substring match) so an UNRELATED open vadi request cannot pose
+/// as the credited-Opus-dispatch signal. Shared to keep producer and gate from
+/// drifting apart.
+pub(crate) const CANONICAL_OPUS_DISPATCH_PURPOSE: &str =
+    "credited cross-vendor Anthropic-Opus dispatch";
+
 /// Whether the candidate's `dispatch_requests` field (if present) is well
 /// formed: an array whose every entry is a `{id, role, purpose, status}` object
-/// with non-empty string id/role/purpose and a status in the CLOSED producer
-/// vocabulary `open|completed|cancelled`. This is the strict-producer half of
-/// the strict-producer/tolerant-consumer split — wait.rs's consumer fails OPEN
-/// on unknown status tokens so a future token still wakes the owner, but the
-/// write producer refuses to CREATE an unknown token, so the two surfaces never
-/// disagree about a token that should not exist. Absent/`null` is fine (the
-/// field is additive); a non-array, or any malformed entry, is rejected.
+/// with non-empty string id/role/purpose and a status in the producer
+/// vocabulary `open|acknowledged|completed|cancelled`. This is the strict-
+/// producer half of the strict-producer/tolerant-consumer split — wait.rs's
+/// consumer fails OPEN on unknown status tokens so a future token still wakes
+/// the owner, but the write producer refuses to CREATE an unknown token, so the
+/// two surfaces never disagree about a token that should not exist. `acknowledged`
+/// is the mid-life token the waking role stamps to claim a paid dispatch without
+/// completing it (still-open for the closure gate, but no longer a wake token).
+/// Absent/`null` is fine (the field is additive); a non-array, or any malformed
+/// entry, is rejected.
 fn dispatch_requests_shape_ok(cand: &Value) -> bool {
     match field(cand, "dispatch_requests") {
         None | Some(Value::Null) => true,
@@ -4875,7 +4912,7 @@ fn dispatch_requests_shape_ok(cand: &Value) -> bool {
                 && str_nonempty("purpose")
                 && matches!(
                     field(req, "status"),
-                    Some(Value::String(s)) if matches!(s.as_str(), "open" | "completed" | "cancelled")
+                    Some(Value::String(s)) if matches!(s.as_str(), "open" | "acknowledged" | "completed" | "cancelled")
                 )
         }),
         Some(_) => false,
@@ -4893,6 +4930,98 @@ fn has_open_dispatch_request(cand: &Value, role: &str) -> bool {
         str_field(req, "role") == role
             && util::is_open_finding_status(Some(&str_field(req, "status")))
     })
+}
+
+/// Whether the candidate carries at least one OPEN `dispatch_requests` entry
+/// naming `role` whose `purpose` contains `purpose_needle`. The entry gate binds
+/// to the canonical credited-Opus-dispatch purpose so an unrelated open request
+/// for the same role cannot pose as the dispatch signal — the identity of the
+/// paid dispatch is part of what the gate requires, not merely "some open vadi
+/// request exists". Open/closed reuses the same tolerant token set as
+/// [`has_open_dispatch_request`] (so `acknowledged` still counts as open here).
+fn has_open_dispatch_request_with_purpose(cand: &Value, role: &str, purpose_needle: &str) -> bool {
+    arr(field(cand, "dispatch_requests")).iter().any(|req| {
+        str_field(req, "role") == role
+            && str_field(req, "purpose").contains(purpose_needle)
+            && util::is_open_finding_status(Some(&str_field(req, "status")))
+    })
+}
+
+/// tc-dispatch-request-no-one-shot-ack: whether `cand` is the narrow same-status
+/// `deep_review` ack rewrite — the writer is vadi|prativadi, the ONLY substantive
+/// change from `cur_doc` is dispatch_requests entries flipping open->acknowledged
+/// on existing ids, and every other field is identical except the mechanical
+/// metadata a checkpoint write always bumps (checkpoint/updated_at/summary/
+/// next_action).
+fn dispatch_ack_rewrite_ok(cur_doc: &Value, cand: &Value, writer_role: &str) -> bool {
+    matches!(writer_role, "vadi" | "prativadi")
+        && dispatch_requests_ack_only_delta(cur_doc, cand)
+        && fields_identical_except(
+            cur_doc,
+            cand,
+            &[
+                "checkpoint",
+                "updated_at",
+                "summary",
+                "next_action",
+                "dispatch_requests",
+            ],
+        )
+}
+
+/// Whether the `dispatch_requests` delta between `cur_doc` and `cand` is EXACTLY
+/// one or more open->acknowledged status flips on existing ids and nothing else:
+/// the id-set is identical (no add, no drop, same order), at least one entry
+/// actually flips open->acknowledged, and every other entry is byte-identical.
+/// A no-op (nothing flipped) returns false so a plain same-status rewrite stays
+/// rejected.
+fn dispatch_requests_ack_only_delta(cur_doc: &Value, cand: &Value) -> bool {
+    let cur = arr(field(cur_doc, "dispatch_requests"));
+    let new = arr(field(cand, "dispatch_requests"));
+    if cur.is_empty() || cur.len() != new.len() {
+        return false;
+    }
+    let mut any_flip = false;
+    for (c, n) in cur.iter().zip(new.iter()) {
+        let c_id = str_field(c, "id");
+        if c_id.is_empty() || c_id != str_field(n, "id") {
+            return false;
+        }
+        let c_status = str_field(c, "status");
+        let n_status = str_field(n, "status");
+        if c_status == n_status {
+            // Unchanged status: the whole entry must be identical.
+            if c != n {
+                return false;
+            }
+        } else {
+            // The only permitted status change is open -> acknowledged, with no
+            // other field of the entry touched.
+            if c_status != "open" || n_status != "acknowledged" {
+                return false;
+            }
+            let mut probe = n.clone();
+            probe["status"] = Value::String(c_status);
+            if &probe != c {
+                return false;
+            }
+            any_flip = true;
+        }
+    }
+    any_flip
+}
+
+/// Whether `cur_doc` and `cand` are identical objects on every key EXCEPT those
+/// in `ignore` (compared over the union of their keys, so an added/removed key
+/// outside `ignore` still counts as a difference).
+fn fields_identical_except(cur_doc: &Value, cand: &Value, ignore: &[&str]) -> bool {
+    let (Some(c), Some(n)) = (cur_doc.as_object(), cand.as_object()) else {
+        return false;
+    };
+    c.keys()
+        .chain(n.keys())
+        .filter(|k| !ignore.contains(&k.as_str()))
+        .all(|k| c.get(k) == n.get(k))
 }
 
 fn narrow_fixups_ok(cand: &Value) -> bool {
@@ -5256,6 +5385,25 @@ fn lost_update_violation(cur_doc: &Value, cand: &Value) -> String {
         if let Some(missing) = installed.iter().find(|id| !candidate.contains(id)) {
             return format!("lost_update field={name} missing={missing}");
         }
+    }
+    String::new()
+}
+
+/// dispatch_requests preservation (identity guard): unlike the team-owned S4-T4
+/// id-sets above, a dispatch request is a paid, cross-role liveness token that
+/// must survive EVERY write in EVERY state — not only the team-owned ones.
+/// Dropping an id silently discards the vadi's wake signal and, at `deep_review`
+/// exit, sneaks past the closure gate (which only sees whether an OPEN entry
+/// REMAINS, not whether one was deleted). Every id in the installed baton's
+/// `dispatch_requests` must persist in the candidate; the first dropped id yields
+/// `lost_update field=dispatch_requests missing=<id>` (empty string when clean).
+/// Status may still change per the vocabulary and new entries may be added — only
+/// dropping an installed id is forbidden.
+fn dispatch_requests_preservation_violation(cur_doc: &Value, cand: &Value) -> String {
+    let installed = id_set(field(cur_doc, "dispatch_requests"));
+    let candidate = id_set(field(cand, "dispatch_requests"));
+    if let Some(missing) = installed.iter().find(|id| !candidate.contains(id)) {
+        return format!("lost_update field=dispatch_requests missing={missing}");
     }
     String::new()
 }

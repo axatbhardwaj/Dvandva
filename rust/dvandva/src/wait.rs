@@ -1189,22 +1189,26 @@ fn role_has_open_finding(baton: &Value, role: &str) -> bool {
         .any(|finding| finding_owner_role(finding) == role && finding_is_open(finding))
 }
 
-/// Whether an OPEN `dispatch_requests` entry names `role`. A dispatch request
-/// is a `{id, role, purpose, status}` object with an `open|completed|cancelled`
-/// status vocabulary. Open/closed reuses the shared [`is_open_finding_status`]
-/// token set rather than an ad-hoc three-token check: `completed`/`cancelled`
-/// are already in that closed set, so `open` (and any unknown/absent token,
-/// fail-safe open) is actionable while `completed`/`cancelled` are not — and
-/// dispatch requests then agree with findings on what "still needs doing"
-/// means, one open/closed rule across the wait surface.
+/// Whether a `dispatch_requests` entry naming `role` is a live WAKE token —
+/// status EXACTLY `"open"`. A dispatch request is a `{id, role, purpose, status}`
+/// object with an `open|acknowledged|completed|cancelled` vocabulary.
+///
+/// The wake is strict (`== "open"`) while findings stay fail-open on unknown
+/// tokens, and the asymmetry is deliberate. Findings fail open because a missed
+/// wake there strands real work; a dispatch REQUEST is producer-validated
+/// (write.rs's shape gate refuses to create any token outside the vocabulary),
+/// so an unknown token cannot occur here, and the failure that DOES matter is the
+/// opposite one — re-firing the wake after the vadi has claimed the dispatch
+/// (`acknowledged`) would trigger a duplicate PAID cross-vendor dispatch. A
+/// duplicate paid dispatch is worse than a missed wake, so only the pristine
+/// `open` token wakes; `acknowledged`/`completed`/`cancelled` (and absent) do not.
 fn role_has_open_dispatch_request(baton: &Value, role: &str) -> bool {
     baton
         .get("dispatch_requests")
         .and_then(Value::as_array)
         .map(|requests| {
             requests.iter().any(|request| {
-                field_str(request, "role") == role
-                    && is_open_finding_status(Some(&field_str(request, "status")))
+                field_str(request, "role") == role && field_str(request, "status") == "open"
             })
         })
         .unwrap_or(false)

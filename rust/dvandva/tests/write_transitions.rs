@@ -834,6 +834,165 @@ fn v2_deep_review_exit_to_escape_state_exempt_from_dispatch_closure() {
     );
 }
 
+// tc-dispatch-request-identity-preservation-bypass (FIX 1a): the deep_review
+// entry gate is bound to the CANONICAL vadi dispatch purpose next.rs scaffolds
+// ("credited cross-vendor Anthropic-Opus dispatch"). An OPEN vadi request whose
+// purpose is unrelated maintenance is NOT the credited-dispatch signal and must
+// no longer satisfy the entry gate.
+#[test]
+fn v2_cross_review_to_deep_review_rejects_unrelated_purpose_dispatch_request() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v3(&n, "deep_review", "prativadi", 5, |v| {
+        cross_review_tracks(v);
+        // OPEN and addressed to the vadi, but the purpose is unrelated — not the
+        // credited cross-vendor Opus dispatch the entry gate binds to.
+        v["dispatch_requests"] = json!([
+            {"id": "dr-x", "role": "vadi", "purpose": "unrelated maintenance sweep", "status": "open"}
+        ]);
+    });
+    run(&b, &n).assert_contains(
+        "v2 cross_review->deep_review with an unrelated-purpose vadi request is rejected",
+        23,
+        "missing_dispatch_request",
+    );
+}
+
+// tc-dispatch-request-identity-preservation-bypass (FIX 1b): dispatch_requests
+// is lost-update-guarded in ALL states — every id in the installed baton must
+// persist in the candidate. A deep_review exit that DROPS the array sneaks past
+// the closure gate today (no OPEN entry remains to see) but silently discards
+// the vadi's paid wake token; preservation now rejects it.
+#[test]
+fn v2_deep_review_exit_dropping_dispatch_requests_is_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(
+        &b,
+        "deep_review",
+        "prativadi",
+        4,
+        dispatch_request_open_vadi,
+    );
+    make_baton_v3(&n, "deslop", "vadi", 5, |v| {
+        review_angles(v);
+        // The whole array is dropped rather than the request being closed.
+        v["dispatch_requests"] = json!([]);
+    });
+    run(&b, &n).assert_contains(
+        "v2 deep_review exit dropping the dispatch_requests array is rejected",
+        23,
+        "lost_update field=dispatch_requests missing=dr-opus",
+    );
+}
+
+// tc-dispatch-request-no-one-shot-ack (FIX 2c): `acknowledged` is still-open for
+// the closure gate — closure belongs to the credited reviews landing, so a
+// deep_review exit that leaves the request `acknowledged` is rejected exactly as
+// an `open` one would be.
+#[test]
+fn v2_deep_review_exit_with_acknowledged_dispatch_request_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(
+        &b,
+        "deep_review",
+        "prativadi",
+        4,
+        dispatch_request_open_vadi,
+    );
+    make_baton_v3(&n, "deslop", "vadi", 5, |v| {
+        review_angles(v);
+        v["dispatch_requests"] = json!([
+            {"id": "dr-opus", "role": "vadi", "purpose": "credited cross-vendor Anthropic-Opus dispatch", "status": "acknowledged"}
+        ]);
+    });
+    run(&b, &n).assert_contains(
+        "v2 deep_review exit with an acknowledged (still-open) dispatch request is rejected",
+        23,
+        "open_dispatch_request",
+    );
+}
+
+// tc-dispatch-request-no-one-shot-ack (FIX 2d): a narrow same-status deep_review
+// rewrite whose ONLY substantive change is dispatch_requests entries flipping
+// open->acknowledged is permitted (the waking role marks the paid dispatch
+// claimed so the wait stops re-firing). Writer must be vadi|prativadi.
+#[test]
+fn v2_deep_review_same_status_ack_write_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(
+        &b,
+        "deep_review",
+        "prativadi",
+        4,
+        dispatch_request_open_vadi,
+    );
+    make_baton_v3(&n, "deep_review", "prativadi", 5, |v| {
+        v["dispatch_requests"] = json!([
+            {"id": "dr-opus", "role": "vadi", "purpose": "credited cross-vendor Anthropic-Opus dispatch", "status": "acknowledged"}
+        ]);
+    });
+    run_env(&b, &n, &[("DVANDVA_ROLE", "vadi")]).assert(
+        "v2 deep_review same-status open->acknowledged ack write is accepted",
+        0,
+    );
+}
+
+// The narrowness mirror: a same-status deep_review rewrite flipping open->
+// COMPLETED is NOT an ack — completion belongs to the exit write (a status
+// change), so it stays rejected (exit 24 illegal_transition).
+#[test]
+fn v2_deep_review_same_status_completed_rewrite_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(
+        &b,
+        "deep_review",
+        "prativadi",
+        4,
+        dispatch_request_open_vadi,
+    );
+    make_baton_v3(&n, "deep_review", "prativadi", 5, |v| {
+        v["dispatch_requests"] = json!([
+            {"id": "dr-opus", "role": "vadi", "purpose": "credited cross-vendor Anthropic-Opus dispatch", "status": "completed"}
+        ]);
+    });
+    run_env(&b, &n, &[("DVANDVA_ROLE", "vadi")]).assert(
+        "v2 deep_review same-status open->completed rewrite is rejected",
+        24,
+    );
+}
+
+// The narrowness mirror: an "ack" write that ALSO edits an unrelated field
+// (master_plan_locked) is not the narrow ack carve and stays rejected.
+#[test]
+fn v2_deep_review_ack_write_touching_another_field_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(
+        &b,
+        "deep_review",
+        "prativadi",
+        4,
+        dispatch_request_open_vadi,
+    );
+    make_baton_v3(&n, "deep_review", "prativadi", 5, |v| {
+        v["dispatch_requests"] = json!([
+            {"id": "dr-opus", "role": "vadi", "purpose": "credited cross-vendor Anthropic-Opus dispatch", "status": "acknowledged"}
+        ]);
+        v["master_plan_locked"] = json!(true);
+    });
+    run_env(&b, &n, &[("DVANDVA_ROLE", "vadi")]).assert(
+        "v2 deep_review ack write that also edits another field is rejected",
+        24,
+    );
+}
+
 #[test]
 fn v2_cross_review_cross_fixing_after_team_sync() {
     let d = tmp();

@@ -390,7 +390,7 @@ fn scaffold_dispatch_request(
     let entry = serde_json::json!({
         "id": format!("credited-opus-dispatch-{checkpoint}"),
         "role": "vadi",
-        "purpose": "credited cross-vendor Anthropic-Opus dispatch",
+        "purpose": crate::write::CANONICAL_OPUS_DISPATCH_PURPOSE,
         "status": "open"
     });
     if !candidate["dispatch_requests"].is_array() {

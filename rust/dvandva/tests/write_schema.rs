@@ -1857,6 +1857,23 @@ fn dispatch_requests_valid_shape_accepted() {
     run(&b, &n).assert("dispatch_requests valid shape is accepted", 0);
 }
 
+/// tc-dispatch-request-no-one-shot-ack: `acknowledged` joins the producer
+/// vocabulary (open|acknowledged|completed|cancelled) — the waking role marks a
+/// paid dispatch claimed without completing it, so a well-formed acknowledged
+/// entry rides through the shape gate.
+#[test]
+fn dispatch_requests_acknowledged_status_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "spec_drafting", "vadi", 4, |_| {});
+    make_baton_v3(&n, "spec_review", "prativadi", 5, |v| {
+        v["dispatch_requests"] = json!([
+            {"id": "dr-1", "role": "vadi", "purpose": "credited opus dispatch", "status": "acknowledged"}
+        ]);
+    });
+    run(&b, &n).assert("dispatch_requests acknowledged status is accepted", 0);
+}
+
 /// F9: phase_profiles keys must be stringified numeric phases.
 #[test]
 fn f9_phase_profiles_non_numeric_key_rejected() {
