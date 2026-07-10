@@ -1860,7 +1860,10 @@ fn dispatch_requests_valid_shape_accepted() {
 /// tc-dispatch-request-no-one-shot-ack: `acknowledged` joins the producer
 /// vocabulary (open|acknowledged|completed|cancelled) — the waking role marks a
 /// paid dispatch claimed without completing it, so a well-formed acknowledged
-/// entry rides through the shape gate.
+/// entry rides through the shape gate. The entry is addressed to prativadi so the
+/// vadi-scoped exit closure gate (which now blocks ANY open-or-acknowledged vadi
+/// request leaving to a non-escape development state) stays clear — this isolates
+/// the shape gate under test.
 #[test]
 fn dispatch_requests_acknowledged_status_accepted() {
     let d = tmp();
@@ -1868,7 +1871,7 @@ fn dispatch_requests_acknowledged_status_accepted() {
     make_baton_v3(&b, "spec_drafting", "vadi", 4, |_| {});
     make_baton_v3(&n, "spec_review", "prativadi", 5, |v| {
         v["dispatch_requests"] = json!([
-            {"id": "dr-1", "role": "vadi", "purpose": "credited opus dispatch", "status": "acknowledged"}
+            {"id": "dr-1", "role": "prativadi", "purpose": "credited opus dispatch", "status": "acknowledged"}
         ]);
     });
     run(&b, &n).assert("dispatch_requests acknowledged status is accepted", 0);

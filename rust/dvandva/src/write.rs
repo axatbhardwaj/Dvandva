@@ -2450,14 +2450,19 @@ fn decide_transition(
 
     // dr-open-dispatch-request-not-closed / dr-dispatch-closure-escape-orphan:
     // the mirror of the producer gate. The closure obligation is REQUEST-scoped,
-    // not state-scoped: the canonical vadi dispatch request the deep_review entry
-    // produced is a paid, cross-role liveness token, so ANY write that installs a
-    // real, non-escape protocol status while that request is still open|
-    // acknowledged must CLOSE it. The credited cross-vendor reviews have landed by
-    // the time the run leaves the deep_review lifecycle for a working state, so an
-    // entry left open would re-wake the vadi's strict-open waiter after the work
-    // is done. Closure is `status: completed|cancelled`, written by either role in
-    // the exit write.
+    // not state-scoped, and scoped to ANY open vadi request, not just the
+    // canonical one: a vadi dispatch request is a paid, cross-role liveness token,
+    // so ANY write that installs a real, non-escape protocol status while ANY vadi
+    // request is still open|acknowledged must CLOSE it. The scope deliberately
+    // matches wait's wake (`role_has_open_dispatch_request` fires on any open vadi
+    // request, no purpose filter) so the exit gate blocks precisely when the wake
+    // would still fire — a baton that closed the canonical request but left a
+    // stray non-canonical vadi request open used to exit here (exit 0) while the
+    // vadi's waiter re-fired `dispatch_requested` forever. The credited cross-
+    // vendor reviews have landed by the time the run leaves the deep_review
+    // lifecycle for a working state, so an entry left open would re-wake the vadi
+    // after the work is done. Closure is `status: completed|cancelled`, written by
+    // either role in the exit write.
     //
     // Scoping to the request (not `cur_status == "deep_review"`) closes the escape
     // orphan: deep_review -> human_decision -> (hand-authored resume) -> deslop
@@ -2467,7 +2472,7 @@ fn decide_transition(
     // through them: staying in / resuming BACK into `deep_review` (the reviews may
     // not have landed yet), and the escape states human_question/human_decision/
     // abandoned (a mid-review pause/escalation does not mean the reviews landed).
-    // Fail-closed at 23.
+    // Fail-closed at 23, naming the blocking request id(s).
     if legal
         && cx.is_v2
         && cur_effective_mode == "development"
@@ -2475,11 +2480,15 @@ fn decide_transition(
             cx.new_status,
             "deep_review" | "human_question" | "human_decision" | "abandoned"
         )
-        && has_open_canonical_dispatch_request(cand, "vadi")
     {
-        return Err((23, format!(
-            "DVANDVA_WRITE open_dispatch_request leaving deep_review (directly or by resuming elsewhere from an escape) to a non-escape status requires closing the vadi dispatch_requests entry (status completed|cancelled once the credited reviews land) candidate={cf}"
-        )));
+        let open_ids = open_vadi_dispatch_request_ids(cand, "vadi");
+        if !open_ids.is_empty() {
+            return Err((23, format!(
+                "DVANDVA_WRITE open_dispatch_request leaving deep_review (directly or by resuming elsewhere from an escape) to a non-escape status requires closing the vadi dispatch_requests entr{plural} [{ids}] (status completed|cancelled once the credited reviews land) candidate={cf}",
+                plural = if open_ids.len() == 1 { "y" } else { "ies" },
+                ids = open_ids.join(", "),
+            )));
+        }
     }
 
     // ---- P1: clarifying-questions per-state non-null gates -----------------
@@ -5018,21 +5027,29 @@ fn dispatch_requests_shape_ok(cand: &Value) -> bool {
     }
 }
 
-/// Whether the candidate carries an OPEN-or-acknowledged CANONICAL credited-Opus
-/// dispatch request for `role` — the request-scoped closure gate keys on this. It
-/// binds to the exact [`CANONICAL_OPUS_DISPATCH_PURPOSE`] the deep_review entry
-/// gate produces, so the closure obligation follows THAT paid liveness token
-/// wherever the run carries it (including parked in an escape) rather than the
-/// `deep_review` status alone. Mirrors wait.rs's `role_has_open_dispatch_request`
-/// open/closed rule: `open` and `acknowledged` both count as still-open per the
-/// shared [`util::is_open_finding_status`] token set, so the producer gate and
-/// the wait wake agree on what "still needs dispatching" means.
-fn has_open_canonical_dispatch_request(cand: &Value, role: &str) -> bool {
-    arr(field(cand, "dispatch_requests")).iter().any(|req| {
-        str_field(req, "role") == role
-            && str_field(req, "purpose") == CANONICAL_OPUS_DISPATCH_PURPOSE
-            && util::is_open_finding_status(Some(&str_field(req, "status")))
-    })
+/// The ids of every OPEN-or-acknowledged dispatch request for `role` the
+/// candidate carries — the request-scoped closure gate keys on this being empty.
+/// It matches wait.rs's `role_has_open_dispatch_request` wake SCOPE exactly: ANY
+/// open vadi request wakes the waiter, with NO purpose filter, so the exit gate
+/// must block on ANY open vadi request too — otherwise a baton that closed the
+/// canonical request but left a stray non-canonical vadi request open exits to a
+/// working state (exit 0) while the vadi's waiter keeps re-firing forever. The
+/// purpose filter belongs to the ENTRY gate alone (which must recognize the
+/// canonical credited-Opus dispatch); the closure obligation follows any paid
+/// liveness token, not just the canonical one. `open` and `acknowledged` both
+/// count as still-open per the shared [`util::is_open_finding_status`] token set
+/// (the closure is deliberately at least as broad as the strict-`open` wake, so
+/// an `acknowledged` token still blocks per r5 P2). Ids are returned so the exit
+/// gate names the blocking request(s) in its rejection reason.
+fn open_vadi_dispatch_request_ids(cand: &Value, role: &str) -> Vec<String> {
+    arr(field(cand, "dispatch_requests"))
+        .iter()
+        .filter(|req| {
+            str_field(req, "role") == role
+                && util::is_open_finding_status(Some(&str_field(req, "status")))
+        })
+        .map(|req| str_field(req, "id"))
+        .collect()
 }
 
 /// Whether the candidate carries at least one FRESH `dispatch_requests` entry
@@ -5044,7 +5061,7 @@ fn has_open_canonical_dispatch_request(cand: &Value, role: &str) -> bool {
 /// deep_review while the vadi's waiter never wakes — the credited-dispatch wake
 /// silently skipped — so it is a contract violation (r5 P1). This is why the check
 /// is strict `"open"`, NOT the tolerant [`util::is_open_finding_status`] set that
-/// [`has_open_canonical_dispatch_request`] (the request-scoped EXIT closure gate)
+/// [`open_vadi_dispatch_request_ids`] (the request-scoped EXIT closure gate)
 /// uses.
 ///
 /// The purpose match is exact string equality, not a substring: a negated or

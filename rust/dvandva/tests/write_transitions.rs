@@ -1001,6 +1001,66 @@ fn v2_deep_review_exit_with_acknowledged_dispatch_request_rejected() {
     );
 }
 
+// wait/closure purpose-scope asymmetry: `dvandva wait`'s wake
+// (`role_has_open_dispatch_request`) fires on ANY open vadi request, with no
+// purpose filter, while the closure gate keyed only on the CANONICAL request.
+// So a deep_review exit that CLOSES the canonical request but leaves a stray,
+// non-canonical open vadi request slipped past the gate (exit 0) yet the vadi's
+// waiter kept re-firing `dispatch_requested` forever. The closure gate now
+// matches the wake scope: ANY open-or-acknowledged vadi request blocks the exit.
+#[test]
+fn v2_deep_review_exit_with_stray_open_vadi_request_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    // deep_review carried both the canonical dispatch request and a stray,
+    // non-canonical open vadi request.
+    make_baton_v3(&b, "deep_review", "prativadi", 4, |v| {
+        v["dispatch_requests"] = json!([
+            {"id": "dr-opus", "role": "vadi", "purpose": "credited cross-vendor Anthropic-Opus dispatch", "status": "open"},
+            {"id": "dr-stray", "role": "vadi", "purpose": "unrelated maintenance sweep", "status": "open"}
+        ]);
+    });
+    // The canonical request is completed on exit, but the stray open vadi request
+    // is left dangling — it still wakes the vadi's strict-open waiter.
+    make_baton_v3(&n, "deslop", "vadi", 5, |v| {
+        review_angles(v);
+        v["dispatch_requests"] = json!([
+            {"id": "dr-opus", "role": "vadi", "purpose": "credited cross-vendor Anthropic-Opus dispatch", "status": "completed"},
+            {"id": "dr-stray", "role": "vadi", "purpose": "unrelated maintenance sweep", "status": "open"}
+        ]);
+    });
+    run(&b, &n).assert_contains(
+        "v2 deep_review exit leaving a stray open vadi request is rejected",
+        23,
+        "open_dispatch_request",
+    );
+}
+
+#[test]
+fn v2_deep_review_exit_with_stray_completed_vadi_request_passes() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "deep_review", "prativadi", 4, |v| {
+        v["dispatch_requests"] = json!([
+            {"id": "dr-opus", "role": "vadi", "purpose": "credited cross-vendor Anthropic-Opus dispatch", "status": "open"},
+            {"id": "dr-stray", "role": "vadi", "purpose": "unrelated maintenance sweep", "status": "open"}
+        ]);
+    });
+    // Both the canonical AND the stray vadi request are closed on exit — nothing
+    // open remains to wake the waiter.
+    make_baton_v3(&n, "deslop", "vadi", 5, |v| {
+        review_angles(v);
+        v["dispatch_requests"] = json!([
+            {"id": "dr-opus", "role": "vadi", "purpose": "credited cross-vendor Anthropic-Opus dispatch", "status": "completed"},
+            {"id": "dr-stray", "role": "vadi", "purpose": "unrelated maintenance sweep", "status": "completed"}
+        ]);
+    });
+    run(&b, &n).assert(
+        "v2 deep_review exit with every vadi request closed passes",
+        0,
+    );
+}
+
 // tc-dispatch-request-no-one-shot-ack (FIX 2d): a narrow same-status deep_review
 // rewrite whose ONLY substantive change is dispatch_requests entries flipping
 // open->acknowledged is permitted (the waking role marks the paid dispatch
