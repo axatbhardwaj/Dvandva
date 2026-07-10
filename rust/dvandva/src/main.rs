@@ -31,6 +31,7 @@ Core:      state | resolve | write | wait | snapshot | next | brief
 Preflight: preflight | hook-preflight
 Monitor:   watchdog
 Git gate:  commit-gate | drift-lint | install-hooks | git-hook <name> | baton-guard
+Hooks:     stop-guard
 Install:   install | install-codex | upgrade | smoke-install | retire-agents
 Lints:     lint <artifacts|skills|protocol-phase1|skill-phase3|phase4-research|
                  run3-dynamic-agents|run4-path-gates|run4-standalone-agents|
@@ -75,6 +76,7 @@ fn main() -> ExitCode {
         Some("next") => cmd::next::run(sub_args),
         Some("brief") => cmd::brief::run(sub_args),
         Some("baton-guard") => cmd::baton_guard::run(sub_args),
+        Some("stop-guard") => cmd::stop_guard::run(sub_args),
         Some("resolve") => cmd::resolve::run(sub_args),
         Some("write") => cmd::write::run(sub_args),
         Some("wait") => cmd::wait::run(sub_args),

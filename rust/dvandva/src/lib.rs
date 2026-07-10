@@ -35,6 +35,7 @@ pub mod sla_marker;
 pub mod smoke;
 pub mod snapshot;
 pub mod state;
+pub mod stop_guard;
 pub mod upgrade;
 pub mod upgrade_txn;
 pub mod upgrade_txn_engines;

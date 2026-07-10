@@ -663,6 +663,16 @@ pub fn report(root: &Path) -> Report {
             "verification_matrix",
             format!("{role} surfaces verification matrix"),
         );
+        // xr-review-checkpoint-cycle-start-misstamp: a cross-review track's
+        // review_checkpoint is the START of the current contiguous review-state
+        // block, not the stamping checkpoint. Pinned in both role SKILLs.
+        req(
+            &mut r,
+            root,
+            &skill,
+            "is the checkpoint at which the run entered its current contiguous `cross_review` block (the cycle start), never the checkpoint of the write that stamps the track",
+            format!("{role} pins the cross-review review_checkpoint cycle-start stamping rule"),
+        );
         req(
             &mut r,
             root,

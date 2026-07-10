@@ -388,6 +388,8 @@ const SUPERPOWERS: &str = "Superpowers is a hard runtime dependency.\nDvandva ow
 
 const NEW5: &str = "dvandva-adversarial-analyst dvandva-security-auditor dvandva-integration-checker dvandva-debugger dvandva-doc-verifier dvandva-pattern-mapper\n";
 
+const CROSS_REVIEW_CYCLE_START_RULE: &str = "A cross-review `subagent_tracks` entry's `review_checkpoint` is the checkpoint at which the run entered its current contiguous `cross_review` block (the cycle start), never the checkpoint of the write that stamps the track; a track stamped with the later stamping checkpoint fails the `cross_review` advancement gate.";
+
 const AGENTS15: [&str; 15] = [
     "researcher",
     "architect",
@@ -689,6 +691,8 @@ fn phase4_role_skill() -> String {
     s.push_str("Phase convention: implementation-chunk\n");
     s.push_str("same-status sync checkpoints\n");
     s.push_str("subagent_tracks\n");
+    s.push_str(CROSS_REVIEW_CYCLE_START_RULE);
+    s.push('\n');
     // Default-10 disagreement cap: the seed baton value plus the prose default
     // statement, both pinned so a silent revert to the old default-3 fails
     // closed (p4-tc3-default-cap-10-unpinned).
@@ -715,6 +719,23 @@ fn phase4_research_accepts_complete_fixture() {
     phase4_fixture(d.path());
     let r = phase4_research::report(d.path());
     assert!(r.passed(), "expected clean, failures: {}", r.failures());
+}
+
+#[test]
+fn phase4_research_rejects_missing_cross_review_cycle_start_rule() {
+    // xr-review-checkpoint-cycle-start-misstamp: both role SKILLs must pin that a
+    // cross-review track's review_checkpoint is the current contiguous block's
+    // START, not the stamping checkpoint. Doctoring the sentence out of either
+    // SKILL fails the pin.
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/skills/prativadi/SKILL.md");
+    let text = fs::read_to_string(&p)
+        .unwrap()
+        .replace(CROSS_REVIEW_CYCLE_START_RULE, "");
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("pins the cross-review review_checkpoint cycle-start stamping rule"));
 }
 
 #[test]
