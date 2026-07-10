@@ -377,6 +377,24 @@ pub fn run(cfg: &WaitConfig) -> i32 {
             }
         }
 
+        // Dispatch-request wake (dr-opus-dispatch-liveness-gap): a role named by
+        // an OPEN `dispatch_requests` entry is actionable in ANY non-terminal
+        // state, even when it is neither the assignee nor a member of
+        // active_roles. Terminal/Pause/HumanGate statuses already returned above
+        // and sibling human-pause / split-brain already took priority, so
+        // reaching here means a Work/ReviewGate state that needs this role to
+        // act. This is the machine-actionable signal that lets a Codex-hosted
+        // `deep_review` (assignee=prativadi, active_roles=[]) wake the
+        // Claude-side vadi to dispatch the credited Opus reviewers instead of
+        // the walkaway loop stalling with nobody holding the baton.
+        if role_has_open_dispatch_request(&value, &cfg.role) {
+            println!(
+                "DVANDVA_WAIT dispatch_requested role={} phase={phase} status={status} checkpoint={checkpoint} assignee={assignee} active_roles={active_roles}",
+                cfg.role
+            );
+            return 0;
+        }
+
         if let Some(since) = cfg.since_checkpoint {
             if !is_all_digits(&checkpoint) {
                 println!(
@@ -1169,6 +1187,27 @@ fn role_has_open_finding(baton: &Value, role: &str) -> bool {
     findings(baton)
         .iter()
         .any(|finding| finding_owner_role(finding) == role && finding_is_open(finding))
+}
+
+/// Whether an OPEN `dispatch_requests` entry names `role`. A dispatch request
+/// is a `{id, role, purpose, status}` object with an `open|completed|cancelled`
+/// status vocabulary. Open/closed reuses the shared [`is_open_finding_status`]
+/// token set rather than an ad-hoc three-token check: `completed`/`cancelled`
+/// are already in that closed set, so `open` (and any unknown/absent token,
+/// fail-safe open) is actionable while `completed`/`cancelled` are not — and
+/// dispatch requests then agree with findings on what "still needs doing"
+/// means, one open/closed rule across the wait surface.
+fn role_has_open_dispatch_request(baton: &Value, role: &str) -> bool {
+    baton
+        .get("dispatch_requests")
+        .and_then(Value::as_array)
+        .map(|requests| {
+            requests.iter().any(|request| {
+                field_str(request, "role") == role
+                    && is_open_finding_status(Some(&field_str(request, "status")))
+            })
+        })
+        .unwrap_or(false)
 }
 
 fn has_any_open_owner_role_finding(baton: &Value) -> bool {

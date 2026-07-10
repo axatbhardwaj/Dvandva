@@ -732,12 +732,64 @@ fn phase4_research_rejects_luna_without_task_class_quality_probe() {
 }
 
 #[test]
+fn phase4_research_rejects_luna_semantic_inversion() {
+    // dr-luna-semantic-inversion-bypass: the old ordered-token slurp regex with
+    // broad `.*` gaps matched an INVERTING narrative that kept the anchor words
+    // (Terra retired as default, luna ungated, probe deleted, 5.5 dropped) in
+    // order. The exact-substring pin fails closed against any such inversion:
+    // deleting or altering the literal policy sentence breaks the match.
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("docs/model-selection.md");
+    let text = fs::read_to_string(&p).unwrap().replace(
+        LUNA_PROBE_POLICY,
+        "`gpt-5.6-terra` is retired as the routine default. `gpt-5.6-luna` handles taste-light mechanical work, and only after we deleted the representative task-class quality probe. `gpt-5.5` is dropped as the runtime fallback.",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("pins Luna behind a representative task-class quality probe"));
+}
+
+#[test]
 fn phase4_research_rejects_unpinned_agents_ring_casting() {
     let d = tmp();
     phase4_fixture(d.path());
     w(d.path(), "AGENTS.md", "The default ring uses gpt-5.5.\n");
     let r = phase4_research::report(d.path());
     assert!(r.fails_with("AGENTS.md pins the Sol/Terra ring and GPT-5.5 fallback"));
+}
+
+#[test]
+fn phase4_research_rejects_agents_localized_sol_terra_swap() {
+    // dr-entrypoint-role-swap-bypass: the presence-only pins passed a localized
+    // swap (sol executes routine, terra reviews adversarial) because every model
+    // token was still present somewhere. Role-bound regexes bind sol to the
+    // adversarial clause and terra to routine execution, so the swap fails closed.
+    let d = tmp();
+    phase4_fixture(d.path());
+    w(
+        d.path(),
+        "AGENTS.md",
+        "gpt-5.6-terra reviews hard and adversarial work; gpt-5.6-sol executes routine tracks; gpt-5.5 is the fallback when a 5.6 model is unavailable.",
+    );
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("AGENTS.md pins the Sol/Terra ring and GPT-5.5 fallback"));
+}
+
+#[test]
+fn phase4_research_rejects_claude_localized_terra_sol_swap() {
+    // dr-entrypoint-role-swap-bypass (CLAUDE.md side): a localized terra<->sol
+    // swap keeps all three model tokens present, so the presence-only pin passed.
+    // Binding terra->routine, sol->hard bounded, luna->mechanically proven closes it.
+    let d = tmp();
+    phase4_fixture(d.path());
+    w(
+        d.path(),
+        "CLAUDE.md",
+        "Dispatch code to gpt-5.6-sol for routine work, gpt-5.6-terra for hard bounded work, and gpt-5.6-luna only for mechanically proven task classes; gpt-5.5 is the fallback.",
+    );
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("CLAUDE.md pins the Sol/Terra/Luna dispatch and GPT-5.5 fallback"));
 }
 
 #[test]

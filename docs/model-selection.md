@@ -149,7 +149,9 @@ Opus deep review. Because Codex maps `opus` to `gpt-5.6-sol` (hygiene only,
 earning no review credit), when Codex hosts the prativadi the credited
 cross-vendor Anthropic-Opus deep review is physically dispatched by the
 Claude-side vadi session as fresh `opus` subagents; the Codex reviewer cannot
-itself stand in for that gate.
+itself stand in for that gate. The `deep_review` entry write records an open
+`dispatch_requests` entry for the vadi so this cross-session wake is
+machine-actionable rather than implicit, closed once the credited reviews land.
 
 The baton is the loop manager at the core of this ring: every station above is
 a phase the baton tracks and gates, not a scheduling decision either engine

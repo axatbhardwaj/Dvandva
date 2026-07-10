@@ -371,6 +371,39 @@ fn write_team_baton_with_findings(
     .unwrap();
 }
 
+/// A `deep_review` baton (assignee=prativadi, empty active_roles) carrying a
+/// single `dispatch_requests` entry addressed to the vadi with the given
+/// status. Models the dr-opus-dispatch-liveness-gap scenario: the credited
+/// Opus deep review must be dispatched by the Claude-side vadi, but at
+/// `deep_review` the vadi is neither the assignee nor a team member, so only an
+/// open dispatch request gives it an actionable wake signal.
+fn write_deep_review_dispatch_baton(file: &Path, run_id: &str, dispatch_status: &str) {
+    mkparent(file);
+    std::fs::write(
+        file,
+        format!(
+            r#"{{
+  "schema": "dvandva.baton.v2",
+  "run_id": "{run_id}",
+  "assignee": "prativadi",
+  "active_roles": [],
+  "status": "deep_review",
+  "phase": 1,
+  "checkpoint": 80,
+  "question": null,
+  "resume_assignee": null,
+  "resume_status": null,
+  "updated_at": "2026-07-10T10:00:00Z",
+  "current_engine": "codex",
+  "dispatch_requests": [
+    {{"id": "dr1", "role": "vadi", "purpose": "dispatch credited opus deep review", "status": "{dispatch_status}"}}
+  ]
+}}"#
+        ),
+    )
+    .unwrap();
+}
+
 fn tmp() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
 }
@@ -807,6 +840,70 @@ fn until_actionable_idle_detail_names_chunk_and_finding_scans() {
     assert!(o.kept_polling(), "expected keeps-polling\n{}", o.out);
     assert!(o.contains("scanned_chunks="), "{}", o.out);
     assert!(o.contains("scanned_findings="), "{}", o.out);
+}
+
+#[test]
+fn until_actionable_open_dispatch_request_wakes_named_role_in_deep_review() {
+    // dr-opus-dispatch-liveness-gap: at `deep_review` the baton is
+    // assignee=prativadi with an empty active_roles, so the vadi is neither the
+    // assignee nor a team member — before the fix it had no actionable signal
+    // and the walkaway loop stalled instead of dispatching the credited Opus
+    // reviewers. An OPEN dispatch_requests entry addressed to the vadi is that
+    // signal, and it wakes the vadi in this (non-terminal) state.
+    let d = tmp();
+    write_deep_review_dispatch_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "open",
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "vadi",
+            "--until-actionable",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_FAST,
+    );
+    assert_eq!(o.code, Some(0), "{}", o.out);
+    assert!(o.contains("dispatch_requested"), "{}", o.out);
+}
+
+#[test]
+fn until_actionable_completed_dispatch_request_does_not_wake_named_role() {
+    // The mirror guard: a `completed` dispatch request is closed and must NOT
+    // wake the vadi, so the wait keeps polling exactly as it did before the fix.
+    let d = tmp();
+    write_deep_review_dispatch_baton(
+        &d.path().join(".dvandva/runs/alpha/baton.json"),
+        "alpha",
+        "completed",
+    );
+    let o = run_wait(
+        Some(d.path()),
+        &[("DVANDVA_RUN_ID", "alpha")],
+        &[
+            "--role",
+            "vadi",
+            "--until-actionable",
+            "--interval",
+            "1",
+            "--max-wait",
+            "1",
+        ],
+        BUDGET_POLL,
+    );
+    assert!(
+        o.kept_polling(),
+        "expected keeps-polling, got {:?}\n{}",
+        o.code,
+        o.out
+    );
 }
 
 // ── Case 8 ───────────────────────────────────────────────────────────────────

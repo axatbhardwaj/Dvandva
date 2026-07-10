@@ -103,6 +103,13 @@ const MODEL_POLICY_GROK_UNCREDITED: &str =
     "A Grok lane may take routine read-only work when it clears the quality bar — always uncredited, never execute, never code-touching, never baton-writing.";
 const MODEL_POLICY_FABLE_NO_CODE: &str =
     "Fable-class owns plan authorship and terminal adjudication, may take routine non-code work when it clears the quality bar, and never writes code.";
+/// The full literal Luna-gate policy sentence, pinned by exact substring rather
+/// than an ordered-token regex (dr-luna-semantic-inversion-bypass). A `.*`-gap
+/// regex matched an inverting narrative that kept the anchor words in order
+/// (Terra retired, luna ungated, probe deleted, 5.5 dropped); the substring pin
+/// fails closed against any inversion, since deleting or altering the sentence
+/// breaks the match.
+const MODEL_POLICY_LUNA_PROBE_SENTENCE: &str = "`gpt-5.6-terra` remains the routine default; `gpt-5.6-luna` may take taste-light mechanical work only after a representative task-class quality probe passes; `gpt-5.5` is the runtime fallback.";
 const STATE_TABLE_CODEX_MAPPING: &str = r#"| `opus` | `opus-class\|gpt-5.5-xhigh` | Opus-class | gpt-5.6-sol xhigh (fallback gpt-5.5) |
 | `sonnet` | `sonnet-class\|gpt-5.5-high` | Sonnet-class | gpt-5.6-terra high (fallback gpt-5.5) |
 | `fable` | `fable-class\|gpt-5.5-xhigh` | Fable-class | gpt-5.6-sol xhigh (fallback gpt-5.5) |
@@ -330,11 +337,7 @@ fn req_grok_plan_pulse_policy(r: &mut Report, root: &Path) {
 fn req_current_model_routing(r: &mut Report, root: &Path) {
     let model_selection = "docs/model-selection.md";
     r.add(
-        file_slurp_matches_ci(
-            root,
-            model_selection,
-            r"gpt-5\.6-terra.*routine default.*gpt-5\.6-luna.*taste-light mechanical.*only after.*representative task-class quality probe.*gpt-5\.5.*runtime fallback",
-        ),
+        file_contains(root, model_selection, MODEL_POLICY_LUNA_PROBE_SENTENCE),
         "docs/model-selection.md pins Luna behind a representative task-class quality probe",
     );
     let normalized_model_selection = read(root, model_selection)
@@ -366,10 +369,15 @@ fn req_current_model_routing(r: &mut Report, root: &Path) {
         "docs/model-selection.md pins Claude-side Anthropic Opus dispatch for Codex-hosted prativadi",
     );
 
+    // Role-bound, not presence-only (dr-entrypoint-role-swap-bypass): a localized
+    // sol<->terra swap keeps every model token present, so bind each token to its
+    // clause with tight `[^.]{0,30}` gaps (never `.*`). Sol must sit next to the
+    // adversarial/hard-review clause and Terra next to routine execution; a swap
+    // pulls one token away from its keyword past the gap and fails closed.
     let agents = "AGENTS.md";
     r.add(
-        file_contains(root, agents, "gpt-5.6-sol")
-            && file_contains(root, agents, "gpt-5.6-terra")
+        file_slurp_matches_ci(root, agents, r"gpt-5\.6-sol[^.]{0,30}adversarial")
+            && file_slurp_matches_ci(root, agents, r"gpt-5\.6-terra[^.]{0,30}routine")
             && file_slurp_matches_ci(
                 root,
                 agents,
@@ -380,9 +388,9 @@ fn req_current_model_routing(r: &mut Report, root: &Path) {
 
     let claude = "CLAUDE.md";
     r.add(
-        file_contains(root, claude, "gpt-5.6-sol")
-            && file_contains(root, claude, "gpt-5.6-terra")
-            && file_contains(root, claude, "gpt-5.6-luna")
+        file_slurp_matches_ci(root, claude, r"gpt-5\.6-terra[^.]{0,30}routine")
+            && file_slurp_matches_ci(root, claude, r"gpt-5\.6-sol[^.]{0,30}hard bounded")
+            && file_slurp_matches_ci(root, claude, r"gpt-5\.6-luna[^.]{0,30}mechanically proven")
             && file_slurp_matches_ci(root, claude, r"gpt-5\.5.*fallback"),
         "CLAUDE.md pins the Sol/Terra/Luna dispatch and GPT-5.5 fallback",
     );
