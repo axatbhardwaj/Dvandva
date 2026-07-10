@@ -512,7 +512,7 @@ fn select_default_ack<'a>(
         ));
     }
     // Canonical-first: the credited-Opus wake the protocol produces on entry.
-    let mut canonical: Vec<&TransitionOption> = candidates
+    let canonical: Vec<&TransitionOption> = candidates
         .iter()
         .copied()
         .filter(|o| {
@@ -521,9 +521,23 @@ fn select_default_ack<'a>(
                 .is_some_and(|id| request_is_canonical(baton, id))
         })
         .collect();
-    if !canonical.is_empty() {
-        canonical.sort_by(|a, b| a.dispatch_ack_request_id.cmp(&b.dispatch_ack_request_id));
-        return Ok(canonical[0]);
+    if canonical.len() > 1 {
+        // >1 canonical open request for the effective role. The round-6 guard
+        // only covered NON-canonical ties, so a canonical tie fell through and
+        // silently acked the lowest-id one — refuse to guess, exactly like the
+        // non-canonical tie below.
+        let role = effective_role.as_deref().unwrap_or("?");
+        return Err((
+            2,
+            format!(
+                "DVANDVA_NEXT ambiguous dispatch ack: {} open canonical requests for role={role} ({}); pass --dispatch-request <id> to select one",
+                canonical.len(),
+                ack_ids(&canonical).join(",")
+            ),
+        ));
+    }
+    if let Some(&option) = canonical.first() {
+        return Ok(option);
     }
     if candidates.len() == 1 {
         return Ok(candidates[0]);

@@ -734,13 +734,14 @@ fn generate_dispatch_request_flag_rejected_on_non_deep_review_target() {
     );
 }
 
-// tc-dispatch-request-selection-order-r6 (P6): the exhaustive composition matrix.
-// Sweeps {1..3 requests} x {vadi/prativadi owners} x {open/acknowledged/completed}
-// x {bare / --role / --dispatch-request selection}, asserting for every row either
-// the ack targets EXACTLY the expected request (exit 0, single open->acknowledged
-// flip, others preserved, and write accepts the candidate) or the command errors
-// with the expected reason. This enumerated table is the completeness proof future
-// rounds check against.
+// tc-dispatch-request-selection-order-r6 (P6): the composition matrix (enumerated
+// cases). Hand-enumerated over {1..3 requests} x {vadi/prativadi owners} x
+// {open/acknowledged/completed} x {bare / --role / --dispatch-request selection} —
+// representative combinations, not a mechanical cartesian product — asserting for
+// every row either the ack targets EXACTLY the expected request (exit 0, single
+// open->acknowledged flip, others preserved, and write accepts the candidate) or
+// the command errors with the expected reason. This enumerated table is the
+// regression guard future rounds extend and check against.
 #[test]
 fn dispatch_ack_selection_composition_matrix() {
     // (id, owner-role, canonical?, status)
@@ -809,6 +810,31 @@ fn dispatch_ack_selection_composition_matrix() {
             role_flag: Some("vadi"),
             dispatch_request: None,
             expect: Ack("zzz-canon"),
+        },
+        // ---- two same-role BOTH-canonical: ambiguous without a selector --
+        // tc-dispatch-request-duplicate-canonical-r7. Reachable: scaffolding is
+        // idempotent per checkpoint and ids embed the checkpoint, so a duplicate
+        // canonical *id* is rejected by the unique-id gate. But two OPEN canonical
+        // requests with DIFFERENT ids (from different checkpoints) can still
+        // accumulate across deep_review re-entries when an earlier canonical wake
+        // is never closed — the closure gate makes that hard, not impossible. The
+        // round-6 guard only covered NON-canonical ties, so before r7 the bare
+        // command silently acked the lowest-id canonical (exit 0); now it refuses.
+        Case {
+            name: "2req-vadi-both-canonical-ambiguous-bare",
+            requests: &[("c1", "vadi", true, "open"), ("c2", "vadi", true, "open")],
+            env_role: "vadi",
+            role_flag: None,
+            dispatch_request: None,
+            expect: Err(2, "ambiguous dispatch ack"),
+        },
+        Case {
+            name: "2req-vadi-both-canonical-explicit-c2",
+            requests: &[("c1", "vadi", true, "open"), ("c2", "vadi", true, "open")],
+            env_role: "vadi",
+            role_flag: None,
+            dispatch_request: Some("c2"),
+            expect: Ack("c2"),
         },
         // ---- two same-role non-canonical: ambiguous without a selector ---
         Case {
