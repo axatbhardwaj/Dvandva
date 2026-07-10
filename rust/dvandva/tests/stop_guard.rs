@@ -602,27 +602,36 @@ fn quoted_env_selector_call_binds_and_persists_its_role() {
         &live_baton("quoted-run", "team", json!(["vadi", "prativadi"])),
     );
 
-    let pre = json!({
-        "session_id": "sess-quoted",
-        "tool_name": "Bash",
-        "tool_input": {
-            "command": "DVANDVA_RUN_ID='quoted-run' DVANDVA_ROLE='prativadi' dvandva preflight"
-        }
-    })
-    .to_string();
-    assert_allowed(&run_baton_guard_in(dir.path(), &[], pre.as_bytes()));
+    for (session_id, command) in [
+        (
+            "sess-single-quoted",
+            "DVANDVA_RUN_ID='quoted-run' DVANDVA_ROLE='prativadi' dvandva preflight",
+        ),
+        (
+            "sess-double-quoted",
+            r#"DVANDVA_RUN_ID="quoted-run" DVANDVA_ROLE="prativadi" dvandva preflight"#,
+        ),
+    ] {
+        let pre = json!({
+            "session_id": session_id,
+            "tool_name": "Bash",
+            "tool_input": { "command": command }
+        })
+        .to_string();
+        assert_allowed(&run_baton_guard_in(dir.path(), &[], pre.as_bytes()));
 
-    let out = run_guard_in(
-        dir.path(),
-        &[],
-        stop_payload_with_session(false, "sess-quoted").as_bytes(),
-    );
-    assert_blocked(&out);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        stderr.contains("dvandva wait --role prativadi"),
-        "quoted selector role must roundtrip through the marker, got: {stderr}"
-    );
+        let out = run_guard_in(
+            dir.path(),
+            &[],
+            stop_payload_with_session(false, session_id).as_bytes(),
+        );
+        assert_blocked(&out);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("dvandva wait --role prativadi"),
+            "quoted selector role must roundtrip through the marker, got: {stderr}"
+        );
+    }
 }
 
 #[test]
