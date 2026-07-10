@@ -3,14 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Dvandva — two rival agents, one baton</title>
+<meta name="description" content="Dvandva pairs two adversarial AI roles — vadi and prativadi — around one validated baton file, so a thesis and its antithesis accumulate and get pressure-tested across checkpoints instead of resetting on every one-shot call.">
+<title>Dvandva — a governed-loop protocol for adversarial AI pairs</title>
 <script type="application/json" id="dvandva-artifact-meta">
 {
-  "schema": "dvandva.artifact.research.v1",
+  "schema": "dvandva.artifact.explainer.v1",
   "artifact_type": "explainer",
-  "title": "Dvandva product explainer — declared workflows, presets, and the baton",
-  "date": "2026-07-08",
-  "basis": "engine truth on main · dvandva 3.3.0 · plugin 1.5.3"
+  "title": "Dvandva — a governed-loop protocol for adversarial AI pairs",
+  "date": "2026-07-11",
+  "basis": "engine truth on main@36f134c · dvandva 3.3.0 · plugin 1.5.3"
 }
 </script>
 <style>
@@ -25,13 +26,23 @@
   *{box-sizing:border-box}
   body{margin:0;background:var(--ground);color:var(--ink);font:16px/1.65 var(--sans)}
   a{color:var(--vadi)}
+  a:focus-visible,summary:focus-visible,details:focus-visible,button:focus-visible,[tabindex]:focus-visible{
+    outline:2px solid var(--vadi);outline-offset:3px;border-radius:4px;
+  }
   main{max-width:1120px;margin:0 auto;padding:0 2.2rem 6rem}
+  header{padding:3.4rem 2.2rem 0;max-width:1120px;margin:0 auto}
   section{margin-top:4.2rem}
   .eyebrow{font:600 .72rem/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--faint);margin:0 0 .9rem}
+  .devan{font-size:1rem;color:var(--faint);letter-spacing:.3em;margin:0 0 1rem;font-family:var(--sans)}
+  h1{font:800 2.3rem/1.1 var(--sans);letter-spacing:-.03em;margin:.4rem 0 1.1rem;text-wrap:balance}
+  @media (min-width:640px){h1{font-size:2.9rem}}
+  @media (min-width:1024px){h1{font-size:3.5rem}}
   h2{font:700 1.6rem/1.25 var(--sans);letter-spacing:-.01em;margin:.1rem 0 .9rem;text-wrap:balance}
   h3{font:650 1.05rem/1.3 var(--sans);margin:1.4rem 0 .4rem}
   p{max-width:68ch}
-  code,.st{font-family:var(--mono);font-size:.85em;background:var(--panel2);border:1px solid var(--line);padding:.08em .4em;border-radius:5px}
+  .thesis{font-size:1.18rem;color:var(--ink);max-width:60ch;margin:0 0 1.1rem}
+  .thesis.sub{font-size:1rem;color:var(--dim);max-width:64ch}
+  code,.st{font-family:var(--mono);font-size:.85em;background:var(--panel2);border:1px solid var(--line);padding:.08em .4em;border-radius:5px;overflow-wrap:anywhere}
   pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1rem 1.2rem;overflow-x:auto;font:.82rem/1.6 var(--mono)}
   pre code{background:none;border:none;padding:0}
   figure{margin:1.6rem 0;background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:1.2rem;overflow-x:auto}
@@ -42,75 +53,98 @@
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.25rem}
   .card h4{margin:0 0 .45rem;font:650 1rem/1.3 var(--sans)}
   .card p{font-size:.9rem;color:var(--dim);margin:.3rem 0}
-  .card .st{font-size:.72rem}
+  .strip{display:flex;flex-wrap:wrap;gap:.55rem;margin:1.3rem 0 0}
+  .chip{font:600 .72rem/1 var(--mono);letter-spacing:.06em;padding:.5em .8em;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--dim)}
+  .chip.hi{color:var(--seal);border-color:var(--seal)}
   .k-vadi{color:var(--vadi)} .k-prat{color:var(--prat)} .k-team{color:var(--team)} .k-human{color:var(--human)} .k-seal{color:var(--seal)}
   table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.86rem}
   th,td{border:1px solid var(--line);padding:.5rem .7rem;text-align:left;vertical-align:top}
   th{background:var(--panel2);font:600 .72rem/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
   tr:nth-child(even) td{background:var(--panel)}
-  /* hero */
-  header{padding:4.5rem 2.2rem 0;max-width:1120px;margin:0 auto}
-  .devan{font-size:1.05rem;color:var(--faint);letter-spacing:.35em;margin:0 0 1rem;font-family:var(--sans)}
-  .duel{display:flex;align-items:baseline;gap:1.2rem;flex-wrap:wrap}
-  .duel h1{font:800 clamp(2.6rem,7vw,4.6rem)/1 var(--sans);letter-spacing:-.035em;margin:0;text-wrap:balance}
-  .duel .vs{font:700 1rem var(--mono);color:var(--faint)}
-  .thesis{font-size:1.18rem;color:var(--dim);max-width:56ch;margin:1.3rem 0 0}
-  .baton-rail{position:relative;height:46px;margin:2.2rem 0 0}
-  .baton-rail .track{position:absolute;left:0;right:0;top:22px;height:2px;background:linear-gradient(90deg,var(--vadi),var(--prat))}
-  .baton-rail .baton{position:absolute;top:14px;width:18px;height:18px;border-radius:50%;background:var(--seal);box-shadow:0 0 14px rgba(70,194,106,.7);animation:pass 6s ease-in-out infinite}
-  @keyframes pass{0%,100%{left:4%}50%{left:calc(96% - 18px)}}
+  .table-wrap{overflow-x:auto}
+  .callout{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:1.1rem 1.3rem;margin:1.3rem 0}
+  .callout .tag{font:650 .74rem/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;margin:0 0 .7rem}
+  .callout.adv{border-color:var(--human)} .callout.adv .tag{color:var(--human)}
+  .callout.meta{border-color:var(--team)} .callout.meta .tag{color:var(--team)}
+  .callout ul{margin:.4rem 0;padding-left:1.2rem}
+  .callout li{margin:.45rem 0;font-size:.9rem;color:var(--ink)}
+  nav#toc{position:sticky;top:0;background:rgba(11,15,20,.94);backdrop-filter:blur(6px);border-bottom:1px solid var(--line);padding:.6rem 2.2rem;font:.8rem var(--mono);z-index:9;display:flex;align-items:center;gap:1.1rem}
+  nav#toc .nav-links{display:flex;flex-wrap:wrap;gap:1.05rem;align-items:center}
+  nav#toc a{color:var(--dim);text-decoration:none} nav#toc a:hover{color:var(--vadi)}
+  nav#toc .nav-repo{color:var(--team)}
+  nav#toc .nav-mobile{display:none;color:var(--ink);font-weight:600}
+  @media (max-width:640px){
+    nav#toc .nav-links{display:none}
+    nav#toc .nav-mobile{display:inline-block}
+  }
+  .baton-rail{position:relative;height:44px;margin:1.6rem 0 0;max-width:640px}
+  .baton-rail .track{position:absolute;left:0;right:0;top:21px;height:2px;background:linear-gradient(90deg,var(--vadi),var(--prat))}
+  .baton-rail .baton{position:absolute;top:13px;width:18px;height:18px;border-radius:50%;background:var(--seal);box-shadow:0 0 14px rgba(70,194,106,.7);animation:pass 6s ease-in-out infinite}
+  @keyframes pass{0%,100%{left:2%}50%{left:calc(98% - 18px)}}
   @media (prefers-reduced-motion: reduce){.baton-rail .baton{animation:none;left:calc(50% - 9px)}}
-  .endcap{position:absolute;top:6px;font:600 .72rem var(--mono);letter-spacing:.14em}
+  .endcap{position:absolute;top:0;font:600 .68rem var(--mono);letter-spacing:.1em}
   .endcap.l{left:0;color:var(--vadi)} .endcap.r{right:0;color:var(--prat)}
+  .scroll-hint{display:inline-block;margin-top:2.1rem;color:var(--dim);font:600 .82rem/1 var(--mono);text-decoration:none;border-bottom:1px dashed var(--line);padding-bottom:.3rem}
+  .scroll-hint:hover{color:var(--vadi)}
+  details{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:1.1rem 1.3rem;margin:1.2rem 0}
+  details[open]{padding-bottom:1.4rem}
+  summary{cursor:pointer;font:700 1.05rem var(--sans);color:var(--ink);list-style:revert}
+  summary::marker{color:var(--prat)}
   .quiet{color:var(--dim);font-size:.9rem}
-  .strip{display:flex;flex-wrap:wrap;gap:.55rem;margin:1.1rem 0 0}
-  .chip{font:600 .72rem/1 var(--mono);letter-spacing:.06em;padding:.5em .8em;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--dim)}
-  .lane{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:1.1rem 1.25rem;margin:.9rem 0}
-  .lane h4{margin:0;font:650 1rem var(--sans);display:flex;gap:.7rem;align-items:center}
-  .lane .dot{width:12px;height:12px;border-radius:50%;display:inline-block}
-  .lane p{font-size:.9rem;color:var(--dim)}
-  .lane .route{font:.78rem/2 var(--mono);color:var(--ink);overflow-x:auto;white-space:nowrap;padding-bottom:.2rem}
   .foot{margin-top:5rem;border-top:1px solid var(--line);padding-top:1.2rem;font:.75rem var(--mono);color:var(--faint)}
+  @media (prefers-reduced-motion: reduce){*{animation:none !important;transition:none !important}}
 </style>
 </head>
 <body>
+<nav id="toc" aria-label="Table of contents">
+  <div class="nav-links">
+    <a href="#why">why it exists</a>
+    <a href="#loop">the loop</a>
+    <a href="#proof">proof</a>
+    <a href="#mechanics">mechanics</a>
+    <a href="#start">get started</a>
+    <a class="nav-repo" href="https://github.com/axatbhardwaj/Dvandva">repo ↗</a>
+  </div>
+  <a class="nav-mobile" href="#toc">Contents</a>
+</nav>
+
 <header>
-  <p class="devan">द्वन्द्व · DVANDVA — a compound of two equal, opposing members</p>
-  <div class="duel">
-    <h1><span class="k-vadi">vadi</span> <span class="vs">×</span> <span class="k-prat">prativadi</span></h1>
-  </div>
-  <p class="thesis">Two rival AI agents from different vendors build your software together — one proposes, one prosecutes. They never talk. They pass a baton file through a workflow <em>they declare for the job</em> — and the engine refuses to let it finish until the work is <em>proven</em>.</p>
-  <div class="baton-rail" aria-hidden="true">
-    <span class="endcap l">VADI · proposes, implements</span>
-    <span class="endcap r">PRATIVADI · reviews, attacks</span>
-    <div class="track"></div><div class="baton"></div>
-  </div>
+  <p class="devan">द्वन्द्व · dvandva — a compound of two equal, opposing members</p>
+  <h1>Dvandva — a governed-loop protocol for adversarial AI pairs</h1>
+  <p class="thesis">Dvandva deliberately did not build its core on one-shot, exec-style single invocations. An isolated one-shot call does not <em>by itself</em> sustain an evolving thesis/antithesis dialectic across a task — each call works in a silo, blind to the others, with nothing carried forward but whatever the caller manually re-feeds it. The governed loop exists precisely so that thesis (one role's position) and antithesis (the other role's adversarial pressure) accumulate and refine over many checkpoints instead of resetting on every call.</p>
+  <p class="thesis sub">A one-shot invocation doesn't <em>by itself</em> establish a shared, role-bound, evidence-gated coordination contract between two adversarial identities. An external caller <em>can</em> loop it and pass it files — but the durable shared state, the role-bound evidence, and the convergence gate would be the caller's to build and enforce, not the command's. The governed loop makes all three structural and engine-enforced instead of caller-supplied. It surfaces and pressures blind spots through decorrelated review — it does not claim to close every one.</p>
   <div class="strip">
     <span class="chip">no daemon — a JSON file is the whole channel</span>
     <span class="chip">crash-tolerant: kill either side, rejoin at preflight</span>
-    <span class="chip">engine-agnostic: Claude Code × Codex is the canonical pair</span>
+    <span class="chip">cross-vendor pairing is the recommended default, not an engine lock</span>
     <span class="chip">walkaway or supervised</span>
     <span class="chip">v3: each run declares its own workflow — peer-approved, invariant-checked</span>
   </div>
+  <a class="scroll-hint" href="#proof">↓ the enforced guarantees, with citations</a>
 </header>
 
 <main>
-<section>
+<section id="why">
   <p class="eyebrow">why it exists</p>
   <h2>Different models have different blind spots. Dvandva weaponizes that.</h2>
   <div class="cards">
     <div class="card"><h4>Decorrelated review</h4><p>The reviewer is never the engine that produced the work. A cross-vendor pair catches what a same-model self-review structurally cannot see.</p></div>
     <div class="card"><h4>Proof, not prose</h4><p>A run cannot end because an agent <em>says</em> it's done. Termination demands both role-bound approvals, artifacts that exist on disk, and a verification matrix fresher than the last code change.</p></div>
-    <div class="card"><h4>Bounded arguments</h4><p>Every review loop is capped. When the pair genuinely disagrees, the protocol escalates to you — it never spins.</p></div>
+    <div class="card"><h4>Bounded arguments</h4><p>Every review loop is capped — a cycle can't spin forever. When the pair keeps disagreeing past the cap, that repeated edge drops; what's left is either escalation to you or the run's legal next step forward.</p></div>
   </div>
 </section>
 
-<section>
-  <p class="eyebrow">the turn loop</p>
-  <h2>One baton, one writer, one gate</h2>
-  <p>Whoever the baton assigns acts; the other blocks on <code>dvandva wait</code>. A turn ends by proposing the <em>entire next baton</em> — and the engine validates it against the state machine before installing it. Wrong owner, stale checkpoint, missing evidence, dropped peer work, illegal edge: rejected with a machine-readable reason.</p>
+<section id="loop">
+  <p class="eyebrow">the loop</p>
+  <h2>One baton, one writer — thesis and antithesis, emergent</h2>
+  <p>Thesis and antithesis are not documents anywhere in the schema. They're <b>emergent</b>: positions that accrue on the baton itself — questions, findings, counters, artifacts — checkpoint by checkpoint, as <span class="k-vadi">vadi</span> proposes and <span class="k-prat">prativadi</span> presses back. Whoever the baton assigns acts; the other blocks on <code>dvandva wait</code>. A turn ends by proposing the <em>entire next baton</em>, and the engine validates it against the declared workflow before installing it. Wrong owner, stale checkpoint, missing evidence, dropped peer work, illegal edge: rejected with a machine-readable reason.</p>
+  <div class="baton-rail" aria-hidden="true">
+    <span class="endcap l">VADI · thesis</span>
+    <span class="endcap r">PRATIVADI · antithesis</span>
+    <div class="track"></div><div class="baton"></div>
+  </div>
   <figure>
-  <svg viewBox="0 0 1040 168" width="100%" role="img" aria-label="The turn loop">
+  <svg viewBox="0 0 1040 168" width="100%" role="img" aria-label="The turn loop: resolve, brief, do the work, next, write, wait, then the other role wakes">
     <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8a97a8"/></marker></defs>
     <g font-size="11.5" text-anchor="middle">
       <rect x="14" y="52" width="132" height="52" rx="9" fill="#182130" stroke="#26303e"/><text x="80" y="74" fill="#dce4ee">resolve · preflight</text><text x="80" y="92" fill="#5c6774" font-size="9.5">find the run, sanity-check</text>
@@ -125,292 +159,130 @@
       <line x1="656" y1="78" x2="696" y2="78" stroke="#8a97a8" stroke-width="1.2" marker-end="url(#ar)"/>
       <line x1="824" y1="78" x2="864" y2="78" stroke="#8a97a8" stroke-width="1.2" marker-end="url(#ar)"/>
       <path d="M 939 104 C 939 150 200 150 82 106" fill="none" stroke="#5c6774" stroke-width="1.1" stroke-dasharray="5 4" marker-end="url(#ar)"/>
-      <text x="510" y="146" fill="#5c6774" font-size="9.5">the other role wakes with the baton — same loop, opposite color</text>
+      <text x="510" y="146" fill="#5c6774" font-size="9.5">the other role wakes with the checkpointed baton — same loop, opposite color, one position sharper than before</text>
       <text x="760" y="40" fill="#46c26a" font-size="9.5">reject = exit 23/24 + reason · a hook blocks hand-editing the baton</text>
     </g>
   </svg>
-  <figcaption>The whole protocol from a session's chair. <code>dvandva next</code> reads the engine's own edge tables, so a candidate is valid by construction.</figcaption>
+  <figcaption>Every full circuit checkpoints the baton — that's the mechanism the dialectic rides on: nothing resets, everything accumulates.</figcaption>
   </figure>
 </section>
 
-<section>
-  <p class="eyebrow">step zero — before any route</p>
-  <h2>Every line shares the same first four stations</h2>
-  <p>Whatever mode or profile a run picks, it cannot reach <code>research_drafting</code> without first passing through a mandatory question gate: vadi asks, the human answers, then prativadi asks follow-ups informed by those answers, and the human answers again. The write gate requires at least five questions combined, with both roles represented — a solo role cannot satisfy the floor alone.</p>
-  <figure>
-  <svg viewBox="0 0 1040 170" width="100%" role="img" aria-label="The mandatory clarifying-questions prefix shared by every mode and profile">
-    <defs><marker id="cq" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8a97a8"/></marker></defs>
-    <rect x="10" y="55" width="200" height="58" rx="9" fill="#0f2a22" stroke="#34d399"/>
-    <text x="110" y="79" fill="#dce4ee" font-size="11" text-anchor="middle">clarifying_questions_drafting</text>
-    <text x="110" y="97" fill="#34d399" font-size="9" text-anchor="middle">vadi asks round 1</text>
-    <line x1="210" y1="84" x2="250" y2="84" stroke="#8a97a8" stroke-width="1.2" marker-end="url(#cq)"/>
-    <rect x="250" y="55" width="180" height="58" rx="9" fill="#2a2007" stroke="#e0a63d"/>
-    <text x="340" y="79" fill="#dce4ee" font-size="11" text-anchor="middle">clarifying_questions_answer</text>
-    <text x="340" y="97" fill="#e0a63d" font-size="9" text-anchor="middle">human answers round 1</text>
-    <line x1="430" y1="84" x2="470" y2="84" stroke="#8a97a8" stroke-width="1.2" marker-end="url(#cq)"/>
-    <rect x="470" y="55" width="200" height="58" rx="9" fill="#241830" stroke="#a78bfa"/>
-    <text x="570" y="79" fill="#dce4ee" font-size="11" text-anchor="middle">clarifying_questions_followup</text>
-    <text x="570" y="97" fill="#a78bfa" font-size="9" text-anchor="middle">prativadi asks round 2</text>
-    <line x1="670" y1="84" x2="710" y2="84" stroke="#8a97a8" stroke-width="1.2" marker-end="url(#cq)"/>
-    <rect x="710" y="55" width="205" height="58" rx="9" fill="#2a2007" stroke="#e0a63d"/>
-    <text x="812" y="76" fill="#dce4ee" font-size="10.5" text-anchor="middle">clarifying_questions</text>
-    <text x="812" y="90" fill="#dce4ee" font-size="10.5" text-anchor="middle">_followup_answer</text>
-    <line x1="915" y1="84" x2="955" y2="84" stroke="#8a97a8" stroke-width="1.2" marker-end="url(#cq)"/>
-    <rect x="955" y="60" width="65" height="48" rx="8" fill="#121821" stroke="#46c26a" stroke-width="1.6"/>
-    <text x="987" y="88" fill="#46c26a" font-size="10" text-anchor="middle">research</text>
-    <text x="460" y="30" fill="#5c6774" font-size="9.5" text-anchor="middle">floor: ≥5 questions combined, ≥1 asked by each role — enforced by the write gate, not a convention</text>
-    <text x="460" y="145" fill="#5c6774" font-size="9.5" text-anchor="middle">every mode (development / research / review) and every profile (fast / standard / full) enters here — there is no bypass edge</text>
-  </svg>
-  <figcaption>The preset map below picks up at RESEARCH — read it as "after the four clarifying stations above," on every line.</figcaption>
-  </figure>
-</section>
+<section id="proof">
+  <p class="eyebrow">the proof</p>
+  <h2>Receipts first, then the mechanism that earns them</h2>
+  <p>Every row below is something the engine actually enforces at <code>dvandva write</code> — not a design intention. Citations are <code>file:line</code> in <code>rust/dvandva/src/</code> on the current tree.</p>
 
-<section>
-  <p class="eyebrow">step one</p>
-  <h2>Pick a mode: what kind of work is this?</h2>
-  <div class="cards">
-    <div class="card"><h4>development</h4><p>Ship a change. The full lifecycle — research, locked plan, phased implementation, adversarial review, evidence-gated termination.</p><p><span class="st">profile chooses the ceremony ↓</span></p></div>
-    <div class="card"><h4>research</h4><p>Answer a question with reviewed evidence. Optionally ends by seeding a development plan for a follow-on run.</p></div>
-    <div class="card"><h4>review</h4><p>A verdict on an existing diff or artifact. Scope → deep review → fixes → verdict. Nothing gets built.</p></div>
+  <h3>The headline receipt</h3>
+  <div class="strip">
+    <span class="chip hi">dvandva 3.2.0 &amp; 3.3.0 — both live on crates.io</span>
+    <span class="chip hi">206 / 400 commits carry a Dvandva-Checkpoint: trailer</span>
+    <span class="chip">pinned @ main<code>@36f134c</code>, 2026-07-11</span>
   </div>
-</section>
+  <pre><code>git log 36f134c --format=%B | grep -c '^Dvandva-Checkpoint:'   # → 206, as of 36f134c (2026-07-11)
+git rev-list --count 36f134c                                     # → 400, as of 36f134c (2026-07-11)</code></pre>
+  <p class="quiet">The ratio grows with every merge, so the claim is stated as-of a fixed commit plus the exact command that reproduces it — a reader re-running this today gets a higher count, and that's expected, not a contradiction.</p>
 
-<section>
-  <p class="eyebrow">step two — new in v3</p>
-  <h2>Declare the workflow: the graph itself is now a reviewed deliverable</h2>
-  <p>After research is accepted, the run does not fall into a frozen state machine — it <em>declares</em> one. The vadi proposes the workflow for this specific job (a preset below, or a custom graph of states, owners, and loop caps); the prativadi reviews it in a capped revision loop; and the engine validates the approved graph against five locked invariants before a single line of spec is written. Mid-run the graph can be amended, but every amendment is peer-re-gated through the same check.</p>
-  <figure>
-  <svg viewBox="0 0 1040 190" width="100%" role="img" aria-label="The workflow declaration loop">
-    <defs><marker id="dw" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8a97a8"/></marker></defs>
-    <rect x="10" y="58" width="140" height="54" rx="9" fill="#182130" stroke="#26303e"/>
-    <text x="80" y="81" fill="#dce4ee" font-size="11" text-anchor="middle">research_review</text>
-    <text x="80" y="98" fill="#5c6774" font-size="9" text-anchor="middle">research accepted</text>
-    <line x1="150" y1="85" x2="192" y2="85" stroke="#8a97a8" stroke-width="1.2" marker-end="url(#dw)"/>
-    <rect x="192" y="58" width="172" height="54" rx="9" fill="#0f2a22" stroke="#34d399"/>
-    <text x="278" y="81" fill="#dce4ee" font-size="11" text-anchor="middle">workflow_declaring</text>
-    <text x="278" y="98" fill="#34d399" font-size="9" text-anchor="middle">vadi: preset or custom graph</text>
-    <line x1="364" y1="85" x2="406" y2="85" stroke="#8a97a8" stroke-width="1.2" marker-end="url(#dw)"/>
-    <rect x="406" y="58" width="164" height="54" rx="9" fill="#241830" stroke="#a78bfa"/>
-    <text x="488" y="81" fill="#dce4ee" font-size="11" text-anchor="middle">workflow_review</text>
-    <text x="488" y="98" fill="#a78bfa" font-size="9" text-anchor="middle">prativadi challenges the graph</text>
-    <line x1="570" y1="85" x2="640" y2="85" stroke="#8a97a8" stroke-width="1.2" marker-end="url(#dw)"/>
-    <rect x="640" y="52" width="120" height="66" rx="9" fill="#12241a" stroke="#46c26a" stroke-width="1.8"/>
-    <text x="700" y="78" fill="#46c26a" font-size="10.5" text-anchor="middle">5 invariants</text>
-    <text x="700" y="94" fill="#5c6774" font-size="8.5" text-anchor="middle">checked at approval</text>
-    <line x1="760" y1="85" x2="802" y2="85" stroke="#8a97a8" stroke-width="1.2" marker-end="url(#dw)"/>
-    <rect x="802" y="58" width="130" height="54" rx="9" fill="#182130" stroke="#26303e"/>
-    <text x="867" y="81" fill="#dce4ee" font-size="11" text-anchor="middle">spec_drafting</text>
-    <text x="867" y="98" fill="#5c6774" font-size="9" text-anchor="middle">the graph is now law</text>
-    <path d="M 460 112 C 420 152 330 152 290 114" fill="none" stroke="#a78bfa" stroke-width="1.2" stroke-dasharray="5 4" marker-end="url(#dw)"/>
-    <text x="375" y="158" fill="#5c6774" font-size="9" text-anchor="middle">workflow_revision ⟲ (loop-capped — deadlock escalates to you)</text>
-    <text x="700" y="34" fill="#5c6774" font-size="9" text-anchor="middle">peer-gate is a node-cut to done · escapes reachable · owner totality · dual-approval done · no absorbing non-terminals</text>
-    <text x="80" y="140" fill="#5c6774" font-size="9">wait is class-driven off the declared graph: work / review_gate / human_gate / pause / terminal — human-gate states wake their owner (exit 15)</text>
-  </svg>
-  <figcaption>The graph a run will live under is itself proposed, attacked, revised, and machine-validated — you provably cannot declare a workflow whose review gates can be dodged on the way to <code>done</code>.</figcaption>
-  </figure>
-</section>
-
-<section>
-  <p class="eyebrow">step three — the preset library</p>
-  <h2>Five preset graphs: every path, one map</h2>
-  <p>These five routes ship with the engine as declarable presets — most runs pick one and move on; a custom graph must pass the same five invariants. All five share the same stations: a line stops where its ceremony applies and passes through where it doesn't. Station color = who owns that stop.</p>
-  <figure>
-  <svg viewBox="0 0 1060 560" width="100%" role="img" aria-label="Transit map of all Dvandva paths">
-    <defs>
-      <marker id="tm" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#5c6774"/></marker>
-    </defs>
-    <!-- column headers -->
-    <g font-size="9.5" fill="#5c6774" text-anchor="middle" font-weight="600">
-      <text x="120" y="26">RESEARCH</text><text x="240" y="26">SPEC / PLAN</text><text x="360" y="26" fill="#46c26a">LOCK</text>
-      <text x="480" y="26">IMPLEMENT</text><text x="590" y="26">TESTS</text><text x="695" y="26">CROSS-REVIEW</text>
-      <text x="800" y="26">DEEP REVIEW</text><text x="893" y="26">CLEANUP</text><text x="985" y="26">TERMINAL GATE</text>
-    </g>
-    <g stroke="#1a222d" stroke-width="1"><line x1="120" y1="36" x2="120" y2="470"/><line x1="240" y1="36" x2="240" y2="470"/><line x1="360" y1="36" x2="360" y2="470"/><line x1="480" y1="36" x2="480" y2="470"/><line x1="590" y1="36" x2="590" y2="470"/><line x1="695" y1="36" x2="695" y2="470"/><line x1="800" y1="36" x2="800" y2="470"/><line x1="893" y1="36" x2="893" y2="470"/><line x1="985" y1="36" x2="985" y2="470"/></g>
-
-    <!-- FAST line y=70 -->
-    <text x="14" y="74" font-size="11" fill="#46c26a" font-weight="700">FAST</text>
-    <line x1="90" y1="70" x2="985" y2="70" stroke="#46c26a" stroke-width="3"/>
-    <circle cx="120" cy="70" r="7" fill="#34d399" stroke="#0b0f14" stroke-width="2"/>
-    <circle cx="480" cy="70" r="7" fill="#34d399" stroke="#0b0f14" stroke-width="2"/>
-    <circle cx="800" cy="70" r="7" fill="#a78bfa" stroke="#0b0f14" stroke-width="2"/>
-    <circle cx="985" cy="70" r="7" fill="#a78bfa" stroke="#0b0f14" stroke-width="2"/>
-    <text x="800" y="56" font-size="8.5" fill="#8a97a8" text-anchor="middle">phase_review ⟲</text>
-    <text x="330" y="86" font-size="8.5" fill="#5c6774">prose-only allowlist · hard-risk paths force FULL</text>
-
-    <!-- STANDARD line y=140 -->
-    <text x="14" y="144" font-size="11" fill="#34d399" font-weight="700">STD</text>
-    <line x1="90" y1="140" x2="985" y2="140" stroke="#34d399" stroke-width="3"/>
-    <circle cx="120" cy="140" r="7" fill="#34d399" stroke="#0b0f14" stroke-width="2"/>
-    <circle cx="240" cy="140" r="7" fill="#a78bfa" stroke="#0b0f14" stroke-width="2"/>
-    <rect x="352" y="132" width="16" height="16" rx="3" fill="#12241a" stroke="#46c26a" stroke-width="2"/>
-    <circle cx="480" cy="140" r="7" fill="#34d399" stroke="#0b0f14" stroke-width="2"/>
-    <circle cx="800" cy="140" r="7" fill="#a78bfa" stroke="#0b0f14" stroke-width="2"/>
-    <circle cx="985" cy="140" r="7" fill="#a78bfa" stroke="#0b0f14" stroke-width="2"/>
-    <text x="800" y="126" font-size="8.5" fill="#8a97a8" text-anchor="middle">phase_review ⟲ + counter valve</text>
-    <path d="M 800 148 C 700 190 340 186 246 148" fill="none" stroke="#34d399" stroke-width="1.2" stroke-dasharray="5 4" marker-end="url(#tm)"/>
-    <text x="520" y="184" font-size="8.5" fill="#5c6774" text-anchor="middle">amendment: reopen the locked plan mid-run (capped, reviewed, phase count mutable only inside the episode)</text>
-
-    <!-- FULL line y=250 -->
-    <text x="14" y="254" font-size="11" fill="#5ca9ff" font-weight="700">FULL</text>
-    <line x1="90" y1="250" x2="985" y2="250" stroke="#5ca9ff" stroke-width="3.5"/>
-    <circle cx="120" cy="250" r="7" fill="#34d399" stroke="#0b0f14" stroke-width="2"/>
-    <circle cx="240" cy="250" r="7" fill="#a78bfa" stroke="#0b0f14" stroke-width="2"/>
-    <rect x="352" y="242" width="16" height="16" rx="3" fill="#12241a" stroke="#46c26a" stroke-width="2"/>
-    <circle cx="480" cy="250" r="8" fill="#5ca9ff" stroke="#0b0f14" stroke-width="2"/>
-    <circle cx="590" cy="250" r="8" fill="#5ca9ff" stroke="#0b0f14" stroke-width="2"/>
-    <circle cx="695" cy="250" r="8" fill="#5ca9ff" stroke="#0b0f14" stroke-width="2"/>
-    <circle cx="800" cy="250" r="7" fill="#a78bfa" stroke="#0b0f14" stroke-width="2"/>
-    <circle cx="893" cy="250" r="7" fill="#a78bfa" stroke="#0b0f14" stroke-width="2"/>
-    <circle cx="985" cy="250" r="7" fill="#a78bfa" stroke="#0b0f14" stroke-width="2"/>
-    <text x="480" y="232" font-size="8.5" fill="#5ca9ff" text-anchor="middle">both roles, disjoint chunks</text>
-    <text x="695" y="232" font-size="8.5" fill="#5ca9ff" text-anchor="middle">review the peer's chunk</text>
-    <text x="800" y="274" font-size="8.5" fill="#8a97a8" text-anchor="middle">risk angles · fixing ⟲×3</text>
-    <path d="M 893 258 C 830 300 560 300 484 258" fill="none" stroke="#5ca9ff" stroke-width="1.4" marker-end="url(#tm)"/>
-    <text x="690" y="298" font-size="8.5" fill="#5c6774" text-anchor="middle">next phase (×total_phases) — entry ceremony pinned per phase_profiles</text>
-    <text x="330" y="330" font-size="8.5" fill="#5c6774">work split ≥2 chunks/role · ≥5 total or reviewed waiver · plan locks: total_phases frozen</text>
-
-    <!-- RESEARCH line y=380 -->
-    <text x="14" y="384" font-size="11" fill="#4dd0c4" font-weight="700">RSRCH</text>
-    <line x1="90" y1="380" x2="240" y2="380" stroke="#4dd0c4" stroke-width="3"/>
-    <path d="M 240 380 C 300 380 320 380 360 380" fill="none" stroke="#4dd0c4" stroke-width="1.4" stroke-dasharray="5 4"/>
-    <line x1="360" y1="380" x2="985" y2="380" stroke="#4dd0c4" stroke-width="3" stroke-dasharray="0"/>
-    <circle cx="120" cy="380" r="7" fill="#34d399" stroke="#0b0f14" stroke-width="2"/>
-    <circle cx="240" cy="380" r="7" fill="#a78bfa" stroke="#0b0f14" stroke-width="2"/>
-    <circle cx="985" cy="380" r="7" fill="#a78bfa" stroke="#0b0f14" stroke-width="2"/>
-    <text x="120" y="364" font-size="8.5" fill="#8a97a8" text-anchor="middle">question ⟲ evidence</text>
-    <text x="300" y="366" font-size="8.5" fill="#5c6774" text-anchor="middle">optional: seed a plan</text>
-    <text x="620" y="368" font-size="8.5" fill="#5c6774" text-anchor="middle">terminals labeled phase "research" (seed path keeps "spec")</text>
-
-    <!-- REVIEW line y=440 -->
-    <text x="14" y="444" font-size="11" fill="#ff9d5c" font-weight="700">REVIEW</text>
-    <line x1="90" y1="440" x2="120" y2="440" stroke="#ff9d5c" stroke-width="3"/>
-    <path d="M 120 440 L 800 440" stroke="#ff9d5c" stroke-width="3"/>
-    <line x1="800" y1="440" x2="985" y2="440" stroke="#ff9d5c" stroke-width="3"/>
-    <circle cx="120" cy="440" r="7" fill="#34d399" stroke="#0b0f14" stroke-width="2"/>
-    <circle cx="800" cy="440" r="7" fill="#a78bfa" stroke="#0b0f14" stroke-width="2"/>
-    <circle cx="893" cy="440" r="7" fill="#a78bfa" stroke="#0b0f14" stroke-width="2"/>
-    <circle cx="985" cy="440" r="7" fill="#a78bfa" stroke="#0b0f14" stroke-width="2"/>
-    <text x="120" y="424" font-size="8.5" fill="#8a97a8" text-anchor="middle">scope the target</text>
-    <text x="800" y="424" font-size="8.5" fill="#8a97a8" text-anchor="middle">verdict + direct fix edge</text>
-
-    <!-- DONE terminus -->
-    <rect x="1012" y="60" width="34" height="390" rx="8" fill="#12241a" stroke="#46c26a" stroke-width="1.6"/>
-    <text x="1029" y="260" fill="#46c26a" font-size="12" font-weight="700" transform="rotate(90 1029 260)" text-anchor="middle">d o n e · archived</text>
-    <g stroke="#46c26a" stroke-width="2"><line x1="992" y1="70" x2="1012" y2="70"/><line x1="992" y1="140" x2="1012" y2="140"/><line x1="992" y1="250" x2="1012" y2="250"/><line x1="992" y1="380" x2="1012" y2="380"/><line x1="992" y1="440" x2="1012" y2="440"/></g>
-
-    <!-- HUMAN RAIL -->
-    <line x1="60" y1="46" x2="60" y2="500" stroke="#e0a63d" stroke-width="2.5" stroke-dasharray="7 5"/>
-    <text x="60" y="518" fill="#e0a63d" font-size="10" font-weight="700" text-anchor="middle">HUMAN RAIL</text>
-    <g stroke="#e0a63d" stroke-width="1.1" stroke-dasharray="2 3"><line x1="60" y1="70" x2="90" y2="70"/><line x1="60" y1="140" x2="90" y2="140"/><line x1="60" y1="250" x2="90" y2="250"/><line x1="60" y1="380" x2="90" y2="380"/><line x1="60" y1="440" x2="90" y2="440"/></g>
-    <text x="66" y="60" fill="#8a97a8" font-size="8.5">every line connects: human_question (exact resume) · human_decision (re-route) · reachable mid-implementation</text>
-    <rect x="20" y="474" width="150" height="26" rx="6" fill="#2b1214" stroke="#ff6a5e"/>
-    <text x="95" y="491" fill="#ff6a5e" font-size="9.5" text-anchor="middle">abandoned — clean death</text>
-
-    <!-- legend -->
-    <g font-size="9" fill="#8a97a8">
-      <circle cx="330" cy="530" r="6" fill="#34d399"/><text x="342" y="534">vadi stop</text>
-      <circle cx="420" cy="530" r="6" fill="#a78bfa"/><text x="432" y="534">prativadi stop</text>
-      <circle cx="530" cy="530" r="6" fill="#5ca9ff"/><text x="542" y="534">team stop (both roles)</text>
-      <rect x="672" y="524" width="12" height="12" rx="3" fill="#12241a" stroke="#46c26a" stroke-width="1.5"/><text x="690" y="534">gate checkpoint</text>
-      <line x1="790" y1="530" x2="820" y2="530" stroke="#5c6774" stroke-width="1.3" stroke-dasharray="5 4"/><text x="828" y="534">loop / optional segment</text>
-    </g>
-  </svg>
-  <figcaption>The five routes, picking up right after the clarifying-questions prefix above. Ownership alternates along every line — that alternation <em>is</em> the protocol: no stretch of track belongs to one agent for long.</figcaption>
-  </figure>
-</section>
-
-<section>
-  <p class="eyebrow">route guide</p>
-  <h2>When to ride which line</h2>
-
-  <div class="lane"><h4><span class="dot" style="background:var(--seal)"></span>FAST — the prose lane</h4>
-    <p>Allowlisted prose-only changes (docs, comments) with positive evidence the diff touches nothing risky. No spec stage at all.</p>
-    <div class="route"><span class="k-team">clarifying ⟲</span> → <span class="k-vadi">research ⟲</span> → <span class="k-vadi">implementing</span> → <span class="k-prat">phase_review ⟲ fixing</span> → <span class="k-prat">termination_review</span> → <span class="k-seal">done</span></div>
-    <p>Guardrail: hard-risk paths (specs, schemas, skills, engine code, secrets…) force <code>profile_floor: full</code> — you cannot ride FAST past them, and downgrades below the floor route to the human.</p></div>
-
-  <div class="lane"><h4><span class="dot" style="background:var(--vadi)"></span>STANDARD — the default</h4>
-    <p>Single-implementer development with a locked, prativadi-reviewed plan and per-phase gates. New scaffolds land here.</p>
-    <div class="route"><span class="k-team">clarifying ⟲</span> → <span class="k-vadi">research ⟲</span> → <span class="k-vadi">spec</span> ⟲ <span class="k-prat">review</span> → <span class="k-seal">LOCK</span> → per phase: <span class="k-vadi">implementing</span> → <span class="k-prat">phase_review</span> ⟲ <span class="k-vadi">fixing</span> → <span class="k-prat">termination_review</span> → <span class="k-seal">done</span></div>
-    <p>Also carries: the amendment loop back to spec, and the capped <code>review_of_review ⇄ counter_review</code> valve for genuine disputes.</p></div>
-
-  <div class="lane"><h4><span class="dot" style="background:var(--team)"></span>FULL — the adversarial lane</h4>
-    <p>Both agents implement concurrently and audit each other. Mandatory for hard-risk paths; the strongest guarantees in the system.</p>
-    <div class="route"><span class="k-team">clarifying ⟲</span> → …<span class="k-seal">LOCK</span> → per phase: <span class="k-team">parallel_implementing</span> → <span class="k-team">test_creation</span> → <span class="k-team">cross_review</span> ⟲ <span class="k-team">cross_fixing</span> → <span class="k-prat">deep_review</span> ⟲ <span class="k-vadi">phase_fixing</span> → <span class="k-prat">deslop</span> → next phase… → <span class="k-prat">termination_review</span> → <span class="k-seal">done</span></div>
-    <p>Team stops are superset-guarded (a retry can't erase the peer's recorded work), deep review gains security/integration angles on risky diffs, and the done gate stacks five independent evidence checks.</p></div>
-
-  <div class="lane"><h4><span class="dot" style="background:#4dd0c4"></span>RESEARCH — answer, then maybe seed</h4>
-    <p>Question in, reviewed evidence out. The optional spur through spec_drafting turns findings into a locked-plan seed for a follow-on development run.</p>
-    <div class="route"><span class="k-team">clarifying ⟲</span> → <span class="k-vadi">research ⟲</span> <span class="k-prat">review</span> → (optional <span class="k-vadi">spec spur</span>) → <span class="k-prat">termination_review ⟲ fixing</span> → <span class="k-seal">done</span></div></div>
-
-  <div class="lane"><h4><span class="dot" style="background:#ff9d5c"></span>REVIEW — verdict on existing work</h4>
-    <p>Point it at a diff or artifact. Scope, deep review with a direct fix edge, cleanup, verdict. Nothing new gets built.</p>
-    <div class="route"><span class="k-team">clarifying ⟲</span> → <span class="k-vadi">scope ⟲</span> → <span class="k-prat">deep_review</span> ⟲ <span class="k-vadi">phase_fixing</span> → <span class="k-prat">deslop</span> → <span class="k-prat">termination_review</span> → <span class="k-seal">done</span></div></div>
-</section>
-
-<section>
-  <p class="eyebrow">mixing lines</p>
-  <h2>phase_profiles: switch trains mid-journey</h2>
-  <p>A full run can declare, at spec time, that a mechanical phase deserves less ceremony: <code>phase_profiles: {"2": "standard"}</code>. The engine pins each phase's entry state to <em>that phase's</em> profile — and per-phase risk floors still bind, so a hard-risk phase can never be demoted.</p>
-  <figure>
-  <svg viewBox="0 0 1040 130" width="100%" role="img" aria-label="phase_profiles mixing">
-    <g font-size="10">
-      <text x="20" y="30" fill="#8a97a8">one FULL run, three phases:</text>
-      <rect x="20" y="46" width="300" height="44" rx="9" fill="#1d1730" stroke="#5ca9ff" stroke-width="1.6"/>
-      <text x="170" y="64" fill="#5ca9ff" text-anchor="middle" font-weight="700">PHASE 1 · full</text><text x="170" y="80" fill="#8a97a8" font-size="8.5" text-anchor="middle">parallel → tests → cross → deep → deslop</text>
-      <rect x="352" y="46" width="270" height="44" rx="9" fill="#12203a" stroke="#34d399" stroke-width="1.6"/>
-      <text x="487" y="64" fill="#34d399" text-anchor="middle" font-weight="700">PHASE 2 · standard (demoted)</text><text x="487" y="80" fill="#8a97a8" font-size="8.5" text-anchor="middle">implementing → phase_review ⟲</text>
-      <rect x="654" y="46" width="300" height="44" rx="9" fill="#1d1730" stroke="#5ca9ff" stroke-width="1.6"/>
-      <text x="804" y="64" fill="#5ca9ff" text-anchor="middle" font-weight="700">PHASE 3 · full (risk floor holds)</text><text x="804" y="80" fill="#8a97a8" font-size="8.5" text-anchor="middle">team ceremony returns for the risky finale</text>
-      <text x="336" y="70" fill="#5c6774" text-anchor="middle">→</text><text x="638" y="70" fill="#5c6774" text-anchor="middle">→</text>
-      <text x="972" y="70" fill="#46c26a" font-weight="700">→ done</text>
-      <text x="20" y="118" fill="#5c6774" font-size="9">entry-state pinning is engine-enforced: arriving at phase 2 lands on implementing, arriving at phase 3 lands on parallel_implementing — a wrong ceremony state is exit 24.</text>
-    </g>
-  </svg>
-  </figure>
-</section>
-
-<section>
-  <p class="eyebrow">the amber line</p>
-  <h2>You are a station on every route</h2>
-  <div class="cards">
-    <div class="card"><h4 class="k-human">human_question</h4><p>Quick answer needed — legal pre-lock <em>and</em> mid-implementation from any working state. Resume restores the exact prior state, team roster included. <span class="st">wait exit 12</span></p></div>
-    <div class="card"><h4 class="k-human">human_decision</h4><p>You re-route the run: any non-terminal state can escalate here, and it's the only way to reopen <code>done</code> or <code>abandoned</code>. <span class="st">wait exit 11</span></p></div>
-    <div class="card"><h4 style="color:var(--stop)">abandoned</h4><p>The clean death. From a human pause you can end the run outright — archived, resolver forgets it, commit gate releases. <span class="st">wait exit 13</span></p></div>
-  </div>
-  <p>Delivery is native: the Claude Code-hosted session owns surfacing every pause to you in-session, and the remote session puts that conversation on your phone — no extra plumbing. Meanwhile the other session appends <code>--through-human</code> to its wait: it sleeps through the pause and resumes itself the moment your answer lands. For fleets, the optional <code>dvandva watchdog</code> cron scan logs any baton that stops moving mid-work.</p>
-</section>
-
-<section>
-  <p class="eyebrow">the fine print that isn't fine print</p>
-  <h2>What the engine refuses to let happen</h2>
+  <h3>What the engine enforces</h3>
+  <div class="table-wrap">
   <table>
-    <tr><th>You cannot…</th><th>Because</th></tr>
-    <tr><td>finish on one engine's word</td><td>both final approvals are <code>DVANDVA_ROLE</code>-bound; the explainer is cross-reviewed by a doc-verifier track from the current cycle</td></tr>
-    <tr><td>finish on stale or missing evidence</td><td>every required ref must be an existing non-empty file; the verification matrix must postdate the last implementation checkpoint</td></tr>
-    <tr><td>erase your partner's work in a retry</td><td>team-state writes must be supersets of the installed arrays (<code>lost_update</code>)</td></tr>
-    <tr><td>quietly change the plan</td><td><code>total_phases</code> freezes at lock; amendments are reviewed episodes; the lock opens only via the human</td></tr>
-    <tr><td>argue forever</td><td>six loop families are counted and capped; the cap's only exit is escalation to you</td></tr>
-    <tr><td>declare a workflow that dodges review</td><td>five locked invariants at approval: deleting the peer-review gates provably disconnects <code>done</code>; escapes stay reachable; every state has an owner; termination is dual-approved; no state traps the run</td></tr>
-    <tr><td>drift off the map</td><td>hand-editing the baton is hook-blocked; commits outside declared scope are gate-blocked; a corrupt baton fails preflight; the docs are lint-pinned to the engine</td></tr>
+    <tr><th>Guarantee</th><th>Enforcement</th><th>Citation</th></tr>
+    <tr><td>Atomic install, monotonic checkpoints</td><td>Every candidate is validated, then installed with a single atomic rename — a corrupt or partial install can't happen mid-write. Checkpoints only ever advance by exactly +1; a candidate that repeats or skips one is rejected (<code>exit 27</code>, <code>stale_checkpoint</code>) before the transition table is even consulted. A post-install snapshot failure surfaces its own distinct exit code, never silently swallowed.</td><td><code>write.rs:2681-2685</code>, <code>2702-2707</code>, <code>1992-2005</code></td></tr>
+    <tr><td>Role-bound approvals and sign-off</td><td>Final approvals and other outcome-deciding fields check <code>DVANDVA_ROLE</code> against the field being changed — a candidate raising the wrong role's approval is rejected before the edge table is consulted.</td><td><code>write.rs:1799-1829</code></td></tr>
+    <tr><td>Role-bound commits</td><td>The pre-commit hook delegates to the commit gate, which blocks a commit unless the committing role is the baton's assignee or listed in <code>active_roles</code>.</td><td><code>commit_gate.rs:125-137</code>, <code>hooks.rs:100-121</code></td></tr>
+    <tr><td>A capped loop bounds one edge — it doesn't force every disagreement to you</td><td>Each loop edge is counted; at the cap, the engine removes that repeated edge from the legal-transitions set. Human escalation remains legal, but the engine only bounds the named edge — it doesn't mandate escalation as the sole exit.</td><td><code>write.rs:4303-4327</code></td></tr>
+    <tr><td>Custom workflow graphs are checked at approval; presets are pre-cleared</td><td>A hand-authored graph runs through five invariant checks before it's approved — one that lets <code>done</code> be reached without crossing a review gate <b>FAILS validation outright</b> (<code>ReviewGateBypass</code>). Built-in presets are pre-validated once, so that same runtime check is a no-op for them — both families satisfy the same contract, by different means.</td><td><code>write.rs:4622-4629</code>, <code>workflow/invariants.rs</code> (<code>ReviewGateBypass</code>)</td></tr>
+    <tr><td>Dual-approval <code>done</code>, every mode</td><td><code>done</code> is legal only from <code>termination_review</code>, and only once both <code>vadi_final_approval</code> and <code>prativadi_final_approval</code> are true — checked independently of mode or profile.</td><td><code>write.rs:2079-2083</code></td></tr>
+    <tr><td>No coordination daemon</td><td>No long-lived controller owns the loop. Every subcommand is a synchronous, one-shot call; the optional watchdog scan never blocks — "a monitor, not a gate." The baton plus a fencing lock is the sole coordination primitive.</td><td><code>main.rs:74-118</code>, <code>watchdog.rs:1-12</code>, <code>lock.rs:1-9</code></td></tr>
+    <tr><td>Two role identities are engine-locked; vendor pairing is policy, not a lock</td><td><code>done</code> requires two ROLE identities' independent approvals — engine-enforced. Running those two roles on two different model vendors is the recommended decorrelation <em>policy</em>, not something the engine checks: which engine wrote a checkpoint is recorded as trace data only, never compared for gating.</td><td>composes <code>write.rs:1799-1829</code> + <code>2079-2083</code> + <code>2854</code></td></tr>
   </table>
+  </div>
+
+  <div class="callout adv">
+    <p class="tag">Advisory-only — read the edges precisely</p>
+    <ul>
+      <li><strong>Single-writer is not a blanket "the peer can't write on your turn" rule.</strong> Only outcome-deciding fields — approvals, review ownership, workflow sign-off — plus commits are role-locked. Most fields on a candidate baton are writable by whoever holds the lock.</li>
+      <li><strong><code>disagreement_cap</code> is a self-declared ceiling</strong>, read straight off the candidate's own field — not an immutability-guarded constant like <code>total_phases</code>.</li>
+    </ul>
+  </div>
+  <p class="quiet">State this precision as a feature, not a hedge — a technical reader trusts a pitch more, not less, for naming its own edges.</p>
+
+  <div class="callout meta">
+    <p class="tag">On the numbers</p>
+    <p style="margin:0 0 .6rem">A naive <code>git log --grep='Dvandva-Checkpoint'</code> overcounts the receipt above by one (<code>207</code>) — it also matches a commit that mentions the phrase in prose but carries no real trailer line. The line-anchored <code>grep -c '^Dvandva-Checkpoint:'</code> command above avoids that trap.</p>
+    <p style="margin:0;color:var(--dim)">This page's own research went through several rounds of adversarial review before acceptance — a live instance of the same loop this page describes, surfacing and closing real findings. The exact round-by-round counts live only in gitignored working files and aren't independently reader-verifiable, so they're kept qualitative here rather than cited as a number.</p>
+  </div>
 </section>
 
-<section>
+<section id="mechanics">
+  <p class="eyebrow">mechanics, for the curious</p>
+  <details>
+    <summary>How the default routes actually run — regenerated from source</summary>
+    <p>Most runs ride one of two declarable presets and never think about the rest. The graph a run lives under is itself a peer-reviewed, invariant-checked artifact — a custom, unapproved workflow must pass through a <code>workflow_declaring → workflow_review</code> loop before it can reach spec drafting; a built-in preset is pre-approved and enters spec drafting directly. Every path, regardless of mode or profile, first clears a mandatory clarifying-questions floor (at least five questions combined, both roles represented) — there is no bypass edge.</p>
+    <figure>
+    <svg viewBox="0 0 1040 240" width="100%" role="img" aria-label="The default compact routes for the standard and fast development profiles">
+      <defs><marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8a97a8"/></marker></defs>
+      <text x="8" y="16" fill="#5c6774" font-size="9.5" letter-spacing="1">DEFAULT COMPACT ROUTES (clarifying-questions floor precedes both, off-diagram)</text>
+
+      <text x="10" y="52" fill="#34d399" font-size="10.5" font-weight="700">STANDARD</text>
+      <rect x="10" y="60" width="150" height="46" rx="8" fill="#182130" stroke="#26303e"/>
+      <text x="85" y="80" fill="#dce4ee" font-size="9.5" text-anchor="middle">research ⟲</text>
+      <text x="85" y="94" fill="#5c6774" font-size="8" text-anchor="middle">vadi ⇄ prativadi</text>
+      <line x1="160" y1="83" x2="182" y2="83" stroke="#8a97a8" stroke-width="1.1" marker-end="url(#mr)"/>
+      <rect x="182" y="60" width="130" height="46" rx="8" fill="#0f2a22" stroke="#34d399"/>
+      <text x="247" y="80" fill="#dce4ee" font-size="9.5" text-anchor="middle">spec ⟲ review</text>
+      <text x="247" y="94" fill="#34d399" font-size="8" text-anchor="middle">vadi drafts</text>
+      <line x1="312" y1="83" x2="334" y2="83" stroke="#8a97a8" stroke-width="1.1" marker-end="url(#mr)"/>
+      <rect x="334" y="60" width="72" height="46" rx="8" fill="#10192b" stroke="#5ca9ff" stroke-width="1.6"/>
+      <text x="370" y="87" fill="#5ca9ff" font-size="10" text-anchor="middle" font-weight="700">LOCK</text>
+      <line x1="406" y1="83" x2="428" y2="83" stroke="#8a97a8" stroke-width="1.1" marker-end="url(#mr)"/>
+      <rect x="428" y="60" width="130" height="46" rx="8" fill="#0f2a22" stroke="#34d399"/>
+      <text x="493" y="83" fill="#dce4ee" font-size="9.5" text-anchor="middle">implementing</text>
+      <line x1="558" y1="83" x2="580" y2="83" stroke="#8a97a8" stroke-width="1.1" marker-end="url(#mr)"/>
+      <rect x="580" y="60" width="160" height="46" rx="8" fill="#241830" stroke="#a78bfa"/>
+      <text x="660" y="80" fill="#dce4ee" font-size="9.5" text-anchor="middle">phase_review ⟲</text>
+      <text x="660" y="94" fill="#a78bfa" font-size="8" text-anchor="middle">⟲ phase_fixing, counted &amp; capped</text>
+      <line x1="740" y1="83" x2="762" y2="83" stroke="#8a97a8" stroke-width="1.1" marker-end="url(#mr)"/>
+      <rect x="762" y="60" width="150" height="46" rx="8" fill="#10192b" stroke="#5ca9ff" stroke-width="1.6"/>
+      <text x="837" y="80" fill="#dce4ee" font-size="9.5" text-anchor="middle">termination_review</text>
+      <text x="837" y="94" fill="#5ca9ff" font-size="8" text-anchor="middle">team-owned</text>
+      <line x1="912" y1="83" x2="934" y2="83" stroke="#8a97a8" stroke-width="1.1" marker-end="url(#mr)"/>
+      <rect x="934" y="56" width="90" height="54" rx="8" fill="#12241a" stroke="#46c26a" stroke-width="1.8"/>
+      <text x="979" y="88" fill="#46c26a" font-size="11" text-anchor="middle" font-weight="700">done</text>
+
+      <path d="M 660 106 C 660 146 620 150 580 150" fill="none" stroke="#5c6774" stroke-width="1.1" stroke-dasharray="4 3" marker-end="url(#mr)"/>
+      <rect x="330" y="150" width="330" height="30" rx="6" fill="none" stroke="#5c6774" stroke-width="1.1" stroke-dasharray="4 3"/>
+      <text x="495" y="169" fill="#8a97a8" font-size="8.5" text-anchor="middle">review_of_review ⇄ counter_review — rare, capped safety valve; absent from FAST entirely</text>
+
+      <text x="10" y="202" fill="#34d399" font-size="10.5" font-weight="700">FAST</text>
+      <rect x="10" y="210" width="150" height="30" rx="7" fill="#182130" stroke="#26303e"/>
+      <text x="85" y="230" fill="#dce4ee" font-size="9" text-anchor="middle">research ⟲</text>
+      <line x1="160" y1="225" x2="182" y2="225" stroke="#8a97a8" stroke-width="1.1" marker-end="url(#mr)"/>
+      <rect x="182" y="210" width="130" height="30" rx="7" fill="#0f2a22" stroke="#34d399"/>
+      <text x="247" y="230" fill="#dce4ee" font-size="9" text-anchor="middle">implementing</text>
+      <text x="360" y="230" fill="#5c6774" font-size="8.5">no spec ceremony, no safety valve — straight to compact review/fix/done (same shape as STANDARD from here)</text>
+    </svg>
+    <figcaption>Both routes converge on the identical review/fix/terminal tail; only the plan-and-lock stage differs.</figcaption>
+    </figure>
+    <p class="quiet">FAST skips spec planning entirely and enters compact implementation directly from an accepted research package; STANDARD keeps the locked-plan stage. Both converge on the identical <code>phase_review ⟲ phase_fixing → termination_review → done</code> tail. Two more presets exist beyond these two — FULL (both roles implement concurrently and cross-review each other) and dedicated RESEARCH/REVIEW-mode graphs — plus custom, peer-declared graphs; all five are validated against the same five invariants sketched above.</p>
+    <p>Full transition tables, every edge, every trigger: <a href="https://github.com/axatbhardwaj/Dvandva/blob/main/plugins/dvandva/references/state-transition-table.md">plugins/dvandva/references/state-transition-table.md ↗</a></p>
+  </details>
+</section>
+
+<section id="start">
   <p class="eyebrow">boarding</p>
   <h2>Get started</h2>
   <pre><code># the runtime (one binary, published on crates.io)
 cargo install dvandva --version 3.3.0
 
-# the plugin, into Claude Code and Codex
+# the plugin, into each session's tool
 dvandva install</code></pre>
   <p class="quiet">Later, <code>dvandva upgrade</code> refreshes the whole stack transactionally — all-new or fully-restored, exit-coded.</p>
   <p>Then open two sessions on a feature branch:</p>
-  <pre><code>Claude:  Implement &lt;feature&gt; with Codex review. Start a Dvandva development run in walkaway mode.
-Codex:   Join the same Dvandva development run and review the baton.</code></pre>
-  <p class="quiet">Walkaway mode drives the baton autonomously until <span class="k-seal">done</span> — or until a question needs you, in which case the Claude session asks you directly, wherever your remote session is open.</p>
+  <pre><code>Session A (vadi):        Implement &lt;feature&gt; with peer review. Start a Dvandva development run in walkaway mode.
+Session B (prativadi):   Join the same Dvandva development run and review the baton.</code></pre>
+  <p class="quiet">Walkaway mode drives the baton autonomously until <span class="k-seal">done</span>. A genuine requirement gap can still route to you — <code>human_question</code> pauses one session's work for a direct answer, and <code>human_decision</code> is the exceptional, human-authorized way to re-route a run or reopen one that already reached <code>done</code>/<code>abandoned</code> — it is not a routine stop most runs ever take. One session surfaces the pause to you directly; the other keeps polling through it and resumes itself the instant your answer lands, so nothing silently stalls.</p>
 </section>
-
-<p class="foot">DVANDVA · engine truth as of main · dvandva 3.3.0 · plugin 1.5.3 · 29 statuses · graph interpreter over 5 declarable presets + custom graphs, 5 locked invariants</p>
 </main>
+<p class="foot">DVANDVA · a governed-loop protocol for adversarial AI pairs · engine truth as of main@36f134c (2026-07-11) · dvandva 3.3.0 · plugin 1.5.3</p>
 </body>
 </html>
