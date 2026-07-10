@@ -153,13 +153,22 @@ fn values_after(text: &str, prefix: &str) -> Vec<String> {
     out
 }
 
-/// Read a single assignment value from the start of `rest`. A value wrapped in
-/// matching single or double quotes (the shell forms `KEY='v'` / `KEY="v"`)
-/// yields its unquoted interior, so a quoted selector like
-/// `DVANDVA_RUN_ID='live'` binds like the bare form; an unquoted value runs up
-/// to the first whitespace, `"`, or `\` — the shell / JSON terminators of a
-/// bare assignment value.
+/// Read a single assignment value from the start of `rest`. Values arrive inside
+/// a JSON tool-call payload, so a double-quoted shell value (`KEY="v"`) reaches
+/// here JSON-escaped as `KEY=\"v\"`, while a single-quoted value (`KEY='v'`) is
+/// passed through unescaped. A value in either matching-quote form yields its
+/// unquoted interior, so a quoted selector like `DVANDVA_RUN_ID="live"` binds
+/// like the bare form; an unquoted value runs up to the first whitespace, `"`,
+/// or `\` — the shell / JSON terminators of a bare assignment value.
 fn read_value(rest: &str) -> String {
+    // A double-quoted value is JSON-escaped as `\"v\"`: strip the opening `\"`
+    // and read to the matching `\"` (the closing `"` is likewise escaped).
+    if let Some(inner) = rest.strip_prefix("\\\"") {
+        return match inner.find("\\\"") {
+            Some(end) => inner[..end].to_string(),
+            None => inner.to_string(),
+        };
+    }
     let mut chars = rest.chars();
     match chars.next() {
         Some(quote @ ('\'' | '"')) => chars.take_while(|&c| c != quote).collect(),
