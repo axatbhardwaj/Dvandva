@@ -20,11 +20,11 @@ use crate::lint::{
     count_lines_matching, file_contains, file_has_exact_line, file_slurp_matches_ci,
     goal_block_matches_ci, list_md, output_contract_contains, resolve_root, Report,
     MODEL_POLICY_CLAUDE_MAPPING, MODEL_POLICY_CODEX_EFFORT, MODEL_POLICY_CODEX_MAPPING,
-    MODEL_POLICY_NO_HAIKU_COMMANDS, MODEL_POLICY_NO_HAIKU_SUBAGENTS, MODEL_POLICY_OPUS_ROUTING,
-    MODEL_POLICY_SONNET_ROUTING, MODEL_POLICY_STALE_CANONICAL_COMPAT_MAPPING,
-    MODEL_POLICY_STALE_CODEX_MAPPING, MODEL_POLICY_STALE_OPUS_ROUTING,
-    MODEL_POLICY_STALE_SONNET_ROUTING, MODEL_POLICY_VENDOR_NEUTRAL_COMMANDS,
-    MODEL_POLICY_VENDOR_NEUTRAL_DOCS,
+    MODEL_POLICY_CODEX_REVIEW_AUTHORITY, MODEL_POLICY_NO_HAIKU_COMMANDS,
+    MODEL_POLICY_NO_HAIKU_SUBAGENTS, MODEL_POLICY_OPUS_ROUTING, MODEL_POLICY_SONNET_ROUTING,
+    MODEL_POLICY_STALE_CANONICAL_COMPAT_MAPPING, MODEL_POLICY_STALE_CODEX_MAPPING,
+    MODEL_POLICY_STALE_OPUS_ROUTING, MODEL_POLICY_STALE_SONNET_ROUTING,
+    MODEL_POLICY_VENDOR_NEUTRAL_COMMANDS, MODEL_POLICY_VENDOR_NEUTRAL_DOCS,
 };
 
 const ALL_AGENTS: [&str; 15] = [
@@ -101,8 +101,6 @@ const MODEL_POLICY_GPT_SELF_REVIEW_NO_CREDIT: &str =
     "GPT self-review is hygiene only and earns no review credit";
 const MODEL_POLICY_GROK_UNCREDITED: &str =
     "A Grok lane may take routine read-only work when it clears the quality bar — always uncredited, never execute, never code-touching, never baton-writing.";
-const MODEL_POLICY_OPUS_CREDITED_REVIEW: &str =
-    "Opus-class remains the credited deep/adversarial review gate.";
 const MODEL_POLICY_FABLE_NO_CODE: &str =
     "Fable-class owns plan authorship and terminal adjudication, may take routine non-code work when it clears the quality bar, and never writes code.";
 
@@ -188,6 +186,13 @@ fn req_model_policy_common(r: &mut Report, root: &Path, rel: &str, vendor_neutra
         MODEL_POLICY_CODEX_MAPPING,
         format!("{rel} documents Codex model-class mapping"),
     );
+    req(
+        r,
+        root,
+        rel,
+        MODEL_POLICY_CODEX_REVIEW_AUTHORITY,
+        format!("{rel} documents cross-vendor credited review authority"),
+    );
     req_model_policy_routing(r, root, rel);
 }
 
@@ -221,13 +226,6 @@ fn req_command_ring_dispatch(r: &mut Report, root: &Path, rel: &str) {
         format!(
             "{rel} permits Grok routine uncredited read-only work but no execution or code touching"
         ),
-    );
-    req(
-        r,
-        root,
-        rel,
-        MODEL_POLICY_OPUS_CREDITED_REVIEW,
-        format!("{rel} preserves Opus-class as the credited deep/adversarial review gate"),
     );
     req(
         r,
@@ -1802,6 +1800,13 @@ pub fn report(root: &Path) -> Report {
             file,
             MODEL_POLICY_CODEX_MAPPING,
             format!("{file} documents Codex model-class mapping"),
+        );
+        req(
+            &mut r,
+            root,
+            file,
+            MODEL_POLICY_CODEX_REVIEW_AUTHORITY,
+            format!("{file} documents cross-vendor credited review authority"),
         );
         req_model_policy_routing(&mut r, root, file);
     }

@@ -348,6 +348,7 @@ write-helper validation exit 23
 const MODEL_CLASSES: &str = r#"Dvandva model classes are vendor-neutral.
 Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available.
 Codex maps `opus` and `fable` to `gpt-5.6-sol` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.6-terra` with `high` reasoning, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface.
+Codex-side `opus` and `fable` executions are GPT hygiene only and never earn review credit; credited deep/adversarial review remains a cross-vendor Anthropic Opus gate.
 Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it.
 Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.
 Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
@@ -358,7 +359,7 @@ const RING_DISPATCH: &str = r#"Seed-roster class vocabulary keeps these legacy r
 Implementation, tests, and fixes default to gpt-class dispatch.
 GPT self-review is hygiene only and earns no review credit.
 A Grok lane may take routine read-only work when it clears the quality bar — always uncredited, never execute, never code-touching, never baton-writing.
-Opus-class remains the credited deep/adversarial review gate.
+Codex-side `opus` and `fable` executions are GPT hygiene only and never earn review credit; credited deep/adversarial review remains a cross-vendor Anthropic Opus gate.
 Fable-class owns plan authorship and terminal adjudication, may take routine non-code work when it clears the quality bar, and never writes code.
 "#;
 
@@ -1533,15 +1534,51 @@ fn phase4_research_rejects_missing_opus_credited_review_gate() {
     let d = tmp();
     phase4_fixture(d.path());
     let p = d.path().join("plugins/dvandva/commands/vadi.md");
-    let text = fs::read_to_string(&p).unwrap().replace(
-        "Opus-class remains the credited deep/adversarial review gate.\n",
-        "",
-    );
+    let text = fs::read_to_string(&p)
+        .unwrap()
+        .replace(
+            "Codex-side `opus` and `fable` executions are GPT hygiene only and never earn review credit; credited deep/adversarial review remains a cross-vendor Anthropic Opus gate.\n",
+            "",
+        );
     fs::write(&p, text).unwrap();
     let r = phase4_research::report(d.path());
     assert!(r.fails_with(
-        "plugins/dvandva/commands/vadi.md preserves Opus-class as the credited deep/adversarial review gate"
+        "plugins/dvandva/commands/vadi.md documents cross-vendor credited review authority"
     ));
+}
+
+#[test]
+fn phase4_research_requires_cross_vendor_review_authority_on_every_mapping_surface() {
+    for rel in [
+        "README.md",
+        "product.md",
+        "docs/protocol/local-baton-channel.md",
+        "plugins/dvandva/references/local-baton-channel.md",
+        "plugins/dvandva/references/state-transition-table.md",
+        "plugins/dvandva/commands/vadi.md",
+        "plugins/dvandva/commands/prativadi.md",
+        "plugins/dvandva/skills/vadi/SKILL.md",
+        "plugins/dvandva/skills/prativadi/SKILL.md",
+        "plugins/dvandva/skills/research/SKILL.md",
+    ] {
+        let d = tmp();
+        phase4_fixture(d.path());
+        let p = d.path().join(rel);
+        let text = fs::read_to_string(&p)
+            .unwrap()
+            .replace(
+                "Codex-side `opus` and `fable` executions are GPT hygiene only and never earn review credit; credited deep/adversarial review remains a cross-vendor Anthropic Opus gate.\n",
+                "",
+            );
+        fs::write(&p, text).unwrap();
+        let r = phase4_research::report(d.path());
+        assert!(
+            r.fails_with(&format!(
+                "{rel} documents cross-vendor credited review authority"
+            )),
+            "missing authority caveat was not rejected for {rel}"
+        );
+    }
 }
 
 #[test]
