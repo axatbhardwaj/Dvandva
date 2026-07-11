@@ -30,18 +30,20 @@
     outline:2px solid var(--vadi);outline-offset:3px;border-radius:4px;
   }
   main{max-width:1120px;margin:0 auto;padding:0 2.2rem 6rem}
-  header{padding:3.4rem 2.2rem 0;max-width:1120px;margin:0 auto}
+  header{padding:1.8rem 2.2rem 0;max-width:1120px;margin:0 auto}
   section{margin-top:4.2rem}
+  #why{margin-top:2rem}
   .eyebrow{font:600 .72rem/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--faint);margin:0 0 .9rem}
-  .devan{font-size:1rem;color:var(--faint);letter-spacing:.3em;margin:0 0 1rem;font-family:var(--sans)}
-  h1{font:800 2.3rem/1.1 var(--sans);letter-spacing:-.03em;margin:.4rem 0 1.1rem;text-wrap:balance}
+  .devan{font-size:1rem;color:var(--faint);letter-spacing:.3em;margin:0 0 .6rem;font-family:var(--sans)}
+  @media (max-width:640px){.devan{font-size:.82rem;letter-spacing:.12em}}
+  h1{font:800 1.85rem/1.15 var(--sans);letter-spacing:0;margin:.4rem 0 .8rem;text-wrap:balance}
   @media (min-width:640px){h1{font-size:2.9rem}}
   @media (min-width:1024px){h1{font-size:3.5rem}}
-  h2{font:700 1.6rem/1.25 var(--sans);letter-spacing:-.01em;margin:.1rem 0 .9rem;text-wrap:balance}
+  h2{font:700 1.6rem/1.25 var(--sans);letter-spacing:0;margin:.1rem 0 .9rem;text-wrap:balance}
   h3{font:650 1.05rem/1.3 var(--sans);margin:1.4rem 0 .4rem}
   p{max-width:68ch}
-  .thesis{font-size:1.18rem;color:var(--ink);max-width:60ch;margin:0 0 1.1rem}
-  .thesis.sub{font-size:1rem;color:var(--dim);max-width:64ch}
+  .thesis{font-size:1.18rem;color:var(--ink);max-width:60ch;margin:0 0 .8rem}
+  .thesis.sub{font-size:1rem;color:var(--dim);max-width:64ch;margin:0 0 .8rem}
   code,.st{font-family:var(--mono);font-size:.85em;background:var(--panel2);border:1px solid var(--line);padding:.08em .4em;border-radius:5px;overflow-wrap:anywhere}
   pre{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:1rem 1.2rem;overflow-x:auto;font:.82rem/1.6 var(--mono)}
   pre code{background:none;border:none;padding:0}
@@ -53,8 +55,13 @@
   .card{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:1.1rem 1.25rem}
   .card h4{margin:0 0 .45rem;font:650 1rem/1.3 var(--sans)}
   .card p{font-size:.9rem;color:var(--dim);margin:.3rem 0}
-  .strip{display:flex;flex-wrap:wrap;gap:.55rem;margin:1.3rem 0 0}
+  .strip{display:flex;flex-wrap:wrap;gap:.5rem;margin:.9rem 0 0}
   .chip{font:600 .72rem/1 var(--mono);letter-spacing:.06em;padding:.5em .8em;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--dim)}
+  @media (max-width:640px){
+    .chip{font-size:.66rem;padding:.42em .65em}
+    .strip{flex-wrap:nowrap;overflow-x:auto;padding-bottom:.3rem}
+    .strip .chip{flex:0 0 auto;white-space:nowrap}
+  }
   .chip.hi{color:var(--seal);border-color:var(--seal)}
   .k-vadi{color:var(--vadi)} .k-prat{color:var(--prat)} .k-team{color:var(--team)} .k-human{color:var(--human)} .k-seal{color:var(--seal)}
   table{border-collapse:collapse;width:100%;margin:1rem 0;font-size:.86rem}
@@ -62,6 +69,7 @@
   th{background:var(--panel2);font:600 .72rem/1.4 var(--mono);letter-spacing:.08em;text-transform:uppercase;color:var(--dim)}
   tr:nth-child(even) td{background:var(--panel)}
   .table-wrap{overflow-x:auto}
+  .table-wrap table{min-width:40rem}
   .callout{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:1.1rem 1.3rem;margin:1.3rem 0}
   .callout .tag{font:650 .74rem/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;margin:0 0 .7rem}
   .callout.adv{border-color:var(--human)} .callout.adv .tag{color:var(--human)}
@@ -72,10 +80,13 @@
   nav#toc .nav-links{display:flex;flex-wrap:wrap;gap:1.05rem;align-items:center}
   nav#toc a{color:var(--dim);text-decoration:none} nav#toc a:hover{color:var(--vadi)}
   nav#toc .nav-repo{color:var(--team)}
-  nav#toc .nav-mobile{display:none;color:var(--ink);font-weight:600}
+  nav#toc .nav-mobile{display:none;border:none;background:none;padding:0;margin:0}
+  nav#toc .nav-mobile summary{color:var(--ink);font:600 .8rem var(--sans);cursor:pointer;list-style:revert}
+  nav#toc .nav-mobile summary::marker{color:var(--prat)}
+  nav#toc .nav-mobile .nav-mobile-links{display:flex;flex-direction:column;gap:.7rem;padding:.8rem 0 .2rem}
   @media (max-width:640px){
     nav#toc .nav-links{display:none}
-    nav#toc .nav-mobile{display:inline-block}
+    nav#toc .nav-mobile{display:block}
   }
   .baton-rail{position:relative;height:44px;margin:1.6rem 0 0;max-width:640px}
   .baton-rail .track{position:absolute;left:0;right:0;top:21px;height:2px;background:linear-gradient(90deg,var(--vadi),var(--prat))}
@@ -84,14 +95,14 @@
   @media (prefers-reduced-motion: reduce){.baton-rail .baton{animation:none;left:calc(50% - 9px)}}
   .endcap{position:absolute;top:0;font:600 .68rem var(--mono);letter-spacing:.1em}
   .endcap.l{left:0;color:var(--vadi)} .endcap.r{right:0;color:var(--prat)}
-  .scroll-hint{display:inline-block;margin-top:2.1rem;color:var(--dim);font:600 .82rem/1 var(--mono);text-decoration:none;border-bottom:1px dashed var(--line);padding-bottom:.3rem}
+  .scroll-hint{display:inline-block;margin-top:1.1rem;color:var(--dim);font:600 .82rem/1 var(--mono);text-decoration:none;border-bottom:1px dashed var(--line);padding-bottom:.3rem}
   .scroll-hint:hover{color:var(--vadi)}
   details{border:1px solid var(--line);border-radius:12px;background:var(--panel);padding:1.1rem 1.3rem;margin:1.2rem 0}
   details[open]{padding-bottom:1.4rem}
   summary{cursor:pointer;font:700 1.05rem var(--sans);color:var(--ink);list-style:revert}
   summary::marker{color:var(--prat)}
   .quiet{color:var(--dim);font-size:.9rem}
-  .foot{margin-top:5rem;border-top:1px solid var(--line);padding-top:1.2rem;font:.75rem var(--mono);color:var(--faint)}
+  .foot{max-width:1120px;margin:5rem auto 0;border-top:1px solid var(--line);padding:1.2rem 2.2rem 0;font:.75rem var(--mono);color:var(--faint)}
   @media (prefers-reduced-motion: reduce){*{animation:none !important;transition:none !important}}
 </style>
 </head>
@@ -105,16 +116,26 @@
     <a href="#start">get started</a>
     <a class="nav-repo" href="https://github.com/axatbhardwaj/Dvandva">repo ↗</a>
   </div>
-  <a class="nav-mobile" href="#toc">Contents</a>
+  <details class="nav-mobile">
+    <summary>Contents</summary>
+    <div class="nav-mobile-links">
+      <a href="#why">why it exists</a>
+      <a href="#loop">the loop</a>
+      <a href="#proof">proof</a>
+      <a href="#mechanics">mechanics</a>
+      <a href="#start">get started</a>
+      <a class="nav-repo" href="https://github.com/axatbhardwaj/Dvandva">repo ↗</a>
+    </div>
+  </details>
 </nav>
 
 <header>
   <p class="devan">द्वन्द्व · dvandva — a compound of two equal, opposing members</p>
   <h1>Dvandva — a governed-loop protocol for adversarial AI pairs</h1>
-  <p class="thesis">Dvandva deliberately did not build its core on one-shot, exec-style single invocations. An isolated one-shot call does not <em>by itself</em> sustain an evolving thesis/antithesis dialectic across a task — each call works in a silo, blind to the others, with nothing carried forward but whatever the caller manually re-feeds it. The governed loop exists precisely so that thesis (one role's position) and antithesis (the other role's adversarial pressure) accumulate and refine over many checkpoints instead of resetting on every call.</p>
-  <p class="thesis sub">A one-shot invocation doesn't <em>by itself</em> establish a shared, role-bound, evidence-gated coordination contract between two adversarial identities. An external caller <em>can</em> loop it and pass it files — but the durable shared state, the role-bound evidence, and the convergence gate would be the caller's to build and enforce, not the command's. The governed loop makes all three structural and engine-enforced instead of caller-supplied. It surfaces and pressures blind spots through decorrelated review — it does not claim to close every one.</p>
+  <p class="thesis">Dvandva deliberately skips one-shot, exec-style calls: each works in a silo, forgetting everything after. Its governed loop instead lets thesis and antithesis accumulate across checkpoints.</p>
+  <p class="thesis sub">A caller could loop a one-shot call and pass it files, but the shared state and convergence gate would be theirs to enforce, not the engine's. Dvandva makes both structural, surfacing blind spots through decorrelated review.</p>
   <div class="strip">
-    <span class="chip">no daemon — a JSON file is the whole channel</span>
+    <span class="chip">no coordination daemon — the baton file is the whole run-coordination channel</span>
     <span class="chip">crash-tolerant: kill either side, rejoin at preflight</span>
     <span class="chip">cross-vendor pairing is the recommended default, not an engine lock</span>
     <span class="chip">walkaway or supervised</span>
@@ -128,7 +149,7 @@
   <p class="eyebrow">why it exists</p>
   <h2>Different models have different blind spots. Dvandva weaponizes that.</h2>
   <div class="cards">
-    <div class="card"><h4>Decorrelated review</h4><p>The reviewer is never the engine that produced the work. A cross-vendor pair catches what a same-model self-review structurally cannot see.</p></div>
+    <div class="card"><h4>Decorrelated review</h4><p>The reviewer is never the same role that produced the work — the engine locks two role identities, vadi and prativadi. Running those roles on different model vendors is a recommended decorrelation policy that reduces correlated blind spots, not a structural guarantee the engine enforces.</p></div>
     <div class="card"><h4>Proof, not prose</h4><p>A run cannot end because an agent <em>says</em> it's done. Termination demands both role-bound approvals, artifacts that exist on disk, and a verification matrix fresher than the last code change.</p></div>
     <div class="card"><h4>Bounded arguments</h4><p>Every review loop is capped — a cycle can't spin forever. When the pair keeps disagreeing past the cap, that repeated edge drops; what's left is either escalation to you or the run's legal next step forward.</p></div>
   </div>
@@ -160,7 +181,7 @@
       <line x1="824" y1="78" x2="864" y2="78" stroke="#8a97a8" stroke-width="1.2" marker-end="url(#ar)"/>
       <path d="M 939 104 C 939 150 200 150 82 106" fill="none" stroke="#5c6774" stroke-width="1.1" stroke-dasharray="5 4" marker-end="url(#ar)"/>
       <text x="510" y="146" fill="#5c6774" font-size="9.5">the other role wakes with the checkpointed baton — same loop, opposite color, one position sharper than before</text>
-      <text x="760" y="40" fill="#46c26a" font-size="9.5">reject = exit 23/24 + reason · a hook blocks hand-editing the baton</text>
+      <text x="760" y="40" fill="#46c26a" font-size="9.5">reject = exit 23/24 + reason · hook guards the installed baton, not the candidate</text>
     </g>
   </svg>
   <figcaption>Every full circuit checkpoints the baton — that's the mechanism the dialectic rides on: nothing resets, everything accumulates.</figcaption>
@@ -263,7 +284,7 @@ git rev-list --count 36f134c                                     # → 400, as o
     </svg>
     <figcaption>Both routes converge on the identical review/fix/terminal tail; only the plan-and-lock stage differs.</figcaption>
     </figure>
-    <p class="quiet">FAST skips spec planning entirely and enters compact implementation directly from an accepted research package; STANDARD keeps the locked-plan stage. Both converge on the identical <code>phase_review ⟲ phase_fixing → termination_review → done</code> tail. Two more presets exist beyond these two — FULL (both roles implement concurrently and cross-review each other) and dedicated RESEARCH/REVIEW-mode graphs — plus custom, peer-declared graphs; all five are validated against the same five invariants sketched above.</p>
+    <p class="quiet">FAST skips spec planning entirely and enters compact implementation directly from an accepted research package; STANDARD keeps the locked-plan stage. Both converge on the identical <code>phase_review ⟲ phase_fixing → termination_review → done</code> tail. Three more presets exist beyond these two — FULL (both roles implement concurrently and cross-review each other) and dedicated RESEARCH/REVIEW-mode graphs — five total, plus custom, peer-declared graphs; all five are validated against the same five invariants sketched above.</p>
     <p>Full transition tables, every edge, every trigger: <a href="https://github.com/axatbhardwaj/Dvandva/blob/main/plugins/dvandva/references/state-transition-table.md">plugins/dvandva/references/state-transition-table.md ↗</a></p>
   </details>
 </section>
