@@ -29,11 +29,11 @@ pub(crate) const MODEL_POLICY_VENDOR_NEUTRAL_COMMANDS: &str =
 pub(crate) const MODEL_POLICY_CLAUDE_MAPPING: &str =
     "Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available";
 pub(crate) const MODEL_POLICY_CODEX_MAPPING: &str =
-    "Codex maps `opus` and `fable` to `gpt-5.6-sol` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.6-terra` with `high` reasoning, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface";
+    "Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra`, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface";
 pub(crate) const MODEL_POLICY_CODEX_REVIEW_AUTHORITY: &str =
     "Codex-side `opus` and `fable` executions are GPT hygiene only and never earn review credit; credited deep/adversarial review remains a cross-vendor Anthropic Opus gate";
 pub(crate) const MODEL_POLICY_CODEX_EFFORT: &str =
-    "Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it";
+    "Codex reasoning effort is keyed to the thread role rather than the model class: the main session defaults to `xhigh` on every model and requests `max` only when the human sets it explicitly, while every dispatched Codex child is launched with an explicit `xhigh` effort because omitting it inherits the parent, may be lowered to `high`, `medium`, or `low` for proven-mechanical work, and never requests `max`; no Dvandva role uses `ultra` because its Codex-managed delegate threads run outside the baton's two-role coordination, and when a model does not support the requested effort the dispatching role keeps the selected model, drops to that model's highest supported effort, and logs the requested effort, effective effort, and reason";
 pub(crate) const MODEL_POLICY_OPUS_ROUTING: &str =
     "Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work";
 pub(crate) const MODEL_POLICY_SONNET_ROUTING: &str =
@@ -46,6 +46,10 @@ pub(crate) const MODEL_POLICY_STALE_SONNET_ROUTING: &str =
     "implementation/documentation workhorse class";
 pub(crate) const MODEL_POLICY_STALE_CODEX_MAPPING: &str =
     "Codex maps `opus` to `gpt-5.5` and `sonnet` to `gpt-5.4`";
+pub(crate) const MODEL_POLICY_STALE_CODEX_EFFORT: &str =
+    "Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it";
+pub(crate) const MODEL_POLICY_STALE_CODEX_MAPPING_EFFORT: &str =
+    "Codex maps `opus` and `fable` to `gpt-5.6-sol` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.6-terra` with `high` reasoning";
 pub(crate) const MODEL_POLICY_STALE_CANONICAL_COMPAT_MAPPING: &str =
     "Accepted compatibility strings remain vendor-neutral: `opus-class|gpt-5.5` maps to `opus`, and `sonnet-class|gpt-5.4` maps to `sonnet`";
 

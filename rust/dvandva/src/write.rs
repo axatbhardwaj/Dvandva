@@ -3529,8 +3529,10 @@ fn agent_instance_entry_ok(inst: &Value) -> bool {
         s.as_str(),
         "opus-class|gpt-5.5-xhigh"
             | "sonnet-class|gpt-5.5-high"
+            | "sonnet-class|gpt-5.5-xhigh"
             | "fable-class|gpt-5.5-xhigh"
             | "gpt-class|gpt-5.5-high"
+            | "gpt-class|gpt-5.5-xhigh"
             | "opus-class|gpt-5.5"
             | "sonnet-class|gpt-5.4"
             | "gpt-5.5"

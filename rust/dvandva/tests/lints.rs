@@ -347,9 +347,9 @@ write-helper validation exit 23
 
 const MODEL_CLASSES: &str = r#"Dvandva model classes are vendor-neutral.
 Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available.
-Codex maps `opus` and `fable` to `gpt-5.6-sol` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.6-terra` with `high` reasoning, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface.
+Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra`, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface.
 Codex-side `opus` and `fable` executions are GPT hygiene only and never earn review credit; credited deep/adversarial review remains a cross-vendor Anthropic Opus gate.
-Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it.
+Codex reasoning effort is keyed to the thread role rather than the model class: the main session defaults to `xhigh` on every model and requests `max` only when the human sets it explicitly, while every dispatched Codex child is launched with an explicit `xhigh` effort because omitting it inherits the parent, may be lowered to `high`, `medium`, or `low` for proven-mechanical work, and never requests `max`; no Dvandva role uses `ultra` because its Codex-managed delegate threads run outside the baton's two-role coordination, and when a model does not support the requested effort the dispatching role keeps the selected model, drops to that model's highest supported effort, and logs the requested effort, effective effort, and reason.
 Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.
 Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
 Do not use `haiku` for Dvandva subagents.
@@ -1644,7 +1644,7 @@ fn phase4_research_rejects_command_missing_model_policy() {
     phase4_fixture(d.path());
     let p = d.path().join("plugins/dvandva/commands/vadi.md");
     let text = fs::read_to_string(&p).unwrap().replace(
-        "Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it.\n",
+        "Codex reasoning effort is keyed to the thread role rather than the model class: the main session defaults to `xhigh` on every model and requests `max` only when the human sets it explicitly, while every dispatched Codex child is launched with an explicit `xhigh` effort because omitting it inherits the parent, may be lowered to `high`, `medium`, or `low` for proven-mechanical work, and never requests `max`; no Dvandva role uses `ultra` because its Codex-managed delegate threads run outside the baton's two-role coordination, and when a model does not support the requested effort the dispatching role keeps the selected model, drops to that model's highest supported effort, and logs the requested effort, effective effort, and reason.\n",
         "",
     );
     fs::write(&p, text).unwrap();
@@ -1676,12 +1676,41 @@ fn phase4_research_rejects_pre_5_6_codex_model_mapping() {
     phase4_fixture(d.path());
     let p = d.path().join("product.md");
     let text = fs::read_to_string(&p).unwrap().replace(
-        "Codex maps `opus` and `fable` to `gpt-5.6-sol` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.6-terra` with `high` reasoning, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface.\n",
-        "Codex maps `opus` and `fable` to `gpt-5.5` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.5` with `high` reasoning.\n",
+        "Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra`, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface.\n",
+        "Codex maps `opus` and `fable` to `gpt-5.5` and `sonnet` and `gpt` to `gpt-5.5`.\n",
     );
     fs::write(&p, text).unwrap();
     let r = phase4_research::report(d.path());
     assert!(r.fails_with("product.md documents Codex model-class mapping"));
+}
+
+#[test]
+fn phase4_research_rejects_resurfaced_stale_codex_effort_wording() {
+    // The retired per-class effort sentence must not resurface on the policy
+    // surface: re-adding it to a pinned file trips the STALE rej so the old
+    // wording cannot silently return alongside the new keyed-by-thread-role text.
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("product.md");
+    let mut text = fs::read_to_string(&p).unwrap();
+    text.push_str("Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it.\n");
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("product.md avoids stale Codex effort-tier wording"));
+}
+
+#[test]
+fn phase4_research_rejects_resurfaced_stale_codex_mapping_effort_wording() {
+    // The retired mapping wording with the inline effort clauses must not
+    // resurface: re-adding it to a pinned file trips the STALE rej.
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("product.md");
+    let mut text = fs::read_to_string(&p).unwrap();
+    text.push_str("Codex maps `opus` and `fable` to `gpt-5.6-sol` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.6-terra` with `high` reasoning.\n");
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("product.md avoids stale Codex mapping effort clauses"));
 }
 
 #[test]
@@ -1863,8 +1892,8 @@ Dynamic write-path disjointness is required unless conflict_group serialization 
 There is no daemon and no mailbox.
 There is no hidden scheduler or hidden central process.
 Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available.
-Codex maps `opus` and `fable` to `gpt-5.6-sol` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.6-terra` with `high` reasoning, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface.
-Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it.
+Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra`, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface.
+Codex reasoning effort is keyed to the thread role rather than the model class: the main session defaults to `xhigh` on every model and requests `max` only when the human sets it explicitly, while every dispatched Codex child is launched with an explicit `xhigh` effort because omitting it inherits the parent, may be lowered to `high`, `medium`, or `low` for proven-mechanical work, and never requests `max`; no Dvandva role uses `ultra` because its Codex-managed delegate threads run outside the baton's two-role coordination, and when a model does not support the requested effort the dispatching role keeps the selected model, drops to that model's highest supported effort, and logs the requested effort, effective effort, and reason.
 Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.
 Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
 generated agents never own assignee, active_roles, or transitions.
@@ -1879,8 +1908,8 @@ Dynamic write-path disjointness is required when instances share base_checkpoint
 There is no daemon and no mailbox.
 There is no hidden scheduler or hidden central process.
 Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available.
-Codex maps `opus` and `fable` to `gpt-5.6-sol` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.6-terra` with `high` reasoning, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface.
-Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it.
+Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra`, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface.
+Codex reasoning effort is keyed to the thread role rather than the model class: the main session defaults to `xhigh` on every model and requests `max` only when the human sets it explicitly, while every dispatched Codex child is launched with an explicit `xhigh` effort because omitting it inherits the parent, may be lowered to `high`, `medium`, or `low` for proven-mechanical work, and never requests `max`; no Dvandva role uses `ultra` because its Codex-managed delegate threads run outside the baton's two-role coordination, and when a model does not support the requested effort the dispatching role keeps the selected model, drops to that model's highest supported effort, and logs the requested effort, effective effort, and reason.
 Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.
 Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
 generated agents never own assignee, active_roles, or transitions.
@@ -1995,6 +2024,74 @@ fn run3_rejects_retired_codex_model_policy() {
     );
     let r = run3_dynamic_agents::report(d.path());
     assert!(r.fails_with("surface avoids retired Codex gpt-5.4 mapping"));
+}
+
+#[test]
+fn run3_rejects_missing_codex_mapping() {
+    let d = tmp();
+    run3_base(d.path());
+    w(
+        d.path(),
+        "plugins/dvandva/skills/research/SKILL.md",
+        &RUN3_SURFACE.replace(
+            "Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra`, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface.\n",
+            "",
+        ),
+    );
+    let r = run3_dynamic_agents::report(d.path());
+    assert!(r.fails_with("surface documents Codex model-class mapping"));
+}
+
+#[test]
+fn run3_rejects_missing_codex_effort() {
+    let d = tmp();
+    run3_base(d.path());
+    w(
+        d.path(),
+        "plugins/dvandva/skills/research/SKILL.md",
+        &RUN3_SURFACE.replace(
+            "Codex reasoning effort is keyed to the thread role rather than the model class: the main session defaults to `xhigh` on every model and requests `max` only when the human sets it explicitly, while every dispatched Codex child is launched with an explicit `xhigh` effort because omitting it inherits the parent, may be lowered to `high`, `medium`, or `low` for proven-mechanical work, and never requests `max`; no Dvandva role uses `ultra` because its Codex-managed delegate threads run outside the baton's two-role coordination, and when a model does not support the requested effort the dispatching role keeps the selected model, drops to that model's highest supported effort, and logs the requested effort, effective effort, and reason.\n",
+            "",
+        ),
+    );
+    let r = run3_dynamic_agents::report(d.path());
+    assert!(r.fails_with("surface documents Codex effort-tier guidance"));
+}
+
+#[test]
+fn run3_rejects_resurfaced_stale_codex_effort_wording() {
+    let d = tmp();
+    run3_base(d.path());
+    w(
+        d.path(),
+        "plugins/dvandva/skills/research/SKILL.md",
+        RUN3_SURFACE,
+    );
+    w(
+        d.path(),
+        "plugins/dvandva/commands/vadi.md",
+        "Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it.\n",
+    );
+    let r = run3_dynamic_agents::report(d.path());
+    assert!(r.fails_with("surface avoids stale Codex effort-tier wording"));
+}
+
+#[test]
+fn run3_rejects_resurfaced_stale_codex_mapping_effort_wording() {
+    let d = tmp();
+    run3_base(d.path());
+    w(
+        d.path(),
+        "plugins/dvandva/skills/research/SKILL.md",
+        RUN3_SURFACE,
+    );
+    w(
+        d.path(),
+        "plugins/dvandva/commands/vadi.md",
+        "Codex maps `opus` and `fable` to `gpt-5.6-sol` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.6-terra` with `high` reasoning.\n",
+    );
+    let r = run3_dynamic_agents::report(d.path());
+    assert!(r.fails_with("surface avoids stale Codex mapping effort clauses"));
 }
 
 #[test]

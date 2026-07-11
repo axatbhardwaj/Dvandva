@@ -22,7 +22,8 @@ use crate::lint::{
     MODEL_POLICY_CLAUDE_MAPPING, MODEL_POLICY_CODEX_EFFORT, MODEL_POLICY_CODEX_MAPPING,
     MODEL_POLICY_CODEX_REVIEW_AUTHORITY, MODEL_POLICY_NO_HAIKU_COMMANDS,
     MODEL_POLICY_NO_HAIKU_SUBAGENTS, MODEL_POLICY_OPUS_ROUTING, MODEL_POLICY_SONNET_ROUTING,
-    MODEL_POLICY_STALE_CANONICAL_COMPAT_MAPPING, MODEL_POLICY_STALE_CODEX_MAPPING,
+    MODEL_POLICY_STALE_CANONICAL_COMPAT_MAPPING, MODEL_POLICY_STALE_CODEX_EFFORT,
+    MODEL_POLICY_STALE_CODEX_MAPPING, MODEL_POLICY_STALE_CODEX_MAPPING_EFFORT,
     MODEL_POLICY_STALE_OPUS_ROUTING, MODEL_POLICY_STALE_SONNET_ROUTING,
     MODEL_POLICY_VENDOR_NEUTRAL_COMMANDS, MODEL_POLICY_VENDOR_NEUTRAL_DOCS,
 };
@@ -177,6 +178,20 @@ fn req_model_policy_routing(r: &mut Report, root: &Path, rel: &str) {
         rel,
         MODEL_POLICY_STALE_CODEX_MAPPING,
         format!("{rel} avoids retired Codex gpt-5.4 mapping"),
+    );
+    rej(
+        r,
+        root,
+        rel,
+        MODEL_POLICY_STALE_CODEX_EFFORT,
+        format!("{rel} avoids stale Codex effort-tier wording"),
+    );
+    rej(
+        r,
+        root,
+        rel,
+        MODEL_POLICY_STALE_CODEX_MAPPING_EFFORT,
+        format!("{rel} avoids stale Codex mapping effort clauses"),
     );
     rej(
         r,

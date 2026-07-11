@@ -448,7 +448,7 @@ pub fn dynamic_agent_instances(b: &mut Value) {
         "purpose": "Run-scoped generated agent for dynamic-agent gate coverage.",
         "agent_kind": "generated",
         "seed_agent": "dvandva-implementer",
-        "model_class": "sonnet-class|gpt-5.5-high",
+        "model_class": "sonnet-class|gpt-5.5-xhigh",
         "permission_class": "verify-only",
         "status": "closed",
         "work_item_ids": ["implementation-chunk-1"],

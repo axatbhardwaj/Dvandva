@@ -12,7 +12,8 @@ use crate::lint::{
     gather_surface, list_md, resolve_root, surface_contains, surface_matches, Report,
     MODEL_POLICY_CLAUDE_MAPPING, MODEL_POLICY_CODEX_EFFORT, MODEL_POLICY_CODEX_MAPPING,
     MODEL_POLICY_OPUS_ROUTING, MODEL_POLICY_SONNET_ROUTING,
-    MODEL_POLICY_STALE_CANONICAL_COMPAT_MAPPING, MODEL_POLICY_STALE_CODEX_MAPPING,
+    MODEL_POLICY_STALE_CANONICAL_COMPAT_MAPPING, MODEL_POLICY_STALE_CODEX_EFFORT,
+    MODEL_POLICY_STALE_CODEX_MAPPING, MODEL_POLICY_STALE_CODEX_MAPPING_EFFORT,
     MODEL_POLICY_STALE_OPUS_ROUTING, MODEL_POLICY_STALE_SONNET_ROUTING,
 };
 
@@ -122,6 +123,14 @@ pub fn report(root: &Path) -> Report {
     r.add(
         !surface_contains(&surface, MODEL_POLICY_STALE_CODEX_MAPPING),
         "surface avoids retired Codex gpt-5.4 mapping",
+    );
+    r.add(
+        !surface_contains(&surface, MODEL_POLICY_STALE_CODEX_EFFORT),
+        "surface avoids stale Codex effort-tier wording",
+    );
+    r.add(
+        !surface_contains(&surface, MODEL_POLICY_STALE_CODEX_MAPPING_EFFORT),
+        "surface avoids stale Codex mapping effort clauses",
     );
     r.add(
         !surface_contains(&surface, MODEL_POLICY_STALE_CANONICAL_COMPAT_MAPPING),
