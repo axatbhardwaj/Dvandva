@@ -28,7 +28,7 @@ the binding constraint.
 
 | Model | Cost | Intelligence | Taste | Quota |
 |---|---:|---:|---:|---:|
-| `gpt-5.6-sol` | 9 | 8 | 6 | 8 |
+| `gpt-5.6-sol` | 9 | 8 | 6 | 7 |
 | `gpt-5.6-terra` | 9 | 8 | 5 | 9 |
 | `gpt-5.6-luna` | 9 | 7 | 4 | 9 |
 | `gpt-5.5` (fallback) | 9 | 8 | 5 | 9 |
@@ -39,7 +39,7 @@ the binding constraint.
 
 GPT-5.6 row basis (2026-07-10, day one): the taste scores for
 `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna` are provisional and should
-be re-scored when independent evals land. Sol's quota score is 8; Terra, Luna,
+be re-scored when independent evals land. Sol's quota score is 7; Terra, Luna,
 and the `gpt-5.5` fallback remain at 9. These are routing scores within one
 shared Codex pool across the entire 5.6 family plus GPT-5.5, not four
 independent budgets; Sol's lower score reserves it for work that needs its
