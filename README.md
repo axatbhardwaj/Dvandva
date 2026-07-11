@@ -13,16 +13,16 @@ Dvandva is **a governed-loop protocol for adversarial AI pairs** — orchestrati
 
 **Superpowers is a hard runtime dependency.** Dvandva owns baton state, role handoff, phase gates, and cross-agent review; Superpowers owns the active-work discipline inside each turn — skills before action, brainstorming before design, TDD before implementation, verification before completion, and subagent-driven execution when parallel tracks exist. If the engine running a Dvandva role cannot see the Superpowers skills, that role must stop and surface setup instructions instead of continuing with a weakened workflow.
 
-Dvandva ships as an installable plugin (version `1.5.3`) for both engines. The repo lives at https://github.com/axatbhardwaj/Dvandva, and the interactive product explainer is live at https://axatbhardwaj.github.io/Dvandva/.
+Dvandva ships as an installable plugin (version `1.5.4`) for both engines. The repo lives at https://github.com/axatbhardwaj/Dvandva, and the interactive product explainer is live at https://axatbhardwaj.github.io/Dvandva/.
 
 ## Quickstart
 
-The `dvandva` binary IS the Dvandva runtime — the read path, the write path, waiting, preflight, git work-gating, the installers, and the lints, all in one multicall binary. It is published on crates.io as `dvandva 3.3.0`.
+The `dvandva` binary IS the Dvandva runtime — the read path, the write path, waiting, preflight, git work-gating, the installers, and the lints, all in one multicall binary. It is published on crates.io as `dvandva 3.3.1`.
 
 **1. Install the binary.** From crates.io, or from a checkout:
 
 ```bash
-cargo install dvandva --version 3.3.0
+cargo install dvandva --version 3.3.1
 # or, from a checkout: cargo install --path rust/dvandva
 ```
 
@@ -103,7 +103,7 @@ Development runs also carry an orthogonal flow `profile`:
 
 Hard-risk paths — product specs, baton schemas, role skills, helper scripts, protocol docs, hooks, top-level scripts, dependency manifests, secret/env surfaces, external API clients, or artifact/history formats — force `profile_floor: "full"`. Profile downgrades below `profile_floor` route to `human_decision`.
 
-**Dvandva model classes are vendor-neutral workload-routing labels.** Agent frontmatter uses `model: opus` and `model: sonnet` as durable class labels, not Anthropic-only product IDs or a ranked model table. Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available. Codex maps `opus` and `fable` to `gpt-5.6-sol` with `xhigh` reasoning and `sonnet` and `gpt` to `gpt-5.6-terra` with `high` reasoning, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface. Codex-side `opus` and `fable` executions are GPT hygiene only and never earn review credit; credited deep/adversarial review remains a cross-vendor Anthropic Opus gate. Codex should request `xhigh` reasoning effort for opus-class and fable-class work and `high` reasoning effort for sonnet-class and gpt-class work where the active surface exposes it. Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work. Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop. Do not use `haiku` for Dvandva subagents.
+**Dvandva model classes are vendor-neutral workload-routing labels.** Agent frontmatter uses `model: opus` and `model: sonnet` as durable class labels, not Anthropic-only product IDs or a ranked model table. Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available. Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra`, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface. Codex-side `opus` and `fable` executions are GPT hygiene only and never earn review credit; credited deep/adversarial review remains a cross-vendor Anthropic Opus gate. Codex reasoning effort is keyed to the thread role rather than the model class: the main session defaults to `xhigh` on every model and requests `max` only when the human sets it explicitly, while every dispatched Codex child is launched with an explicit `xhigh` effort because omitting it inherits the parent, may be lowered to `high`, `medium`, or `low` for proven-mechanical work, and never requests `max`; no Dvandva role uses `ultra` because its Codex-managed delegate threads run outside the baton's two-role coordination, and when a model does not support the requested effort the dispatching role keeps the selected model, drops to that model's highest supported effort, and logs the requested effort, effective effort, and reason. All current Codex models support `xhigh`; `max` is supported by `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`; `ultra` is supported only by `gpt-5.6-sol` and `gpt-5.6-terra` but is forbidden in Dvandva because it visibly performs proactive delegation outside the baton's two-role coordination; and `gpt-5.5` caps at `xhigh`. Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work. Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop. Do not use `haiku` for Dvandva subagents.
 
 ## The human rail
 
@@ -121,7 +121,7 @@ Disputes run through bounded findings→fixing loops (`deep_review → phase_fix
 
 ## The runtime
 
-The `dvandva` binary is one multicall runtime. Invoked through a git-hook symlink (`pre-commit`, `prepare-commit-msg`, ...) it takes the hook name from `argv[0]`; `dvandva --version` prints the version line (`dvandva 3.3.0`).
+The `dvandva` binary is one multicall runtime. Invoked through a git-hook symlink (`pre-commit`, `prepare-commit-msg`, ...) it takes the hook name from `argv[0]`; `dvandva --version` prints the version line (`dvandva 3.3.1`).
 
 | Group | Subcommands |
 |---|---|

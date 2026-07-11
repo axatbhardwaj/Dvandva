@@ -254,6 +254,21 @@ wraps the needed surface, use that skill. For work the skills do not cover,
 such as investigation or data analysis, run `codex exec -s read-only` with a
 self-contained prompt.
 
+Codex reasoning effort is keyed to the thread role rather than the model class: the main session defaults to `xhigh` on every model and requests `max` only when the human sets it explicitly, while every dispatched Codex child is launched with an explicit `xhigh` effort because omitting it inherits the parent, may be lowered to `high`, `medium`, or `low` for proven-mechanical work, and never requests `max`; no Dvandva role uses `ultra` because its Codex-managed delegate threads run outside the baton's two-role coordination, and when a model does not support the requested effort the dispatching role keeps the selected model, drops to that model's highest supported effort, and logs the requested effort, effective effort, and reason.
+
+| Codex model | `xhigh` | `max` | `ultra` |
+|---|---|---|---|
+| `gpt-5.6-sol` | supported | supported | supported, but forbidden in Dvandva |
+| `gpt-5.6-terra` | supported | supported | supported, but forbidden in Dvandva |
+| `gpt-5.6-luna` | supported | supported | unsupported |
+| `gpt-5.5` | supported (cap) | unsupported | unsupported |
+
+`ultra` visibly performs proactive delegation through Codex-managed delegate
+threads outside the baton's coordinated role pair, so Dvandva forbids it even
+on models that expose it. The thread-role policy therefore starts every current
+model at `xhigh`; model capability matters only for a human-requested `max` or
+if the available model set changes.
+
 Claude models (`sonnet-5`, `opus-4.8`, `fable-5`) run through the Agent or
 Workflow model parameter where that surface exposes them.
 
