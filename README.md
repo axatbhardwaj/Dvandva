@@ -13,7 +13,7 @@ Dvandva is **a governed-loop protocol for adversarial AI pairs** — orchestrati
 
 **Superpowers is a hard runtime dependency.** Dvandva owns baton state, role handoff, phase gates, and cross-agent review; Superpowers owns the active-work discipline inside each turn — skills before action, brainstorming before design, TDD before implementation, verification before completion, and subagent-driven execution when parallel tracks exist. If the engine running a Dvandva role cannot see the Superpowers skills, that role must stop and surface setup instructions instead of continuing with a weakened workflow.
 
-Dvandva ships as an installable plugin (version `1.5.3`) for both engines. The repo lives at https://github.com/axatbhardwaj/Dvandva.
+Dvandva ships as an installable plugin (version `1.5.3`) for both engines. The repo lives at https://github.com/axatbhardwaj/Dvandva, and the interactive product explainer is live at https://axatbhardwaj.github.io/Dvandva/.
 
 ## Quickstart
 
@@ -226,7 +226,7 @@ Old pre-plugin installs used `dvandva-vadi` and `dvandva-prativadi` symlinks poi
 
 ```
 docs/
-  dvandva-explainer.html            # visual product explainer (dark, self-contained; open via file://)
+  dvandva-explainer.html            # visual product explainer (dark, self-contained; live at axatbhardwaj.github.io/Dvandva/)
   case-studies/pr-353.md            # sanitized case study that motivated the design
   protocol/local-baton-channel.md   # baton protocol spec
   workflows/two-mode-agent-workflow.md
