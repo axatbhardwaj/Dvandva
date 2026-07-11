@@ -122,10 +122,10 @@ const MODEL_POLICY_FABLE_NO_CODE: &str =
 /// is deliberately out of scope (it would require comment/fence-region semantic
 /// parsing, not a substring/regex pin).
 const MODEL_POLICY_LUNA_PROBE_SENTENCE: &str = "`gpt-5.6-terra` remains the routine default; `gpt-5.6-luna` may take taste-light mechanical work only after a representative task-class quality probe passes; `gpt-5.5` is the runtime fallback.";
-const STATE_TABLE_CODEX_MAPPING: &str = r#"| `opus` | `opus-class\|gpt-5.5-xhigh` | Opus-class | gpt-5.6-sol xhigh (fallback gpt-5.5) |
-| `sonnet` | `sonnet-class\|gpt-5.5-high` | Sonnet-class | gpt-5.6-terra high (fallback gpt-5.5) |
-| `fable` | `fable-class\|gpt-5.5-xhigh` | Fable-class | gpt-5.6-sol xhigh (fallback gpt-5.5) |
-| `gpt` | `gpt-class\|gpt-5.5-high` | Sonnet-class wrapper shells to Codex | gpt-5.6-terra high (fallback gpt-5.5) |
+const STATE_TABLE_CODEX_MAPPING: &str = r#"| `opus` | `opus-class\|gpt-5.5-xhigh` | Opus-class | gpt-5.6-sol (fallback gpt-5.5) |
+| `sonnet` | `sonnet-class\|gpt-5.5-high` | Sonnet-class | gpt-5.6-terra (fallback gpt-5.5) |
+| `fable` | `fable-class\|gpt-5.5-xhigh` | Fable-class | gpt-5.6-sol (fallback gpt-5.5) |
+| `gpt` | `gpt-class\|gpt-5.5-high` | Sonnet-class wrapper shells to Codex | gpt-5.6-terra (fallback gpt-5.5) |
 "#;
 
 fn req(r: &mut Report, root: &Path, rel: &str, needle: &str, msg: impl Into<String>) {

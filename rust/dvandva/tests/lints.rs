@@ -378,10 +378,10 @@ const GROK_GPT_OPUS_SEQUENCE: &str = "Grok produces uncredited first-pass review
 const CODEX_HOSTED_OPUS_DISPATCH: &str = "When Codex hosts the prativadi, the Claude-side vadi dispatches fresh Anthropic Opus subagents for the credited deep review; Codex-side opus execution remains uncredited GPT hygiene.";
 const AGENTS_GPT56_RING: &str = "gpt-5.6-sol reviews hard and adversarial work; gpt-5.6-terra executes routine tracks; gpt-5.5 is the fallback when a 5.6 model is unavailable.";
 const CLAUDE_GPT56_DISPATCH: &str = "Dispatch code to gpt-5.6-terra for routine work, gpt-5.6-sol for hard bounded work, and gpt-5.6-luna only for mechanically proven task classes; gpt-5.5 is the fallback.";
-const STATE_TABLE_CODEX_MAPPING: &str = r#"| `opus` | `opus-class\|gpt-5.5-xhigh` | Opus-class | gpt-5.6-sol xhigh (fallback gpt-5.5) |
-| `sonnet` | `sonnet-class\|gpt-5.5-high` | Sonnet-class | gpt-5.6-terra high (fallback gpt-5.5) |
-| `fable` | `fable-class\|gpt-5.5-xhigh` | Fable-class | gpt-5.6-sol xhigh (fallback gpt-5.5) |
-| `gpt` | `gpt-class\|gpt-5.5-high` | Sonnet-class wrapper shells to Codex | gpt-5.6-terra high (fallback gpt-5.5) |
+const STATE_TABLE_CODEX_MAPPING: &str = r#"| `opus` | `opus-class\|gpt-5.5-xhigh` | Opus-class | gpt-5.6-sol (fallback gpt-5.5) |
+| `sonnet` | `sonnet-class\|gpt-5.5-high` | Sonnet-class | gpt-5.6-terra (fallback gpt-5.5) |
+| `fable` | `fable-class\|gpt-5.5-xhigh` | Fable-class | gpt-5.6-sol (fallback gpt-5.5) |
+| `gpt` | `gpt-class\|gpt-5.5-high` | Sonnet-class wrapper shells to Codex | gpt-5.6-terra (fallback gpt-5.5) |
 "#;
 
 const SUPERPOWERS: &str = "Superpowers is a hard runtime dependency.\nDvandva owns baton state.\n";
@@ -851,7 +851,7 @@ fn phase4_research_rejects_stale_state_table_codex_mapping_cells() {
         .join("plugins/dvandva/references/state-transition-table.md");
     let text = fs::read_to_string(&p)
         .unwrap()
-        .replace("gpt-5.6-sol xhigh (fallback gpt-5.5)", "gpt-5.5 xhigh");
+        .replace("gpt-5.6-sol (fallback gpt-5.5)", "gpt-5.5 xhigh");
     fs::write(&p, text).unwrap();
     let r = phase4_research::report(d.path());
     assert!(r.fails_with("state-transition-table.md pins current Codex mapping cells"));
