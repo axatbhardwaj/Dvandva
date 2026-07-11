@@ -59,8 +59,15 @@
   .chip{font:600 .72rem/1 var(--mono);letter-spacing:.06em;padding:.5em .8em;border-radius:999px;border:1px solid var(--line);background:var(--panel);color:var(--dim)}
   @media (max-width:640px){
     .chip{font-size:.66rem;padding:.42em .65em}
-    .strip{flex-wrap:nowrap;overflow-x:auto;padding-bottom:.3rem}
+    .strip{flex-wrap:nowrap;overflow-x:auto;padding-bottom:.3rem;margin-top:.6rem}
     .strip .chip{flex:0 0 auto;white-space:nowrap}
+    main{padding:0 1.2rem 6rem}
+    header{padding:1rem 1.2rem 0}
+    h1{margin:.3rem 0 .5rem}
+    .thesis{font-size:1.02rem;margin:0 0 .5rem}
+    .thesis.sub{font-size:.92rem;margin:0 0 .5rem}
+    .scroll-hint{margin-top:.6rem}
+    #why{margin-top:1rem}
   }
   .chip.hi{color:var(--seal);border-color:var(--seal)}
   .k-vadi{color:var(--vadi)} .k-prat{color:var(--prat)} .k-team{color:var(--team)} .k-human{color:var(--human)} .k-seal{color:var(--seal)}
@@ -76,20 +83,23 @@
   .callout.meta{border-color:var(--team)} .callout.meta .tag{color:var(--team)}
   .callout ul{margin:.4rem 0;padding-left:1.2rem}
   .callout li{margin:.45rem 0;font-size:.9rem;color:var(--ink)}
-  details.nav{border:none;border-radius:0;background:rgba(11,15,20,.94);backdrop-filter:blur(6px);border-bottom:1px solid var(--line);padding:.6rem 2.2rem;margin:0;font:.8rem var(--mono);z-index:9}
-  details.nav summary{color:var(--ink);font:600 .8rem var(--sans);cursor:pointer;list-style:revert}
-  details.nav summary::marker{color:var(--prat)}
-  details.nav .links{display:flex;flex-wrap:wrap;gap:1.05rem;align-items:center}
-  details.nav a{color:var(--dim);text-decoration:none} details.nav a:hover{color:var(--vadi)}
-  details.nav .nav-repo{color:var(--team)}
+  #toc{position:sticky;top:0;background:rgba(11,15,20,.94);backdrop-filter:blur(6px);border-bottom:1px solid var(--line);padding:.6rem 2.2rem;margin:0;font:.8rem var(--mono);z-index:9}
+  #toc details{border:none;border-radius:0;background:none;padding:0;margin:0}
+  #toc summary{color:var(--ink);font:600 .8rem var(--sans);cursor:pointer;list-style:revert}
+  #toc summary::marker{color:var(--prat)}
+  #toc .links{flex-wrap:wrap;gap:1.05rem;align-items:center}
+  #toc a{color:var(--dim);text-decoration:none} #toc a:hover{color:var(--vadi)}
+  #toc .nav-repo{color:var(--team)}
   @media (min-width:641px){
-    details.nav{position:sticky;top:0;display:flex;align-items:center;gap:1.1rem}
-    details.nav summary{display:none}
-    details.nav .links{display:flex}
+    #toc{display:flex;align-items:center;gap:1.1rem}
+    #toc details{display:flex;align-items:center;gap:1.1rem}
+    #toc summary{display:none}
+    #toc .links{display:flex}
   }
   @media (max-width:640px){
-    details.nav{position:static}
-    details.nav .links{display:flex;flex-direction:column;gap:.7rem;padding:.8rem 0 .2rem}
+    #toc{padding:.5rem 1.2rem}
+    #toc .links{display:none;flex-direction:column;gap:.7rem;padding:.8rem 0 .2rem}
+    #toc details[open] .links{display:flex}
   }
   .baton-rail{position:relative;height:44px;margin:1.6rem 0 0;max-width:640px}
   .baton-rail .track{position:absolute;left:0;right:0;top:21px;height:2px;background:linear-gradient(90deg,var(--vadi),var(--prat))}
@@ -110,23 +120,33 @@
 </style>
 </head>
 <body>
-<details class="nav" id="toc" role="navigation" aria-label="Table of contents">
-  <summary>Contents</summary>
-  <div class="links">
-    <a href="#why">why it exists</a>
-    <a href="#loop">the loop</a>
-    <a href="#proof">proof</a>
-    <a href="#mechanics">mechanics</a>
-    <a href="#start">get started</a>
-    <a class="nav-repo" href="https://github.com/axatbhardwaj/Dvandva">repo ↗</a>
-  </div>
-</details>
+<nav id="toc" aria-label="Table of contents">
+  <details>
+    <summary>Contents</summary>
+    <div class="links">
+      <a href="#why">why it exists</a>
+      <a href="#loop">the loop</a>
+      <a href="#proof">proof</a>
+      <a href="#mechanics">mechanics</a>
+      <a href="#start">get started</a>
+      <a class="nav-repo" href="https://github.com/axatbhardwaj/Dvandva">repo ↗</a>
+    </div>
+  </details>
+</nav>
+<script>
+document.getElementById('toc').addEventListener('click', function(e){
+  var a = e.target.closest('a');
+  if(!a) return;
+  var d = a.closest('details');
+  if(d) d.open = false;
+});
+</script>
 
 <header>
   <p class="devan">द्वन्द्व · dvandva — a compound of two equal, opposing members</p>
   <h1>Dvandva — a governed-loop protocol for adversarial AI pairs</h1>
-  <p class="thesis">Dvandva doesn't build its coordination core on isolated one-shot calls — one call, however capable, doesn't by itself sustain a shared, role-bound thesis/antithesis dialectic. Its governed loop lets those positions accumulate and get pressure-tested across checkpoints instead.</p>
-  <p class="thesis sub">A caller could loop a one-shot call and pass it files, but the shared state and convergence gate would be theirs to enforce, not the engine's. Dvandva makes both structural, surfacing blind spots through decorrelated review.</p>
+  <p class="thesis">Dvandva doesn't build its coordination core on isolated one-shot calls — no single call sustains a shared, role-bound thesis/antithesis dialectic. Its governed loop lets those positions accumulate and get pressure-tested across checkpoints.</p>
+  <p class="thesis sub">A caller could loop a one-shot call, but the shared state and convergence gate would be theirs to enforce, not the engine's. Dvandva makes both structural, surfacing blind spots through decorrelated review.</p>
   <div class="strip">
     <span class="chip">no coordination daemon — the baton file is the whole run-coordination channel</span>
     <span class="chip">crash-tolerant: kill either side, rejoin at preflight</span>
