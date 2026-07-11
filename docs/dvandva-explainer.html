@@ -31,7 +31,7 @@
   }
   main{max-width:1120px;margin:0 auto;padding:0 2.2rem 6rem}
   header{padding:1.8rem 2.2rem 0;max-width:1120px;margin:0 auto}
-  section{margin-top:4.2rem}
+  section{margin-top:4.2rem;scroll-margin-top:4.5rem}
   #why{margin-top:2rem}
   .eyebrow{font:600 .72rem/1 var(--mono);letter-spacing:.18em;text-transform:uppercase;color:var(--faint);margin:0 0 .9rem}
   .devan{font-size:1rem;color:var(--faint);letter-spacing:.3em;margin:0 0 .6rem;font-family:var(--sans)}
@@ -76,17 +76,20 @@
   .callout.meta{border-color:var(--team)} .callout.meta .tag{color:var(--team)}
   .callout ul{margin:.4rem 0;padding-left:1.2rem}
   .callout li{margin:.45rem 0;font-size:.9rem;color:var(--ink)}
-  nav#toc{position:sticky;top:0;background:rgba(11,15,20,.94);backdrop-filter:blur(6px);border-bottom:1px solid var(--line);padding:.6rem 2.2rem;font:.8rem var(--mono);z-index:9;display:flex;align-items:center;gap:1.1rem}
-  nav#toc .nav-links{display:flex;flex-wrap:wrap;gap:1.05rem;align-items:center}
-  nav#toc a{color:var(--dim);text-decoration:none} nav#toc a:hover{color:var(--vadi)}
-  nav#toc .nav-repo{color:var(--team)}
-  nav#toc .nav-mobile{display:none;border:none;background:none;padding:0;margin:0}
-  nav#toc .nav-mobile summary{color:var(--ink);font:600 .8rem var(--sans);cursor:pointer;list-style:revert}
-  nav#toc .nav-mobile summary::marker{color:var(--prat)}
-  nav#toc .nav-mobile .nav-mobile-links{display:flex;flex-direction:column;gap:.7rem;padding:.8rem 0 .2rem}
+  details.nav{border:none;border-radius:0;background:rgba(11,15,20,.94);backdrop-filter:blur(6px);border-bottom:1px solid var(--line);padding:.6rem 2.2rem;margin:0;font:.8rem var(--mono);z-index:9}
+  details.nav summary{color:var(--ink);font:600 .8rem var(--sans);cursor:pointer;list-style:revert}
+  details.nav summary::marker{color:var(--prat)}
+  details.nav .links{display:flex;flex-wrap:wrap;gap:1.05rem;align-items:center}
+  details.nav a{color:var(--dim);text-decoration:none} details.nav a:hover{color:var(--vadi)}
+  details.nav .nav-repo{color:var(--team)}
+  @media (min-width:641px){
+    details.nav{position:sticky;top:0;display:flex;align-items:center;gap:1.1rem}
+    details.nav summary{display:none}
+    details.nav .links{display:flex}
+  }
   @media (max-width:640px){
-    nav#toc .nav-links{display:none}
-    nav#toc .nav-mobile{display:block}
+    details.nav{position:static}
+    details.nav .links{display:flex;flex-direction:column;gap:.7rem;padding:.8rem 0 .2rem}
   }
   .baton-rail{position:relative;height:44px;margin:1.6rem 0 0;max-width:640px}
   .baton-rail .track{position:absolute;left:0;right:0;top:21px;height:2px;background:linear-gradient(90deg,var(--vadi),var(--prat))}
@@ -107,8 +110,9 @@
 </style>
 </head>
 <body>
-<nav id="toc" aria-label="Table of contents">
-  <div class="nav-links">
+<details class="nav" id="toc" role="navigation" aria-label="Table of contents">
+  <summary>Contents</summary>
+  <div class="links">
     <a href="#why">why it exists</a>
     <a href="#loop">the loop</a>
     <a href="#proof">proof</a>
@@ -116,23 +120,12 @@
     <a href="#start">get started</a>
     <a class="nav-repo" href="https://github.com/axatbhardwaj/Dvandva">repo ↗</a>
   </div>
-  <details class="nav-mobile">
-    <summary>Contents</summary>
-    <div class="nav-mobile-links">
-      <a href="#why">why it exists</a>
-      <a href="#loop">the loop</a>
-      <a href="#proof">proof</a>
-      <a href="#mechanics">mechanics</a>
-      <a href="#start">get started</a>
-      <a class="nav-repo" href="https://github.com/axatbhardwaj/Dvandva">repo ↗</a>
-    </div>
-  </details>
-</nav>
+</details>
 
 <header>
   <p class="devan">द्वन्द्व · dvandva — a compound of two equal, opposing members</p>
   <h1>Dvandva — a governed-loop protocol for adversarial AI pairs</h1>
-  <p class="thesis">Dvandva deliberately skips one-shot, exec-style calls: each works in a silo, forgetting everything after. Its governed loop instead lets thesis and antithesis accumulate across checkpoints.</p>
+  <p class="thesis">Dvandva doesn't build its coordination core on isolated one-shot calls — one call, however capable, doesn't by itself sustain a shared, role-bound thesis/antithesis dialectic. Its governed loop lets those positions accumulate and get pressure-tested across checkpoints instead.</p>
   <p class="thesis sub">A caller could loop a one-shot call and pass it files, but the shared state and convergence gate would be theirs to enforce, not the engine's. Dvandva makes both structural, surfacing blind spots through decorrelated review.</p>
   <div class="strip">
     <span class="chip">no coordination daemon — the baton file is the whole run-coordination channel</span>
@@ -208,7 +201,7 @@ git rev-list --count 36f134c                                     # → 400, as o
   <table>
     <tr><th>Guarantee</th><th>Enforcement</th><th>Citation</th></tr>
     <tr><td>Atomic install, monotonic checkpoints</td><td>Every candidate is validated, then installed with a single atomic rename — a corrupt or partial install can't happen mid-write. Checkpoints only ever advance by exactly +1; a candidate that repeats or skips one is rejected (<code>exit 27</code>, <code>stale_checkpoint</code>) before the transition table is even consulted. A post-install snapshot failure surfaces its own distinct exit code, never silently swallowed.</td><td><code>write.rs:2681-2685</code>, <code>2702-2707</code>, <code>1992-2005</code></td></tr>
-    <tr><td>Role-bound approvals and sign-off</td><td>Final approvals and other outcome-deciding fields check <code>DVANDVA_ROLE</code> against the field being changed — a candidate raising the wrong role's approval is rejected before the edge table is consulted.</td><td><code>write.rs:1799-1829</code></td></tr>
+    <tr><td>Role-bound final approvals</td><td>Final approvals check <code>DVANDVA_ROLE</code> — a role can raise only its own final-approval bit, and only while entering <code>termination_review</code>.</td><td><code>write.rs:1799-1829</code></td></tr>
     <tr><td>Role-bound commits</td><td>The pre-commit hook delegates to the commit gate, which blocks a commit unless the committing role is the baton's assignee or listed in <code>active_roles</code>.</td><td><code>commit_gate.rs:125-137</code>, <code>hooks.rs:100-121</code></td></tr>
     <tr><td>A capped loop bounds one edge — it doesn't force every disagreement to you</td><td>Each loop edge is counted; at the cap, the engine removes that repeated edge from the legal-transitions set. Human escalation remains legal, but the engine only bounds the named edge — it doesn't mandate escalation as the sole exit.</td><td><code>write.rs:4303-4327</code></td></tr>
     <tr><td>Custom workflow graphs are checked at approval; presets are pre-cleared</td><td>A hand-authored graph runs through five invariant checks before it's approved — one that lets <code>done</code> be reached without crossing a review gate <b>FAILS validation outright</b> (<code>ReviewGateBypass</code>). Built-in presets are pre-validated once, so that same runtime check is a no-op for them — both families satisfy the same contract, by different means.</td><td><code>write.rs:4622-4629</code>, <code>workflow/invariants.rs</code> (<code>ReviewGateBypass</code>)</td></tr>
