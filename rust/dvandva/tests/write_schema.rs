@@ -938,6 +938,29 @@ fn v2_agent_instance_rejects_bare_fable_and_gpt_model_classes() {
 }
 
 #[test]
+fn v2_agent_instance_rejects_child_max_and_ultra_model_classes() {
+    for model_class in [
+        "opus-class|gpt-5.5-max",
+        "sonnet-class|gpt-5.5-max",
+        "fable-class|gpt-5.5-max",
+        "gpt-class|gpt-5.5-max",
+        "opus-class|gpt-5.5-ultra",
+        "sonnet-class|gpt-5.5-ultra",
+        "fable-class|gpt-5.5-ultra",
+        "gpt-class|gpt-5.5-ultra",
+    ] {
+        let d = tmp();
+        let (b, n) = paths(&d);
+        make_baton_v3(&n, "clarifying_questions_drafting", "vadi", 0, |b| {
+            b["phase"] = json!("clarifying");
+            dynamic_agent_instances(b);
+            b["agent_instances"][0]["model_class"] = json!(model_class);
+        });
+        run(&b, &n).assert_contains(model_class, 23, "DVANDVA_WRITE bad_agent_instances");
+    }
+}
+
+#[test]
 fn v2_dynamic_owner_requires_output_refs() {
     let d = tmp();
     let (b, n) = paths(&d);
