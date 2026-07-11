@@ -28,7 +28,7 @@ the binding constraint.
 
 | Model | Cost | Intelligence | Taste | Quota |
 |---|---:|---:|---:|---:|
-| `gpt-5.6-sol` | 9 | 9 | 6 | 9 |
+| `gpt-5.6-sol` | 9 | 8 | 6 | 8 |
 | `gpt-5.6-terra` | 9 | 8 | 5 | 9 |
 | `gpt-5.6-luna` | 9 | 7 | 4 | 9 |
 | `gpt-5.5` (fallback) | 9 | 8 | 5 | 9 |
@@ -39,10 +39,11 @@ the binding constraint.
 
 GPT-5.6 row basis (2026-07-10, day one): the taste scores for
 `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna` are provisional and should
-be re-scored when independent evals land. Quota 9 for those three rows and the
-`gpt-5.5` fallback is one shared Codex pool across the entire 5.6 family plus
-GPT-5.5, not four independent quota-9 budgets; all four draw from the same
-vendor pool.
+be re-scored when independent evals land. Sol's quota score is 8; Terra, Luna,
+and the `gpt-5.5` fallback remain at 9. These are routing scores within one
+shared Codex pool across the entire 5.6 family plus GPT-5.5, not four
+independent budgets; Sol's lower score reserves it for work that needs its
+strengths rather than implying a separate provider limit.
 
 Grok 4.5 row basis (2026-07-09, day-one — re-score when independent
 replication lands): intelligence 7 from Artificial Analysis Intelligence
