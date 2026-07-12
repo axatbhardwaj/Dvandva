@@ -2525,3 +2525,57 @@ fn dr53_f3_absent_installed_matrix_tolerated() {
     });
     run(&b, &n).assert("dr53-f3 absent installed matrix tolerated", 0);
 }
+
+// ---- VF75-F1: agent_instances pairwise write-path disjointness -------------
+
+/// VF75-F1: two live (`planned`/`running`) generated `agent_instances`
+/// sharing a `base_checkpoint`, with OVERLAPPING `write_paths` and no
+/// `depends_on` serialization, fail the pairwise write-path disjointness gate
+/// (`write_paths_overlap`, write.rs:3651). Byte-identical to
+/// `vf75_f1_agent_instances_disjoint_write_paths_accepted` except for the
+/// second instance's `write_paths` — that sibling test proves this fixture is
+/// otherwise valid, isolating the rejection to the overlap itself.
+#[test]
+fn vf75_f1_agent_instances_overlapping_write_paths_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&n, "clarifying_questions_drafting", "vadi", 0, |v| {
+        dynamic_agent_instances(v);
+        v["agent_instances"][0]["status"] = json!("planned");
+        v["agent_instances"][0]["write_paths"] = json!(["src/vf75-shared.rs"]);
+        let mut second = v["agent_instances"][0].clone();
+        second["id"] = json!("r3-generated-vf75-b");
+        second["status"] = json!("running");
+        second["write_paths"] = json!(["src/vf75-shared.rs"]);
+        second["evidence_refs"] = json!(["subagent:r3-generated-vf75-b"]);
+        second["output_refs"] = json!(["subagent_track:r3-generated-vf75-b"]);
+        v["agent_instances"].as_array_mut().unwrap().push(second);
+    });
+    run(&b, &n).assert_contains(
+        "vf75-f1 overlapping agent_instances write_paths rejected",
+        23,
+        "DVANDVA_WRITE bad_agent_instances_write_paths",
+    );
+}
+
+/// VF75-F1 accept arm: the identical fixture above, but the two instances'
+/// `write_paths` are pairwise disjoint, so the same scaffold write succeeds —
+/// proving the reject arm's failure is caused specifically by the overlap.
+#[test]
+fn vf75_f1_agent_instances_disjoint_write_paths_accepted() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&n, "clarifying_questions_drafting", "vadi", 0, |v| {
+        dynamic_agent_instances(v);
+        v["agent_instances"][0]["status"] = json!("planned");
+        v["agent_instances"][0]["write_paths"] = json!(["src/vf75-a.rs"]);
+        let mut second = v["agent_instances"][0].clone();
+        second["id"] = json!("r3-generated-vf75-b");
+        second["status"] = json!("running");
+        second["write_paths"] = json!(["src/vf75-b.rs"]);
+        second["evidence_refs"] = json!(["subagent:r3-generated-vf75-b"]);
+        second["output_refs"] = json!(["subagent_track:r3-generated-vf75-b"]);
+        v["agent_instances"].as_array_mut().unwrap().push(second);
+    });
+    run(&b, &n).assert("vf75-f1 disjoint agent_instances write_paths accepted", 0);
+}
