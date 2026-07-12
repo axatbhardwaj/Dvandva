@@ -5820,56 +5820,112 @@ fn verification_matrix_lost_update(cur_doc: &Value, cand: &Value) -> Option<Stri
         }
         // CR40-F1: the terminal rebuild re-keys the object, so the raw object KEY
         // is not the identity basis — but the INSTALLED ROW IDENTITY SET must still
-        // survive. Compute each side's identities via `matrix_row_label` (inner
-        // `id` first, else array index / object key) across BOTH shapes and require
-        // the candidate to remain a SUPERSET. The earlier CR34-F1 count floor
-        // rejected only shrinkage, so an equal-size SUBSTITUTION (drop installed
-        // row X, add a fresh unrelated row Z) slipped through; identity-superset
-        // subsumes the count floor and closes that seam. The done-gate stale sweep
-        // still re-verifies every surviving row fresh/complete.
+        // survive. DR53-F1: identities are TYPE-TAGGED (id:/idx:/key:) so an inner
+        // id can never collide with a positional fallback, and the comparison is a
+        // COUNT-AWARE MULTISET superset so a single survivor cannot cover a
+        // duplicated (or id-less) installed identity. The earlier CR34-F1 count
+        // floor rejected only shrinkage, so an equal-size SUBSTITUTION slipped
+        // through; this closes that and the collision/duplicate seams together.
+        // The done-gate stale sweep still re-verifies every surviving row fresh.
         let installed = vm_label_set(cur_vm);
         let candidate = vm_label_set(cand_vm);
-        return installed
-            .iter()
-            .find(|id| !candidate.contains(id))
-            .map(|id| format!("lost_update field=verification_matrix missing={id}"));
+        return vm_multiset_missing(&installed, &candidate).map(|id| {
+            format!(
+                "lost_update field=verification_matrix missing={}",
+                vm_display(&id)
+            )
+        });
     }
     let cand_ids = vm_id_set(cand_vm);
-    cur_ids
-        .iter()
-        .find(|id| !cand_ids.contains(id))
-        .map(|id| format!("lost_update field=verification_matrix missing={id}"))
+    vm_multiset_missing(&cur_ids, &cand_ids).map(|id| {
+        format!(
+            "lost_update field=verification_matrix missing={}",
+            vm_display(&id)
+        )
+    })
 }
 
-/// The identity-set of a `verification_matrix`: array rows by their non-empty
-/// `id` field (via [`id_set`]), object matrices by their stable object KEY. An
-/// absent / scalar / empty matrix has no identity.
-fn vm_id_set(v: Option<&Value>) -> Vec<String> {
-    if v.and_then(Value::as_array).is_some() {
-        id_set(v)
-    } else {
-        v.and_then(Value::as_object)
-            .map(|map| map.keys().cloned().collect())
-            .unwrap_or_default()
+/// A row's TYPE-TAGGED identity label (DR53-F1): its inner non-empty `id` as
+/// `id:<x>`, else the caller's positional tag (`idx:<n>` for an array position,
+/// `key:<k>` for an object key). The tag makes an inner id "1", array index 1,
+/// and object key "1" three DISTINCT labels, so a cross-type collision can never
+/// let one mask a dropped row of another type.
+fn tagged_row_label(row: &Value, positional: String) -> String {
+    match field(row, "id") {
+        Some(Value::String(s)) if !s.is_empty() => format!("id:{s}"),
+        _ => positional,
     }
 }
 
-/// The identity label-set of a `verification_matrix` via [`matrix_row_label`]
-/// across BOTH shapes: each array row / object value is labelled by its inner
-/// non-empty `id`, else the array index / object key. CR40-F1 uses this to
-/// preserve the installed row identity set across the terminal rebuild edge,
-/// which re-keys the object but must still carry every installed identity forward
-/// (an equal-count substitution is caught here; a bare count floor missed it).
-fn vm_label_set(v: Option<&Value>) -> Vec<String> {
+/// The type-tagged identity labels of a `verification_matrix` (DR53-F1). Array
+/// rows: inner non-empty `id` -> `id:<x>`, else array position -> `idx:<n>`
+/// (id-less rows are now protected). Object matrices: when `object_by_inner_id`
+/// (the TERMINAL rebuild edge, which re-keys the object so the raw KEY is not the
+/// identity) each value is labelled by its inner `id` else its key; otherwise
+/// (the SAME-SHAPE path, where the object KEY is the stable identity) always by
+/// key -> `key:<k>`. One label per row, duplicates preserved for the count-aware
+/// comparison. An absent / scalar matrix has no identity. The type tag makes an
+/// inner id "1", array index 1, and object key "1" three DISTINCT labels, so a
+/// cross-type collision can never let one mask a dropped row of another type.
+fn vm_labels(v: Option<&Value>, object_by_inner_id: bool) -> Vec<String> {
     match v {
         Some(Value::Array(items)) => items
             .iter()
             .enumerate()
-            .map(|(i, row)| matrix_row_label(row, &i.to_string()))
+            .map(|(i, row)| tagged_row_label(row, format!("idx:{i}")))
             .collect(),
-        Some(Value::Object(m)) => m.iter().map(|(k, row)| matrix_row_label(row, k)).collect(),
+        Some(Value::Object(m)) => m
+            .iter()
+            .map(|(k, row)| {
+                if object_by_inner_id {
+                    tagged_row_label(row, format!("key:{k}"))
+                } else {
+                    format!("key:{k}")
+                }
+            })
+            .collect(),
         _ => Vec::new(),
     }
+}
+
+/// Same-shape identity labels: object matrices keyed by their stable object KEY
+/// (a same-shape re-key is a lost update). See [`vm_labels`].
+fn vm_id_set(v: Option<&Value>) -> Vec<String> {
+    vm_labels(v, false)
+}
+
+/// Terminal-rebuild identity labels: object values keyed by inner `id` (the
+/// rebuild re-keys the object, so the raw KEY is not the identity). See
+/// [`vm_labels`].
+fn vm_label_set(v: Option<&Value>) -> Vec<String> {
+    vm_labels(v, true)
+}
+
+/// Count-aware multiset superset check (DR53-F1): returns the first installed
+/// label whose multiplicity exceeds the candidate's, so N duplicate installed
+/// labels each need their own covering candidate row (a single survivor can no
+/// longer cover a duplicated identity). `None` when the candidate covers every
+/// installed label with matching-or-greater multiplicity.
+fn vm_multiset_missing(installed: &[String], candidate: &[String]) -> Option<String> {
+    let mut available: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for label in candidate {
+        *available.entry(label.as_str()).or_insert(0) += 1;
+    }
+    for label in installed {
+        let remaining = available.entry(label.as_str()).or_insert(0);
+        if *remaining == 0 {
+            return Some(label.clone());
+        }
+        *remaining -= 1;
+    }
+    None
+}
+
+/// Strip the DR53-F1 type tag (`id:` / `idx:` / `key:`) from a label for the
+/// human-facing `missing=<id>` reason, preserving the pre-tag message format
+/// (an inner-id drop still reports the bare id).
+fn vm_display(label: &str) -> &str {
+    label.split_once(':').map_or(label, |(_, rest)| rest)
 }
 
 /// dispatch_requests preservation + per-id integrity (identity guard): unlike the
@@ -6625,17 +6681,18 @@ mod delta_wiring_tests {
         );
     }
 
-    // CR40-F1: vm_label_set labels each matrix row by its inner `id` (both shapes),
-    // falling back to the array index / object key when no inner id is present.
+    // CR40-F1 / DR53-F1: vm_label_set TYPE-TAGS each matrix row by its inner
+    // `id` (`id:<x>`, both shapes), falling back to the array position
+    // (`idx:<n>`) / object key (`key:<k>`) when no inner id is present.
     #[test]
     fn vm_label_set_labels_by_inner_id_then_index_or_key() {
         assert_eq!(
             vm_label_set(Some(&json!([{ "id": "a" }, { "b": 1 }]))),
-            vec!["a".to_string(), "1".to_string()]
+            vec!["id:a".to_string(), "idx:1".to_string()]
         );
         assert_eq!(
             vm_label_set(Some(&json!({ "k1": { "id": "a" }, "k2": {} }))),
-            vec!["a".to_string(), "k2".to_string()]
+            vec!["id:a".to_string(), "key:k2".to_string()]
         );
         assert!(vm_label_set(None).is_empty());
         assert!(vm_label_set(Some(&json!("scalar"))).is_empty());
@@ -6694,5 +6751,69 @@ mod delta_wiring_tests {
             "verification_matrix": { "row-a": { "result": "passed" } }
         });
         assert_eq!(lost_update_violation(&cur, &cand), "");
+    }
+
+    // DR53-F1(a): a stale id-less array row (installed index 1) is dropped in a
+    // terminal reshape whose candidate object re-keys a FRESH unrelated row to
+    // the string "1". The untagged label set let the array-INDEX "1" be masked
+    // by the object-KEY "1" (cross-type collision). Type-tagged labels
+    // (idx:1 vs key:1) keep them distinct, so the dropped row is flagged.
+    #[test]
+    fn lost_update_terminal_reshape_idless_row_index_key_collision_rejected() {
+        let cur = json!({
+            "status": "termination_review",
+            "verification_matrix": [ { "id": "a" }, { "note": "stale" } ]
+        });
+        let cand = json!({
+            "status": "done",
+            "verification_matrix": {
+                "1": { "result": "passed" },
+                "keep": { "id": "a", "result": "passed" }
+            }
+        });
+        assert_eq!(
+            lost_update_violation(&cur, &cand),
+            "lost_update field=verification_matrix missing=1"
+        );
+    }
+
+    // DR53-F1(b): two installed rows share the inner id "x"; the candidate keeps
+    // only one. Set (non-count-aware) semantics let one survivor cover both.
+    // Count-aware multiset comparison requires each duplicate to be covered.
+    #[test]
+    fn lost_update_terminal_reshape_duplicate_inner_id_single_survivor_rejected() {
+        let cur = json!({
+            "status": "termination_review",
+            "verification_matrix": [ { "id": "x" }, { "id": "x" } ]
+        });
+        let cand = json!({
+            "status": "done",
+            "verification_matrix": { "k": { "id": "x", "result": "passed" } }
+        });
+        assert_eq!(
+            lost_update_violation(&cur, &cand),
+            "lost_update field=verification_matrix missing=x"
+        );
+    }
+
+    // DR53-F1(c): the exploit from the finding — an inner id "1" collides with
+    // the index-1 fallback of a stale id-less sibling row. Untagged labels
+    // collapse to ["1","1"] and a single candidate "1" covers both (set
+    // semantics), dropping the stale row. Type tags (id:1 vs idx:1) plus the
+    // count-aware multiset both reject it.
+    #[test]
+    fn lost_update_terminal_reshape_inner_id_equals_index_collision_rejected() {
+        let cur = json!({
+            "status": "termination_review",
+            "verification_matrix": [ { "id": "1" }, { "note": "stale" } ]
+        });
+        let cand = json!({
+            "status": "done",
+            "verification_matrix": { "k": { "id": "1", "result": "passed" } }
+        });
+        assert_eq!(
+            lost_update_violation(&cur, &cand),
+            "lost_update field=verification_matrix missing=1"
+        );
     }
 }

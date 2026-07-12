@@ -127,8 +127,46 @@ pub fn find_unit(snap: &Value, kind: &str, id: &str) -> Option<Value> {
     Some(unit)
 }
 
+/// Kind-qualified lookup that distinguishes an ABSENT unit from a POISONED
+/// (duplicate-id) one — unlike [`find_unit`], whose public `Option` collapses
+/// both to `None`. DR53-F4: the freshness scan must fail closed on a duplicate
+/// rather than skip past it, so it needs the three-way outcome.
+enum UnitLookup {
+    /// No matching `(kind, id)` unit in this snapshot — keep scanning.
+    Absent,
+    /// Two or more matching units — the snapshot is poisoned; fail closed.
+    Duplicate,
+    /// Exactly one matching unit.
+    Found(Value),
+}
+
+fn lookup_unit(snap: &Value, kind: &str, id: &str) -> UnitLookup {
+    let field = match kind {
+        "verification_matrix_row" => "verification_matrix",
+        "subagent_track" => "subagent_tracks",
+        _ => return UnitLookup::Absent,
+    };
+    let Some(array) = snap.get(field).and_then(Value::as_array) else {
+        return UnitLookup::Absent;
+    };
+    let mut matches = array
+        .iter()
+        .filter(|unit| unit.get("id").and_then(Value::as_str) == Some(id));
+    let Some(unit) = matches.next() else {
+        return UnitLookup::Absent;
+    };
+    if matches.next().is_some() {
+        return UnitLookup::Duplicate;
+    }
+    UnitLookup::Found(unit.clone())
+}
+
 /// Return the earliest installed checkpoint where `(kind, id)` is completed
 /// and passing, without consulting candidate-authored checkpoint fields.
+///
+/// DR53-F4: a DUPLICATE-id snapshot poisons the scan (returns `None`, fail
+/// closed) rather than being skipped, so a planted early duplicate cannot hide
+/// the real first-completion and inflate freshness. An ABSENT id keeps scanning.
 pub fn first_completed_checkpoint(
     dir: &Path,
     cur_doc: &Value,
@@ -143,11 +181,20 @@ pub fn first_completed_checkpoint(
         }
     }
     documents.sort_by_key(|(checkpoint, _)| *checkpoint);
-    documents.into_iter().find_map(|(checkpoint, snapshot)| {
-        let unit = find_unit(&snapshot, kind, id)?;
-        (unit.get("status").and_then(Value::as_str) == Some("completed") && was_pass(&unit))
-            .then_some(checkpoint)
-    })
+    for (checkpoint, snapshot) in documents {
+        match lookup_unit(&snapshot, kind, id) {
+            UnitLookup::Duplicate => return None,
+            UnitLookup::Found(unit) => {
+                if unit.get("status").and_then(Value::as_str) == Some("completed")
+                    && was_pass(&unit)
+                {
+                    return Some(checkpoint);
+                }
+            }
+            UnitLookup::Absent => {}
+        }
+    }
+    None
 }
 
 fn history_documents(dir: &Path, current_ckpt: i64) -> Vec<(i64, Value)> {
@@ -510,6 +557,66 @@ mod tests {
                 "test-a"
             ),
             Some(5)
+        );
+    }
+
+    #[test]
+    fn first_completed_duplicate_id_snapshot_poisons_scan() {
+        // DR53-F4: a duplicate-id snapshot must POISON the freshness scan
+        // (fail-closed not-fresh), NOT be skipped over to a later clean
+        // completion. A planted early duplicate would otherwise hide the real
+        // first-completion checkpoint and inflate freshness.
+        let dir = tempfile::tempdir().unwrap();
+        write_snapshot(
+            dir.path(),
+            5,
+            "test_creation",
+            "1",
+            json!({"subagent_tracks": [
+                {"id": "test-a", "status": "completed", "result": "passed"},
+                {"id": "test-a", "status": "completed", "result": "passed"}
+            ]}),
+        );
+        write_snapshot(
+            dir.path(),
+            9,
+            "test_creation",
+            "1",
+            json!({"subagent_tracks": [{"id": "test-a", "status": "completed", "result": "passed"}]}),
+        );
+        let cur = current(10, "cross_review", "1");
+
+        assert_eq!(
+            first_completed_checkpoint(dir.path(), &cur, 10, "subagent_track", "test-a"),
+            None
+        );
+    }
+
+    #[test]
+    fn first_completed_absent_early_snapshot_keeps_scanning() {
+        // DR53-F4: an ABSENT id in an early snapshot is distinct from a
+        // duplicate — the scan continues forward to a later genuine completion
+        // (only a duplicate poisons).
+        let dir = tempfile::tempdir().unwrap();
+        write_snapshot(
+            dir.path(),
+            5,
+            "test_creation",
+            "1",
+            json!({"subagent_tracks": [{"id": "other", "status": "completed", "result": "passed"}]}),
+        );
+        write_snapshot(
+            dir.path(),
+            9,
+            "test_creation",
+            "1",
+            json!({"subagent_tracks": [{"id": "test-a", "status": "completed", "result": "passed"}]}),
+        );
+        let cur = current(10, "cross_review", "1");
+
+        assert_eq!(
+            first_completed_checkpoint(dir.path(), &cur, 10, "subagent_track", "test-a"),
+            Some(9)
         );
     }
 }

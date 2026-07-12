@@ -1031,18 +1031,35 @@ fn vm15_kind_collision() {
 
 // ===== VM-16: three-way closure membership ===============================
 
-/// Proves current closure drift defeats a stale origin/candidate two-way agreement.
+/// Proves SP-3 closure-membership drift is LOAD-BEARING (DR53-F2). Every other
+/// guard passes: a real committed anchor over BOTH closure paths (so
+/// `commit_anchor_valid` would succeed), origin and candidate `covered_paths`
+/// byte-equal, valid provenance + on-cycle ancestry, and a non-blank
+/// `carry_reason` — a would-be Carry. The ONLY thing forcing ReRun is that the
+/// CURRENT `work_split`'s `depends_on` expanded (or shrank) the engine-derived
+/// closure past the stale origin/candidate two-way agreement. Commenting the
+/// SP-3 three-way check in reverify.rs guard (e) flips this test to Carry
+/// (mutation-verified), which the old fixture — lacking any committed repo, so
+/// `commit_anchor_valid` fail-closed regardless — could not detect.
 #[test]
 fn vm16_closure_membership_drift() {
+    // --- expand direction: current closure GAINS src/new-dependency.rs ------
     let d = tmp();
-    let stale_chunks = json!([bounded_chunk("X", &["src/a.rs"], &[])]);
+    let anchor = committed_repo_at(
+        d.path(),
+        &[("src/a.rs", "a\n"), ("src/new-dependency.rs", "dep\n")],
+    );
+    // Origin snapshot + candidate agree on the STALE two-way closure ["src/a.rs"].
     write_origin_track_snapshot(
         d.path(),
         5,
         "1",
-        origin_track("t", "anchor", &["src/a.rs"]),
-        stale_chunks,
+        origin_track("t", &anchor, &["src/a.rs"]),
+        json!([bounded_chunk("X", &["src/a.rs"], &[])]),
     );
+    let candidate = carried_track("t", 5, &anchor, &["src/a.rs"], &["X"]);
+    // CURRENT work_split: X now depends_on Y, expanding the derived closure to
+    // {src/a.rs, src/new-dependency.rs} — the drift the two-way agreement misses.
     let current_chunks = json!([
         {
             "id": "X", "write_paths": ["src/a.rs"], "read_paths": [],
@@ -1053,7 +1070,6 @@ fn vm16_closure_membership_drift() {
             "depends_on": []
         }
     ]);
-    let candidate = carried_track("t", 5, "anchor", &["src/a.rs"], &["X"]);
     let baton = decide_baton(candidate.clone(), current_chunks);
     assert_eq!(
         reverify::decide(
@@ -1064,6 +1080,33 @@ fn vm16_closure_membership_drift() {
             10,
             "1",
             d.path(),
+        ),
+        reverify::Decision::ReRun
+    );
+
+    // --- shrink direction: current closure LOSES src/b.rs -------------------
+    let d2 = tmp();
+    let anchor2 = committed_repo_at(d2.path(), &[("src/a.rs", "a\n"), ("src/b.rs", "b\n")]);
+    write_origin_track_snapshot(
+        d2.path(),
+        5,
+        "1",
+        origin_track("t", &anchor2, &["src/a.rs", "src/b.rs"]),
+        json!([bounded_chunk("X", &["src/a.rs", "src/b.rs"], &[])]),
+    );
+    let candidate2 = carried_track("t", 5, &anchor2, &["src/a.rs", "src/b.rs"], &["X"]);
+    // CURRENT work_split shrinks X's footprint to just src/a.rs.
+    let shrunk_chunks = json!([bounded_chunk("X", &["src/a.rs"], &[])]);
+    let baton2 = decide_baton(candidate2.clone(), shrunk_chunks);
+    assert_eq!(
+        reverify::decide(
+            &baton2,
+            d2.path(),
+            &candidate2,
+            "subagent_track",
+            10,
+            "1",
+            d2.path(),
         ),
         reverify::Decision::ReRun
     );
@@ -2131,4 +2174,81 @@ fn cr21_f2_relap_legacy_track_requires_fresh_or_carry() {
         );
     });
     run(&b2, &n2).assert("cr21-f2 first-pass legacy track accepted", 0);
+}
+
+// ===== DR53-F1: type-tagged, count-aware matrix identity guard ============
+
+/// DR53-F1(a) end-to-end through the write gate: a same-shape retry that drops
+/// an ID-LESS installed array row is rejected. Exercises the positional
+/// (`idx:<n>`) label path — the id-less row is now protected — and the
+/// count-aware multiset comparison. The reported `missing=1` is the dropped
+/// row's array position.
+#[test]
+fn dr53_f1_idless_array_row_drop_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "test_creation", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["verification_matrix"] = json!([
+            { "id": "vm-a", "current": "pending" },
+            { "note": "id-less stale row" }
+        ]);
+    });
+    make_baton_v3(&n, "test_creation", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["summary"] = json!("Retry that drops the id-less matrix row.");
+        v["next_action"] = json!("Team must retain the id-less row.");
+        v["verification_matrix"] = json!([{ "id": "vm-a", "current": "pending" }]);
+    });
+    run(&b, &n).assert_contains(
+        "dr53-f1 dropped id-less array row",
+        23,
+        "lost_update field=verification_matrix missing=1",
+    );
+}
+
+/// DR53-F1 end-to-end: a same-shape OBJECT matrix retry that drops a stable KEY
+/// is rejected. Exercises the same-shape object label path (`key:<k>`) and its
+/// tag-stripped `missing=<key>` reason.
+#[test]
+fn dr53_f1_object_key_drop_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "test_creation", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["verification_matrix"] = json!({
+            "row-x": { "current": "pending" },
+            "row-y": { "current": "pending" }
+        });
+    });
+    make_baton_v3(&n, "test_creation", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["summary"] = json!("Retry that drops an installed object matrix key.");
+        v["next_action"] = json!("Team must retain row-y.");
+        v["verification_matrix"] = json!({ "row-x": { "current": "pending" } });
+    });
+    run(&b, &n).assert_contains(
+        "dr53-f1 dropped object matrix key",
+        23,
+        "lost_update field=verification_matrix missing=row-y",
+    );
+}
+
+/// DR53-F3 end-to-end: an installed baton with NO verification_matrix reaches
+/// the team-sync lost_update guard with nothing to protect and is accepted —
+/// exercising the absent/scalar (`_`) label arm of the shared labeller.
+#[test]
+fn dr53_f3_absent_installed_matrix_tolerated() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "test_creation", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v.as_object_mut().unwrap().remove("verification_matrix");
+    });
+    make_baton_v3(&n, "test_creation", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["summary"] = json!("Retry from a baton that never installed a matrix.");
+        v["next_action"] = json!("Continue test creation.");
+    });
+    run(&b, &n).assert("dr53-f3 absent installed matrix tolerated", 0);
 }
