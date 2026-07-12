@@ -286,18 +286,25 @@ fn is_global_unit(unit: &Value) -> bool {
 /// reimplemented locally rather than promoting the private constant).
 const GIT_COVERS_DIFF_ALGO: &str = "git-covers-diff-v1";
 
-/// CR21-F3: whether `orig_unit` is a COMPLETE qualifying DIRECT test-creation
-/// execution eligible to back a same-id carry — not merely `was_pass`. Requires
-/// `status=completed`, a passing result, the test-creation `track` family, an
-/// `owner`/`owner_role` present, non-empty `outputs` + `evidence_refs`, and the
-/// exact `git-covers-diff-v1` stamp algo. (The no-carry-of-a-carry check lives
-/// in `decide` so the "origin is a direct execution" invariant is shared with
-/// the `verification_matrix_row` kind.) Any missing piece fails closed.
+/// CR21-F3 / CR29-F2: whether `orig_unit` is a COMPLETE qualifying DIRECT
+/// test-creation execution eligible to back a same-id carry — not merely
+/// `was_pass`. The origin must match the EXACT qualifying shape the live carry
+/// gate `write.rs::test_creation_to_cross_review_ok` enforces on the candidate:
+/// `phase == "test_creation"`, `track == "test-creation"`, and
+/// `owner == "dvandva-test-creator"` (not merely a non-empty owner — a
+/// same-id completed/passing track from another phase or an arbitrary owner
+/// must NOT back a carry). It also keeps the origin-only integrity requirements:
+/// `status=completed`, a passing result, a present `owner_role`, non-empty
+/// `outputs` + `evidence_refs`, and the exact `git-covers-diff-v1` stamp algo.
+/// (The no-carry-of-a-carry check lives in `decide` so the "origin is a direct
+/// execution" invariant is shared with the `verification_matrix_row` kind.) Any
+/// missing piece fails closed.
 fn origin_direct_test_creation_shape_ok(orig_unit: &Value) -> bool {
     str_field(orig_unit, "status") == "completed"
         && provenance::was_pass(orig_unit)
+        && str_field(orig_unit, "phase") == "test_creation"
         && str_field(orig_unit, "track") == "test-creation"
-        && !str_field(orig_unit, "owner").trim().is_empty()
+        && str_field(orig_unit, "owner") == "dvandva-test-creator"
         && !str_field(orig_unit, "owner_role").trim().is_empty()
         && !str_vec_field(orig_unit, "outputs").is_empty()
         && !str_vec_field(orig_unit, "evidence_refs").is_empty()

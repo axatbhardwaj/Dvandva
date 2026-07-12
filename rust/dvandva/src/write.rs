@@ -5780,14 +5780,25 @@ fn lost_update_violation(cur_doc: &Value, cand: &Value) -> String {
 /// row/key yields `lost_update field=verification_matrix missing=<id>`).
 ///
 /// A genuine array<->object reshape erases the identity basis. It is REJECTED as
-/// `shape_change` on a SAME-STATUS team write (the finding's evasion vector — a
-/// same-status retry flipping shape to slip a row deletion past the id-superset
-/// guard). Across a status TRANSITION it is allowed: the only legitimate reshape
-/// is the terminal `termination_review`->`done` matrix rebuild, whose
-/// `stale_verification_matrix_row` sweep independently re-verifies every row
-/// fresh against `implementation_family_anchor` (see
-/// `s4t6_object_matrix_stale_value_rejected`). Returns the reason, or `None`
-/// when clean / nothing installed.
+/// `shape_change` on EVERY edge (same-status retry OR a non-terminal cross-status
+/// write — CR29-F1) except the single explicitly proven terminal rebuild edge
+/// `termination_review`->`done`. Same-status was the finding's original evasion
+/// vector; CR29-F1 showed a non-terminal cross-status write
+/// (`test_creation`->`cross_review`, `cross_review`->`cross_fixing`, ...) could
+/// reshape an installed array into a single-key object and drop a row too,
+/// because the guard skipped the identity comparison on any status change.
+///
+/// The terminal `termination_review`->`done` rebuild legitimately assigns fresh
+/// object KEYS unrelated to the pre-terminal array `id`s, so the installed row
+/// identity-set is NOT preserved across it and cannot be the enforced invariant
+/// there. The enforceable variant chosen is "the full expected matrix proven
+/// independently": for that one edge the done gate runs
+/// `stale_verification_matrix_row` (see `install`/`legal_transition`,
+/// `s4t6_object_matrix_stale_value_rejected`), which re-verifies EVERY final row
+/// fresh (>= `implementation_family_anchor`) and complete. That independent
+/// full-matrix proof — structurally guaranteed for `new_status == "done"`
+/// regardless of shape — is why the reshape is allowed ONLY on that edge here.
+/// Returns the reason, or `None` when clean / nothing installed.
 fn verification_matrix_lost_update(cur_doc: &Value, cand: &Value) -> Option<String> {
     let cur_vm = field(cur_doc, "verification_matrix");
     let cand_vm = field(cand, "verification_matrix");
@@ -5797,10 +5808,12 @@ fn verification_matrix_lost_update(cur_doc: &Value, cand: &Value) -> Option<Stri
     }
     if matches!(cur_vm, Some(Value::Array(_))) != matches!(cand_vm, Some(Value::Array(_))) {
         // array<->object reshape (or the matrix dropped to an unshaped candidate).
-        return if str_field(cur_doc, "status") == str_field(cand, "status") {
-            Some("lost_update field=verification_matrix shape_change".to_string())
-        } else {
+        let terminal_rebuild_edge = str_field(cur_doc, "status") == "termination_review"
+            && str_field(cand, "status") == "done";
+        return if terminal_rebuild_edge {
             None
+        } else {
+            Some("lost_update field=verification_matrix shape_change".to_string())
         };
     }
     let cand_ids = vm_id_set(cand_vm);
@@ -6499,10 +6512,11 @@ mod delta_wiring_tests {
         assert_eq!(lost_update_violation(&cur, &cand), "");
     }
 
-    // CR21-F1: a SAME-STATUS team write that flips array<->object erases the
-    // identity basis and is rejected (the evasion vector); a status TRANSITION
-    // (e.g. the terminal done rebuild) legitimately reshapes and passes here,
-    // deferring row integrity to the stale_verification_matrix_row sweep.
+    // CR21-F1 / CR29-F1: a team write that flips array<->object erases the
+    // identity basis and is rejected (the evasion vector) on EVERY edge except
+    // the terminal termination_review->done rebuild, which alone reshapes here
+    // and defers row integrity to the done-gate stale_verification_matrix_row
+    // full-matrix sweep.
     #[test]
     fn lost_update_same_status_shape_change_rejected() {
         let cur = json!({
@@ -6530,6 +6544,26 @@ mod delta_wiring_tests {
             "verification_matrix": { "row-a": { "result": "passed" } }
         });
         assert_eq!(lost_update_violation(&cur, &cand), "");
+    }
+
+    // CR29-F1: a NON-terminal cross-status reshape (e.g. test_creation ->
+    // cross_review) is NOT the terminal rebuild edge. It erases the identity
+    // basis and can drop a row past the id-superset guard, so it is rejected —
+    // only termination_review -> done is allowlisted.
+    #[test]
+    fn lost_update_non_terminal_cross_status_shape_change_rejected() {
+        let cur = json!({
+            "status": "test_creation",
+            "verification_matrix": [ { "id": "vm-1" }, { "id": "vm-2" } ]
+        });
+        let cand = json!({
+            "status": "cross_review",
+            "verification_matrix": { "vm-1": { "result": "passed" } }
+        });
+        assert_eq!(
+            lost_update_violation(&cur, &cand),
+            "lost_update field=verification_matrix shape_change"
+        );
     }
 
     #[test]

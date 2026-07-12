@@ -1769,7 +1769,9 @@ fn cr21_f3_origin_direct_test_creation_shape_required() {
             "control: a fully-qualified origin carries"
         );
     }
-    let cases: [(&str, fn(&mut Value)); 5] = [
+    // CR29-F3: named tuple type keeps the table off clippy::type_complexity.
+    type OriginCase = (&'static str, fn(&mut Value));
+    let cases: [OriginCase; 7] = [
         ("running_not_completed", |o| o["status"] = json!("running")),
         ("wrong_track_subtype", |o| {
             o["track"] = json!("cross-review")
@@ -1777,6 +1779,12 @@ fn cr21_f3_origin_direct_test_creation_shape_required() {
         ("owner_absent", |o| {
             o.as_object_mut().unwrap().remove("owner");
         }),
+        // CR29-F2: a wrong (but non-empty) owner must not back a carry — the
+        // gate requires the exact dvandva-test-creator identity.
+        ("wrong_nonempty_owner", |o| o["owner"] = json!("vadi")),
+        // CR29-F2: a same-id completed/passing track from another phase must not
+        // back a carry — the gate requires phase == test_creation exactly.
+        ("wrong_phase", |o| o["phase"] = json!("1")),
         ("evidence_refs_empty", |o| o["evidence_refs"] = json!([])),
         ("wrong_digest_algo", |o| o["digest_algo"] = json!("sha256")),
     ];
@@ -1872,6 +1880,38 @@ fn cr21_f1_same_status_shape_change_rejected() {
     });
     run(&b, &n).assert_contains(
         "cr21-f1 same-status shape change",
+        23,
+        "lost_update field=verification_matrix shape_change",
+    );
+}
+
+/// CR29-F1 regression: a NON-terminal cross-status team write
+/// (`test_creation`->`cross_review`) that reshapes the matrix array->object and
+/// drops an installed row must fail `lost_update` as `shape_change`. The reshape
+/// allowlist is the terminal `termination_review`->`done` edge ONLY — any other
+/// cross-status edge that flips shape erases the identity basis and can silently
+/// delete a row past the id-superset guard.
+#[test]
+fn cr29_f1_non_terminal_cross_status_reshape_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "test_creation", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["verification_matrix"] = json!([
+            {"id": "vm-1", "result": "passed"},
+            {"id": "vm-2", "result": "passed"}
+        ]);
+    });
+    make_baton_v3(&n, "cross_review", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        // array->object reshape dropping vm-2: without the terminal-edge-only
+        // allowlist this slips the deletion past the id-superset guard.
+        v["verification_matrix"] = json!({"vm-1": {"id": "vm-1", "result": "passed"}});
+        v["summary"] = json!("Cross-status reshape dropping an installed matrix row.");
+        v["next_action"] = json!("Reshape evasion across a status transition.");
+    });
+    run(&b, &n).assert_contains(
+        "cr29-f1 non-terminal cross-status reshape",
         23,
         "lost_update field=verification_matrix shape_change",
     );
