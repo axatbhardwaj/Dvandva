@@ -59,6 +59,8 @@ Carry these fields forward on every baton:
 
 `verification` remains the command log. `verification_matrix` is the coverage plan and evidence map. Test creation is separate from review: the doer creates or updates tests, then the reviewer independently evaluates sufficiency.
 
+For a development plan that can re-lap through `phase_fixing` or `cross_fixing`, declare delta re-verification narrowly. The first pass is always full. Only a mechanical `test_creation` track may carry at the intermediate test gate; a carried track needs non-empty `covers_chunks` and `carry_reason`, while the engine stamps and audits its same-id provenance, current-cycle ancestry, and `git-covers-diff-v1` tracked regular-file closure. Plan a new test track id for every rerun. Cross-review, deep-review, risk-angle, global/unbounded tracks, and all `verification_matrix` rows are unbounded and never carry. The terminal plan must still rerun full review depth and every matrix row after the latest implementation-family checkpoint. Absent carry fields preserve legacy behavior.
+
 ## Parallel Tracks
 
 Use parallel subagents aggressively when tools are available. Default tracks:

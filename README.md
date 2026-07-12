@@ -119,6 +119,8 @@ Walkaway is autonomous, but three baton states are human-intervention pauses, no
 
 Disputes run through bounded findings→fixing loops (`deep_review → phase_fixing`, `cross_review → cross_fixing`, `phase_review → phase_fixing`) capped by `loop_counts` at `disagreement_cap`. The `review_of_review` / `counter_review` vadi-counter loop is a retained but rarely-exercised safety valve — it has never fired across the ~24 recorded runs.
 
+**Delta re-verification.** The first full-profile pass always executes every gate. On a re-lap through `phase_fixing` or `cross_fixing`, only a mechanical `test_creation` track may carry through the intermediate test gate, and only when its declared `covers_chunks`/`carry_reason`, same-id origin provenance, current-cycle ancestry, and engine-derived `git-covers-diff-v1` tracked regular-file closure validate unchanged. A failed check reruns under a new track id. Cross-review, deep-review, risk-angle, global/unbounded tracks, and every `verification_matrix` row never carry. The terminal `done` gate is unchanged: full review depth and every matrix row must be fresh after the latest implementation-family checkpoint. Legacy batons without carry fields keep full-rerun behavior.
+
 ## The runtime
 
 The `dvandva` binary is one multicall runtime. Invoked through a git-hook symlink (`pre-commit`, `prepare-commit-msg`, ...) it takes the hook name from `argv[0]`; `dvandva --version` prints the version line (`dvandva 3.3.1`).

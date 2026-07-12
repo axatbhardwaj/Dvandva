@@ -639,6 +639,27 @@ installed baton, and `allow_push == true`. If a later review rejects a
 checkpointed change, fix it with a new commit rather than rewriting history
 unless the human explicitly asks for history surgery.
 
+## Delta Re-verification
+
+The first full-profile pass is always complete. When `phase_fixing` or
+`cross_fixing` causes a re-lap, Dvandva may carry only mechanical
+`test_creation` evidence through the intermediate test gate. A carried track
+keeps the same id and declares `carried_from_checkpoint`, `covers_chunks`, and
+`carry_reason`; the engine binds it to the origin snapshot's
+`covered_input_digest`, `digest_algo: "git-covers-diff-v1"`, and
+`covered_paths`. Carry is accepted only on the current phase-cycle ancestry and
+only when the engine-derived closure is unchanged, tracked, regular, and
+non-symlink. Failure is closed: create a new test track id and rerun it.
+
+Review evidence is never carried. Cross-review, deep-review, risk-angle,
+global/unbounded tracks, and every `verification_matrix` row always re-execute.
+The terminal `done` gate is unchanged: all review depth and every matrix row
+must be fresh after the latest implementation-family checkpoint. Carry is an
+intermediate best-effort optimization, not a correctness boundary; Git-native
+change detection narrows redundant test work, while terminal full
+re-verification supplies the final guarantee. Legacy batons with no carry
+fields keep the prior full-rerun behavior.
+
 This is the core anti-token-polling rule:
 
 - The vadi does not spend model turns asking whether the prativadi moved.
