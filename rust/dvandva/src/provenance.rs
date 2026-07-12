@@ -127,6 +127,29 @@ pub fn find_unit(snap: &Value, kind: &str, id: &str) -> Option<Value> {
     Some(unit)
 }
 
+/// Return the earliest installed checkpoint where `(kind, id)` is completed
+/// and passing, without consulting candidate-authored checkpoint fields.
+pub fn first_completed_checkpoint(
+    dir: &Path,
+    cur_doc: &Value,
+    current_ckpt: i64,
+    kind: &str,
+    id: &str,
+) -> Option<i64> {
+    let mut documents = history_documents(dir, current_ckpt);
+    if let Some(checkpoint) = cur_doc.get("checkpoint").and_then(Value::as_i64) {
+        if checkpoint <= current_ckpt {
+            documents.push((checkpoint, cur_doc.clone()));
+        }
+    }
+    documents.sort_by_key(|(checkpoint, _)| *checkpoint);
+    documents.into_iter().find_map(|(checkpoint, snapshot)| {
+        let unit = find_unit(&snapshot, kind, id)?;
+        (unit.get("status").and_then(Value::as_str) == Some("completed") && was_pass(&unit))
+            .then_some(checkpoint)
+    })
+}
+
 fn history_documents(dir: &Path, current_ckpt: i64) -> Vec<(i64, Value)> {
     let Ok(entries) = std::fs::read_dir(dir.join("history")) else {
         return Vec::new();
@@ -374,5 +397,119 @@ mod tests {
         ));
         assert!(!was_pass(&json!({"current": "failed", "result": "passed"})));
         assert!(!was_pass(&json!({"result": "pending"})));
+    }
+
+    #[test]
+    fn first_completed_returns_smallest_completed_checkpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        write_snapshot(
+            dir.path(),
+            5,
+            "test_creation",
+            "1",
+            json!({"subagent_tracks": [{"id": "test-a", "status": "completed", "result": "passed"}]}),
+        );
+        write_snapshot(
+            dir.path(),
+            9,
+            "test_creation",
+            "1",
+            json!({"subagent_tracks": [{"id": "test-a", "status": "completed", "result": "passed"}]}),
+        );
+        let cur = current(10, "cross_review", "1");
+
+        assert_eq!(
+            first_completed_checkpoint(dir.path(), &cur, 10, "subagent_track", "test-a"),
+            Some(5)
+        );
+    }
+
+    #[test]
+    fn first_completed_ignores_later_rewritten_appearance() {
+        let dir = tempfile::tempdir().unwrap();
+        write_snapshot(
+            dir.path(),
+            5,
+            "test_creation",
+            "1",
+            json!({"subagent_tracks": [{"id": "test-a", "status": "completed", "result": "passed", "evidence_checkpoint": 5}]}),
+        );
+        write_snapshot(
+            dir.path(),
+            9,
+            "phase_fixing",
+            "1",
+            json!({"subagent_tracks": [{"id": "test-a", "status": "completed", "result": "passed", "evidence_checkpoint": 9}]}),
+        );
+        let cur = current(10, "test_creation", "1");
+
+        assert_eq!(
+            first_completed_checkpoint(dir.path(), &cur, 10, "subagent_track", "test-a"),
+            Some(5)
+        );
+    }
+
+    #[test]
+    fn first_completed_none_when_never_completed() {
+        let dir = tempfile::tempdir().unwrap();
+        write_snapshot(
+            dir.path(),
+            5,
+            "test_creation",
+            "1",
+            json!({"subagent_tracks": [{"id": "test-a", "status": "running", "result": "passed"}]}),
+        );
+        write_snapshot(
+            dir.path(),
+            9,
+            "test_creation",
+            "1",
+            json!({"subagent_tracks": [{"id": "test-a", "status": "completed", "result": "failed"}]}),
+        );
+        let cur = current(10, "cross_review", "1");
+
+        assert_eq!(
+            first_completed_checkpoint(dir.path(), &cur, 10, "subagent_track", "test-a"),
+            None
+        );
+    }
+
+    #[test]
+    fn first_completed_considers_current_installed_document() {
+        let dir = tempfile::tempdir().unwrap();
+        let cur = json!({
+            "checkpoint": 9,
+            "status": "test_creation",
+            "phase": "1",
+            "subagent_tracks": [{"id": "test-a", "status": "completed", "result": "passed"}]
+        });
+
+        assert_eq!(
+            first_completed_checkpoint(dir.path(), &cur, 9, "subagent_track", "test-a"),
+            Some(9)
+        );
+    }
+
+    #[test]
+    fn first_completed_tolerates_current_document_without_checkpoint() {
+        let dir = tempfile::tempdir().unwrap();
+        write_snapshot(
+            dir.path(),
+            5,
+            "test_creation",
+            "1",
+            json!({"subagent_tracks": [{"id": "test-a", "status": "completed", "result": "passed"}]}),
+        );
+
+        assert_eq!(
+            first_completed_checkpoint(
+                dir.path(),
+                &json!({"subagent_tracks": []}),
+                9,
+                "subagent_track",
+                "test-a"
+            ),
+            Some(5)
+        );
     }
 }
