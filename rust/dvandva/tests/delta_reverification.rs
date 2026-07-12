@@ -1657,6 +1657,41 @@ fn reverify_duplicate_chunk_id_masking_changed_path_forces_rerun() {
     );
 }
 
+/// DR64-F1: a duplicate `work_split` chunk id reached ONLY via a
+/// `conflict_group` peer edge (never a seed nor a `depends_on` target) must
+/// poison the closure exactly like the seed/depends_on cases above —
+/// `find_chunk`'s ambiguity guard has no special-case for which edge type
+/// reached it. `derive_covered_closure` returns `None`, and `decide`'s guard
+/// (a) turns that straight into `ReRun`.
+#[test]
+fn reverify_derive_closure_poisons_on_duplicate_conflict_group_peer() {
+    let chunks = json!([
+        {"id": "A", "write_paths": ["src/a.rs"], "read_paths": [], "depends_on": [], "conflict_group": "grp"},
+        {"id": "B", "write_paths": ["src/b1.rs"], "read_paths": [], "depends_on": [], "conflict_group": "grp"},
+        {"id": "B", "write_paths": ["src/b2.rs"], "read_paths": [], "depends_on": [], "conflict_group": "grp"}
+    ]);
+    let baton = json!({"work_split": chunks.clone()});
+    assert_eq!(
+        reverify::derive_covered_closure(&baton, &json!({"id": "t", "covers_chunks": ["A"]})),
+        None
+    );
+
+    let candidate = carried_track("t", 5, "anchor", &["src/a.rs"], &["A"]);
+    let decide_input = decide_baton(candidate.clone(), chunks);
+    assert_eq!(
+        reverify::decide(
+            &decide_input,
+            Path::new("/no-fs-needed"),
+            &candidate,
+            "subagent_track",
+            10,
+            "1",
+            Path::new("/no-git-needed"),
+        ),
+        reverify::Decision::ReRun
+    );
+}
+
 // ---- provenance.rs: branches not reached by VM-1..VM-17 ------------------
 
 /// Closes `read_origin_snapshot`'s ambiguous-duplicate-checkpoint-file
@@ -1735,6 +1770,112 @@ fn provenance_first_completed_tolerates_current_doc_without_checkpoint() {
     let cur = json!({"status": "cross_review"});
     assert_eq!(
         provenance::first_completed_checkpoint(d.path(), &cur, 9, "subagent_track", "t"),
+        Some(5)
+    );
+}
+
+/// DR64-F1: closes `first_completed_checkpoint`'s (private `lookup_unit`)
+/// unknown-`kind` branch — an unrecognized `kind` never resolves to a
+/// snapshot field, so the one history document scanned is treated ABSENT and
+/// the scan exhausts to `None` rather than matching anything.
+#[test]
+fn provenance_first_completed_checkpoint_unknown_kind_is_none() {
+    let d = tmp();
+    write_snapshot(
+        d.path(),
+        5,
+        "test_creation",
+        "1",
+        json!({"subagent_tracks": [{"id": "t", "status": "completed", "result": "passed"}]}),
+    );
+    assert_eq!(
+        provenance::first_completed_checkpoint(d.path(), &json!({}), 9, "unknown-kind", "t"),
+        None
+    );
+}
+
+/// DR64-F1: closes `first_completed_checkpoint`'s (private `lookup_unit`)
+/// non-array-field branch — a snapshot whose `subagent_tracks` is present but
+/// not an array is treated ABSENT (not poisoned), so the scan continues past
+/// it to a later genuinely-completed checkpoint.
+#[test]
+fn provenance_first_completed_checkpoint_non_array_field_is_absent() {
+    let d = tmp();
+    write_snapshot(
+        d.path(),
+        3,
+        "test_creation",
+        "1",
+        json!({"subagent_tracks": "not-an-array"}),
+    );
+    write_snapshot(
+        d.path(),
+        5,
+        "test_creation",
+        "1",
+        json!({"subagent_tracks": [{"id": "t", "status": "completed", "result": "passed"}]}),
+    );
+    assert_eq!(
+        provenance::first_completed_checkpoint(d.path(), &json!({}), 9, "subagent_track", "t"),
+        Some(5)
+    );
+}
+
+/// DR64-F1: closes `first_completed_checkpoint`'s (private `lookup_unit`)
+/// duplicate-id branch with a REAL history file — the `--lib` unit test in
+/// `provenance.rs` exercises the same branch directly on an in-memory
+/// snapshot. A snapshot with two same-id `subagent_tracks` entries poisons the
+/// whole scan (`None`) even though a later checkpoint is a clean
+/// completed+passing match.
+#[test]
+fn provenance_first_completed_checkpoint_duplicate_id_snapshot_poisons() {
+    let d = tmp();
+    write_snapshot(
+        d.path(),
+        3,
+        "test_creation",
+        "1",
+        json!({"subagent_tracks": [
+            {"id": "t", "status": "completed", "result": "passed"},
+            {"id": "t", "status": "completed", "result": "passed"}
+        ]}),
+    );
+    write_snapshot(
+        d.path(),
+        5,
+        "test_creation",
+        "1",
+        json!({"subagent_tracks": [{"id": "t", "status": "completed", "result": "passed"}]}),
+    );
+    assert_eq!(
+        provenance::first_completed_checkpoint(d.path(), &json!({}), 9, "subagent_track", "t"),
+        None
+    );
+}
+
+/// DR64-F1: an early snapshot's same-id track exists but is NOT
+/// completed+passing — the `Found` arm's guard falls through without
+/// returning, so the scan continues to a later checkpoint that IS a genuine
+/// completed+passing match.
+#[test]
+fn provenance_first_completed_checkpoint_skips_found_not_passing() {
+    let d = tmp();
+    write_snapshot(
+        d.path(),
+        3,
+        "test_creation",
+        "1",
+        json!({"subagent_tracks": [{"id": "t", "status": "completed", "result": "failed"}]}),
+    );
+    write_snapshot(
+        d.path(),
+        5,
+        "test_creation",
+        "1",
+        json!({"subagent_tracks": [{"id": "t", "status": "completed", "result": "passed"}]}),
+    );
+    assert_eq!(
+        provenance::first_completed_checkpoint(d.path(), &json!({}), 9, "subagent_track", "t"),
         Some(5)
     );
 }
