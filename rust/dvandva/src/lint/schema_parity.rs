@@ -306,10 +306,12 @@ fn disagreement_cap_default(root: &Path, r: &mut Report) {
 mod tests {
     use std::str::FromStr;
 
+    use serde_json::Value;
+
     use crate::baton::Status;
     use crate::commit_gate::{matches_reminder_hard_path, REMINDER_HARD_PATH_TOKENS};
     use crate::preflight::V2_STATUS_TOKENS;
-    use crate::write::{status_enum_ok, V2_STATUS_CATALOG, V3_STATUS_CATALOG};
+    use crate::write::{status_enum_ok, v2_required_keys, V2_STATUS_CATALOG, V3_STATUS_CATALOG};
 
     #[test]
     fn engine_catalog_has_26_unique_tokens() {
@@ -450,6 +452,91 @@ mod tests {
             assert!(
                 matches_reminder_hard_path(path),
                 "matches_reminder_hard_path({path:?}) must be true for token {tok}"
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Chunk C (delta-reverification-2, Option B) — the seven additive carry
+    // fields stay optional/nested and never regress v2/v3 backward
+    // compatibility. Pure Rust, no filesystem dependency, matching this
+    // module's existing catalog/key-parity test style.
+    // -----------------------------------------------------------------------
+
+    /// The exact seven Option-B carry fields (see baton-schema-v3.json's
+    /// `_carry_fields_note` / `subagent_tracks_example`). There is
+    /// deliberately no `carried_from_id` — Option B uses same-id carry.
+    const CARRY_FIELDS: [&str; 7] = [
+        "carried_from_checkpoint",
+        "carry_reason",
+        "covers_chunks",
+        "global",
+        "covered_input_digest",
+        "digest_algo",
+        "covered_paths",
+    ];
+
+    #[test]
+    fn legacy_baton_without_carry_fields_validates() {
+        // A pre-carry subagent_track, shaped exactly like the v2 reference
+        // schema's real `startup-controller` example: none of the seven
+        // carry fields present.
+        let legacy_track = serde_json::json!({
+            "id": "startup-controller",
+            "phase": "research",
+            "status": "planned",
+            "track": "controller",
+            "owner": "vadi",
+            "parallelized": false,
+            "rationale": "Initial run scaffold; record concrete subagent tracks as each phase begins.",
+            "inputs": [],
+            "outputs": [],
+            "evidence_refs": [],
+            "result": "pending"
+        });
+        // A pre-carry verification_matrix row, shaped like the v2
+        // reference's real `verify-research-coverage` example.
+        let legacy_row = serde_json::json!({
+            "id": "verify-research-coverage",
+            "phase": "research",
+            "owner": "prativadi",
+            "covers": ["original_ask", "research_ref", "work_split"],
+            "command": null,
+            "expected": "Independent research review confirms the artifact is source-backed and sufficient for spec drafting.",
+            "result": "pending",
+            "evidence_ref": null
+        });
+        for unit in [&legacy_track, &legacy_row] {
+            let obj = unit.as_object().expect("fixture unit is a JSON object");
+            for field in CARRY_FIELDS {
+                assert!(
+                    !obj.contains_key(field),
+                    "legacy fixture must validate with none of the seven carry fields present, found {field}"
+                );
+            }
+            // Round-trips byte-equal — the "legacy batons validate byte-equal"
+            // half of the Option B backward-compat constraint.
+            let serialized = serde_json::to_string(unit).unwrap();
+            let reparsed: Value = serde_json::from_str(&serialized).unwrap();
+            assert_eq!(&reparsed, unit, "legacy fixture must round-trip byte-equal");
+        }
+
+        // Guard against future drift: the seven fields stay optional and
+        // NESTED in Baton::rest — never promoted to a top-level required key
+        // (v2/v3 required-keys parity stays unchanged) ...
+        let mut required: Vec<&str> = super::v3_inline_required_keys();
+        required.extend(v2_required_keys());
+        for field in CARRY_FIELDS {
+            assert!(
+                !required.contains(&field),
+                "{field} must never be a top-level required key (v2/v3 required-keys parity is unchanged)"
+            );
+        }
+        // ... and never promoted to a new lifecycle Status.
+        for field in CARRY_FIELDS {
+            assert!(
+                !V2_STATUS_CATALOG.contains(&field) && !V3_STATUS_CATALOG.contains(&field),
+                "{field} must never be a status_catalog member (no new status was added)"
             );
         }
     }

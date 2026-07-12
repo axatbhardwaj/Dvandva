@@ -1,5 +1,6 @@
 {
   "_note": "HISTORICAL: dvandva.baton.v2 — retired write schema, kept for read-path compatibility and migration only. Live writes require dvandva.baton.v3 (see baton-schema-v3.json); a v2 write candidate is rejected with schema_retired.",
+  "_carry_fields_note": "v2 batons predate Option B delta re-verification (delta-reverification-2, 2026-07-12) and its seven optional carry fields (carried_from_checkpoint, carry_reason, covers_chunks, global, covered_input_digest, digest_algo, covered_paths — documented in baton-schema-v3.json). Their absence here is not a defect: a baton carrying none of these seven fields simply takes the existing fresh path unchanged — every unit re-runs in full, exactly as before this feature existed.",
   "schema": "dvandva.baton.v2",
   "updated_at": null,
   "mode": "development",
