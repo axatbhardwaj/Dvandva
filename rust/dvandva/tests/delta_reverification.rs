@@ -2531,10 +2531,12 @@ fn dr53_f3_absent_installed_matrix_tolerated() {
 /// VF75-F1: two live (`planned`/`running`) generated `agent_instances`
 /// sharing a `base_checkpoint`, with OVERLAPPING `write_paths` and no
 /// `depends_on` serialization, fail the pairwise write-path disjointness gate
-/// (`write_paths_overlap`, write.rs:3651). Byte-identical to
-/// `vf75_f1_agent_instances_disjoint_write_paths_accepted` except for the
-/// second instance's `write_paths` — that sibling test proves this fixture is
-/// otherwise valid, isolating the rejection to the overlap itself.
+/// (`write_paths_overlap`, write.rs:3651). Differs from
+/// `vf75_f1_agent_instances_disjoint_write_paths_accepted` only in the
+/// `write_paths` values: both instances share `"src/vf75-shared.rs"` here,
+/// making the pair OVERLAPPING, vs. pairwise-DISJOINT paths there — that
+/// sibling test proves this fixture is otherwise valid, isolating the
+/// rejection to the overlap itself.
 #[test]
 fn vf75_f1_agent_instances_overlapping_write_paths_rejected() {
     let d = tmp();
@@ -2558,9 +2560,10 @@ fn vf75_f1_agent_instances_overlapping_write_paths_rejected() {
     );
 }
 
-/// VF75-F1 accept arm: the identical fixture above, but the two instances'
-/// `write_paths` are pairwise disjoint, so the same scaffold write succeeds —
-/// proving the reject arm's failure is caused specifically by the overlap.
+/// VF75-F1 accept arm: the same fixture shape as above, but the two
+/// instances' `write_paths` values are pairwise disjoint instead of
+/// overlapping, so the same scaffold write succeeds — proving the reject
+/// arm's failure is caused specifically by the overlap.
 #[test]
 fn vf75_f1_agent_instances_disjoint_write_paths_accepted() {
     let d = tmp();
