@@ -660,6 +660,21 @@ change detection narrows redundant test work, while terminal full
 re-verification supplies the final guarantee. Legacy batons with no carry
 fields keep the prior full-rerun behavior.
 
+Freshness is proven solely by the earliest checkpoint where a `(kind, id)`
+unit is ever seen completed and passing in engine-written history, and that
+pin never moves — a rerun that reuses its old id can never re-qualify, because
+its first completion still predates the new cycle's anchor. This is why every
+rerun claims a fresh track id rather than reusing one. A duplicate-id
+appearance within a single history snapshot poisons that scan and fails
+freshness closed rather than being skipped past.
+
+The terminal `termination_review`->`done` rebuild is the only edge allowed to
+reshape `verification_matrix` between array and object shape; every other
+reshape is rejected as `shape_change`. On that edge, each installed row's
+type-tagged identity label (`id:`/`idx:`/`key:`) must survive as a
+count-aware multiset superset, so the row count can only grow or hold steady
+across the rebuild, never shrink or silently substitute an identity.
+
 This is the core anti-token-polling rule:
 
 - The vadi does not spend model turns asking whether the prativadi moved.

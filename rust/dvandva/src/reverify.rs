@@ -282,11 +282,6 @@ fn is_global_unit(unit: &Value) -> bool {
             .any(|c| c == "*")
 }
 
-/// The fixed `digest_algo` value the engine stamps on a bounded direct-executed
-/// test-creation covered-input digest (mirrors `write.rs::GIT_COVERS_DIFF_ALGO`;
-/// reimplemented locally rather than promoting the private constant).
-const GIT_COVERS_DIFF_ALGO: &str = "git-covers-diff-v1";
-
 /// CR21-F3 / CR29-F2: whether `orig_unit` is a COMPLETE qualifying DIRECT
 /// test-creation execution eligible to back a same-id carry — not merely
 /// `was_pass`. The origin must match the EXACT qualifying shape the live carry
@@ -309,7 +304,7 @@ fn origin_direct_test_creation_shape_ok(orig_unit: &Value) -> bool {
         && !str_field(orig_unit, "owner_role").trim().is_empty()
         && !str_vec_field(orig_unit, "outputs").is_empty()
         && !str_vec_field(orig_unit, "evidence_refs").is_empty()
-        && str_field(orig_unit, "digest_algo") == GIT_COVERS_DIFF_ALGO
+        && str_field(orig_unit, "digest_algo") == provenance::GIT_COVERS_DIFF_ALGO
 }
 
 /// True iff any OPEN finding intersects `closure`. A finding is open per the
@@ -339,20 +334,12 @@ fn open_finding_touches_closure(baton: &Value, closure: &BTreeSet<String>) -> bo
         }
         if fpaths
             .iter()
-            .any(|fp| closure.iter().any(|cp| path_overlap(fp, cp)))
+            .any(|fp| closure.iter().any(|cp| provenance::path_overlap(fp, cp)))
         {
             return true;
         }
     }
     false
-}
-
-/// Prefix-overlap of two repo-relative paths (mirrors `write.rs::path_overlap`;
-/// reimplemented locally rather than promoting the private helper).
-fn path_overlap(left: &str, right: &str) -> bool {
-    left == right
-        || left.starts_with(&format!("{right}/"))
-        || right.starts_with(&format!("{left}/"))
 }
 
 // ===========================================================================
@@ -789,14 +776,5 @@ mod tests {
             &json!({ "findings": [] }),
             &closure
         ));
-    }
-
-    #[test]
-    fn path_overlap_semantics() {
-        assert!(path_overlap("src/a.rs", "src/a.rs"));
-        assert!(path_overlap("src", "src/a.rs"));
-        assert!(path_overlap("src/a.rs", "src"));
-        assert!(!path_overlap("src/a.rs", "src/b.rs"));
-        assert!(!path_overlap("srcx", "src"));
     }
 }

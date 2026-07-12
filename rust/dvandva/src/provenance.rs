@@ -7,6 +7,12 @@ use serde_json::Value;
 use crate::gitcfg;
 use crate::util;
 
+/// The fixed `digest_algo` value the engine stamps on a bounded direct-executed
+/// `test_creation` track's covered-input digest. Single home for the value
+/// (`write.rs` and `reverify.rs` both use this constant rather than each
+/// defining their own copy).
+pub(crate) const GIT_COVERS_DIFF_ALGO: &str = "git-covers-diff-v1";
+
 /// Read the unique history snapshot for `ckpt`; missing, unreadable, or
 /// ambiguous snapshots fail closed.
 pub fn read_origin_snapshot(dir: &Path, ckpt: i64) -> Option<Value> {
@@ -75,7 +81,12 @@ pub fn on_current_cycle_ancestry(
 /// Verify that every covered path is a tracked regular non-symlink file and
 /// unchanged from the origin snapshot's commit anchor.
 pub fn commit_anchor_valid(dir: &Path, origin_snapshot_anchor: &str, covered: &[String]) -> bool {
-    if origin_snapshot_anchor.trim().is_empty() || covered.is_empty() {
+    // Defense-in-depth: reject anything that is not exactly a 40-lowercase-hex
+    // commit SHA before it ever reaches `git diff` as an argument. A stray
+    // flag-like value (leading `-`) could otherwise be parsed as a git option
+    // instead of a revision, so this closes the anchor off from ever being
+    // interpreted that way.
+    if !is_full_hex_sha(origin_snapshot_anchor) || covered.is_empty() {
         return false;
     }
     if covered.iter().any(|path| {
@@ -95,6 +106,24 @@ pub fn commit_anchor_valid(dir: &Path, origin_snapshot_anchor: &str, covered: &[
     let mut diff_args = vec!["diff", "--quiet", origin_snapshot_anchor, "--"];
     diff_args.extend(covered.iter().map(String::as_str));
     gitcfg::git_stdout(dir, &diff_args).is_some()
+}
+
+/// Whether `s` is exactly 40 lowercase hex characters -- the shape of a full
+/// git commit SHA, and never a leading `-` that `git diff` could parse as an
+/// option.
+fn is_full_hex_sha(s: &str) -> bool {
+    s.len() == 40
+        && s.bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+/// Prefix-overlap of two repo-relative paths. Single home for the check
+/// (`write.rs` and `reverify.rs` both use this rather than each defining
+/// their own copy).
+pub(crate) fn path_overlap(left: &str, right: &str) -> bool {
+    left == right
+        || left.starts_with(&format!("{right}/"))
+        || right.starts_with(&format!("{left}/"))
 }
 
 /// Whether the unit's coalesced `current // result` value is passed or approved.
@@ -164,20 +193,28 @@ fn lookup_unit(snap: &Value, kind: &str, id: &str) -> UnitLookup {
 /// Return the earliest installed checkpoint where `(kind, id)` is completed
 /// and passing, without consulting candidate-authored checkpoint fields.
 ///
+/// `scan_doc` is scanned alongside engine-written history purely for its
+/// tagged `checkpoint` (never for any freshness claim it makes about itself)
+/// -- callers that already hold the currently-installed document pass it
+/// here, but the `track_is_fresh` chain deliberately passes the CANDIDATE
+/// document instead: scanning the candidate's own checkpoint is the stricter
+/// direction, since it can only add an evaluation point at or before
+/// `current_ckpt`, never remove one the installed history already has.
+///
 /// DR53-F4: a DUPLICATE-id snapshot poisons the scan (returns `None`, fail
 /// closed) rather than being skipped, so a planted early duplicate cannot hide
 /// the real first-completion and inflate freshness. An ABSENT id keeps scanning.
 pub fn first_completed_checkpoint(
     dir: &Path,
-    cur_doc: &Value,
+    scan_doc: &Value,
     current_ckpt: i64,
     kind: &str,
     id: &str,
 ) -> Option<i64> {
     let mut documents = history_documents(dir, current_ckpt);
-    if let Some(checkpoint) = cur_doc.get("checkpoint").and_then(Value::as_i64) {
+    if let Some(checkpoint) = scan_doc.get("checkpoint").and_then(Value::as_i64) {
         if checkpoint <= current_ckpt {
-            documents.push((checkpoint, cur_doc.clone()));
+            documents.push((checkpoint, scan_doc.clone()));
         }
     }
     documents.sort_by_key(|(checkpoint, _)| *checkpoint);
@@ -323,11 +360,34 @@ mod tests {
     }
 
     #[test]
+    fn path_overlap_semantics() {
+        assert!(path_overlap("src/a.rs", "src/a.rs"));
+        assert!(path_overlap("src", "src/a.rs"));
+        assert!(path_overlap("src/a.rs", "src"));
+        assert!(!path_overlap("src/a.rs", "src/b.rs"));
+        assert!(!path_overlap("srcx", "src"));
+    }
+
+    #[test]
     fn anchor_invalid_on_empty_paths() {
         let repo = committed_repo();
         let anchor = crate::gitcfg::git_stdout(repo.path(), &["rev-parse", "HEAD"]).unwrap();
 
         assert!(!commit_anchor_valid(repo.path(), &anchor, &[]));
+    }
+
+    #[test]
+    fn anchor_invalid_on_flag_like_value() {
+        // Defense-in-depth: a leading-`-` anchor must never reach `git diff`
+        // as an argument, so it is rejected before the git call regardless of
+        // repo state.
+        let repo = committed_repo();
+
+        assert!(!commit_anchor_valid(
+            repo.path(),
+            "--upload-pack=evil",
+            &["tracked.txt".to_string()]
+        ));
     }
 
     #[test]

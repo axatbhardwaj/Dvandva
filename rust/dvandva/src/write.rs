@@ -3614,12 +3614,6 @@ fn reserved_agent_id(id: &str) -> bool {
     re.is_match(id)
 }
 
-fn path_overlap(left: &str, right: &str) -> bool {
-    left == right
-        || left.starts_with(&format!("{right}/"))
-        || right.starts_with(&format!("{left}/"))
-}
-
 fn agent_instances_write_paths_ok(cand: &Value) -> bool {
     let generated_live = |inst: &Value| {
         str_field(inst, "agent_kind") == "generated"
@@ -3654,7 +3648,7 @@ fn write_paths_overlap(a: &Value, b: &Value) -> bool {
     aw.iter().any(|pa| {
         if let Value::String(pa) = pa {
             bw.iter()
-                .any(|pb| matches!(pb, Value::String(pb) if path_overlap(pa, pb)))
+                .any(|pb| matches!(pb, Value::String(pb) if provenance::path_overlap(pa, pb)))
         } else {
             false
         }
@@ -3937,7 +3931,8 @@ fn parallel_impl_chunk(item: &Value, root_phase: &str) -> bool {
 fn work_overlap(a: &Value, b: &Value, root_status: &str) -> bool {
     let aw = effective_write_paths(a, root_status);
     let bw = effective_write_paths(b, root_status);
-    aw.iter().any(|pa| bw.iter().any(|pb| path_overlap(pa, pb)))
+    aw.iter()
+        .any(|pa| bw.iter().any(|pb| provenance::path_overlap(pa, pb)))
 }
 
 fn serialized_work(a: &Value, b: &Value) -> bool {
@@ -5036,7 +5031,7 @@ fn cycle_has_fixing_relap(baton_dir: &Path, cur_doc: &Value, current_checkpoint:
 /// and letting a later snapshot corroborate the rewrite.
 fn track_is_fresh(
     baton_dir: &Path,
-    cur_doc: &Value,
+    scan_doc: &Value,
     current_ckpt: i64,
     t: &Value,
     anchor: i64,
@@ -5048,7 +5043,7 @@ fn track_is_fresh(
     let id = str_field(t, "id");
     match provenance::first_completed_checkpoint(
         baton_dir,
-        cur_doc,
+        scan_doc,
         current_ckpt,
         "subagent_track",
         &id,
@@ -5057,10 +5052,6 @@ fn track_is_fresh(
         None => false,
     }
 }
-
-/// The fixed `digest_algo` value the engine stamps on a bounded direct-executed
-/// `test_creation` track's covered-input digest.
-const GIT_COVERS_DIFF_ALGO: &str = "git-covers-diff-v1";
 
 /// A git-covers-diff stamp triple `(covered_input_digest, digest_algo,
 /// covered_paths)`.
@@ -5126,7 +5117,7 @@ fn test_track_stamp_violation(
                     let paths: Vec<String> = closure.into_iter().collect();
                     Some(StampTriple {
                         digest: head,
-                        algo: GIT_COVERS_DIFF_ALGO.to_string(),
+                        algo: provenance::GIT_COVERS_DIFF_ALGO.to_string(),
                         paths,
                     })
                 }
@@ -6538,7 +6529,8 @@ mod delta_wiring_tests {
     #[test]
     fn fresh_or_carry_opted_in_but_not_fresh_or_carried_fails() {
         // Opts in via covers_chunks but has no carried_from_checkpoint, so
-        // decide() is ReRun and first_completed is stubbed None -> not accepted.
+        // decide() is ReRun; first_completed_checkpoint finds no engine-written
+        // history under nowhere() and returns None -> not accepted.
         let t = json!({ "id": "t", "covers_chunks": ["X"] });
         let cand = baton_with_chunk();
         assert!(!test_track_fresh_or_carry(
