@@ -5788,18 +5788,19 @@ fn lost_update_violation(cur_doc: &Value, cand: &Value) -> String {
 /// reshape an installed array into a single-key object and drop a row too,
 /// because the guard skipped the identity comparison on any status change.
 ///
-/// The terminal `termination_review`->`done` rebuild legitimately assigns fresh
-/// object KEYS unrelated to the pre-terminal array `id`s, so the installed row
-/// identity-set is NOT preserved across it and cannot be the enforced invariant
-/// there. The done gate additionally runs `stale_verification_matrix_row` (see
-/// `install`/`legal_transition`, `s4t6_object_matrix_stale_value_rejected`) to
-/// re-verify every SURVIVING row fresh (>= `implementation_family_anchor`) and
-/// complete — but that sweep iterates only the candidate's own rows and proves
-/// nothing about SET completeness (CR34-F1): a candidate could shrink a multi-row
-/// array to one fresh object row and pass it. So this edge instead enforces the
-/// expected-row-set SIZE — the invariant identity can no longer supply once the
-/// keys are re-assigned: the rebuilt matrix must retain at least as many rows as
-/// installed (`vm_row_count`). The cardinality floor (no installed row omitted)
+/// The terminal `termination_review`->`done` rebuild re-keys the object, so the
+/// raw object KEY is not the enforced identity there — but the installed row
+/// IDENTITY SET must still survive the reshape. CR40-F1 computes each side's
+/// identities via `matrix_row_label` (inner `id` first, else array index / object
+/// key) across BOTH shapes and requires the candidate to remain a SUPERSET (first
+/// missing identity -> `lost_update field=verification_matrix missing=<id>`). This
+/// subsumes the earlier CR34-F1 cardinality floor, which rejected only row
+/// SHRINKAGE and let an equal-size SUBSTITUTION (drop installed row X, add a fresh
+/// unrelated row Z) slip through. The done gate additionally runs
+/// `stale_verification_matrix_row` (see `install`/`legal_transition`,
+/// `s4t6_object_matrix_stale_value_rejected`) to re-verify every surviving row
+/// fresh (>= `implementation_family_anchor`) and complete. Identity-superset
+/// (every installed identity carried forward, which also implies the count floor)
 /// plus the stale sweep (every surviving row fresh/complete) together prove the
 /// full installed set survives fresh across the rebuild. Returns the reason, or
 /// `None` when clean / nothing installed.
@@ -5817,20 +5818,21 @@ fn verification_matrix_lost_update(cur_doc: &Value, cand: &Value) -> Option<Stri
         if !terminal_rebuild_edge {
             return Some("lost_update field=verification_matrix shape_change".to_string());
         }
-        // CR34-F1: the terminal rebuild re-keys the matrix, so per-row identity
-        // is gone as an invariant. Enforce the expected-row-set SIZE instead — the
-        // rebuilt matrix must not carry fewer rows than installed, or a row was
-        // permanently dropped (which the done-gate stale sweep cannot detect, as
-        // it only inspects surviving rows).
-        let cur_len = vm_row_count(cur_vm);
-        let cand_len = vm_row_count(cand_vm);
-        return if cand_len < cur_len {
-            Some(format!(
-                "lost_update field=verification_matrix terminal_row_dropped installed={cur_len} candidate={cand_len}"
-            ))
-        } else {
-            None
-        };
+        // CR40-F1: the terminal rebuild re-keys the object, so the raw object KEY
+        // is not the identity basis — but the INSTALLED ROW IDENTITY SET must still
+        // survive. Compute each side's identities via `matrix_row_label` (inner
+        // `id` first, else array index / object key) across BOTH shapes and require
+        // the candidate to remain a SUPERSET. The earlier CR34-F1 count floor
+        // rejected only shrinkage, so an equal-size SUBSTITUTION (drop installed
+        // row X, add a fresh unrelated row Z) slipped through; identity-superset
+        // subsumes the count floor and closes that seam. The done-gate stale sweep
+        // still re-verifies every surviving row fresh/complete.
+        let installed = vm_label_set(cur_vm);
+        let candidate = vm_label_set(cand_vm);
+        return installed
+            .iter()
+            .find(|id| !candidate.contains(id))
+            .map(|id| format!("lost_update field=verification_matrix missing={id}"));
     }
     let cand_ids = vm_id_set(cand_vm);
     cur_ids
@@ -5852,14 +5854,21 @@ fn vm_id_set(v: Option<&Value>) -> Vec<String> {
     }
 }
 
-/// The row COUNT of a `verification_matrix`: array length or object entry count
-/// (0 when absent / scalar). CR34-F1 uses this as the terminal-rebuild
-/// expected-row-set size once the reshape has erased the per-row identity basis.
-fn vm_row_count(v: Option<&Value>) -> usize {
+/// The identity label-set of a `verification_matrix` via [`matrix_row_label`]
+/// across BOTH shapes: each array row / object value is labelled by its inner
+/// non-empty `id`, else the array index / object key. CR40-F1 uses this to
+/// preserve the installed row identity set across the terminal rebuild edge,
+/// which re-keys the object but must still carry every installed identity forward
+/// (an equal-count substitution is caught here; a bare count floor missed it).
+fn vm_label_set(v: Option<&Value>) -> Vec<String> {
     match v {
-        Some(Value::Array(a)) => a.len(),
-        Some(Value::Object(m)) => m.len(),
-        _ => 0,
+        Some(Value::Array(items)) => items
+            .iter()
+            .enumerate()
+            .map(|(i, row)| matrix_row_label(row, &i.to_string()))
+            .collect(),
+        Some(Value::Object(m)) => m.iter().map(|(k, row)| matrix_row_label(row, k)).collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -6560,6 +6569,10 @@ mod delta_wiring_tests {
         );
     }
 
+    // CR40-F1: the terminal rebuild re-keys the object, so the candidate must
+    // carry the installed identity via its row's inner `id` (matrix_row_label),
+    // not the fresh object KEY. Here the re-keyed row preserves vm-1, so the
+    // shape change is allowed.
     #[test]
     fn lost_update_cross_status_shape_change_allowed() {
         let cur = json!({
@@ -6568,15 +6581,34 @@ mod delta_wiring_tests {
         });
         let cand = json!({
             "status": "done",
-            "verification_matrix": { "row-a": { "result": "passed" } }
+            "verification_matrix": { "row-a": { "id": "vm-1", "result": "passed" } }
         });
         assert_eq!(lost_update_violation(&cur, &cand), "");
     }
 
-    // CR34-F1: the terminal rebuild re-keys the matrix, so a permanent row DROP is
-    // invisible to the id-superset check and to the done-gate stale sweep (which
-    // only inspects surviving rows). The cardinality floor rejects a rebuild that
-    // shrinks the installed row set (a 2-row array replaced by 1 fresh object row).
+    // CR40-F1: a terminal rebuild that re-keys the object but preserves every
+    // installed identity via each row's inner `id` is allowed, even though the
+    // object KEYS (k1/k2) are unrelated to the pre-terminal array ids.
+    #[test]
+    fn lost_update_terminal_reshape_rekeyed_identity_preserved_allowed() {
+        let cur = json!({
+            "status": "termination_review",
+            "verification_matrix": [ { "id": "vm-1" }, { "id": "vm-2" } ]
+        });
+        let cand = json!({
+            "status": "done",
+            "verification_matrix": {
+                "k1": { "id": "vm-1", "result": "passed" },
+                "k2": { "id": "vm-2", "result": "passed" }
+            }
+        });
+        assert_eq!(lost_update_violation(&cur, &cand), "");
+    }
+
+    // CR40-F1: the terminal rebuild must preserve the installed row IDENTITY SET.
+    // Here the candidate preserves vm-1 (inner id) but drops vm-2, so the
+    // identity-superset guard rejects it as `missing=vm-2` (the done-gate stale
+    // sweep alone could not detect the drop — it only inspects surviving rows).
     #[test]
     fn lost_update_terminal_reshape_dropping_row_rejected() {
         let cur = json!({
@@ -6585,34 +6617,36 @@ mod delta_wiring_tests {
         });
         let cand = json!({
             "status": "done",
-            "verification_matrix": { "row-a": { "result": "passed" } }
+            "verification_matrix": { "row-a": { "id": "vm-1", "result": "passed" } }
         });
         assert_eq!(
             lost_update_violation(&cur, &cand),
-            "lost_update field=verification_matrix terminal_row_dropped installed=2 candidate=1"
+            "lost_update field=verification_matrix missing=vm-2"
         );
     }
 
-    // CR34-F1: vm_row_count is the terminal expected-row-set size — array length,
-    // object entry count, or 0 for an absent/scalar (unshaped) matrix.
+    // CR40-F1: vm_label_set labels each matrix row by its inner `id` (both shapes),
+    // falling back to the array index / object key when no inner id is present.
     #[test]
-    fn vm_row_count_counts_arrays_objects_and_unshaped() {
+    fn vm_label_set_labels_by_inner_id_then_index_or_key() {
         assert_eq!(
-            vm_row_count(Some(&json!([{ "id": "a" }, { "id": "b" }]))),
-            2
+            vm_label_set(Some(&json!([{ "id": "a" }, { "b": 1 }]))),
+            vec!["a".to_string(), "1".to_string()]
         );
         assert_eq!(
-            vm_row_count(Some(&json!({ "row-a": {}, "row-b": {}, "row-c": {} }))),
-            3
+            vm_label_set(Some(&json!({ "k1": { "id": "a" }, "k2": {} }))),
+            vec!["a".to_string(), "k2".to_string()]
         );
-        assert_eq!(vm_row_count(None), 0);
-        assert_eq!(vm_row_count(Some(&json!("scalar"))), 0);
+        assert!(vm_label_set(None).is_empty());
+        assert!(vm_label_set(Some(&json!("scalar"))).is_empty());
     }
 
-    // CR34-F1: a terminal rebuild that re-keys but retains the row count (2 -> 2)
-    // is still allowed here; the done-gate stale sweep proves the survivors fresh.
+    // CR40-F1: a terminal rebuild that re-keys the object and retains the row
+    // count (2 -> 2) but SUBSTITUTES an installed identity (drop vm-2, add fresh
+    // vm-3) is rejected. Row count alone cannot prove identity-set survival; the
+    // identity-superset guard flags the dropped vm-2.
     #[test]
-    fn lost_update_terminal_reshape_preserving_count_allowed() {
+    fn lost_update_terminal_reshape_equal_count_substitution_rejected() {
         let cur = json!({
             "status": "termination_review",
             "verification_matrix": [ { "id": "vm-1" }, { "id": "vm-2" } ]
@@ -6620,11 +6654,14 @@ mod delta_wiring_tests {
         let cand = json!({
             "status": "done",
             "verification_matrix": {
-                "row-a": { "result": "passed" },
-                "row-b": { "result": "passed" }
+                "row-a": { "id": "vm-1", "result": "passed" },
+                "row-b": { "id": "vm-3", "result": "passed" }
             }
         });
-        assert_eq!(lost_update_violation(&cur, &cand), "");
+        assert_eq!(
+            lost_update_violation(&cur, &cand),
+            "lost_update field=verification_matrix missing=vm-2"
+        );
     }
 
     // CR29-F1: a NON-terminal cross-status reshape (e.g. test_creation ->

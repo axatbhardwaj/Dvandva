@@ -1918,9 +1918,12 @@ fn cr29_f1_non_terminal_cross_status_reshape_rejected() {
 }
 
 /// Proves the terminal termination_review->done matrix rebuild legitimately
-/// reshapes array->object: lost_update ALLOWS the cross-status reshape, and the
-/// stale_verification_matrix_row sweep still re-verifies every row fresh (row-b
-/// is stale here, so terminal integrity holds).
+/// reshapes array->object: lost_update ALLOWS the cross-status reshape when the
+/// candidate PRESERVES the installed identity set (CR40-F1: each re-keyed row
+/// carries its installed inner `id`), and the stale_verification_matrix_row sweep
+/// still re-verifies every row fresh (row-b, id verify-100-percent-test-coverage,
+/// is stale here, so terminal integrity holds and the stale gate — not
+/// lost_update — is what fires).
 #[test]
 fn cr21_f1_cross_status_done_reshape_allowed_then_stale_swept() {
     let d = tmp();
@@ -1939,25 +1942,32 @@ fn cr21_f1_cross_status_done_reshape_allowed_then_stale_swept() {
         v["prativadi_final_approval"] = json!(true);
         run_explainer_reviews(v);
         explainer_verification_track(v);
+        // CR40-F1: re-key the installed two-row seed array into an object while
+        // preserving both installed identities via inner `id`, so lost_update
+        // passes and the stale sweep (not the identity guard) is exercised. row-b
+        // (verify-100-percent-test-coverage) is missing a checkpoint -> stale.
         v["verification_matrix"] = json!({
-            "row-a": {"result": "passed", "evidence_refs": ["e"], "evidence_checkpoint": 5},
-            "row-b": {"result": "passed", "evidence_refs": ["e"]}
+            "row-a": {"id": "verify-research-coverage", "result": "passed", "evidence_refs": ["e"], "evidence_checkpoint": 5},
+            "row-b": {"id": "verify-100-percent-test-coverage", "result": "passed", "evidence_refs": ["e"]}
         });
     });
     run(&b, &n).assert_contains(
         "cr21-f1 cross-status done reshape allowed then stale swept",
         23,
-        "stale_verification_matrix row=row-b",
+        "stale_verification_matrix row=verify-100-percent-test-coverage",
     );
 }
 
-/// CR34-F1 regression: the terminal `termination_review`->`done` reshape must not
-/// let a candidate PERMANENTLY DROP an installed row. Here the installed baton
-/// carries the default two-row array matrix; the done candidate rebuilds it as a
-/// SINGLE fresh+complete object row. Every surviving row is fresh, so the
-/// stale_verification_matrix_row sweep is satisfied — yet an installed row was
-/// silently omitted. Before the cardinality-floor fix this reached exit 0 (the
-/// drop slipped past both checks); it must now fail lost_update.
+/// CR34-F1 / CR40-F1 regression: the terminal `termination_review`->`done`
+/// reshape must not let a candidate PERMANENTLY DROP an installed row. Here the
+/// installed baton carries the default two-row array matrix; the done candidate
+/// rebuilds it as a SINGLE fresh+complete object row that PRESERVES
+/// verify-research-coverage (inner `id`) but drops verify-100-percent-test-coverage.
+/// The survivor is fresh, so the stale_verification_matrix_row sweep is satisfied
+/// — yet an installed identity was silently omitted. It must fail lost_update.
+/// (CR40-F1 replaced the CR34-F1 cardinality floor with the unified
+/// identity-superset `missing=<id>` vocabulary, which also catches equal-count
+/// substitution, not only shrinkage.)
 #[test]
 fn cr34_f1_terminal_reshape_dropping_installed_row_rejected() {
     let d = tmp();
@@ -1976,10 +1986,13 @@ fn cr34_f1_terminal_reshape_dropping_installed_row_rejected() {
         v["prativadi_final_approval"] = json!(true);
         run_explainer_reviews(v);
         explainer_verification_track(v);
-        // Rebuild the installed two-row array into ONE fresh+complete object row:
-        // the survivor passes the stale sweep, but the row set shrank 2 -> 1.
+        // Rebuild the installed two-row array into ONE fresh+complete object row
+        // that preserves verify-research-coverage (inner id) but drops
+        // verify-100-percent-test-coverage: the survivor passes the stale sweep,
+        // but the installed identity set shrank 2 -> 1.
         v["verification_matrix"] = json!({
             "row-a": {
+                "id": "verify-research-coverage",
                 "result": "passed",
                 "current": "passed",
                 "evidence_refs": ["e"],
@@ -1990,7 +2003,62 @@ fn cr34_f1_terminal_reshape_dropping_installed_row_rejected() {
     run(&b, &n).assert_contains(
         "cr34-f1 terminal reshape dropping installed row",
         23,
-        "lost_update field=verification_matrix terminal_row_dropped installed=2 candidate=1",
+        "lost_update field=verification_matrix missing=verify-100-percent-test-coverage",
+    );
+}
+
+/// CR40-F1 regression (red-first): the terminal `termination_review`->`done`
+/// reshape must preserve the INSTALLED row IDENTITY SET, not merely the row
+/// COUNT. The installed baton carries the default two-row array matrix
+/// {verify-research-coverage, verify-100-percent-test-coverage}; the done
+/// candidate rebuilds it as an EQUAL-COUNT (2 -> 2) object that PRESERVES
+/// verify-research-coverage but SUBSTITUTES verify-100-percent-test-coverage with
+/// an unrelated fresh row. Every candidate row is fresh+complete (stale sweep
+/// satisfied) and the count is equal (retired cardinality floor satisfied), yet
+/// an installed identity was silently dropped. The identity-superset guard must
+/// reject it as `missing=verify-100-percent-test-coverage`.
+#[test]
+fn cr40_f1_terminal_reshape_equal_count_substitution_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    seed_done_artifacts(d.path());
+    make_baton_v3(
+        &b,
+        "termination_review",
+        "team",
+        4,
+        configure_terminal_current,
+    );
+    make_baton_v3(&n, "done", "team", 5, |v| {
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+        explainer_verification_track(v);
+        // Equal-count (2 -> 2) reshape, ALL rows fresh+complete, but the second
+        // installed identity is SUBSTITUTED with an unrelated fresh row: the count
+        // floor and the stale sweep both pass, yet an installed identity is gone.
+        v["verification_matrix"] = json!({
+            "row-a": {
+                "id": "verify-research-coverage",
+                "result": "passed",
+                "current": "passed",
+                "evidence_refs": ["e"],
+                "evidence_checkpoint": 5
+            },
+            "row-x": {
+                "id": "substitute-fresh-row",
+                "result": "passed",
+                "current": "passed",
+                "evidence_refs": ["e"],
+                "evidence_checkpoint": 5
+            }
+        });
+    });
+    run(&b, &n).assert_contains(
+        "cr40-f1 terminal reshape equal-count substitution",
+        23,
+        "lost_update field=verification_matrix missing=verify-100-percent-test-coverage",
     );
 }
 

@@ -4096,16 +4096,22 @@ fn s4t6_object_matrix_stale_value_rejected() {
         v["prativadi_final_approval"] = json!(true);
         run_explainer_reviews(v);
         explainer_verification_track(v);
-        // object matrix: row-a fresh, row-b missing a checkpoint -> stale (row-b).
+        // CR40-F1: the terminal rebuild must preserve the installed row identity
+        // set, so give the re-keyed object rows inner `id`s equal to the two seed
+        // array ids (verify-research-coverage / verify-100-percent-test-coverage);
+        // this keeps lost_update clean so the stale sweep — this test's actual
+        // gate — is what fires. row-a is fresh; row-b (verify-100-percent-test-
+        // coverage) is missing a checkpoint -> stale. The stale label is now the
+        // matrix_row_label (inner id) of the stale row.
         v["verification_matrix"] = json!({
-            "row-a": {"result": "passed", "evidence_refs": ["e"], "evidence_checkpoint": 5},
-            "row-b": {"result": "passed", "evidence_refs": ["e"]}
+            "row-a": {"id": "verify-research-coverage", "result": "passed", "evidence_refs": ["e"], "evidence_checkpoint": 5},
+            "row-b": {"id": "verify-100-percent-test-coverage", "result": "passed", "evidence_refs": ["e"]}
         });
     });
     run(&b, &n).assert_contains(
         "s4t6 object matrix stale value",
         23,
-        "stale_verification_matrix row=row-b",
+        "stale_verification_matrix row=verify-100-percent-test-coverage",
     );
 }
 
