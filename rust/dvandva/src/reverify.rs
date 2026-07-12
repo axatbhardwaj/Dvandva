@@ -66,13 +66,13 @@ pub fn decide(
     let Some(origin) = field(unit, "carried_from_checkpoint").and_then(json_int) else {
         return Decision::ReRun;
     };
-    // guard (a): the closure must be engine-derivable and non-empty.
+    // guard (a): the closure must be engine-derivable. `derive_covered_closure`
+    // never returns `Some` of an EMPTY set (its own final `Some(paths)` is only
+    // reached after at least one seed chunk contributed a path), so no separate
+    // emptiness re-check is needed here.
     let Some(closure) = derive_covered_closure(baton, unit) else {
         return Decision::ReRun;
     };
-    if closure.is_empty() {
-        return Decision::ReRun;
-    }
     // guard (b): not a terminal-approval unit, not a global / unbounded unit.
     if is_terminal_approval_unit(unit) || is_global_unit(unit) {
         return Decision::ReRun;
@@ -89,12 +89,17 @@ pub fn decide(
     if unit_id.is_empty() {
         return Decision::ReRun;
     }
-    if !provenance::on_current_cycle_ancestry(dir, baton, current_ckpt, current_phase, origin) {
-        return Decision::ReRun;
-    }
+    // Read the origin snapshot FIRST (its absence is the fail-closed default),
+    // THEN require it to sit on the current phase-cycle lineage. Ordering the
+    // read before the ancestry check keeps BOTH arms reachable in coverage: a
+    // missing snapshot is rejected right here, an off-lineage-but-readable
+    // snapshot by the ancestry guard immediately below.
     let Some(snap) = provenance::read_origin_snapshot(dir, origin) else {
         return Decision::ReRun;
     };
+    if !provenance::on_current_cycle_ancestry(dir, baton, current_ckpt, current_phase, origin) {
+        return Decision::ReRun;
+    }
     let Some(orig_unit) = provenance::find_unit(&snap, kind, &unit_id) else {
         return Decision::ReRun;
     };
@@ -103,6 +108,15 @@ pub fn decide(
     }
     // no carry-of-a-carry: the origin must itself be a direct execution.
     if field(&orig_unit, "carried_from_checkpoint").is_some() {
+        return Decision::ReRun;
+    }
+    // CR21-F3: for the honored `subagent_track` carry (the ONLY kind whose
+    // Carry decision A2 acts on), the origin must be a COMPLETE qualifying
+    // DIRECT test-creation execution — not merely `was_pass`. A
+    // `verification_matrix_row` origin is never honored (reviews / the terminal
+    // done-gate never consult `decide`), so its weaker legacy shape is left
+    // untouched here.
+    if kind == "subagent_track" && !origin_direct_test_creation_shape_ok(&orig_unit) {
         return Decision::ReRun;
     }
     // guard (e): closure-membership binding (SP-3) then anti-substitution
@@ -188,9 +202,9 @@ pub fn derive_covered_closure(baton: &Value, unit: &Value) -> Option<BTreeSet<St
             }
         }
     }
-    if paths.is_empty() {
-        return None;
-    }
+    // `seeds` was checked non-empty at entry, and every processed chunk either
+    // returns `None` early or inserts at least one validated path, so `paths`
+    // is guaranteed non-empty here — no emptiness re-check is needed.
     Some(paths)
 }
 
@@ -247,10 +261,12 @@ fn is_terminal_approval_unit(unit: &Value) -> bool {
         "terminal",
         "final_approval",
     ];
-    ["gate", "phase", "kind", "track", "name"].iter().any(|key| {
-        let v = str_field(unit, key).trim().to_ascii_lowercase();
-        TERMINAL_TOKENS.contains(&v.as_str())
-    })
+    ["gate", "phase", "kind", "track", "name"]
+        .iter()
+        .any(|key| {
+            let v = str_field(unit, key).trim().to_ascii_lowercase();
+            TERMINAL_TOKENS.contains(&v.as_str())
+        })
 }
 
 /// A global / unbounded unit (never carries): an explicit `global: true` marker,
@@ -260,7 +276,32 @@ fn is_global_unit(unit: &Value) -> bool {
         return true;
     }
     str_vec_field(unit, "covers").iter().any(|c| c == "*")
-        || str_vec_field(unit, "covers_chunks").iter().any(|c| c == "*")
+        || str_vec_field(unit, "covers_chunks")
+            .iter()
+            .any(|c| c == "*")
+}
+
+/// The fixed `digest_algo` value the engine stamps on a bounded direct-executed
+/// test-creation covered-input digest (mirrors `write.rs::GIT_COVERS_DIFF_ALGO`;
+/// reimplemented locally rather than promoting the private constant).
+const GIT_COVERS_DIFF_ALGO: &str = "git-covers-diff-v1";
+
+/// CR21-F3: whether `orig_unit` is a COMPLETE qualifying DIRECT test-creation
+/// execution eligible to back a same-id carry — not merely `was_pass`. Requires
+/// `status=completed`, a passing result, the test-creation `track` family, an
+/// `owner`/`owner_role` present, non-empty `outputs` + `evidence_refs`, and the
+/// exact `git-covers-diff-v1` stamp algo. (The no-carry-of-a-carry check lives
+/// in `decide` so the "origin is a direct execution" invariant is shared with
+/// the `verification_matrix_row` kind.) Any missing piece fails closed.
+fn origin_direct_test_creation_shape_ok(orig_unit: &Value) -> bool {
+    str_field(orig_unit, "status") == "completed"
+        && provenance::was_pass(orig_unit)
+        && str_field(orig_unit, "track") == "test-creation"
+        && !str_field(orig_unit, "owner").trim().is_empty()
+        && !str_field(orig_unit, "owner_role").trim().is_empty()
+        && !str_vec_field(orig_unit, "outputs").is_empty()
+        && !str_vec_field(orig_unit, "evidence_refs").is_empty()
+        && str_field(orig_unit, "digest_algo") == GIT_COVERS_DIFF_ALGO
 }
 
 /// True iff any OPEN finding intersects `closure`. A finding is open per the
@@ -417,7 +458,15 @@ mod tests {
         let baton = baton_fixture();
         let unit = json!({ "id": "t1", "covers_chunks": ["A"] });
         assert_eq!(
-            decide(&baton, nowhere(), &unit, "subagent_track", 42, "1", nowhere()),
+            decide(
+                &baton,
+                nowhere(),
+                &unit,
+                "subagent_track",
+                42,
+                "1",
+                nowhere()
+            ),
             Decision::ReRun
         );
     }
@@ -432,7 +481,15 @@ mod tests {
             "gate": "done"
         });
         assert_eq!(
-            decide(&baton, nowhere(), &unit, "verification_matrix_row", 42, "1", nowhere()),
+            decide(
+                &baton,
+                nowhere(),
+                &unit,
+                "verification_matrix_row",
+                42,
+                "1",
+                nowhere()
+            ),
             Decision::ReRun
         );
     }
@@ -447,7 +504,15 @@ mod tests {
             "global": true
         });
         assert_eq!(
-            decide(&baton, nowhere(), &global_flag, "subagent_track", 42, "1", nowhere()),
+            decide(
+                &baton,
+                nowhere(),
+                &global_flag,
+                "subagent_track",
+                42,
+                "1",
+                nowhere()
+            ),
             Decision::ReRun
         );
         let wildcard = json!({
@@ -457,7 +522,15 @@ mod tests {
             "covers": ["*"]
         });
         assert_eq!(
-            decide(&baton, nowhere(), &wildcard, "subagent_track", 42, "1", nowhere()),
+            decide(
+                &baton,
+                nowhere(),
+                &wildcard,
+                "subagent_track",
+                42,
+                "1",
+                nowhere()
+            ),
             Decision::ReRun
         );
     }
@@ -474,7 +547,15 @@ mod tests {
             "covers_chunks": ["A"]
         });
         assert_eq!(
-            decide(&baton, nowhere(), &unit, "subagent_track", 42, "1", nowhere()),
+            decide(
+                &baton,
+                nowhere(),
+                &unit,
+                "subagent_track",
+                42,
+                "1",
+                nowhere()
+            ),
             Decision::ReRun
         );
     }
@@ -489,7 +570,15 @@ mod tests {
             "covers_chunks": ["A"]
         });
         assert_eq!(
-            decide(&baton, nowhere(), &unit, "subagent_track", 42, "1", nowhere()),
+            decide(
+                &baton,
+                nowhere(),
+                &unit,
+                "subagent_track",
+                42,
+                "1",
+                nowhere()
+            ),
             Decision::ReRun
         );
     }
@@ -504,7 +593,15 @@ mod tests {
             "covers_chunks": ["nope"]
         });
         assert_eq!(
-            decide(&baton, nowhere(), &unit, "subagent_track", 42, "1", nowhere()),
+            decide(
+                &baton,
+                nowhere(),
+                &unit,
+                "subagent_track",
+                42,
+                "1",
+                nowhere()
+            ),
             Decision::ReRun
         );
     }
@@ -542,7 +639,11 @@ mod tests {
 
     #[test]
     fn derive_closure_rejects_unnormalizable() {
-        for bad in [json!(["/abs/x.rs"]), json!(["../up.rs"]), json!(["src/*.rs"])] {
+        for bad in [
+            json!(["/abs/x.rs"]),
+            json!(["../up.rs"]),
+            json!(["src/*.rs"]),
+        ] {
             let baton = json!({
                 "work_split": [{ "id": "A", "write_paths": bad, "read_paths": [] }]
             });
@@ -583,19 +684,25 @@ mod tests {
     fn is_terminal_approval_unit_variants() {
         assert!(is_terminal_approval_unit(&json!({ "terminal": true })));
         assert!(is_terminal_approval_unit(&json!({ "gate": "done" })));
-        assert!(is_terminal_approval_unit(&json!({ "phase": "termination_review" })));
+        assert!(is_terminal_approval_unit(
+            &json!({ "phase": "termination_review" })
+        ));
         assert!(!is_terminal_approval_unit(&json!({ "phase": "1" })));
-        assert!(!is_terminal_approval_unit(&json!({ "gate": "test_creation_to_cross_review_ok" })));
+        assert!(!is_terminal_approval_unit(
+            &json!({ "gate": "test_creation_to_cross_review_ok" })
+        ));
     }
 
     #[test]
     fn open_finding_touches_closure_branches() {
         let closure: BTreeSet<String> = ["src/a.rs".to_string()].into_iter().collect();
         // closed finding ⇒ no block
-        let closed = json!({ "findings": [{ "id": "f", "status": "resolved", "paths": ["src/a.rs"] }] });
+        let closed =
+            json!({ "findings": [{ "id": "f", "status": "resolved", "paths": ["src/a.rs"] }] });
         assert!(!open_finding_touches_closure(&closed, &closure));
         // open finding, non-overlapping path ⇒ no block
-        let disjoint = json!({ "findings": [{ "id": "f", "status": "open", "paths": ["src/z.rs"] }] });
+        let disjoint =
+            json!({ "findings": [{ "id": "f", "status": "open", "paths": ["src/z.rs"] }] });
         assert!(!open_finding_touches_closure(&disjoint, &closure));
         // open finding, overlapping path ⇒ block
         let hit = json!({ "findings": [{ "id": "f", "status": "open", "paths": ["src/a.rs"] }] });
@@ -607,7 +714,10 @@ mod tests {
         let bare = json!({ "findings": ["something is wrong"] });
         assert!(open_finding_touches_closure(&bare, &closure));
         // no findings ⇒ no block
-        assert!(!open_finding_touches_closure(&json!({ "findings": [] }), &closure));
+        assert!(!open_finding_touches_closure(
+            &json!({ "findings": [] }),
+            &closure
+        ));
     }
 
     #[test]

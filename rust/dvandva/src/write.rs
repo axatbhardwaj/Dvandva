@@ -2367,8 +2367,7 @@ fn decide_transition(
     }
     if legal && cx.is_v2 && cur_status == "test_creation" && cx.new_status == "cross_review" {
         let anchor = implementation_family_anchor(baton_dir, cur_doc, cur_checkpoint_i64);
-        let repo_root =
-            gitcfg::repo_toplevel(baton_dir).unwrap_or_else(|| baton_dir.to_path_buf());
+        let repo_root = gitcfg::repo_toplevel(baton_dir).unwrap_or_else(|| baton_dir.to_path_buf());
         // Engine-stamp lifecycle (RR-3, SP-1) — scoped to test_creation
         // subagent_tracks, split direct-vs-carry. A forged/missing stamp triple
         // is a hard exit 23 (a legacy track carries no triple and is a no-op).
@@ -4993,12 +4992,39 @@ fn test_track_fresh_or_carry(
 ) -> bool {
     let opted_in =
         field(t, "covers_chunks").is_some() || field(t, "carried_from_checkpoint").is_some();
-    if !opted_in {
-        return true; // legacy direct track: byte-identical (VM-7)
+    // CR21-F2: a metadata-free (legacy) track keeps its byte-identical bypass
+    // ONLY on a genuine FIRST traversal of the test_creation gate. On a RE-LAP
+    // re-traversal — signalled by a fixing-family status (cross_fixing /
+    // phase_fixing) already present in the engine-written cycle history — EVERY
+    // test-creation track, metadata or not, must prove first-completed >= anchor
+    // OR validly carry, so a stale same-id legacy track cannot ride a re-lap
+    // through unchanged while a first-pass legacy baton still validates (VM-7).
+    if !opted_in && !cycle_has_fixing_relap(baton_dir, baton, current_ckpt) {
+        return true; // first-traversal legacy direct track: byte-identical (VM-7)
     }
     track_is_fresh(baton_dir, baton, current_ckpt, t, anchor)
-        || reverify::decide(baton, baton_dir, t, "subagent_track", current_ckpt, phase, repo_root)
-            == reverify::Decision::Carry
+        || reverify::decide(
+            baton,
+            baton_dir,
+            t,
+            "subagent_track",
+            current_ckpt,
+            phase,
+            repo_root,
+        ) == reverify::Decision::Carry
+}
+
+/// CR21-F2 re-lap detection: whether the engine-written cycle history (the
+/// [`collect_cycle_rows`] scan that also feeds [`implementation_family_anchor`])
+/// already shows a fixing-family status — `cross_fixing` or `phase_fixing`. A
+/// fixing status is only reached on a RE-TRAVERSAL of the
+/// test_creation -> cross_review edge (a first pass has none), so its presence
+/// means a metadata-free legacy test-creation track may no longer bypass the
+/// FRESH-or-CARRY rule.
+fn cycle_has_fixing_relap(baton_dir: &Path, cur_doc: &Value, current_checkpoint: i64) -> bool {
+    collect_cycle_rows(baton_dir, cur_doc, current_checkpoint, false)
+        .iter()
+        .any(|r| matches!(r.status.as_str(), "cross_fixing" | "phase_fixing"))
 }
 
 /// DR2-R5: FRESH is proven SOLELY by an engine-derived first-completed
@@ -5015,10 +5041,11 @@ fn track_is_fresh(
     t: &Value,
     anchor: i64,
 ) -> bool {
+    // An empty id needs no explicit guard: `first_completed_checkpoint` resolves
+    // no completed+passing appearance for it (upstream `bad_subagent_tracks`
+    // already rejects an empty subagent_track id before this gate runs), so it
+    // fails closed as `None` -> not fresh.
     let id = str_field(t, "id");
-    if id.is_empty() {
-        return false;
-    }
     match provenance::first_completed_checkpoint(
         baton_dir,
         cur_doc,
@@ -5710,23 +5737,13 @@ fn findings_ids(v: Option<&Value>) -> Vec<String> {
 /// dropped id yields the `lost_update field=<f> missing=<id>` reason (empty
 /// string when clean).
 fn lost_update_violation(cur_doc: &Value, cand: &Value) -> String {
-    // RR-6a: a 5th id-set protects verification_matrix rows by id. The row id is
-    // the array shape's identity (each row's `id` field); an OBJECT-shaped matrix
-    // is key-identified rather than id-field-identified, so the id-superset guard
-    // is only defined when both sides are arrays. A shape mismatch (or an
-    // object matrix) leaves the row-integrity check to the terminal
-    // stale_verification_matrix_row sweep, which re-verifies every row at done.
-    let (vm_cur, vm_cand) = match (
-        field(cur_doc, "verification_matrix"),
-        field(cand, "verification_matrix"),
-    ) {
-        (Some(Value::Array(_)), Some(Value::Array(_))) => (
-            id_set(field(cur_doc, "verification_matrix")),
-            id_set(field(cand, "verification_matrix")),
-        ),
-        _ => (Vec::new(), Vec::new()),
-    };
-    let checks: [(&str, Vec<String>, Vec<String>); 5] = [
+    // RR-6a / CR21-F1: the verification_matrix dimension is protected for BOTH
+    // valid shapes and handled ahead of the uniform id-set loop because a shape
+    // reshape needs its own reason (see verification_matrix_lost_update).
+    if let Some(reason) = verification_matrix_lost_update(cur_doc, cand) {
+        return reason;
+    }
+    let checks: [(&str, Vec<String>, Vec<String>); 4] = [
         (
             "subagent_tracks",
             id_set(field(cur_doc, "subagent_tracks")),
@@ -5747,7 +5764,6 @@ fn lost_update_violation(cur_doc: &Value, cand: &Value) -> String {
             findings_ids(field(cur_doc, "findings")),
             findings_ids(field(cand, "findings")),
         ),
-        ("verification_matrix", vm_cur, vm_cand),
     ];
     for (name, installed, candidate) in &checks {
         if let Some(missing) = installed.iter().find(|id| !candidate.contains(id)) {
@@ -5755,6 +5771,56 @@ fn lost_update_violation(cur_doc: &Value, cand: &Value) -> String {
         }
     }
     String::new()
+}
+
+/// CR21-F1: the `verification_matrix` dimension of the lost_update superset
+/// guard, defined for BOTH valid matrix shapes. Array rows are identified by
+/// their non-empty `id`, object matrices by their stable object KEY; the
+/// candidate identity-set must remain a SUPERSET of the installed one (a dropped
+/// row/key yields `lost_update field=verification_matrix missing=<id>`).
+///
+/// A genuine array<->object reshape erases the identity basis. It is REJECTED as
+/// `shape_change` on a SAME-STATUS team write (the finding's evasion vector — a
+/// same-status retry flipping shape to slip a row deletion past the id-superset
+/// guard). Across a status TRANSITION it is allowed: the only legitimate reshape
+/// is the terminal `termination_review`->`done` matrix rebuild, whose
+/// `stale_verification_matrix_row` sweep independently re-verifies every row
+/// fresh against `implementation_family_anchor` (see
+/// `s4t6_object_matrix_stale_value_rejected`). Returns the reason, or `None`
+/// when clean / nothing installed.
+fn verification_matrix_lost_update(cur_doc: &Value, cand: &Value) -> Option<String> {
+    let cur_vm = field(cur_doc, "verification_matrix");
+    let cand_vm = field(cand, "verification_matrix");
+    let cur_ids = vm_id_set(cur_vm);
+    if cur_ids.is_empty() {
+        return None; // nothing installed to protect (absent / empty / unshaped)
+    }
+    if matches!(cur_vm, Some(Value::Array(_))) != matches!(cand_vm, Some(Value::Array(_))) {
+        // array<->object reshape (or the matrix dropped to an unshaped candidate).
+        return if str_field(cur_doc, "status") == str_field(cand, "status") {
+            Some("lost_update field=verification_matrix shape_change".to_string())
+        } else {
+            None
+        };
+    }
+    let cand_ids = vm_id_set(cand_vm);
+    cur_ids
+        .iter()
+        .find(|id| !cand_ids.contains(id))
+        .map(|id| format!("lost_update field=verification_matrix missing={id}"))
+}
+
+/// The identity-set of a `verification_matrix`: array rows by their non-empty
+/// `id` field (via [`id_set`]), object matrices by their stable object KEY. An
+/// absent / scalar / empty matrix has no identity.
+fn vm_id_set(v: Option<&Value>) -> Vec<String> {
+    if v.and_then(Value::as_array).is_some() {
+        id_set(v)
+    } else {
+        v.and_then(Value::as_object)
+            .map(|map| map.keys().cloned().collect())
+            .unwrap_or_default()
+    }
 }
 
 /// dispatch_requests preservation + per-id integrity (identity guard): unlike the
@@ -6161,7 +6227,10 @@ mod delta_wiring_tests {
         let repo = tempfile::tempdir().unwrap();
         git_ok(repo.path(), &["init", "-q"]);
         git_ok(repo.path(), &["config", "user.name", "Dvandva Test"]);
-        git_ok(repo.path(), &["config", "user.email", "dvandva@example.test"]);
+        git_ok(
+            repo.path(),
+            &["config", "user.email", "dvandva@example.test"],
+        );
         std::fs::write(repo.path().join("seed.txt"), "seed\n").unwrap();
         git_ok(repo.path(), &["add", "seed.txt"]);
         git_ok(repo.path(), &["commit", "-q", "-m", "seed"]);
@@ -6309,8 +6378,9 @@ mod delta_wiring_tests {
 
     #[test]
     fn stamp_carried_origin_unreadable_rejected() {
-        // read_origin_snapshot is the frozen stub (None) -> carried claims cannot
-        // resolve an origin yet -> fail-closed exit-23 subreason.
+        // `nowhere()` has no history directory, so `read_origin_snapshot` returns
+        // None and a carried claim cannot resolve its origin -> fail-closed
+        // exit-23 subreason.
         let cand = baton_with_chunk();
         let unit = json!({
             "id": "t",
@@ -6336,7 +6406,8 @@ mod delta_wiring_tests {
 
     #[test]
     fn track_is_fresh_false_without_engine_first_completed() {
-        // first_completed_checkpoint is the frozen stub (None) -> not fresh.
+        // No engine-written history for this id, so `first_completed_checkpoint`
+        // returns None -> not fresh.
         let t = json!({ "id": "t" });
         assert!(!track_is_fresh(nowhere(), &json!({}), 10, &t, 0));
     }
@@ -6403,13 +6474,71 @@ mod delta_wiring_tests {
         assert_eq!(lost_update_violation(&cur, &cand), "");
     }
 
+    // CR21-F1: object matrices are identified by object KEY and superset-checked
+    // just like array rows; a dropped key is a lost_update.
     #[test]
-    fn lost_update_matrix_shape_mismatch_is_skipped() {
-        // Array current, object candidate: the id-superset guard is undefined
-        // across shapes, so the verification_matrix dimension is skipped (row
-        // integrity is enforced by stale_verification_matrix_row at done).
-        let cur = json!({ "verification_matrix": [ { "id": "vm-1" } ] });
+    fn lost_update_flags_dropped_object_matrix_key() {
+        let cur = json!({
+            "verification_matrix": { "vm-1": { "result": "passed" }, "vm-2": { "result": "passed" } }
+        });
         let cand = json!({
+            "verification_matrix": { "vm-1": { "result": "passed" } }
+        });
+        assert_eq!(
+            lost_update_violation(&cur, &cand),
+            "lost_update field=verification_matrix missing=vm-2"
+        );
+    }
+
+    #[test]
+    fn lost_update_object_matrix_superset_is_clean() {
+        let cur = json!({ "verification_matrix": { "vm-1": { "result": "passed" } } });
+        let cand = json!({
+            "verification_matrix": { "vm-1": { "result": "passed" }, "vm-2": { "result": "passed" } }
+        });
+        assert_eq!(lost_update_violation(&cur, &cand), "");
+    }
+
+    // CR21-F1: a SAME-STATUS team write that flips array<->object erases the
+    // identity basis and is rejected (the evasion vector); a status TRANSITION
+    // (e.g. the terminal done rebuild) legitimately reshapes and passes here,
+    // deferring row integrity to the stale_verification_matrix_row sweep.
+    #[test]
+    fn lost_update_same_status_shape_change_rejected() {
+        let cur = json!({
+            "status": "cross_review",
+            "verification_matrix": [ { "id": "vm-1" } ]
+        });
+        let cand = json!({
+            "status": "cross_review",
+            "verification_matrix": { "row-a": { "result": "passed" } }
+        });
+        assert_eq!(
+            lost_update_violation(&cur, &cand),
+            "lost_update field=verification_matrix shape_change"
+        );
+    }
+
+    #[test]
+    fn lost_update_cross_status_shape_change_allowed() {
+        let cur = json!({
+            "status": "termination_review",
+            "verification_matrix": [ { "id": "vm-1" } ]
+        });
+        let cand = json!({
+            "status": "done",
+            "verification_matrix": { "row-a": { "result": "passed" } }
+        });
+        assert_eq!(lost_update_violation(&cur, &cand), "");
+    }
+
+    #[test]
+    fn lost_update_empty_current_matrix_is_clean() {
+        // Nothing installed to protect: an empty current matrix never blocks,
+        // even when the candidate reshapes.
+        let cur = json!({ "status": "cross_review", "verification_matrix": [] });
+        let cand = json!({
+            "status": "cross_review",
             "verification_matrix": { "row-a": { "result": "passed" } }
         });
         assert_eq!(lost_update_violation(&cur, &cand), "");

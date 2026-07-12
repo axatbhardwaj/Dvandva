@@ -476,8 +476,21 @@ mod tests {
         "covered_paths",
     ];
 
+    /// Structural parity only — this test does NOT drive either fixture
+    /// through the real write-path validator, so it proves none of "a legacy
+    /// baton validates". What it DOES prove: (1) two isolated pre-carry unit
+    /// fixtures, shaped like the v2 reference schema's real
+    /// `startup-controller` / `verify-research-coverage` examples, carry none
+    /// of the seven Option-B fields and round-trip byte-equal through serde;
+    /// (2) the seven fields are absent from both the v2+v3 required-keys
+    /// lists; (3) the seven fields are absent from both status catalogs.
+    /// Executable legacy-baton validation THROUGH the actual writer is VM-7's
+    /// job: see `tests/delta_reverification.rs::vm07_first_pass_legacy_byte_equal`,
+    /// which spawns the real `dvandva write` binary against a legacy
+    /// `test_creation` subagent_track end to end and asserts the written
+    /// candidate is byte-identical to what was submitted.
     #[test]
-    fn legacy_baton_without_carry_fields_validates() {
+    fn carry_fields_stay_optional_and_out_of_required_keys() {
         // A pre-carry subagent_track, shaped exactly like the v2 reference
         // schema's real `startup-controller` example: none of the seven
         // carry fields present.
@@ -511,11 +524,11 @@ mod tests {
             for field in CARRY_FIELDS {
                 assert!(
                     !obj.contains_key(field),
-                    "legacy fixture must validate with none of the seven carry fields present, found {field}"
+                    "legacy fixture must carry none of the seven carry fields, found {field}"
                 );
             }
-            // Round-trips byte-equal — the "legacy batons validate byte-equal"
-            // half of the Option B backward-compat constraint.
+            // Round-trips byte-equal through serde — a structural proxy for
+            // "unchanged shape", NOT a write-path validation run (see VM-7).
             let serialized = serde_json::to_string(unit).unwrap();
             let reparsed: Value = serde_json::from_str(&serialized).unwrap();
             assert_eq!(&reparsed, unit, "legacy fixture must round-trip byte-equal");

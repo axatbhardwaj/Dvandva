@@ -85,11 +85,11 @@
   "subagent_tracks_example": [
     {
       "id": "delta-E-test-creation",
-      "phase": "1",
+      "phase": "test_creation",
       "status": "completed",
-      "track": "test_creation",
-      "owner": "team",
-      "owner_role": "team",
+      "track": "test-creation",
+      "owner": "dvandva-test-creator",
+      "owner_role": "vadi",
       "parallelized": false,
       "rationale": "Illustrates a validly CARRIED test_creation track (Option B, RR-8): only a mechanical test_creation subagent_track may ever carry. covers_chunks is the agent-authored seed the engine expands into the transitive covered closure; covered_input_digest/digest_algo/covered_paths are then ENGINE-stamped, never agent-authored. There is no carried_from_id field — the origin is the candidate's OWN id at carried_from_checkpoint (same-id carry).",
       "inputs": [],
@@ -97,12 +97,13 @@
       "evidence_refs": ["subagent:delta-E-test-creation"],
       "result": "passed",
       "carried_from_checkpoint": 12,
-      "carry_reason": "covers_chunks closure is disjoint from this fix's diff; origin at checkpoint 12 was a real, on-cycle, passing execution.",
+      "carry_reason": "covers_chunks closure is disjoint from this fix's diff; origin at checkpoint 12 (earlier than the current checkpoint) was a real, on-cycle, passing execution.",
       "covers_chunks": ["delta-B-provenance-and-digest"],
       "global": false,
-      "covered_input_digest": "<git rev-parse HEAD at checkpoint 12>",
+      "covered_input_digest": "1a2b3c4d5e6f7089a1b2c3d4e5f60718293a4b5c",
       "digest_algo": "git-covers-diff-v1",
-      "covered_paths": ["rust/dvandva/src/provenance.rs"]
+      "covered_paths": ["rust/dvandva/src/provenance.rs"],
+      "_field_guard_note": "Field-to-guard map against test_creation_to_cross_review_ok (write.rs) and decide() (reverify.rs), neither edited by this fix. phase=='test_creation' + track=='test-creation' + owner=='dvandva-test-creator' + status=='completed' are the track's shape predicate; result=='passed' feeds good_result(); non-empty outputs/evidence_refs feed the evidence-floor count checks. carried_from_checkpoint present is decide()'s carry-claim entry guard (absent ⇒ ReRun); covers_chunks is guard (a)'s engine-derivable closure seed; global:false and no covers:['*'] clear guard (b)'s unbounded/terminal check; carry_reason non-blank satisfies guard (f). covered_input_digest/digest_algo/covered_paths are the ENGINE-stamped triple guard (e) byte-compares against the origin snapshot's stored triple (SP-1 anti-substitution) and anchors the git-diff-over-closure check — on a real track these three are never agent-authored."
     }
   ],
   "verification_matrix": [],
@@ -117,13 +118,13 @@
       "result": "passed",
       "evidence_ref": "vm-18",
       "carried_from_checkpoint": 12,
-      "carry_reason": "structurally legal here, but see _carry_note: verification_matrix rows never carry.",
+      "carry_reason": "NEVER HONORED — see _carry_note. This row is NOT carry-eligible; the field is shown only to document that it is structurally accepted (untyped rest map) while being ignored by every gate.",
       "covers_chunks": ["delta-C-schema-and-backward-compat"],
       "global": false,
-      "covered_input_digest": "<git rev-parse HEAD at checkpoint 12>",
+      "covered_input_digest": "9f8e7d6c5b4a39281706f5e4d3c2b1a09876f5e4",
       "digest_algo": "git-covers-diff-v1",
       "covered_paths": ["rust/dvandva/src/lint/schema_parity.rs"],
-      "_carry_note": "Option B (RR-8): the same seven carry fields are structurally legal on a verification_matrix row exactly as shown here, but the done-gate NEVER reads them. Carry is honored ONLY at the single test_creation_to_cross_review_ok gate, and only for a subagent_track. Every verification_matrix row always re-verifies in full via stale_verification_matrix_row at done, regardless of any carry claim present on the row."
+      "_carry_note": "Option B (RR-8): the same seven carry fields are structurally LEGAL on a verification_matrix row exactly as shown here (schema/parsing accepts them into the untyped rest map), but NO gate ever reads or honors them on a row — this example is documentation of accepted shape only, never a claim that this row is carry-eligible. Carry is honored ONLY at the single test_creation_to_cross_review_ok gate, and only for a subagent_track whose track=='test-creation' (see subagent_tracks_example). Every verification_matrix row always re-verifies in full via stale_verification_matrix_row at done, regardless of any carry claim present on the row."
     }
   ],
   "master_plan_locked": false,

@@ -1555,6 +1555,20 @@ fn provenance_cycle_start_handles_missing_phase_on_current_doc() {
     );
 }
 
+/// Closes `current_phase_cycle_start`'s empty-history `return 0` arm: the
+/// current doc's phase matches but no earlier history snapshot exists. (CR21-F4
+/// reordered `reverify::decide` to read the origin snapshot BEFORE the ancestry
+/// check, so VM-5's missing-origin case no longer reaches this arm transitively;
+/// it is now covered here directly.)
+#[test]
+fn provenance_cycle_start_returns_zero_on_empty_history() {
+    let d = tmp();
+    assert_eq!(
+        provenance::current_phase_cycle_start(d.path(), &json!({"phase": "1"}), 10, "1"),
+        0
+    );
+}
+
 /// Closes `commit_anchor_valid`'s empty-anchor and empty-covered-list
 /// fail-closed branches.
 #[test]
@@ -1679,13 +1693,10 @@ fn write_carried_stamp_origin_unit_missing_is_rejected() {
 }
 
 /// Closes `track_is_fresh`'s `first_completed_checkpoint -> None`
-/// (never-completed-anywhere) arm. `track_is_fresh`'s own empty-id
-/// short-circuit is NOT independently reachable through the public `write`
-/// pipeline: the earlier `bad_subagent_tracks` shape gate already rejects an
-/// empty subagent_track id (exit 23) before the transition-legality carry
-/// gate runs, confirmed by inspection above — `reverify::decide`'s own
-/// equivalent empty-id guard (SP-2 identity) is covered directly at the
-/// library level by `reverify_empty_unit_id_never_carries`.
+/// (never-completed-anywhere) arm. (CR21-F4 removed `track_is_fresh`'s former
+/// empty-id short-circuit — an empty id already fails closed through the same
+/// `first_completed_checkpoint -> None` path, and `reverify::decide`'s own
+/// SP-2 identity guard stays covered by `reverify_empty_unit_id_never_carries`.)
 #[test]
 fn write_track_is_fresh_rejects_never_completed_id() {
     let d2 = tmp();
@@ -1708,11 +1719,123 @@ fn write_track_is_fresh_rejects_never_completed_id() {
     );
 }
 
-/// Closes `lost_update_violation`'s RR-6a shape-mismatch fallback arm: an
-/// object-shaped `verification_matrix` (not array-shaped on both sides)
-/// skips the id-superset check instead of panicking or false-rejecting.
+// (CR21-F1 retired `write_lost_update_matrix_check_skips_non_array_shapes` — the
+// old array-only guard no longer skips object matrices; object-key superset and
+// same/cross-status shape-change behavior are covered by the cr21_f1_* tests
+// below.)
+
+// ===========================================================================
+// CR21 cross-review regressions (F1 / F2 / F3). CR21-F4 removed the four
+// former "documented-unreachable" lines (reverify.rs closure/second-read/paths
+// guards + write.rs's track_is_fresh empty-id guard) by restructuring, so the
+// `--test delta_reverification` changed-line map now clears a TRUE 100%.
+// ===========================================================================
+
+// ---- CR21-F3: the carry origin must be a complete qualifying test-creation --
+
+/// Proves a same-id carry fails closed unless the ORIGIN unit is a COMPLETE
+/// qualifying DIRECT test-creation execution — not merely `was_pass`. The repo,
+/// closure, digest, and carry_reason are all VALID (so guards (e)/(f) would
+/// otherwise carry); only the origin-shape defect re-runs it. A control case
+/// with an untouched origin proves the fixture would carry absent the defect.
 #[test]
-fn write_lost_update_matrix_check_skips_non_array_shapes() {
+fn cr21_f3_origin_direct_test_creation_shape_required() {
+    let chunks = json!([bounded_chunk("X", &["src/a.rs"], &[])]);
+    // control: an untouched, fully-qualified origin DOES carry (proves the
+    // fixture reaches guards (e)/(f) and would carry but for the shape defect).
+    {
+        let d = tmp();
+        let anchor = committed_repo_at(d.path(), &[("src/a.rs", "a\n")]);
+        write_origin_track_snapshot(
+            d.path(),
+            5,
+            "1",
+            origin_track("t", &anchor, &["src/a.rs"]),
+            chunks.clone(),
+        );
+        let candidate = carried_track("t", 5, &anchor, &["src/a.rs"], &["X"]);
+        let baton = decide_baton(candidate.clone(), chunks.clone());
+        assert_eq!(
+            reverify::decide(
+                &baton,
+                d.path(),
+                &candidate,
+                "subagent_track",
+                10,
+                "1",
+                d.path()
+            ),
+            reverify::Decision::Carry,
+            "control: a fully-qualified origin carries"
+        );
+    }
+    let cases: [(&str, fn(&mut Value)); 5] = [
+        ("running_not_completed", |o| o["status"] = json!("running")),
+        ("wrong_track_subtype", |o| {
+            o["track"] = json!("cross-review")
+        }),
+        ("owner_absent", |o| {
+            o.as_object_mut().unwrap().remove("owner");
+        }),
+        ("evidence_refs_empty", |o| o["evidence_refs"] = json!([])),
+        ("wrong_digest_algo", |o| o["digest_algo"] = json!("sha256")),
+    ];
+    for (label, mutate) in cases {
+        let d = tmp();
+        let anchor = committed_repo_at(d.path(), &[("src/a.rs", "a\n")]);
+        let mut origin = origin_track("t", &anchor, &["src/a.rs"]);
+        mutate(&mut origin);
+        write_origin_track_snapshot(d.path(), 5, "1", origin, chunks.clone());
+        let candidate = carried_track("t", 5, &anchor, &["src/a.rs"], &["X"]);
+        let baton = decide_baton(candidate.clone(), chunks.clone());
+        assert_eq!(
+            reverify::decide(
+                &baton,
+                d.path(),
+                &candidate,
+                "subagent_track",
+                10,
+                "1",
+                d.path()
+            ),
+            reverify::Decision::ReRun,
+            "origin defect '{label}' must fail closed to ReRun"
+        );
+    }
+}
+
+// ---- CR21-F1: object matrices and shape flips in the lost_update guard ------
+
+/// Proves an OBJECT-shaped verification_matrix is protected by object KEY: a
+/// same-status team write dropping a key is a lost_update.
+#[test]
+fn cr21_f1_object_matrix_key_deletion_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "test_creation", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["verification_matrix"] = json!({
+            "vm-1": {"id": "vm-1", "current": "pending"},
+            "vm-2": {"id": "vm-2", "current": "pending"}
+        });
+    });
+    make_baton_v3(&n, "test_creation", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["verification_matrix"] = json!({"vm-1": {"id": "vm-1", "current": "pending"}});
+        v["summary"] = json!("Team sync dropping an installed object-matrix key.");
+        v["next_action"] = json!("Team must retain vm-2.");
+    });
+    run(&b, &n).assert_contains(
+        "cr21-f1 object matrix key deletion",
+        23,
+        "lost_update field=verification_matrix missing=vm-2",
+    );
+}
+
+/// Proves an object-matrix key SUPERSET (retain + grow) is accepted (the
+/// replacement for the retired array-only shape-mismatch acceptance test).
+#[test]
+fn cr21_f1_object_matrix_superset_accepted() {
     let d = tmp();
     let (b, n) = paths(&d);
     make_baton_v3(&b, "test_creation", "team", 4, |v| {
@@ -1721,45 +1844,140 @@ fn write_lost_update_matrix_check_skips_non_array_shapes() {
     });
     make_baton_v3(&n, "test_creation", "team", 5, |v| {
         v["active_roles"] = json!(["vadi", "prativadi"]);
-        v["verification_matrix"] = json!({"vm-1": {"id": "vm-1", "current": "pending"}});
-        v["summary"] = json!("Team sync with an object-shaped verification_matrix.");
+        v["verification_matrix"] = json!({
+            "vm-1": {"id": "vm-1", "current": "pending"},
+            "vm-2": {"id": "vm-2", "current": "pending"}
+        });
+        v["summary"] = json!("Team sync with an object-shaped verification_matrix superset.");
         v["next_action"] = json!("Continue test creation.");
     });
-    run(&b, &n).assert(
-        "write lost_update tolerates non-array verification_matrix",
-        0,
+    run(&b, &n).assert("cr21-f1 object matrix superset accepted", 0);
+}
+
+/// Proves a SAME-STATUS team write flipping the matrix array<->object erases
+/// the identity basis and is rejected as `shape_change` (the evasion vector).
+#[test]
+fn cr21_f1_same_status_shape_change_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "test_creation", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        // default seed array matrix (non-empty identity basis).
+    });
+    make_baton_v3(&n, "test_creation", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["verification_matrix"] = json!({"row-a": {"result": "passed"}});
+        v["summary"] = json!("Team sync flipping the matrix to object shape.");
+        v["next_action"] = json!("Reshape evasion attempt.");
+    });
+    run(&b, &n).assert_contains(
+        "cr21-f1 same-status shape change",
+        23,
+        "lost_update field=verification_matrix shape_change",
     );
 }
 
-// ===========================================================================
-// Known-unreachable lines (documented, not test gaps): four lines remain
-// uncovered under `--test delta_reverification` after the above additions.
-// Each is defensive redundancy the surrounding function's own invariants
-// make unreachable through any valid input to the PUBLIC API — not a missed
-// behavioral branch:
-//
-//   * reverify.rs:74  `if closure.is_empty() { return Decision::ReRun; }` —
-//     `derive_covered_closure` never returns `Some` of an empty set (its own
-//     `if paths.is_empty() { return None; }` guard fires first), so this
-//     branch cannot be reached by any `unit`/`baton` pair.
-//   * reverify.rs:96  the second `read_origin_snapshot(dir, origin)` call's
-//     `else` arm — `on_current_cycle_ancestry` (already required to return
-//     `true` to reach this line) performs its own internal
-//     `read_origin_snapshot(dir, origin)` read of the identical, immutable
-//     file first; a single-threaded test cannot make the second read of the
-//     same path fail after the first succeeded.
-//   * reverify.rs:192 `if paths.is_empty() { return None; }` inside
-//     `derive_covered_closure` — `covers_chunks` is checked non-empty at
-//     entry, and every loop iteration either returns `None` early (dangling
-//     seed / no declared paths / unnormalizable path) or inserts at least
-//     one path before continuing, so the accumulated set can never be empty
-//     by the time this guard runs.
-//   * write.rs:5020   `track_is_fresh`'s `if id.is_empty() { return false; }`
-//     — an empty `subagent_track.id` is already rejected by the earlier
-//     `bad_subagent_tracks` shape gate (exit 23) before the transition
-//     reaches the carry gate at all (confirmed empirically: see the removed
-//     first half of `write_track_is_fresh_rejects_never_completed_id`'s
-//     history in this file's authoring). The equivalent identity guard
-//     inside `reverify::decide` IS reachable and IS covered directly by
-//     `reverify_empty_unit_id_never_carries`.
-// ===========================================================================
+/// Proves the terminal termination_review->done matrix rebuild legitimately
+/// reshapes array->object: lost_update ALLOWS the cross-status reshape, and the
+/// stale_verification_matrix_row sweep still re-verifies every row fresh (row-b
+/// is stale here, so terminal integrity holds).
+#[test]
+fn cr21_f1_cross_status_done_reshape_allowed_then_stale_swept() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    seed_done_artifacts(d.path());
+    make_baton_v3(
+        &b,
+        "termination_review",
+        "team",
+        4,
+        configure_terminal_current,
+    );
+    make_baton_v3(&n, "done", "team", 5, |v| {
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+        explainer_verification_track(v);
+        v["verification_matrix"] = json!({
+            "row-a": {"result": "passed", "evidence_refs": ["e"], "evidence_checkpoint": 5},
+            "row-b": {"result": "passed", "evidence_refs": ["e"]}
+        });
+    });
+    run(&b, &n).assert_contains(
+        "cr21-f1 cross-status done reshape allowed then stale swept",
+        23,
+        "stale_verification_matrix row=row-b",
+    );
+}
+
+/// Proves an EMPTY installed matrix has no identity to protect: a same-status
+/// reshape from `[]` to a fresh object matrix is not a lost_update.
+#[test]
+fn cr21_f1_empty_current_matrix_is_clean() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "test_creation", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["verification_matrix"] = json!([]);
+    });
+    make_baton_v3(&n, "test_creation", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["verification_matrix"] = json!({"row-a": {"result": "passed"}});
+        v["summary"] = json!("Team sync from an empty matrix to a new object matrix.");
+        v["next_action"] = json!("Continue test creation.");
+    });
+    run(&b, &n).assert("cr21-f1 empty current matrix clean", 0);
+}
+
+// ---- CR21-F2: a metadata-free legacy track cannot ride a re-lap ------------
+
+/// Proves a metadata-free legacy test-creation track first completed BEFORE the
+/// implementation-family anchor is REJECTED when reused unchanged on a re-lap
+/// (fixing-family status in cycle history), while the first-pass legacy case
+/// (no fixing history) stays accepted byte-identically.
+#[test]
+fn cr21_f2_relap_legacy_track_requires_fresh_or_carry() {
+    // RE-LAP: history shows a phase_fixing (anchor 5, re-lap signal); the legacy
+    // track first completed at checkpoint 3 (< anchor) -> rejected.
+    let relap = tmp();
+    let (b, n) = paths(&relap);
+    let legacy = legacy_or_unbounded_track("relap-legacy-test", false);
+    write_snapshot(
+        relap.path(),
+        3,
+        "test_creation",
+        "1",
+        json!({"subagent_tracks": [legacy.clone()]}),
+    );
+    write_impl_anchor(relap.path(), 5, "1"); // phase_fixing@5: re-lap + anchor 5
+    make_baton_v3(&b, "test_creation", "team", 6, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v3(&n, "cross_review", "team", 7, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        push(v, "subagent_tracks", legacy.clone());
+    });
+    run(&b, &n).assert_contains(
+        "cr21-f2 re-lap legacy track rejected",
+        24,
+        "test_creation->cross_review requires completed test-creation subagent_track",
+    );
+
+    // FIRST PASS: no fixing history -> the same metadata-free legacy track keeps
+    // its byte-identical bypass and is accepted.
+    let first = tmp();
+    let (b2, n2) = paths(&first);
+    make_baton_v3(&b2, "test_creation", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+    });
+    make_baton_v3(&n2, "cross_review", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        push(
+            v,
+            "subagent_tracks",
+            legacy_or_unbounded_track("first-pass-legacy-test", false),
+        );
+    });
+    run(&b2, &n2).assert("cr21-f2 first-pass legacy track accepted", 0);
+}
