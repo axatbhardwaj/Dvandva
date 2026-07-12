@@ -5791,14 +5791,18 @@ fn lost_update_violation(cur_doc: &Value, cand: &Value) -> String {
 /// The terminal `termination_review`->`done` rebuild legitimately assigns fresh
 /// object KEYS unrelated to the pre-terminal array `id`s, so the installed row
 /// identity-set is NOT preserved across it and cannot be the enforced invariant
-/// there. The enforceable variant chosen is "the full expected matrix proven
-/// independently": for that one edge the done gate runs
-/// `stale_verification_matrix_row` (see `install`/`legal_transition`,
-/// `s4t6_object_matrix_stale_value_rejected`), which re-verifies EVERY final row
-/// fresh (>= `implementation_family_anchor`) and complete. That independent
-/// full-matrix proof — structurally guaranteed for `new_status == "done"`
-/// regardless of shape — is why the reshape is allowed ONLY on that edge here.
-/// Returns the reason, or `None` when clean / nothing installed.
+/// there. The done gate additionally runs `stale_verification_matrix_row` (see
+/// `install`/`legal_transition`, `s4t6_object_matrix_stale_value_rejected`) to
+/// re-verify every SURVIVING row fresh (>= `implementation_family_anchor`) and
+/// complete — but that sweep iterates only the candidate's own rows and proves
+/// nothing about SET completeness (CR34-F1): a candidate could shrink a multi-row
+/// array to one fresh object row and pass it. So this edge instead enforces the
+/// expected-row-set SIZE — the invariant identity can no longer supply once the
+/// keys are re-assigned: the rebuilt matrix must retain at least as many rows as
+/// installed (`vm_row_count`). The cardinality floor (no installed row omitted)
+/// plus the stale sweep (every surviving row fresh/complete) together prove the
+/// full installed set survives fresh across the rebuild. Returns the reason, or
+/// `None` when clean / nothing installed.
 fn verification_matrix_lost_update(cur_doc: &Value, cand: &Value) -> Option<String> {
     let cur_vm = field(cur_doc, "verification_matrix");
     let cand_vm = field(cand, "verification_matrix");
@@ -5810,10 +5814,22 @@ fn verification_matrix_lost_update(cur_doc: &Value, cand: &Value) -> Option<Stri
         // array<->object reshape (or the matrix dropped to an unshaped candidate).
         let terminal_rebuild_edge = str_field(cur_doc, "status") == "termination_review"
             && str_field(cand, "status") == "done";
-        return if terminal_rebuild_edge {
-            None
+        if !terminal_rebuild_edge {
+            return Some("lost_update field=verification_matrix shape_change".to_string());
+        }
+        // CR34-F1: the terminal rebuild re-keys the matrix, so per-row identity
+        // is gone as an invariant. Enforce the expected-row-set SIZE instead — the
+        // rebuilt matrix must not carry fewer rows than installed, or a row was
+        // permanently dropped (which the done-gate stale sweep cannot detect, as
+        // it only inspects surviving rows).
+        let cur_len = vm_row_count(cur_vm);
+        let cand_len = vm_row_count(cand_vm);
+        return if cand_len < cur_len {
+            Some(format!(
+                "lost_update field=verification_matrix terminal_row_dropped installed={cur_len} candidate={cand_len}"
+            ))
         } else {
-            Some("lost_update field=verification_matrix shape_change".to_string())
+            None
         };
     }
     let cand_ids = vm_id_set(cand_vm);
@@ -5833,6 +5849,17 @@ fn vm_id_set(v: Option<&Value>) -> Vec<String> {
         v.and_then(Value::as_object)
             .map(|map| map.keys().cloned().collect())
             .unwrap_or_default()
+    }
+}
+
+/// The row COUNT of a `verification_matrix`: array length or object entry count
+/// (0 when absent / scalar). CR34-F1 uses this as the terminal-rebuild
+/// expected-row-set size once the reshape has erased the per-row identity basis.
+fn vm_row_count(v: Option<&Value>) -> usize {
+    match v {
+        Some(Value::Array(a)) => a.len(),
+        Some(Value::Object(m)) => m.len(),
+        _ => 0,
     }
 }
 
@@ -6542,6 +6569,60 @@ mod delta_wiring_tests {
         let cand = json!({
             "status": "done",
             "verification_matrix": { "row-a": { "result": "passed" } }
+        });
+        assert_eq!(lost_update_violation(&cur, &cand), "");
+    }
+
+    // CR34-F1: the terminal rebuild re-keys the matrix, so a permanent row DROP is
+    // invisible to the id-superset check and to the done-gate stale sweep (which
+    // only inspects surviving rows). The cardinality floor rejects a rebuild that
+    // shrinks the installed row set (a 2-row array replaced by 1 fresh object row).
+    #[test]
+    fn lost_update_terminal_reshape_dropping_row_rejected() {
+        let cur = json!({
+            "status": "termination_review",
+            "verification_matrix": [ { "id": "vm-1" }, { "id": "vm-2" } ]
+        });
+        let cand = json!({
+            "status": "done",
+            "verification_matrix": { "row-a": { "result": "passed" } }
+        });
+        assert_eq!(
+            lost_update_violation(&cur, &cand),
+            "lost_update field=verification_matrix terminal_row_dropped installed=2 candidate=1"
+        );
+    }
+
+    // CR34-F1: vm_row_count is the terminal expected-row-set size — array length,
+    // object entry count, or 0 for an absent/scalar (unshaped) matrix.
+    #[test]
+    fn vm_row_count_counts_arrays_objects_and_unshaped() {
+        assert_eq!(
+            vm_row_count(Some(&json!([{ "id": "a" }, { "id": "b" }]))),
+            2
+        );
+        assert_eq!(
+            vm_row_count(Some(&json!({ "row-a": {}, "row-b": {}, "row-c": {} }))),
+            3
+        );
+        assert_eq!(vm_row_count(None), 0);
+        assert_eq!(vm_row_count(Some(&json!("scalar"))), 0);
+    }
+
+    // CR34-F1: a terminal rebuild that re-keys but retains the row count (2 -> 2)
+    // is still allowed here; the done-gate stale sweep proves the survivors fresh.
+    #[test]
+    fn lost_update_terminal_reshape_preserving_count_allowed() {
+        let cur = json!({
+            "status": "termination_review",
+            "verification_matrix": [ { "id": "vm-1" }, { "id": "vm-2" } ]
+        });
+        let cand = json!({
+            "status": "done",
+            "verification_matrix": {
+                "row-a": { "result": "passed" },
+                "row-b": { "result": "passed" }
+            }
         });
         assert_eq!(lost_update_violation(&cur, &cand), "");
     }

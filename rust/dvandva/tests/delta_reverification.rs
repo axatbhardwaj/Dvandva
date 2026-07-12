@@ -1951,6 +1951,49 @@ fn cr21_f1_cross_status_done_reshape_allowed_then_stale_swept() {
     );
 }
 
+/// CR34-F1 regression: the terminal `termination_review`->`done` reshape must not
+/// let a candidate PERMANENTLY DROP an installed row. Here the installed baton
+/// carries the default two-row array matrix; the done candidate rebuilds it as a
+/// SINGLE fresh+complete object row. Every surviving row is fresh, so the
+/// stale_verification_matrix_row sweep is satisfied — yet an installed row was
+/// silently omitted. Before the cardinality-floor fix this reached exit 0 (the
+/// drop slipped past both checks); it must now fail lost_update.
+#[test]
+fn cr34_f1_terminal_reshape_dropping_installed_row_rejected() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    seed_done_artifacts(d.path());
+    make_baton_v3(
+        &b,
+        "termination_review",
+        "team",
+        4,
+        configure_terminal_current,
+    );
+    make_baton_v3(&n, "done", "team", 5, |v| {
+        v["run_explainer_ref"] = json!("./superpowers/run-reports/2026-06-28-run-a-explainer.html");
+        v["vadi_final_approval"] = json!(true);
+        v["prativadi_final_approval"] = json!(true);
+        run_explainer_reviews(v);
+        explainer_verification_track(v);
+        // Rebuild the installed two-row array into ONE fresh+complete object row:
+        // the survivor passes the stale sweep, but the row set shrank 2 -> 1.
+        v["verification_matrix"] = json!({
+            "row-a": {
+                "result": "passed",
+                "current": "passed",
+                "evidence_refs": ["e"],
+                "evidence_checkpoint": 5
+            }
+        });
+    });
+    run(&b, &n).assert_contains(
+        "cr34-f1 terminal reshape dropping installed row",
+        23,
+        "lost_update field=verification_matrix terminal_row_dropped installed=2 candidate=1",
+    );
+}
+
 /// Proves an EMPTY installed matrix has no identity to protect: a same-status
 /// reshape from `[]` to a fresh object matrix is not a lost_update.
 #[test]
