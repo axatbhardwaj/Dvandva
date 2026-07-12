@@ -33,6 +33,8 @@ use serde_json::Value;
 
 use crate::gitcfg;
 use crate::lock::{self, Acquire};
+use crate::provenance;
+use crate::reverify;
 use crate::snapshot::snapshot_baton;
 use crate::util;
 use crate::workflow::validate_run_workflow;
@@ -2363,14 +2365,32 @@ fn decide_transition(
             reason = "parallel_implementing->test_creation requires completed implementation-chunk subagent_tracks for both roles".to_string();
         }
     }
-    if legal
-        && cx.is_v2
-        && cur_status == "test_creation"
-        && cx.new_status == "cross_review"
-        && !test_creation_to_cross_review_ok(cand)
-    {
-        legal = false;
-        reason = "test_creation->cross_review requires completed test-creation subagent_track from dvandva-test-creator".to_string();
+    if legal && cx.is_v2 && cur_status == "test_creation" && cx.new_status == "cross_review" {
+        let anchor = implementation_family_anchor(baton_dir, cur_doc, cur_checkpoint_i64);
+        let repo_root =
+            gitcfg::repo_toplevel(baton_dir).unwrap_or_else(|| baton_dir.to_path_buf());
+        // Engine-stamp lifecycle (RR-3, SP-1) — scoped to test_creation
+        // subagent_tracks, split direct-vs-carry. A forged/missing stamp triple
+        // is a hard exit 23 (a legacy track carries no triple and is a no-op).
+        for t in arr(field(cand, "subagent_tracks")) {
+            if str_field(t, "phase") != "test_creation" {
+                continue;
+            }
+            if let Some(sub) = test_track_stamp_violation(t, cand, baton_dir, &repo_root) {
+                return Err((23, format!("DVANDVA_WRITE {sub} candidate={cf}")));
+            }
+        }
+        if !test_creation_to_cross_review_ok(
+            cand,
+            baton_dir,
+            &repo_root,
+            cur_checkpoint_i64,
+            &cur_phase,
+            anchor,
+        ) {
+            legal = false;
+            reason = "test_creation->cross_review requires completed test-creation subagent_track from dvandva-test-creator".to_string();
+        }
     }
     if legal && cx.is_v2 && cur_status == "cross_review" && cx.new_status == "cross_fixing" {
         let required = cross_review_cycle_checkpoint(baton_dir, cur_doc, cur_checkpoint_i64);
@@ -4930,7 +4950,19 @@ fn parallel_to_test_creation_ok(cand: &Value, waived: bool) -> bool {
     vadi >= 2 && prativadi >= 2 && (tracks.len() >= 5 || waived)
 }
 
-fn test_creation_to_cross_review_ok(cand: &Value) -> bool {
+/// Option B delta re-verification (chunk A2): carry is honored at EXACTLY this
+/// gate, for a `test_creation` subagent_track. A qualifying track passes when its
+/// existing shape predicate holds AND it is engine-corroborated FRESH OR validly
+/// CARRIED (`test_track_fresh_or_carry`). No other gate (cross_review /
+/// deep_review / done) ever consults carry.
+fn test_creation_to_cross_review_ok(
+    cand: &Value,
+    baton_dir: &Path,
+    repo_root: &Path,
+    current_ckpt: i64,
+    phase: &str,
+    anchor: i64,
+) -> bool {
     arr(field(cand, "subagent_tracks")).iter().any(|t| {
         str_field(t, "phase") == "test_creation"
             && str_field(t, "track") == "test-creation"
@@ -4939,7 +4971,170 @@ fn test_creation_to_cross_review_ok(cand: &Value) -> bool {
             && good_result(field(t, "result"))
             && count_len(field(t, "outputs")) > 0
             && count_len(field(t, "evidence_refs")) > 0
+            && test_track_fresh_or_carry(t, cand, baton_dir, repo_root, current_ckpt, phase, anchor)
     })
+}
+
+/// RR-6b + DR2-R5 (the SINGLE freshness definition, SP2-R4): a qualifying
+/// `test_creation` track is accepted when it is engine-corroborated FRESH OR
+/// validly CARRIED. A track that carries NO delta-reverification metadata
+/// (neither `covers_chunks` nor `carried_from_checkpoint`) is a pre-carry direct
+/// execution and keeps its byte-identical acceptance — the carry contract ONLY
+/// tightens tracks that opt into it (VM-7: legacy batons behave exactly as
+/// today).
+fn test_track_fresh_or_carry(
+    t: &Value,
+    baton: &Value,
+    baton_dir: &Path,
+    repo_root: &Path,
+    current_ckpt: i64,
+    phase: &str,
+    anchor: i64,
+) -> bool {
+    let opted_in =
+        field(t, "covers_chunks").is_some() || field(t, "carried_from_checkpoint").is_some();
+    if !opted_in {
+        return true; // legacy direct track: byte-identical (VM-7)
+    }
+    track_is_fresh(baton_dir, baton, current_ckpt, t, anchor)
+        || reverify::decide(baton, baton_dir, t, "subagent_track", current_ckpt, phase, repo_root)
+            == reverify::Decision::Carry
+}
+
+/// DR2-R5: FRESH is proven SOLELY by an engine-derived first-completed
+/// checkpoint — the SMALLEST checkpoint at which this exact `(kind, id)` ever
+/// appears completed+passing in an engine-written history snapshot — which must
+/// be `>= anchor`. NO candidate-authored checkpoint field
+/// (`evidence_checkpoint` / `review_checkpoint`) is consulted, so a stale
+/// same-id track cannot launder freshness by rewriting its own checkpoint claim
+/// and letting a later snapshot corroborate the rewrite.
+fn track_is_fresh(
+    baton_dir: &Path,
+    cur_doc: &Value,
+    current_ckpt: i64,
+    t: &Value,
+    anchor: i64,
+) -> bool {
+    let id = str_field(t, "id");
+    if id.is_empty() {
+        return false;
+    }
+    match provenance::first_completed_checkpoint(
+        baton_dir,
+        cur_doc,
+        current_ckpt,
+        "subagent_track",
+        &id,
+    ) {
+        Some(first) => first >= anchor,
+        None => false,
+    }
+}
+
+/// The fixed `digest_algo` value the engine stamps on a bounded direct-executed
+/// `test_creation` track's covered-input digest.
+const GIT_COVERS_DIFF_ALGO: &str = "git-covers-diff-v1";
+
+/// A git-covers-diff stamp triple `(covered_input_digest, digest_algo,
+/// covered_paths)`.
+#[derive(Debug, PartialEq, Eq)]
+struct StampTriple {
+    digest: String,
+    algo: String,
+    paths: Vec<String>,
+}
+
+/// The stamp triple a unit actually carries, or `None` when it carries NONE of
+/// the three fields (the unbounded shape — an unbounded unit carries no triple
+/// at all). A PARTIAL triple (some fields present, some absent) is returned as a
+/// `Some` with empty strings for the missing pieces, so it can never byte-equal
+/// a well-formed expected triple and is rejected.
+fn candidate_stamp(unit: &Value) -> Option<StampTriple> {
+    let has_digest = field(unit, "covered_input_digest").is_some();
+    let has_algo = field(unit, "digest_algo").is_some();
+    let has_paths = field(unit, "covered_paths").is_some();
+    if !has_digest && !has_algo && !has_paths {
+        return None;
+    }
+    Some(StampTriple {
+        digest: str_field(unit, "covered_input_digest"),
+        algo: str_field(unit, "digest_algo"),
+        paths: string_array(field(unit, "covered_paths")),
+    })
+}
+
+/// Engine-stamp lifecycle (RR-3, SP-1), SPLIT direct-vs-carry, evaluated for one
+/// `test_creation` subagent_track at the passing-gate write. Returns
+/// `Some(subreason)` (an exit-23 rejection) when the candidate's stamp triple is
+/// forged, else `None` (accepted).
+///
+///  * DIRECT (no `carried_from_checkpoint`): the triple is recomputed from the
+///    engine's FRESH derivation over the CURRENT work_split closure — digest =
+///    `git rev-parse HEAD`, algo = `git-covers-diff-v1`, paths = the sorted
+///    derived closure — and must byte-equal it; an UNBOUNDED unit (no derivable
+///    closure) must carry NO triple at all.
+///  * CARRIED (has `carried_from_checkpoint`): the triple is NEVER recomputed
+///    against HEAD; the engine reads the ORIGIN snapshot unit by the
+///    candidate's OWN `(kind, id)` (Option B same-id carry) and the candidate's
+///    triple must byte-equal the ORIGIN snapshot's stored triple.
+fn test_track_stamp_violation(
+    unit: &Value,
+    cand: &Value,
+    baton_dir: &Path,
+    repo_root: &Path,
+) -> Option<String> {
+    let id = str_field(unit, "id");
+    match field(unit, "carried_from_checkpoint").and_then(json_int) {
+        // DIRECT-executed unit: recompute-and-require-equality against HEAD.
+        None => {
+            let expected = match reverify::derive_covered_closure(cand, unit) {
+                Some(closure) => {
+                    let Some(head) = gitcfg::git_stdout(repo_root, &["rev-parse", "HEAD"]) else {
+                        return Some(format!(
+                            "forged_test_creation_stamp id={id} mode=direct reason=head_unresolved"
+                        ));
+                    };
+                    // A BTreeSet iterates in sorted order; the engine stamps the
+                    // sorted closure.
+                    let paths: Vec<String> = closure.into_iter().collect();
+                    Some(StampTriple {
+                        digest: head,
+                        algo: GIT_COVERS_DIFF_ALGO.to_string(),
+                        paths,
+                    })
+                }
+                // Unbounded direct unit: it must carry no triple at all.
+                None => None,
+            };
+            if candidate_stamp(unit) == expected {
+                None
+            } else {
+                Some(format!(
+                    "forged_test_creation_stamp id={id} mode=direct reason=triple_mismatch"
+                ))
+            }
+        }
+        // CARRIED unit: byte-equal the ORIGIN snapshot's stored triple, never HEAD.
+        Some(origin) => {
+            let Some(snap) = provenance::read_origin_snapshot(baton_dir, origin) else {
+                return Some(format!(
+                    "forged_test_creation_stamp id={id} mode=carried reason=origin_unreadable"
+                ));
+            };
+            let Some(orig_unit) = provenance::find_unit(&snap, "subagent_track", &id) else {
+                return Some(format!(
+                    "forged_test_creation_stamp id={id} mode=carried reason=origin_unit_missing"
+                ));
+            };
+            if candidate_stamp(unit) == candidate_stamp(&orig_unit) {
+                None
+            } else {
+                Some(format!(
+                    "forged_test_creation_stamp id={id} mode=carried reason=triple_mismatch"
+                ))
+            }
+        }
+    }
 }
 
 fn cross_review_to_cross_fixing_ok(cand: &Value, required: i64) -> bool {
@@ -5515,7 +5710,23 @@ fn findings_ids(v: Option<&Value>) -> Vec<String> {
 /// dropped id yields the `lost_update field=<f> missing=<id>` reason (empty
 /// string when clean).
 fn lost_update_violation(cur_doc: &Value, cand: &Value) -> String {
-    let checks: [(&str, Vec<String>, Vec<String>); 4] = [
+    // RR-6a: a 5th id-set protects verification_matrix rows by id. The row id is
+    // the array shape's identity (each row's `id` field); an OBJECT-shaped matrix
+    // is key-identified rather than id-field-identified, so the id-superset guard
+    // is only defined when both sides are arrays. A shape mismatch (or an
+    // object matrix) leaves the row-integrity check to the terminal
+    // stale_verification_matrix_row sweep, which re-verifies every row at done.
+    let (vm_cur, vm_cand) = match (
+        field(cur_doc, "verification_matrix"),
+        field(cand, "verification_matrix"),
+    ) {
+        (Some(Value::Array(_)), Some(Value::Array(_))) => (
+            id_set(field(cur_doc, "verification_matrix")),
+            id_set(field(cand, "verification_matrix")),
+        ),
+        _ => (Vec::new(), Vec::new()),
+    };
+    let checks: [(&str, Vec<String>, Vec<String>); 5] = [
         (
             "subagent_tracks",
             id_set(field(cur_doc, "subagent_tracks")),
@@ -5536,6 +5747,7 @@ fn lost_update_violation(cur_doc: &Value, cand: &Value) -> String {
             findings_ids(field(cur_doc, "findings")),
             findings_ids(field(cand, "findings")),
         ),
+        ("verification_matrix", vm_cur, vm_cand),
     ];
     for (name, installed, candidate) in &checks {
         if let Some(missing) = installed.iter().find(|id| !candidate.contains(id)) {
@@ -5923,5 +6135,283 @@ mod surface_tests {
         );
         assert_eq!(a, "vadi");
         assert!(roles.is_empty());
+    }
+}
+
+// ===========================================================================
+// Delta re-verification wiring (chunk A2): pure-helper unit tests. The full
+// gate behavior (transition edges) is integration-tested by chunk E.
+// ===========================================================================
+#[cfg(test)]
+mod delta_wiring_tests {
+    use super::*;
+    use serde_json::json;
+    use std::path::Path;
+
+    fn git_ok(repo: &Path, args: &[&str]) {
+        assert!(
+            crate::gitcfg::git(repo, args).unwrap().status.success(),
+            "git {} failed",
+            args.join(" ")
+        );
+    }
+
+    /// A git repo with exactly one commit (enough for `rev-parse HEAD`).
+    fn committed_repo() -> tempfile::TempDir {
+        let repo = tempfile::tempdir().unwrap();
+        git_ok(repo.path(), &["init", "-q"]);
+        git_ok(repo.path(), &["config", "user.name", "Dvandva Test"]);
+        git_ok(repo.path(), &["config", "user.email", "dvandva@example.test"]);
+        std::fs::write(repo.path().join("seed.txt"), "seed\n").unwrap();
+        git_ok(repo.path(), &["add", "seed.txt"]);
+        git_ok(repo.path(), &["commit", "-q", "-m", "seed"]);
+        repo
+    }
+
+    fn head(repo: &Path) -> String {
+        crate::gitcfg::git_stdout(repo, &["rev-parse", "HEAD"]).unwrap()
+    }
+
+    fn nowhere() -> &'static Path {
+        Path::new("/nonexistent-delta-wiring-test")
+    }
+
+    // ---- candidate_stamp -------------------------------------------------
+
+    #[test]
+    fn candidate_stamp_none_when_all_absent() {
+        assert_eq!(candidate_stamp(&json!({ "id": "t" })), None);
+    }
+
+    #[test]
+    fn candidate_stamp_reads_full_triple() {
+        let unit = json!({
+            "covered_input_digest": "abc",
+            "digest_algo": "git-covers-diff-v1",
+            "covered_paths": ["src/a.rs", "src/b.rs"]
+        });
+        assert_eq!(
+            candidate_stamp(&unit),
+            Some(StampTriple {
+                digest: "abc".into(),
+                algo: "git-covers-diff-v1".into(),
+                paths: vec!["src/a.rs".into(), "src/b.rs".into()],
+            })
+        );
+    }
+
+    #[test]
+    fn candidate_stamp_partial_triple_is_some_with_empties() {
+        // Only a digest present: the missing algo/paths become empty, so this can
+        // never byte-equal a well-formed expected triple (fail-closed).
+        let unit = json!({ "covered_input_digest": "abc" });
+        assert_eq!(
+            candidate_stamp(&unit),
+            Some(StampTriple {
+                digest: "abc".into(),
+                algo: String::new(),
+                paths: Vec::new(),
+            })
+        );
+    }
+
+    // ---- test_track_stamp_violation: DIRECT ------------------------------
+
+    fn baton_with_chunk() -> Value {
+        // Chunk "X" declares one bounded write path; the closure is {"src/x.rs"}.
+        json!({
+            "work_split": [
+                { "id": "X", "write_paths": ["src/x.rs"], "read_paths": [] }
+            ]
+        })
+    }
+
+    #[test]
+    fn stamp_direct_legacy_unbounded_no_triple_ok() {
+        // A legacy direct track: no covers_chunks (unbounded), no triple.
+        let cand = json!({ "work_split": [] });
+        let unit = json!({ "id": "t", "phase": "test_creation" });
+        assert_eq!(
+            test_track_stamp_violation(&unit, &cand, nowhere(), nowhere()),
+            None
+        );
+    }
+
+    #[test]
+    fn stamp_direct_unbounded_with_stray_triple_rejected() {
+        // Unbounded (no covers_chunks) but the candidate stamped a triple anyway.
+        let cand = json!({ "work_split": [] });
+        let unit = json!({
+            "id": "t",
+            "covered_input_digest": "abc",
+            "digest_algo": "git-covers-diff-v1",
+            "covered_paths": ["src/x.rs"]
+        });
+        let v = test_track_stamp_violation(&unit, &cand, nowhere(), nowhere());
+        assert_eq!(
+            v,
+            Some("forged_test_creation_stamp id=t mode=direct reason=triple_mismatch".into())
+        );
+    }
+
+    #[test]
+    fn stamp_direct_bounded_correct_triple_ok() {
+        let repo = committed_repo();
+        let cand = baton_with_chunk();
+        let unit = json!({
+            "id": "t",
+            "covers_chunks": ["X"],
+            "covered_input_digest": head(repo.path()),
+            "digest_algo": "git-covers-diff-v1",
+            "covered_paths": ["src/x.rs"]
+        });
+        assert_eq!(
+            test_track_stamp_violation(&unit, &cand, repo.path(), repo.path()),
+            None
+        );
+    }
+
+    #[test]
+    fn stamp_direct_bounded_forged_digest_rejected() {
+        let repo = committed_repo();
+        let cand = baton_with_chunk();
+        let unit = json!({
+            "id": "t",
+            "covers_chunks": ["X"],
+            "covered_input_digest": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+            "digest_algo": "git-covers-diff-v1",
+            "covered_paths": ["src/x.rs"]
+        });
+        assert_eq!(
+            test_track_stamp_violation(&unit, &cand, repo.path(), repo.path()),
+            Some("forged_test_creation_stamp id=t mode=direct reason=triple_mismatch".into())
+        );
+    }
+
+    #[test]
+    fn stamp_direct_bounded_head_unresolved_rejected() {
+        // repo_root is not a git repo -> rev-parse HEAD fails -> fail-closed.
+        let cand = baton_with_chunk();
+        let unit = json!({
+            "id": "t",
+            "covers_chunks": ["X"],
+            "covered_input_digest": "abc",
+            "digest_algo": "git-covers-diff-v1",
+            "covered_paths": ["src/x.rs"]
+        });
+        assert_eq!(
+            test_track_stamp_violation(&unit, &cand, nowhere(), nowhere()),
+            Some("forged_test_creation_stamp id=t mode=direct reason=head_unresolved".into())
+        );
+    }
+
+    // ---- test_track_stamp_violation: CARRIED -----------------------------
+
+    #[test]
+    fn stamp_carried_origin_unreadable_rejected() {
+        // read_origin_snapshot is the frozen stub (None) -> carried claims cannot
+        // resolve an origin yet -> fail-closed exit-23 subreason.
+        let cand = baton_with_chunk();
+        let unit = json!({
+            "id": "t",
+            "carried_from_checkpoint": 5,
+            "covers_chunks": ["X"],
+            "covered_input_digest": "abc",
+            "digest_algo": "git-covers-diff-v1",
+            "covered_paths": ["src/x.rs"]
+        });
+        assert_eq!(
+            test_track_stamp_violation(&unit, &cand, nowhere(), nowhere()),
+            Some("forged_test_creation_stamp id=t mode=carried reason=origin_unreadable".into())
+        );
+    }
+
+    // ---- track_is_fresh --------------------------------------------------
+
+    #[test]
+    fn track_is_fresh_false_on_empty_id() {
+        let t = json!({ "phase": "test_creation" });
+        assert!(!track_is_fresh(nowhere(), &json!({}), 10, &t, 0));
+    }
+
+    #[test]
+    fn track_is_fresh_false_without_engine_first_completed() {
+        // first_completed_checkpoint is the frozen stub (None) -> not fresh.
+        let t = json!({ "id": "t" });
+        assert!(!track_is_fresh(nowhere(), &json!({}), 10, &t, 0));
+    }
+
+    // ---- test_track_fresh_or_carry ---------------------------------------
+
+    #[test]
+    fn fresh_or_carry_legacy_track_passes_byte_identical() {
+        // No covers_chunks and no carried_from_checkpoint -> legacy passthrough.
+        let t = json!({ "id": "t", "phase": "test_creation" });
+        let cand = json!({ "work_split": [] });
+        assert!(test_track_fresh_or_carry(
+            &t,
+            &cand,
+            nowhere(),
+            nowhere(),
+            10,
+            "1",
+            0
+        ));
+    }
+
+    #[test]
+    fn fresh_or_carry_opted_in_but_not_fresh_or_carried_fails() {
+        // Opts in via covers_chunks but has no carried_from_checkpoint, so
+        // decide() is ReRun and first_completed is stubbed None -> not accepted.
+        let t = json!({ "id": "t", "covers_chunks": ["X"] });
+        let cand = baton_with_chunk();
+        assert!(!test_track_fresh_or_carry(
+            &t,
+            &cand,
+            nowhere(),
+            nowhere(),
+            10,
+            "1",
+            0
+        ));
+    }
+
+    // ---- RR-6a: lost_update_violation verification_matrix ----------------
+
+    #[test]
+    fn lost_update_flags_dropped_matrix_row() {
+        let cur = json!({
+            "verification_matrix": [
+                { "id": "vm-1" }, { "id": "vm-2" }
+            ]
+        });
+        let cand = json!({
+            "verification_matrix": [ { "id": "vm-1" } ]
+        });
+        assert_eq!(
+            lost_update_violation(&cur, &cand),
+            "lost_update field=verification_matrix missing=vm-2"
+        );
+    }
+
+    #[test]
+    fn lost_update_matrix_superset_is_clean() {
+        let cur = json!({ "verification_matrix": [ { "id": "vm-1" } ] });
+        let cand = json!({
+            "verification_matrix": [ { "id": "vm-1" }, { "id": "vm-2" } ]
+        });
+        assert_eq!(lost_update_violation(&cur, &cand), "");
+    }
+
+    #[test]
+    fn lost_update_matrix_shape_mismatch_is_skipped() {
+        // Array current, object candidate: the id-superset guard is undefined
+        // across shapes, so the verification_matrix dimension is skipped (row
+        // integrity is enforced by stale_verification_matrix_row at done).
+        let cur = json!({ "verification_matrix": [ { "id": "vm-1" } ] });
+        let cand = json!({
+            "verification_matrix": { "row-a": { "result": "passed" } }
+        });
+        assert_eq!(lost_update_violation(&cur, &cand), "");
     }
 }
