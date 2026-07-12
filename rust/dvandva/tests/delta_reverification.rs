@@ -1748,6 +1748,52 @@ fn provenance_commit_anchor_valid_rejects_empty_anchor_or_empty_paths() {
     assert!(!provenance::commit_anchor_valid(d.path(), &anchor, &[]));
 }
 
+/// TR73-F1 regression: a `git init --object-format=sha256` repo stamps 64-hex
+/// object ids. `commit_anchor_valid`'s defense-in-depth shape guard must accept
+/// a full 64-lowercase-hex anchor (the SHA-256 length arm), not only 40-hex
+/// SHA-1 — otherwise carry is permanently impossible on such repos. An unchanged
+/// tracked file validates against the 64-hex anchor; a working-tree change to a
+/// covered path fails it. SKIPS (never fakes) when the installed git lacks
+/// SHA-256 object-format support.
+#[test]
+fn provenance_commit_anchor_valid_accepts_sha256_object_ids() {
+    let d = tmp();
+    let init = dvandva::gitcfg::git(d.path(), &["init", "--object-format=sha256", "-q"]).unwrap();
+    if !init.status.success() {
+        eprintln!(
+            "SKIP provenance_commit_anchor_valid_accepts_sha256_object_ids: installed git \
+             lacks --object-format=sha256 support"
+        );
+        return;
+    }
+    git_ok(d.path(), &["config", "user.name", "Dvandva Test"]);
+    git_ok(d.path(), &["config", "user.email", "dvandva@example.test"]);
+    std::fs::write(d.path().join("tracked.rs"), "origin\n").unwrap();
+    git_ok(d.path(), &["add", "tracked.rs"]);
+    git_ok(d.path(), &["commit", "-q", "-m", "origin"]);
+    let anchor = head(d.path());
+    assert_eq!(
+        anchor.len(),
+        64,
+        "SHA-256 object-format HEAD must be 64 hex chars, got {anchor:?}"
+    );
+
+    // Unchanged tracked file: the 64-hex anchor validates (RED before the fix).
+    assert!(provenance::commit_anchor_valid(
+        d.path(),
+        &anchor,
+        &["tracked.rs".to_string()]
+    ));
+
+    // A working-tree change to the covered path fails the same 64-hex anchor.
+    std::fs::write(d.path().join("tracked.rs"), "changed\n").unwrap();
+    assert!(!provenance::commit_anchor_valid(
+        d.path(),
+        &anchor,
+        &["tracked.rs".to_string()]
+    ));
+}
+
 /// Closes `find_unit`'s unknown-`kind` branch.
 #[test]
 fn provenance_find_unit_rejects_unknown_kind() {

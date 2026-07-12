@@ -81,12 +81,12 @@ pub fn on_current_cycle_ancestry(
 /// Verify that every covered path is a tracked regular non-symlink file and
 /// unchanged from the origin snapshot's commit anchor.
 pub fn commit_anchor_valid(dir: &Path, origin_snapshot_anchor: &str, covered: &[String]) -> bool {
-    // Defense-in-depth: reject anything that is not exactly a 40-lowercase-hex
-    // commit SHA before it ever reaches `git diff` as an argument. A stray
-    // flag-like value (leading `-`) could otherwise be parsed as a git option
-    // instead of a revision, so this closes the anchor off from ever being
-    // interpreted that way.
-    if !is_full_hex_sha(origin_snapshot_anchor) || covered.is_empty() {
+    // Defense-in-depth: reject anything that is not a full lowercase-hex git
+    // object id (40-char SHA-1 or 64-char SHA-256) before it ever reaches
+    // `git diff` as an argument. A stray flag-like value (leading `-`) could
+    // otherwise be parsed as a git option instead of a revision, so this closes
+    // the anchor off from ever being interpreted that way.
+    if !is_full_hex_object_id(origin_snapshot_anchor) || covered.is_empty() {
         return false;
     }
     if covered.iter().any(|path| {
@@ -108,11 +108,12 @@ pub fn commit_anchor_valid(dir: &Path, origin_snapshot_anchor: &str, covered: &[
     gitcfg::git_stdout(dir, &diff_args).is_some()
 }
 
-/// Whether `s` is exactly 40 lowercase hex characters -- the shape of a full
-/// git commit SHA, and never a leading `-` that `git diff` could parse as an
-/// option.
-fn is_full_hex_sha(s: &str) -> bool {
-    s.len() == 40
+/// Whether `s` is exactly a full lowercase-hex git object id -- 40 chars
+/// (SHA-1) or 64 (SHA-256), the two object formats `git init` can stamp -- and
+/// never a leading `-` that `git diff` could parse as an option, nor any other
+/// length or letter case.
+fn is_full_hex_object_id(s: &str) -> bool {
+    (s.len() == 40 || s.len() == 64)
         && s.bytes()
             .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
@@ -678,5 +679,28 @@ mod tests {
             first_completed_checkpoint(dir.path(), &cur, 10, "subagent_track", "test-a"),
             Some(9)
         );
+    }
+
+    #[test]
+    fn full_hex_object_id_accepts_both_git_object_formats() {
+        // TR73-F1: `git init --object-format=sha256` stamps 64-hex object ids;
+        // both the 40-hex (SHA-1) and 64-hex (SHA-256) lowercase full-object-id
+        // shapes must pass, so carry is possible on either repo format.
+        assert!(is_full_hex_object_id(&"a".repeat(40)));
+        assert!(is_full_hex_object_id(&"0123456789abcdef".repeat(4))); // 64 hex
+
+        // Every off-by-one length around BOTH arms fails.
+        assert!(!is_full_hex_object_id(&"a".repeat(39)));
+        assert!(!is_full_hex_object_id(&"a".repeat(41)));
+        assert!(!is_full_hex_object_id(&"a".repeat(63)));
+        assert!(!is_full_hex_object_id(&"a".repeat(65)));
+
+        // Uppercase hex is non-canonical and fails at BOTH valid lengths.
+        assert!(!is_full_hex_object_id(&"A".repeat(40)));
+        assert!(!is_full_hex_object_id(&"A".repeat(64)));
+
+        // A leading-`-` flag-like value never survives, even at a valid length.
+        assert!(!is_full_hex_object_id(&format!("-{}", "a".repeat(39))));
+        assert!(!is_full_hex_object_id("--upload-pack=evil"));
     }
 }
