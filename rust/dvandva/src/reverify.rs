@@ -161,9 +161,10 @@ pub fn decide(
 /// is NOT consulted here), unions each chunk's declared `write_paths` +
 /// `read_paths`, and walks `depends_on` + `conflict_group` transitively.
 /// Returns `None` (unbounded — never carries) on: empty/absent seeds, a dangling
-/// seed id, a reached chunk with no declared paths, or an unnormalizable path
-/// (absolute, containing `..`, or containing a glob metacharacter). Every
-/// returned path is a validated repo-relative file path.
+/// seed id, a blank or DUPLICATED chunk id reached during resolution (CR56-F1),
+/// a reached chunk with no declared paths, or an unnormalizable path (absolute,
+/// containing `..`, or containing a glob metacharacter). Every returned path is
+/// a validated repo-relative file path.
 pub fn derive_covered_closure(baton: &Value, unit: &Value) -> Option<BTreeSet<String>> {
     let seeds = str_vec_field(unit, "covers_chunks");
     if seeds.is_empty() {
@@ -414,8 +415,28 @@ fn work_split_chunks(baton: &Value) -> Vec<&Value> {
     }
 }
 
+/// Resolve EXACTLY ONE `work_split` chunk by `id`, failing closed on ambiguity
+/// so an ambiguous chunk cannot silently omit its paths from the derived closure
+/// (CR56-F1). Consistent with the crate's SP-2 `provenance::find_unit` and
+/// DR53-F4 duplicate-poison conventions:
+///   (a) a blank/whitespace query `id` (a blank seed, `depends_on` target, or
+///       `conflict_group` peer id — every such id reaches this lookup) is
+///       unaddressable ⇒ `None`; and
+///   (b) two or more chunks sharing `id` are ambiguous ⇒ `None` — NOT a
+///       silent first-match.
+/// Either `None` propagates through [`derive_covered_closure`] exactly like a
+/// dangling seed, poisoning the whole derivation into an unbounded (never
+/// carries) closure rather than skipping the offending chunk.
 fn find_chunk<'a>(chunks: &[&'a Value], id: &str) -> Option<&'a Value> {
-    chunks.iter().copied().find(|c| str_field(c, "id") == id)
+    if id.trim().is_empty() {
+        return None; // CR56-F1(a): a blank chunk id is unaddressable ⇒ unbounded
+    }
+    let mut matches = chunks.iter().copied().filter(|c| str_field(c, "id") == id);
+    let first = matches.next()?;
+    if matches.next().is_some() {
+        return None; // CR56-F1(b): duplicate id ⇒ ambiguous ⇒ poison the closure
+    }
+    Some(first)
 }
 
 #[cfg(test)]
@@ -628,6 +649,49 @@ mod tests {
     fn derive_closure_none_on_dangling_seed() {
         let baton = baton_fixture();
         let unit = json!({ "id": "t1", "covers_chunks": ["ghost"] });
+        assert_eq!(derive_covered_closure(&baton, &unit), None);
+    }
+
+    #[test]
+    fn derive_closure_none_on_blank_seed_id() {
+        // CR56-F1(a): a blank chunk id reaches find_chunk unaddressable ⇒ None.
+        let baton = baton_fixture();
+        assert_eq!(
+            derive_covered_closure(&baton, &json!({ "id": "t1", "covers_chunks": [""] })),
+            None
+        );
+        assert_eq!(
+            derive_covered_closure(&baton, &json!({ "id": "t1", "covers_chunks": ["   "] })),
+            None
+        );
+    }
+
+    #[test]
+    fn derive_closure_none_on_duplicate_seed_id() {
+        // CR56-F1(b): two chunks share id "X" on DISTINCT paths — a silent
+        // first-match would omit src/second.rs; the whole derivation poisons.
+        let baton = json!({
+            "work_split": [
+                { "id": "X", "write_paths": ["src/first.rs"], "read_paths": [] },
+                { "id": "X", "write_paths": ["src/second.rs"], "read_paths": [] }
+            ]
+        });
+        let unit = json!({ "id": "t1", "covers_chunks": ["X"] });
+        assert_eq!(derive_covered_closure(&baton, &unit), None);
+    }
+
+    #[test]
+    fn derive_closure_none_on_duplicate_depends_on_target() {
+        // CR56-F1(b): a UNIQUE seed reaches a DUPLICATED transitive target via
+        // depends_on — the duplicate must poison the walk, not first-match.
+        let baton = json!({
+            "work_split": [
+                { "id": "A", "write_paths": ["src/a.rs"], "read_paths": [], "depends_on": ["B"] },
+                { "id": "B", "write_paths": ["src/b1.rs"], "read_paths": [] },
+                { "id": "B", "write_paths": ["src/b2.rs"], "read_paths": [] }
+            ]
+        });
+        let unit = json!({ "id": "t1", "covers_chunks": ["A"] });
         assert_eq!(derive_covered_closure(&baton, &unit), None);
     }
 

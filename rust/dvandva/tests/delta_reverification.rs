@@ -1571,6 +1571,92 @@ fn reverify_work_split_accepts_object_shape_and_rejects_absent_shape() {
     );
 }
 
+/// CR56-F1: closure resolution must treat a BLANK or DUPLICATED `work_split`
+/// chunk id as ambiguity ⇒ `None` (unbounded, never carries), consistent with
+/// the SP-2 `find_unit` / DR53-F4 duplicate-poison conventions — never a silent
+/// first-match. Exercises the three `find_chunk` fail-closed arms directly.
+#[test]
+fn reverify_derive_closure_poisons_on_blank_or_duplicate_chunk_ids() {
+    // (a) blank seed id reaches find_chunk unaddressable ⇒ None.
+    let baton = json!({"work_split": [bounded_chunk("X", &["src/x.rs"], &[])]});
+    assert_eq!(
+        reverify::derive_covered_closure(&baton, &json!({"id": "t", "covers_chunks": [""]})),
+        None
+    );
+
+    // (b) duplicate SEED id on DISTINCT paths — first-match would omit the
+    // second chunk's src/second.rs; the whole derivation must poison instead.
+    let dup_seed = json!({
+        "work_split": [
+            {"id": "X", "write_paths": ["src/first.rs"], "read_paths": []},
+            {"id": "X", "write_paths": ["src/second.rs"], "read_paths": []}
+        ]
+    });
+    assert_eq!(
+        reverify::derive_covered_closure(&dup_seed, &json!({"id": "t", "covers_chunks": ["X"]})),
+        None
+    );
+
+    // (b) duplicate id reached transitively via a UNIQUE seed's depends_on.
+    let dup_dep = json!({
+        "work_split": [
+            {"id": "A", "write_paths": ["src/a.rs"], "read_paths": [], "depends_on": ["B"]},
+            {"id": "B", "write_paths": ["src/b1.rs"], "read_paths": []},
+            {"id": "B", "write_paths": ["src/b2.rs"], "read_paths": []}
+        ]
+    });
+    assert_eq!(
+        reverify::derive_covered_closure(&dup_dep, &json!({"id": "t", "covers_chunks": ["A"]})),
+        None
+    );
+}
+
+/// CR56-F1 end-to-end regression: two `work_split` chunks share id "X" on
+/// DISTINCT `write_paths`; a carried test track covers "X"; the SECOND X-chunk's
+/// path (`src/second.rs`) has drifted since the origin anchor while the first
+/// (`src/first.rs`) is untouched. A silent first-match derives only
+/// {src/first.rs} — clean under the anchor — and CARRIES, laundering the change
+/// on src/second.rs. Fail-closed poisoning of the ambiguous id forces ReRun.
+/// (Pre-fix `find_chunk` first-matched ⇒ this asserted Carry: RED.)
+#[test]
+fn reverify_duplicate_chunk_id_masking_changed_path_forces_rerun() {
+    let d = tmp();
+    let anchor = committed_repo_at(
+        d.path(),
+        &[("src/first.rs", "first\n"), ("src/second.rs", "second\n")],
+    );
+    // Origin + candidate agree on the stale first-match closure ["src/first.rs"].
+    write_origin_track_snapshot(
+        d.path(),
+        5,
+        "1",
+        origin_track("t", &anchor, &["src/first.rs"]),
+        json!([bounded_chunk("X", &["src/first.rs"], &[])]),
+    );
+    let candidate = carried_track("t", 5, &anchor, &["src/first.rs"], &["X"]);
+    // The SECOND X-chunk's path drifts since the anchor — invisible to a
+    // first-matched {src/first.rs} closure.
+    std::fs::write(d.path().join("src/second.rs"), "DRIFTED\n").unwrap();
+    // CURRENT work_split: a DUPLICATE "X" on distinct paths.
+    let dup_chunks = json!([
+        {"id": "X", "write_paths": ["src/first.rs"], "read_paths": []},
+        {"id": "X", "write_paths": ["src/second.rs"], "read_paths": []}
+    ]);
+    let baton = decide_baton(candidate.clone(), dup_chunks);
+    assert_eq!(
+        reverify::decide(
+            &baton,
+            d.path(),
+            &candidate,
+            "subagent_track",
+            10,
+            "1",
+            d.path(),
+        ),
+        reverify::Decision::ReRun
+    );
+}
+
 // ---- provenance.rs: branches not reached by VM-1..VM-17 ------------------
 
 /// Closes `read_origin_snapshot`'s ambiguous-duplicate-checkpoint-file
