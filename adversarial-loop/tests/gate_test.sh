@@ -9,6 +9,7 @@ SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 LOOP_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd -P)
 PREDICATE="$LOOP_DIR/lib/predicate.sh"
 GATE="$LOOP_DIR/hooks/gate.sh"
+GATE_CLI="$LOOP_DIR/hooks/gate-cli.sh"
 
 if [[ ! -f "$PREDICATE" || ! -f "$GATE" ]]; then
   printf 'FAIL: expected predicate and hook under %s\n' "$LOOP_DIR" >&2
@@ -62,12 +63,15 @@ write_goal() {
   local status=$3
   local steps_json=$4
   local goal_id=${5:-goal-1}
+  local mode=${6:-}
   write_file "$repo/.adversarial-loop/goal.json" "$(jq -cn \
     --arg goal_id "$goal_id" \
     --arg owner "$owner" \
     --arg status "$status" \
+    --arg mode "$mode" \
     --argjson steps "$steps_json" \
-    '{goal_id:$goal_id,owner_session_id:$owner,status:$status,acceptance:"gate test",steps:$steps}')"
+    '({goal_id:$goal_id,owner_session_id:$owner,status:$status,acceptance:"gate test",steps:$steps}) +
+      (if $mode == "" then {} else {mode:$mode} end)')"
 }
 
 step_json() {
@@ -77,14 +81,17 @@ step_json() {
   local revision=$4
   local artifact_path=$5
   local digest=$6
+  local author_agent_id=${7:-}
   jq -cn \
     --arg id "$id" \
     --arg status "$step_status" \
     --arg author "$author" \
     --arg path "$artifact_path" \
     --arg digest "$digest" \
+    --arg author_agent_id "$author_agent_id" \
     --argjson revision "$revision" \
-    '{id:$id,kind:"execute",author_family:$author,revision:$revision,status:$status,artifact_path:$path,artifact_digest:$digest}'
+    '({id:$id,kind:"execute",author_family:$author,revision:$revision,status:$status,artifact_path:$path,artifact_digest:$digest}) +
+      (if $author_agent_id == "" then {} else {author_agent_id:$author_agent_id} end)'
 }
 
 write_evidence() {
@@ -97,6 +104,7 @@ write_evidence() {
   local reviewer=$7
   local verdict=$8
   local goal_id=${9:-goal-1}
+  local reviewer_agent_id=${10:-}
   write_file "$repo/.adversarial-loop/evidence/$goal_id/$step_id/$filename" "$(jq -cn \
     --arg goal_id "$goal_id" \
     --arg step_id "$step_id" \
@@ -104,8 +112,10 @@ write_evidence() {
     --arg reviewer "$reviewer" \
     --arg verdict "$verdict" \
     --arg created_at "$created_at" \
+    --arg reviewer_agent_id "$reviewer_agent_id" \
     --argjson revision "$revision" \
-    '{goal_id:$goal_id,step_id:$step_id,step_revision:$revision,artifact_digest:$digest,reviewer_family:$reviewer,reviewer_model:"test-model",verdict:$verdict,findings:[],transcript_ref:"test://transcript",created_at:$created_at}')"
+    '({goal_id:$goal_id,step_id:$step_id,step_revision:$revision,artifact_digest:$digest,reviewer_family:$reviewer,reviewer_model:"test-model",verdict:$verdict,findings:[],transcript_ref:"test://transcript",created_at:$created_at}) +
+      (if $reviewer_agent_id == "" then {} else {reviewer_agent_id:$reviewer_agent_id} end)')"
 }
 
 predicate_result() {
@@ -186,9 +196,11 @@ make_valid_active_goal() {
   local repo=$1
   local author=${2:-claude}
   local step_status=${3:-complete}
+  local mode=${4:-}
+  local author_agent_id=${5:-}
   local digest
   digest=$(sha_of "$repo/artifact.txt")
-  write_goal "$repo" session-a active "[$(step_json step-1 "$step_status" "$author" 1 artifact.txt "$digest")]"
+  write_goal "$repo" session-a active "[$(step_json step-1 "$step_status" "$author" 1 artifact.txt "$digest" "$author_agent_id")]" goal-1 "$mode"
   printf '%s\n' "$digest"
 }
 
@@ -201,9 +213,21 @@ repo=$(new_repo malformed-goal)
 write_file "$repo/.adversarial-loop/goal.json" '{not valid json'
 assert_predicate 'malformed goal blocks' block "$repo" session-a 'malformed'
 
-repo=$(new_repo done-goal)
-write_goal "$repo" session-a done '[]'
-assert_predicate 'status=done allows' allow "$repo" session-a
+repo=$(new_repo done-with-evidence)
+digest=$(sha_of "$repo/artifact.txt")
+write_goal "$repo" session-a done "[$(step_json step-1 complete claude 1 artifact.txt "$digest")]"
+write_evidence "$repo" step-1 attempt-1.json 2026-07-13T10:00:00Z 1 "$digest" gpt pass
+assert_predicate 'status=done with full passing evidence allows' allow "$repo" session-a
+
+repo=$(new_repo done-missing-evidence)
+digest=$(sha_of "$repo/artifact.txt")
+write_goal "$repo" session-a done "[$(step_json step-1 complete claude 1 artifact.txt "$digest")]"
+assert_predicate 'status=done with missing evidence blocks' block "$repo" session-a 'missing evidence'
+
+repo=$(new_repo invalid-status)
+digest=$(sha_of "$repo/artifact.txt")
+write_goal "$repo" session-a paused "[$(step_json step-1 complete claude 1 artifact.txt "$digest")]"
+assert_predicate 'invalid status blocks fail-closed' block "$repo" session-a 'invalid status'
 
 repo=$(new_repo wrong-session)
 make_valid_active_goal "$repo" >/dev/null
@@ -245,6 +269,14 @@ repo=$(new_repo pending-step)
 digest=$(make_valid_active_goal "$repo" claude pending)
 write_evidence "$repo" step-1 attempt-1.json 2026-07-13T10:00:00Z 1 "$digest" gpt pass
 assert_predicate 'step not complete blocks' block "$repo" session-a 'not complete'
+
+repo=$(new_repo pending-empty-digest)
+write_goal "$repo" session-a active "[$(step_json step-1 pending claude 1 artifact.txt '')]"
+assert_predicate 'pending step accepts empty digest before evidence check' block "$repo" session-a 'missing evidence'
+
+repo=$(new_repo complete-invalid-digest)
+write_goal "$repo" session-a active "[$(step_json step-1 complete claude 1 artifact.txt not-a-sha256)]"
+assert_predicate 'complete step with non-64hex digest blocks' block "$repo" session-a 'missing or invalid required fields'
 
 repo=$(new_repo missing-evidence)
 make_valid_active_goal "$repo" >/dev/null
@@ -322,6 +354,26 @@ repo=$(new_repo cross-family-pass)
 digest=$(make_valid_active_goal "$repo")
 write_evidence "$repo" step-1 attempt-1.json 2026-07-13T10:00:00Z 1 "$digest" gpt pass
 assert_predicate 'all-pass cross-family allows' allow "$repo" session-a
+
+repo=$(new_repo cross-context-pass)
+digest=$(make_valid_active_goal "$repo" claude complete cross-context author-agent-a)
+write_evidence "$repo" step-1 attempt-1.json 2026-07-13T10:00:00Z 1 "$digest" claude pass goal-1 reviewer-agent-b
+assert_predicate 'cross-context distinct reviewer agent allows' allow "$repo" session-a
+
+repo=$(new_repo cross-context-same-agent)
+digest=$(make_valid_active_goal "$repo" claude complete cross-context agent-a)
+write_evidence "$repo" step-1 attempt-1.json 2026-07-13T10:00:00Z 1 "$digest" claude pass goal-1 agent-a
+assert_predicate 'cross-context same reviewer agent blocks' block "$repo" session-a 'reviewer agent id matches author agent id'
+
+repo=$(new_repo cross-context-missing-reviewer-agent)
+digest=$(make_valid_active_goal "$repo" claude complete cross-context author-agent-a)
+write_evidence "$repo" step-1 attempt-1.json 2026-07-13T10:00:00Z 1 "$digest" claude pass
+assert_predicate 'cross-context missing reviewer agent id blocks' block "$repo" session-a 'reviewer_agent_id'
+
+repo=$(new_repo cross-context-missing-author-agent)
+digest=$(make_valid_active_goal "$repo" claude complete cross-context)
+write_evidence "$repo" step-1 attempt-1.json 2026-07-13T10:00:00Z 1 "$digest" claude pass goal-1 reviewer-agent-b
+assert_predicate 'cross-context missing author agent id blocks' block "$repo" session-a 'author_agent_id'
 
 repo=$(new_repo unknown-step)
 digest=$(make_valid_active_goal "$repo")
@@ -409,6 +461,23 @@ make_valid_active_goal "$repo" >/dev/null
 control_name=$'bad\x1fname.json'
 write_file "$repo/.adversarial-loop/evidence/goal-1/step-1/$control_name" '{not valid json'
 assert_hook 'hook emits valid block JSON when reason contains a control character' block "$repo" session-a "$repo" false 'malformed evidence'
+
+printf '%s\n' 'Layer C: CLI adapter end-to-end'
+
+repo=$(new_repo cli-missing-evidence)
+make_valid_active_goal "$repo" >/dev/null
+cli_stderr="$TEST_TMP/gate-cli.stderr"
+if [[ ! -x "$GATE_CLI" ]]; then
+  record fail 'CLI adapter blocks missing evidence (adapter is missing or not executable)'
+else
+  cli_stdout=$(cd "$repo" && "$GATE_CLI" --session session-a 2>"$cli_stderr")
+  exit_code=$?
+  if [[ $exit_code -ne 0 && -z "$cli_stdout" ]] && grep -q 'missing evidence' "$cli_stderr"; then
+    record pass 'CLI adapter blocks missing evidence'
+  else
+    record fail "CLI adapter blocks missing evidence (exit $exit_code, stdout: $cli_stdout, stderr: $(<"$cli_stderr"))"
+  fi
+fi
 
 total=$((passed + failed))
 if [[ $failed -eq 0 ]]; then

@@ -11,6 +11,10 @@
       "pattern": "^[a-z0-9][a-z0-9_-]{0,63}$"
     },
     "owner_session_id": { "type": "string", "minLength": 1 },
+    "mode": {
+      "enum": ["cross-vendor", "cross-context"],
+      "description": "Review separation mode. When absent, the gate treats it as cross-vendor for backward compatibility."
+    },
     "status": { "enum": ["active", "done", "abandoned"] },
     "acceptance": { "type": "string" },
     "steps": {
@@ -27,13 +31,17 @@
           },
           "kind": { "enum": ["plan", "execute"] },
           "author_family": { "enum": ["claude", "gpt"] },
+          "author_agent_id": {
+            "type": "string",
+            "description": "Required and non-empty by the gate when mode is cross-context."
+          },
           "revision": { "type": "integer", "minimum": 1 },
           "status": { "enum": ["pending", "complete"] },
           "artifact_path": { "type": "string", "minLength": 1 },
           "artifact_digest": {
             "type": "string",
-            "pattern": "^[0-9a-f]{64}$",
-            "description": "sha256 of artifact_path at completion"
+            "pattern": "^([0-9a-f]{64})?$",
+            "description": "Empty while pending; the gate requires the sha256 of artifact_path when complete."
           }
         },
         "additionalProperties": true

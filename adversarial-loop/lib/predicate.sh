@@ -102,14 +102,14 @@ _adversarial_loop_evidence_name_gt() {
 adversarial_loop_gate_predicate() {
   local repo_root=${1-}
   local session_id=${2-}
-  local state_dir goal_file status goal_id owner step_count
-  local index id author revision step_status artifact_path artifact_digest
+  local state_dir goal_file status mode goal_id owner step_count
+  local index id author author_agent_id revision step_status artifact_path artifact_digest
   local artifact_file computed_digest evidence_dir evidence_file evidence_name
   local evidence_goal_id evidence_step_id evidence_created_at latest_file
   local latest_created_at latest_name latest_revision latest_digest latest_verdict
-  local latest_reviewer found_evidence evidence_timestamp_order
+  local latest_reviewer latest_reviewer_agent_id found_evidence evidence_timestamp_order
   local enumerated_step_count=0
-  local -a step_ids step_authors step_revisions step_statuses step_paths step_digests
+  local -a step_ids step_authors step_author_agent_ids step_revisions step_statuses step_paths step_digests
   local -A seen_ids
 
   if [[ -z "$repo_root" || ! -d "$repo_root" ]]; then
@@ -138,16 +138,20 @@ adversarial_loop_gate_predicate() {
   fi
 
   status=$(jq -r '.status' "$goal_file" 2>/dev/null)
-  # Deliberately inert for an explicitly non-active goal. The chair controls
-  # this field; a malicious chair changing it is outside this bounded-nudge
-  # gate's threat model.
-  if [[ "$status" != active ]]; then
-    _adversarial_loop_predicate_result allow ''
-    return 0
-  fi
+  case "$status" in
+    active | done) ;;
+    abandoned)
+      _adversarial_loop_predicate_result allow ''
+      return 0
+      ;;
+    *)
+      _adversarial_loop_predicate_result block "goal has invalid status: $status"
+      return 0
+      ;;
+  esac
 
   if [[ -z "$session_id" ]]; then
-    _adversarial_loop_predicate_result block 'active goal cannot be matched because hook session_id is missing'
+    _adversarial_loop_predicate_result block 'enforced goal cannot be matched because session_id is missing'
     return 0
   fi
 
@@ -172,6 +176,18 @@ adversarial_loop_gate_predicate() {
     _adversarial_loop_predicate_result block 'active goal has missing or invalid required fields'
     return 0
   fi
+
+  if ! jq -e '
+    if has("mode") then
+      (.mode == "cross-vendor" or .mode == "cross-context")
+    else
+      true
+    end
+  ' "$goal_file" >/dev/null 2>&1; then
+    _adversarial_loop_predicate_result block 'active goal has invalid mode'
+    return 0
+  fi
+  mode=$(jq -r 'if has("mode") then .mode else "cross-vendor" end' "$goal_file" 2>/dev/null)
 
   goal_id=$(jq -r '.goal_id' "$goal_file" 2>/dev/null)
   if [[ ! "$goal_id" =~ ^[a-z0-9][a-z0-9_-]{0,63}$ ]]; then
@@ -199,10 +215,14 @@ adversarial_loop_gate_predicate() {
       (.id | type == "string") and
       (.kind == "plan" or .kind == "execute") and
       (.author_family == "claude" or .author_family == "gpt") and
+      ((has("author_agent_id") | not) or (.author_agent_id | type == "string")) and
       (.revision | (type == "number" and floor == . and . >= 1)) and
       (.status == "pending" or .status == "complete") and
       (.artifact_path | (type == "string" and length > 0)) and
-      (.artifact_digest | (type == "string" and test("^[0-9a-f]{64}$")))
+      (
+        (.status == "pending" and (.artifact_digest | (type == "string" and test("^([0-9a-f]{64})?$")))) or
+        (.status == "complete" and (.artifact_digest | (type == "string" and test("^[0-9a-f]{64}$"))))
+      )
     ' "$goal_file" >/dev/null 2>&1; then
       _adversarial_loop_predicate_result block "step at index $index has missing or invalid required fields"
       return 0
@@ -220,6 +240,17 @@ adversarial_loop_gate_predicate() {
     seen_ids["$id"]=1
 
     author=$(jq -r --argjson index "$index" '.steps[$index].author_family' "$goal_file" 2>/dev/null)
+    author_agent_id=$(jq -r --argjson index "$index" '
+      if (.steps[$index].author_agent_id? | type) == "string" then
+        .steps[$index].author_agent_id
+      else
+        ""
+      end
+    ' "$goal_file" 2>/dev/null)
+    if [[ "$mode" == cross-context && -z "$author_agent_id" ]]; then
+      _adversarial_loop_predicate_result block "step $id author_agent_id is required in cross-context mode"
+      return 0
+    fi
     revision=$(jq -r --argjson index "$index" '.steps[$index].revision' "$goal_file" 2>/dev/null)
     step_status=$(jq -r --argjson index "$index" '.steps[$index].status' "$goal_file" 2>/dev/null)
     artifact_path=$(jq -r --argjson index "$index" '.steps[$index].artifact_path' "$goal_file" 2>/dev/null)
@@ -227,6 +258,7 @@ adversarial_loop_gate_predicate() {
 
     step_ids+=("$id")
     step_authors+=("$author")
+    step_author_agent_ids+=("$author_agent_id")
     step_revisions+=("$revision")
     step_statuses+=("$step_status")
     step_paths+=("$artifact_path")
@@ -285,6 +317,7 @@ adversarial_loop_gate_predicate() {
           (.step_revision | (type == "number" and floor == . and . >= 1)) and
           (.artifact_digest | (type == "string" and test("^[0-9a-f]{64}$"))) and
           (.reviewer_family == "claude" or .reviewer_family == "gpt") and
+          ((has("reviewer_agent_id") | not) or (.reviewer_agent_id | type == "string")) and
           (.reviewer_model | type == "string") and
           (.verdict == "pass" or .verdict == "fail") and
           (.findings | type == "array") and
@@ -329,6 +362,13 @@ adversarial_loop_gate_predicate() {
     latest_digest=$(jq -r '.artifact_digest' "$latest_file" 2>/dev/null)
     latest_verdict=$(jq -r '.verdict' "$latest_file" 2>/dev/null)
     latest_reviewer=$(jq -r '.reviewer_family' "$latest_file" 2>/dev/null)
+    latest_reviewer_agent_id=$(jq -r '
+      if (.reviewer_agent_id? | type) == "string" then
+        .reviewer_agent_id
+      else
+        ""
+      end
+    ' "$latest_file" 2>/dev/null)
 
     if [[ "$latest_revision" != "${step_revisions[$index]}" ]]; then
       _adversarial_loop_predicate_result block "step $id latest evidence revision mismatch"
@@ -342,9 +382,20 @@ adversarial_loop_gate_predicate() {
       _adversarial_loop_predicate_result block "step $id latest evidence verdict is $latest_verdict"
       return 0
     fi
-    if [[ "$latest_reviewer" == "${step_authors[$index]}" ]]; then
-      _adversarial_loop_predicate_result block "step $id latest evidence reviewer family matches author family"
-      return 0
+    if [[ "$mode" == cross-vendor ]]; then
+      if [[ "$latest_reviewer" == "${step_authors[$index]}" ]]; then
+        _adversarial_loop_predicate_result block "step $id latest evidence reviewer family matches author family"
+        return 0
+      fi
+    else
+      if [[ -z "$latest_reviewer_agent_id" ]]; then
+        _adversarial_loop_predicate_result block "step $id latest evidence reviewer_agent_id is required in cross-context mode"
+        return 0
+      fi
+      if [[ "$latest_reviewer_agent_id" == "${step_author_agent_ids[$index]}" ]]; then
+        _adversarial_loop_predicate_result block "step $id latest evidence reviewer agent id matches author agent id"
+        return 0
+      fi
     fi
   done
 

@@ -14,6 +14,10 @@
     "step_revision": { "type": "integer", "minimum": 1 },
     "artifact_digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "reviewer_family": { "enum": ["claude", "gpt"] },
+    "reviewer_agent_id": {
+      "type": "string",
+      "description": "Required and non-empty by the gate when the goal mode is cross-context."
+    },
     "reviewer_model": { "type": "string" },
     "verdict": { "enum": ["pass", "fail"] },
     "findings": { "type": "array" },
