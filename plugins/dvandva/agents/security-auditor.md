@@ -2,6 +2,7 @@
 name: dvandva-security-auditor
 description: Use for Dvandva deep_review when the run needs structured security-threat analysis across authn/authz and role/privilege boundaries, input validation and injection vectors, secrets handling, supply-chain risks in installer scripts, and unsafe shell/path operations.
 model: opus
+effort: xhigh
 color: red
 phase: deep_review
 tools: Read, Glob, Grep, Bash

@@ -2441,7 +2441,7 @@ fn standalone_fixture(root: &Path) {
         w(
             root,
             &format!("plugins/dvandva/agents/{name}.md"),
-            &format!("---\nname: dvandva-{name}\n---\n# dvandva-{name}\n"),
+            &format!("---\nname: dvandva-{name}\neffort: xhigh\n---\n# dvandva-{name}\n"),
         );
     }
 }
@@ -2512,10 +2512,25 @@ fn standalone_rejects_bad_frontmatter_name() {
     w(
         d.path(),
         "plugins/dvandva/agents/test-creator.md",
-        "---\nname: test-creator\n---\n# test-creator\n",
+        "---\nname: test-creator\neffort: xhigh\n---\n# test-creator\n",
     );
     let r = run4_standalone_agents::report(d.path());
     assert!(r.fails_with("agent frontmatter names must use dvandva-*"));
+}
+
+#[test]
+fn standalone_rejects_missing_or_downgraded_xhigh_effort() {
+    for effort_line in ["", "effort: high\n"] {
+        let d = tmp();
+        standalone_fixture(d.path());
+        w(
+            d.path(),
+            "plugins/dvandva/agents/test-creator.md",
+            &format!("---\nname: dvandva-test-creator\n{effort_line}---\n# dvandva-test-creator\n"),
+        );
+        let r = run4_standalone_agents::report(d.path());
+        assert!(r.fails_with("agent frontmatter must contain exactly one effort: xhigh"));
+    }
 }
 
 #[test]

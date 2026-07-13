@@ -189,18 +189,38 @@ pub fn report(root: &Path) -> Report {
     );
 
     let mut frontmatter_ok = !actual.is_empty();
+    let mut effort_ok = !actual.is_empty();
+    let frontmatter_re = Regex::new(r"(?s)\A---\r?\n(.*?)\r?\n---(?:\r?\n|\z)").unwrap();
+    let effort_re = Regex::new(r"(?m)^effort:[^\r\n]*$").unwrap();
+    let xhigh_effort_re = Regex::new(r"(?m)^effort:[[:space:]]*xhigh[[:space:]]*$").unwrap();
     for agent in EXPECTED_AGENTS {
         let rel = format!("plugins/dvandva/agents/{agent}.md");
         let re = Regex::new(&format!(
             r"(?m)^name:[[:space:]]*dvandva-{agent}[[:space:]]*$"
         ))
         .unwrap();
-        let matched = read(root, &rel).map(|c| re.is_match(&c)).unwrap_or(false);
-        if !matched {
+        let content = read(root, &rel);
+        if !content.as_ref().map(|c| re.is_match(c)).unwrap_or(false) {
             frontmatter_ok = false;
+        }
+        if !content
+            .as_ref()
+            .and_then(|c| frontmatter_re.captures(c))
+            .and_then(|captures| captures.get(1))
+            .map(|frontmatter| {
+                effort_re.find_iter(frontmatter.as_str()).count() == 1
+                    && xhigh_effort_re.is_match(frontmatter.as_str())
+            })
+            .unwrap_or(false)
+        {
+            effort_ok = false;
         }
     }
     r.add(frontmatter_ok, "agent frontmatter names must use dvandva-*");
+    r.add(
+        effort_ok,
+        "agent frontmatter must contain exactly one effort: xhigh",
+    );
 
     r
 }

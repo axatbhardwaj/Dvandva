@@ -2,6 +2,7 @@
 name: dvandva-integration-checker
 description: Use for Dvandva deep_review when two-team parallel implementation chunks need cross-chunk wiring verification across imports and exports, data flowing end-to-end across chunk seams, and no orphaned interfaces or dead ends between parallel-built pieces.
 model: opus
+effort: xhigh
 color: yellow
 phase: deep_review
 tools: Read, Glob, Grep, Bash

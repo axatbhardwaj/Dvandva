@@ -20,14 +20,14 @@ Modes:
 Safety:
   \u{2022} Only the 5 allowlisted symlinks are ever moved.
   \u{2022} --apply refuses unless the dvandva cache at DVANDVA_EXPECTED_VERSION
-    (default: 1.6.0) contains all 15 required dvandva-* agent files.
+    (default: 1.6.1) contains all 15 required dvandva-* agent files.
   \u{2022} Haoshoku source targets are never touched; only the symlink pointers move.
   \u{2022} Skills, non-allowlisted agents, and Codex dirs are never modified.
 
 Environment:
   HOME                       Overridable home dir (used in tests).
   CODEX_HOME                 Codex home dir (default: $HOME/.codex).
-  DVANDVA_EXPECTED_VERSION   Required dvandva cache version (default: 1.6.0).
+  DVANDVA_EXPECTED_VERSION   Required dvandva cache version (default: 1.6.1).
 ";
 // NOTE: keep the two \"(default: ...)\" values above in sync with the
 // authoritative default (DEFAULT_EXPECTED_VERSION / PLUGIN_VERSION) defined
