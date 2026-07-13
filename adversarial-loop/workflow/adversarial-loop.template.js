@@ -45,7 +45,22 @@ const executeAgentId = s => s.author_agent_id || `execute:${GOAL}:${s.id}:r${s.r
 const reviewerAgentId = s => `attack:${GOAL}:${s.id}:r${s.revision}`
 
 // GPT authors the artifact. STAMP, not this lane, is the sole goal.json writer.
-const executeLane = s => `Thin Codex wrapper — EXECUTE lane. Your dispatched agent id is ${executeAgentId(s)}. Run one foreground codex exec with </dev/null, explicit workspace-write sandbox, explicit model_reasoning_effort=xhigh, --json, and -o. Build step '${s.id}' at ${s.artifact_path} per the plan. On timeout, resume the exact thread (never --last). Verify the artifact exists on disk; do not edit .adversarial-loop/goal.json. Return the artifact path and a one-line summary.`
+const executeLane = s => `Thin Codex wrapper — EXECUTE lane. Your dispatched agent id is ${executeAgentId(s)}. Build step '${s.id}' at ${s.artifact_path} per the plan; do not edit .adversarial-loop/goal.json.
+
+Set REPO_ROOT to the repository root, MODEL=gpt-5.6-terra, EFFORT=xhigh, and SANDBOX=workspace-write. Before writing the self-contained brief at "$ATT/brief.md", allocate ATT as a new path such as "/tmp/codex-attempts/${GOAL}-${s.id}-r${s.revision}-a$N" and create it with `mkdir -p "$ATT"`. Do this before every dispatch, retry, and resume; N must increment and no output path may ever be reused. Capture the status baseline before dispatch.
+
+  git -C "$REPO_ROOT" status --short > "$ATT/pre.status"
+  timeout --kill-after=10 600 codex exec \\
+    -C "$REPO_ROOT" \\
+    -m "$MODEL" -s "$SANDBOX" \\
+    -c "model_reasoning_effort=$EFFORT" \\
+    --json -o "$ATT/last-message.md" \\
+    "$(cat "$ATT/brief.md")" </dev/null \\
+    > "$ATT/events.jsonl" 2> "$ATT/stderr.log"
+  EXIT=$?
+  printf 'EXIT:%s\\n' "$EXIT" > "$ATT/exit"
+
+Keep stdout (the --json JSONL) and stderr in those separate files: never merge stderr into events.jsonl, because it corrupts the stream. Treat the attempt as complete only when EXIT is 0, events.jsonl contains turn.completed, and last-message.md is non-empty; a nonzero exit, turn.failed/error event, missing turn.completed, or empty -o output is a failed attempt. On a timeout, first confirm the process is dead; any exact-thread resume uses a new ATT with new events.jsonl, stderr.log, and last-message.md (never resume --last). Rerun the plan's verification commands and verify the artifact and boundaries on disk before returning the artifact path and a one-line summary. If this Codex run may exceed the ~10-minute shell cap, hold it in wrapper-owned background Bash and wait for its completion notification; never use a sleep-poll loop.`
 
 const stampIds = STEPS.map(s => shellQuote(s.id)).join(' ')
 const stampRevisionCases = STEPS.map(s => `    ${shellQuote(s.id)}) REVISION=${s.revision} ;;`).join('\n')
