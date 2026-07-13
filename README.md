@@ -13,16 +13,16 @@ Dvandva is **a governed-loop protocol for adversarial AI pairs** — orchestrati
 
 **Superpowers is a hard runtime dependency.** Dvandva owns baton state, role handoff, phase gates, and cross-agent review; Superpowers owns the active-work discipline inside each turn — skills before action, brainstorming before design, TDD before implementation, verification before completion, and subagent-driven execution when parallel tracks exist. If the engine running a Dvandva role cannot see the Superpowers skills, that role must stop and surface setup instructions instead of continuing with a weakened workflow.
 
-Dvandva ships as an installable plugin (version `1.5.4`) for both engines. The repo lives at https://github.com/axatbhardwaj/Dvandva, and the interactive product explainer is live at https://axatbhardwaj.github.io/Dvandva/.
+Dvandva ships as an installable plugin (version `1.6.0`) for both engines. The repo lives at https://github.com/axatbhardwaj/Dvandva, and the interactive product explainer is live at https://axatbhardwaj.github.io/Dvandva/.
 
 ## Quickstart
 
-The `dvandva` binary IS the Dvandva runtime — the read path, the write path, waiting, preflight, git work-gating, the installers, and the lints, all in one multicall binary. It is published on crates.io as `dvandva 3.3.1`.
+The `dvandva` binary IS the Dvandva runtime — the read path, the write path, waiting, preflight, git work-gating, the installers, and the lints, all in one multicall binary. It is published on crates.io as `dvandva 3.4.0`.
 
 **1. Install the binary.** From crates.io, or from a checkout:
 
 ```bash
-cargo install dvandva --version 3.3.1
+cargo install dvandva --version 3.4.0
 # or, from a checkout: cargo install --path rust/dvandva
 ```
 
@@ -123,7 +123,7 @@ Disputes run through bounded findings→fixing loops (`deep_review → phase_fix
 
 ## The runtime
 
-The `dvandva` binary is one multicall runtime. Invoked through a git-hook symlink (`pre-commit`, `prepare-commit-msg`, ...) it takes the hook name from `argv[0]`; `dvandva --version` prints the version line (`dvandva 3.3.1`).
+The `dvandva` binary is one multicall runtime. Invoked through a git-hook symlink (`pre-commit`, `prepare-commit-msg`, ...) it takes the hook name from `argv[0]`; `dvandva --version` prints the version line (`dvandva 3.4.0`).
 
 | Group | Subcommands |
 |---|---|
