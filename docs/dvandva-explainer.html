@@ -10,8 +10,8 @@
   "schema": "dvandva.artifact.explainer.v1",
   "artifact_type": "explainer",
   "title": "Dvandva — a governed-loop protocol for adversarial AI pairs",
-  "date": "2026-07-12",
-  "basis": "engine truth on feat/delta-reverification · Option-B delta re-verification"
+  "date": "2026-07-13",
+  "basis": "engine truth on feat/adversarial-loop · v3.4.0 published runtime + single-loop successor in-tree"
 }
 </script>
 <style>
@@ -129,6 +129,7 @@
       <a href="#proof">proof</a>
       <a href="#mechanics">mechanics</a>
       <a href="#delta">re-laps</a>
+      <a href="#single-loop">the single loop</a>
       <a href="#start">get started</a>
       <a class="nav-repo" href="https://github.com/axatbhardwaj/Dvandva">repo ↗</a>
     </div>
@@ -154,6 +155,7 @@ document.getElementById('toc').addEventListener('click', function(e){
     <span class="chip">cross-vendor pairing is the recommended default, not an engine lock</span>
     <span class="chip">walkaway or supervised</span>
     <span class="chip">v3: each run declares its own workflow — peer-approved, invariant-checked</span>
+    <span class="chip">in-tree successor: the single adversarial loop — same moat, no engine</span>
   </div>
   <a class="scroll-hint" href="#proof">↓ the enforced guarantees, with citations</a>
 </header>
@@ -325,6 +327,51 @@ git rev-list --count 36f134c                                     # → 400, as o
   <p class="quiet">Carry is a best-effort optimization, not a cryptographic or terminal guarantee: every <code>verification_matrix</code> row still reruns. Legacy batons without carry fields follow the original full-rerun behavior.</p>
 </section>
 
+<section id="single-loop">
+  <p class="eyebrow">the single loop</p>
+  <h2>The successor keeps the moat and drops the engine</h2>
+  <p>Everything above needs two live sessions and a state-machine binary. The in-tree successor — <a href="https://github.com/axatbhardwaj/Dvandva/tree/main/adversarial-loop">adversarial-loop/ ↗</a> — distills it to what the moat actually requires: <b>the reviewer is never the author.</b> One chair session drives every step through <code>propose → stamp → attack → gate</code>; a hook refuses to let the turn end <code>done</code> until each step carries passing cross-reviewer evidence digest-bound to the artifact bytes. No daemon, no baton, no binary — a skill, a hook, and a workflow template.</p>
+  <figure>
+    <svg viewBox="0 0 1040 240" width="100%" role="img" aria-label="The single adversarial loop: author proposes, the chair stamps a digest, the other family attacks, the gate blocks done until the latest attempt passes">
+      <defs><marker id="sl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8a97a8"/></marker>
+      <marker id="slr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#ff6a5e"/></marker></defs>
+      <g text-anchor="middle">
+        <rect x="18" y="60" width="196" height="96" rx="8" fill="#182130" stroke="#34d399"/>
+        <text x="116" y="88" fill="#34d399" font-size="11">propose</text>
+        <text x="116" y="110" fill="#dce4ee" font-size="9.5">one family authors</text>
+        <text x="116" y="128" fill="#8a97a8" font-size="8.5">claude plans · gpt executes</text>
+        <line x1="214" y1="108" x2="268" y2="108" stroke="#8a97a8" marker-end="url(#sl)"/>
+        <rect x="268" y="60" width="180" height="96" rx="8" fill="#182130" stroke="#5ca9ff"/>
+        <text x="358" y="88" fill="#5ca9ff" font-size="11">stamp</text>
+        <text x="358" y="110" fill="#dce4ee" font-size="9.5">goal.json: sha-256 digest</text>
+        <text x="358" y="128" fill="#8a97a8" font-size="8.5">+ revision, before any review</text>
+        <line x1="448" y1="108" x2="502" y2="108" stroke="#8a97a8" marker-end="url(#sl)"/>
+        <rect x="502" y="60" width="212" height="96" rx="8" fill="#182130" stroke="#a78bfa"/>
+        <text x="608" y="88" fill="#a78bfa" font-size="11">attack</text>
+        <text x="608" y="110" fill="#dce4ee" font-size="9.5">the other family reviews</text>
+        <text x="608" y="128" fill="#8a97a8" font-size="8.5">recomputes the digest itself</text>
+        <line x1="714" y1="108" x2="768" y2="108" stroke="#8a97a8" marker-end="url(#sl)"/>
+        <rect x="768" y="60" width="150" height="96" rx="8" fill="#12241a" stroke="#46c26a" stroke-width="1.8"/>
+        <text x="843" y="88" fill="#46c26a" font-size="11">gate</text>
+        <text x="843" y="110" fill="#dce4ee" font-size="9.5">Stop hook / gate-cli</text>
+        <text x="843" y="128" fill="#8a97a8" font-size="8.5">latest attempt must pass</text>
+        <line x1="918" y1="108" x2="978" y2="108" stroke="#46c26a" marker-end="url(#sl)"/>
+        <text x="1005" y="112" fill="#46c26a" font-size="10">done</text>
+        <path d="M 843 156 L 843 196 L 116 196 L 116 156" fill="none" stroke="#ff6a5e" stroke-dasharray="5 4" marker-end="url(#slr)"/>
+        <text x="480" y="188" fill="#ff6a5e" font-size="9">fail → adjudicate findings → fix → bump revision → re-stamp → re-attack (append-only evidence; a recorded fail is never overwritten)</text>
+        <text x="480" y="222" fill="#5c6774" font-size="8.5">evidence/&lt;goal&gt;/&lt;step&gt;/attempt-N.json — reviewer family or agent id must differ from the author's</text>
+      </g>
+    </svg>
+    <figcaption>The gate validates <code>done</code> exactly like <code>active</code>: declaring victory early changes nothing — evidence bound to the current digest is the only way out.</figcaption>
+  </figure>
+  <div class="cards">
+    <div class="card"><h4>Cross-vendor <span style="color:var(--faint)">· strong default</span></h4><p>Claude chairs; Codex executes and attacks (<code>gpt-5.6-sol/terra</code>). Evidence must come from a different <em>vendor family</em> than the step's author. Different training, different blind spots.</p></div>
+    <div class="card"><h4>Claude-only</h4><p>No Codex subscription needed: fresh Claude subagents across tiers attack (opus attacks sonnet's work). Evidence must carry a reviewer <em>agent id</em> distinct from the author's. Honest degradation — shared-vendor blind spots can survive.</p></div>
+    <div class="card"><h4>Codex-only</h4><p>Codex drives; <code>sol</code> attacks <code>terra</code>'s work across effort tiers. No Stop hook exists here, so the same predicate gates through <code>gate-cli.sh</code> — invoked explicitly or as a Git pre-commit hook.</p></div>
+  </div>
+  <p class="quiet">Enforcement is stated honestly: the gate fails closed on the <em>procedure</em> — evidence present, cross-reviewer, digest-bound, verdict-passing — and is a bounded nudge (Claude Code force-ends after eight consecutive blocks), aimed at a lazy chair, not a malicious one. It cannot prove a provider call really happened. Two companion skills, <code>delegating-to-codex</code> and <code>delegating-to-grok</code>, teach the chair to dispatch the other models well — self-contained briefs, hardened invocations, independently verified results. Wiring per configuration: <a href="https://github.com/axatbhardwaj/Dvandva/blob/main/adversarial-loop/README.md">adversarial-loop/README.md ↗</a>.</p>
+</section>
+
 <section id="start">
   <p class="eyebrow">boarding</p>
   <h2>Get started</h2>
@@ -340,6 +387,6 @@ Session B (prativadi):   Join the same Dvandva development run and review the ba
   <p class="quiet">Walkaway mode drives the baton autonomously until <span class="k-seal">done</span>. A genuine requirement gap can still route to you — <code>human_question</code> pauses one session's work for a direct answer, and <code>human_decision</code> is the exceptional, human-authorized way to re-route a run or reopen one that already reached <code>done</code>/<code>abandoned</code> — it is not a routine stop most runs ever take. One session surfaces the pause to you directly; the other keeps polling through it and resumes itself the instant your answer lands, so nothing silently stalls.</p>
 </section>
 </main>
-<p class="foot">DVANDVA · a governed-loop protocol for adversarial AI pairs · Option-B delta re-verification on feat/delta-reverification · 2026-07-12</p>
+<p class="foot">DVANDVA · a governed-loop protocol for adversarial AI pairs · v3.4.0 published runtime + single-loop successor on feat/adversarial-loop · 2026-07-13</p>
 </body>
 </html>

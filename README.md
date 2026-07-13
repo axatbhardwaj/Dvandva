@@ -15,6 +15,18 @@ Dvandva is **a governed-loop protocol for adversarial AI pairs** — orchestrati
 
 Dvandva ships as an installable plugin (version `1.6.0`) for both engines. The repo lives at https://github.com/axatbhardwaj/Dvandva, and the interactive product explainer is live at https://axatbhardwaj.github.io/Dvandva/.
 
+## The adversarial loop — the lightweight core
+
+The protocol below is being distilled into a much smaller core that keeps the moat — **enforced adversarial review** — and drops the engine. `adversarial-loop/` ships it as three pieces, with no daemon and no binary:
+
+- **A skill** (`adversarial-loop/skills/adversarial-loop/`) drives the loop. Every step is propose → stamp → attack → gate, and **the reviewer is never the author**: a different vendor when two are available (Claude proposes, GPT attacks; GPT executes, Claude attacks), a different fresh-context agent when only one is.
+- **A hook** (`adversarial-loop/hooks/`) enforces it fail-closed. The Claude Code Stop adapter refuses to let a turn end `done` until every step carries passing cross-reviewer evidence digest-bound to the actual artifact bytes; a CLI / Git pre-commit adapter covers Codex-only and general automation.
+- **A workflow template** (`adversarial-loop/workflow/`) runs authoring and attack lanes in parallel.
+
+Three deployment configurations ship — cross-vendor (Claude chair + Codex, the strong default), Claude-only, and Codex-only — all on the same predicate. Two delegation skills, `delegating-to-codex` and `delegating-to-grok` (`adversarial-loop/skills/`), teach the chair session to dispatch other models well: self-contained briefs, hardened invocations, and independent verification of every result. Per-config wiring, the verification suite, and the honest statement of what the gate can and cannot enforce live in [`adversarial-loop/README.md`](adversarial-loop/README.md).
+
+The v3 runtime documented below remains the published release (`dvandva 3.4.0` on crates.io) while the loop replaces it in-tree.
+
 ## Quickstart
 
 The `dvandva` binary IS the Dvandva runtime — the read path, the write path, waiting, preflight, git work-gating, the installers, and the lints, all in one multicall binary. It is published on crates.io as `dvandva 3.4.0`.
