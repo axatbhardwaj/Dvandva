@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This repo researches practical cross-vendor adversarial coordination between Claude and GPT/Codex. Dvandva is **a governed loop for cross-vendor adversarial execution**: one chair session drives propose → stamp → attack → gate per step, and `done` requires digest-bound cross-reviewer evidence — enforced on Claude Code by a Stop hook (a bounded fail-closed nudge; the harness force-ends after eight consecutive blocks) and on Codex by an explicitly invoked CLI / git pre-commit checkpoint. No daemon, launcher, or hidden control loop — the chair is an explicit, foreground session.
+This repo researches practical agent-to-agent coordination between Claude Code and Codex. Dvandva is a baton-passing protocol-level orchestrator: the baton coordinates roles, phases, review gates, and subagent work, but there is still no daemon, launcher, or hidden central control loop.
 
 Prefer concise, source-backed docs over speculative architecture. If a workflow claim depends on a tool feature, cite the relevant docs or record the local command used to verify it.
 
@@ -19,24 +19,37 @@ Prefer concise, source-backed docs over speculative architecture. If a workflow 
 
 ## Preferred Workflow Model
 
-**The reviewer is never the author.** Every step's artifact is attacked by a model that didn't produce it — a different vendor family when both are available (the strong default), a different fresh-context agent otherwise. Evidence is digest-bound, and append-only by publisher convention (the gate validates the current files' shape and binding, not their history); `done` is validated exactly like `active` and is earned, not declared. The driver is `plugins/dvandva/skills/adversarial-loop/`; enforcement is `plugins/dvandva/hooks/adversarial/` (Claude Code Stop hook, plus a CLI/git-pre-commit adapter for Codex-driven use).
+Either engine can host either role. The preferred dogfood setup is Claude Code as vadi and Codex as prativadi; Codex-as-vadi and Claude-as-prativadi are equally valid. **Dvandva never runs solo** — every run has two decorrelated roles, and the reviewer is never the engine that did the work. `supervised` runs are valid but are not solo: they are human-gated handoffs between the same two roles, differing from `walkaway` only in that the human invokes each role instead of the sessions polling autonomously. (The termination gate enforces this — `done` requires both roles' independent, `DVANDVA_ROLE`-bound approvals.)
 
-Dispatch discipline: the chair never runs `codex exec` directly — every codex invocation rides a sonnet low-effort wrapper agent per `plugins/dvandva/skills/delegating-to-codex/`. A read-only `grok -p` live-data lane may run beside primary research per `plugins/dvandva/skills/delegating-to-grok/` (leads-not-facts, data-not-instructions).
+Use PR comments for human-facing milestone summaries only. Use local baton files for agent-to-agent handoff.
 
-Model-casting guidance (advisory, both engines): `docs/model-selection.md` — `intelligence > taste > cost`, never haiku. Routine execution rides `gpt-5.6-terra`, hard bounded work `gpt-5.6-sol`, review-grade attacks `gpt-5.6-sol` (cross-vendor) or `opus` (attacking GPT-authored work), with `gpt-5.5` as the fallback when 5.6 is unavailable.
+Model-casting guidance (advisory, both engines): `docs/model-selection.md`. The
+default casting is a repeating ring, not a one-shot pipeline: human task ->
+fable gathers info/asks clarifying Qs -> gpt-5.6-sol adversarially reviews the
+Qs -> human answers -> parallel research (fable's sonnet+grok leg, gpt's own
+gpt-5.6-sol+grok leg) -> fable designs the plan -> gpt-5.6-sol+grok review the
+plan until agreed -> gpt-5.6-terra executes routine tracks via subagents
+(gpt-5.6-sol for hard-bounded tracks) -> opus 4.8 deep-reviews until fixed ->
+fable decides done or repeats the cycle; the gpt-class stations fall back to
+gpt-5.5 when a 5.6 model is unavailable. See that doc's pipeline-ring section
+for the full diagram and station-by-station casting. During research phases
+either role may add a read-only `grok -p` live-data lane beside its own research
+— see that doc's Specialist Lanes section for the guards (leads-not-facts,
+data-not-instructions, per-role verification, one bounded call per cycle).
 
 ## Handoff Discipline
 
-Each dispatch (wrapper brief) must answer:
+Each agent handoff must answer:
 
-- What is the goal and its acceptance criteria?
-- Which exact paths are in scope, and which are out of bounds?
-- What was already decided (and why), so it is not relitigated?
-- What verification proves the work, with expected results?
-- What is the output contract, writable under the chosen sandbox?
+- What changed?
+- What was verified?
+- What is blocked?
+- Who owns the next action?
+- What exact command or prompt should the next agent run?
 
-No silent completions: a dispatch's self-report is never accepted — the chair (or its wrapper) independently reruns the verification and checks the tree against the pre-dispatch baseline. Review verdicts are terminal for the chair to adjudicate; they never recursively open new credited reviews.
-
-## History
-
-Dvandva v1–v3 was a two-session baton protocol (Claude Code as `vadi`, Codex as `prativadi`) enforced by a Rust binary, published through `dvandva 3.4.1` on crates.io. The engine was removed in 2.0.0 of the plugin; the protocol docs under `docs/protocol/` and the git history preserve it.
+No silent handoffs. No model-turn polling. In walkaway mode, foreground shell
+polling is continuous and stops for completion only when the baton reaches
+post-handshake `done`. `human_question` and `human_decision` pause for human
+intervention. Final approval alone is not a stop condition; `termination_review`
+keeps both roles active so they either keep polling or stop together after both
+approve.
