@@ -7,12 +7,12 @@ description: Use when driving any non-trivial goal to completion with enforced a
 
 One rule generates the whole system: **the reviewer is never the author.** In the strong form the reviewer is a different *vendor* (Claude proposes, GPT/Codex attacks; GPT executes, Claude attacks). When only one vendor is available it degrades to a different *fresh-context agent across tiers* (opus attacks sonnet, sol attacks terra). Every step is `propose → attack → gate`, and a hook refuses to let the turn end "done" until each step carries passing cross-reviewer evidence bound to the actual artifact. If the goal isn't met, the loop isn't achieved.
 
-This skill is the driver. The hook (`adversarial-loop/hooks/gate.sh`, or the `gate-cli.sh` adapter) is the gate. `goal.json` is the contract between them.
+This skill is the driver. The hook (`plugins/dvandva/hooks/adversarial/gate.sh`, or the `plugins/dvandva/hooks/adversarial/gate-cli.sh` adapter) is the gate. `goal.json` is the contract between them.
 
 ## When to use
 Any goal worth reviewing: a feature, an end-to-end bug fix, a shippable change, a research/design pass. Not for throwaway one-liners or pure questions.
 
-## Pick the mode (auto-detect the strongest available)
+## Pick the mode (auto-detect the most decorrelated available)
 
 Set `mode` in `goal.json` by what's available:
 
@@ -69,7 +69,7 @@ Rules the hook enforces, so honor them: `goal_id` **and every `steps[].id`** mus
 
 1. **Author** the artifact. Plan: Claude authors. Execute: dispatch the GPT executor (per the sibling `delegating-to-codex` skill) — or a fresh subagent in single-vendor mode. Write it to `artifact_path`.
 2. **Stamp** the step in `goal.json` (single-writer): set `status:"complete"` and `artifact_digest = $(sha256sum -- "<artifact_path>" | cut -d" " -f1)`. Do this **before** attacking, and never edit the artifact after stamping (any change breaks the digest bind — re-stamp if you do).
-3. **Attack** with the *other* vendor/agent, in parallel — a genuine adversary, not a rubber stamp, and never with write access to the bytes it reviews: Codex reviewers get `-s read-only` (sandbox-enforced); Claude subagent reviewers get a read-only tool surface where the harness offers one, and where it doesn't, the gate's digest recompute is the detection backstop — re-verify the stamped digest after the review returns before accepting the report. Claude-authored → dispatch `gpt-5.6-sol` via a sonnet-low wrapper running `codex exec` (or a fresh `opus` in claude-only). GPT-authored → dispatch `opus` (+ optional `sonnet`/`grok`). **Reviewer preflight (mandatory):** before reviewing, the reviewer reads `goal.json`, requires exactly one matching step with `status:"complete"` and the expected `revision` and `artifact_path`, **recomputes `sha256sum -- <artifact_path>` itself**, and refuses if it differs from the stamped `artifact_digest` — so the evidence provably covers the bytes that were stamped. The evidence file records the digest the reviewer *observed*, never a chair-supplied value.
+3. **Attack** with the *other* vendor/agent, in parallel — a genuine adversary, not a rubber stamp, and never with write access to the bytes it reviews: Codex reviewers get `-s read-only` (which sandboxes the model's shell/file operations — configured MCP servers and hooks stay trusted inputs); Claude subagent reviewers get a read-only tool surface where the harness offers one; in every case the gate's digest recompute is the detection backstop — re-verify the stamped digest after the review returns before accepting the report. Claude-authored → dispatch `gpt-5.6-sol` via a sonnet-low wrapper running `codex exec` (or a fresh `opus` in claude-only). GPT-authored → dispatch `opus` (+ optional `sonnet`/`grok`). **Reviewer preflight (mandatory):** before reviewing, the reviewer reads `goal.json`, requires exactly one matching step with `status:"complete"` and the expected `revision` and `artifact_path`, **recomputes `sha256sum -- <artifact_path>` itself**, and refuses if it differs from the stamped `artifact_digest` — so the evidence provably covers the bytes that were stamped. The evidence file records the digest the reviewer *observed*, never a chair-supplied value.
 4. **Write evidence** — one append-only file per attack attempt at `.adversarial-loop/evidence/<goal_id>/<step_id>/attempt-<N>.json`, built with `jq -n` (not a hand-rolled heredoc), published atomically:
 
 ```json

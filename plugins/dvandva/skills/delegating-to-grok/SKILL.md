@@ -22,7 +22,14 @@ echo "EXIT:$?" > "$ATT/exit"
 ```
 
 - **Complete** = exit 0 AND `lane.json` parses as the success object (no error `type`) AND `stopReason` is `"EndTurn"` AND non-empty `text`. Plain-text output cannot distinguish a finished answer from one truncated at a turn/token limit — that's why the JSON format is pinned.
-- **Sandbox honesty:** `--sandbox read-only` is kernel-enforced (Landlock/Seatbelt) **when it applies** — but built-in profiles *fail open*: if the sandbox can't be applied, grok logs a warning and continues without enforcement. So check `lane.err` for a sandbox warning before crediting output. For high-stakes runs use an explicitly-requested **custom profile** (`~/.grok/sandbox.toml`, `extends = "read-only"`) — custom profiles *refuse to start* rather than run exposed. Even applied, the sandbox leaves `~/.grok/` writable (sessions, memory, config — a persistent trust boundary) and contains filesystem effects only, not remote side effects of user-configured hooks/plugins/MCP servers; review `grok inspect` first when stakes are high.
+- **Sandbox honesty:** `--sandbox read-only` is kernel-enforced (Landlock/Seatbelt) **when it applies** — but built-in profiles *fail open*: if the sandbox can't be applied, grok logs a warning and continues without enforcement. So check `lane.err` for a sandbox warning before crediting output. For high-stakes runs use an explicitly-requested **custom profile** — custom profiles *refuse to start* rather than run exposed. Complete recipe: in `~/.grok/sandbox.toml` define
+
+  ```toml
+  [profiles.adversarial-ro]
+  extends = "read-only"
+  ```
+
+  and select it with `--sandbox adversarial-ro` in place of `--sandbox read-only` (the built-in name selects the fail-open built-in; only the custom *name* gets the refuse-to-start behavior). Even applied, the sandbox leaves `~/.grok/` writable (sessions, memory, config — a persistent trust boundary) and contains filesystem effects only, not remote side effects of user-configured hooks/plugins/MCP servers; review `grok inspect` first when stakes are high.
 - Tool filtering (`--tools`, `--disallowed-tools`) is defense-in-depth, **not** enforcement — and it can conflict with user-level tool config (observed: session construction fails outright). Test in your environment before relying on it.
 - Exit ≠ 0, an error object, a non-`EndTurn` stop, or empty text = failed attempt and **earns zero leads**; one retry in a new attempt dir, then surface to the human.
 

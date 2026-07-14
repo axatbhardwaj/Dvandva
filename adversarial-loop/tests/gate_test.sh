@@ -6,17 +6,18 @@
 set -u -o pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
-LOOP_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd -P)
-PREDICATE="$LOOP_DIR/lib/predicate.sh"
-GATE="$LOOP_DIR/hooks/gate.sh"
-GATE_CLI="$LOOP_DIR/hooks/gate-cli.sh"
+REPO_ROOT=$(cd -- "$SCRIPT_DIR/../.." && pwd -P)
+RUNTIME_DIR="$REPO_ROOT/plugins/dvandva/hooks/adversarial"
+PREDICATE="$RUNTIME_DIR/predicate.sh"
+GATE="$RUNTIME_DIR/gate.sh"
+GATE_CLI="$RUNTIME_DIR/gate-cli.sh"
 
 if [[ ! -f "$PREDICATE" || ! -f "$GATE" ]]; then
-  printf 'FAIL: expected predicate and hook under %s\n' "$LOOP_DIR" >&2
+  printf 'FAIL: expected predicate and hook under %s\n' "$RUNTIME_DIR" >&2
   exit 1
 fi
 
-# shellcheck source=../lib/predicate.sh
+# shellcheck source=../../plugins/dvandva/hooks/adversarial/predicate.sh
 source "$PREDICATE"
 
 TEST_TMP=$(mktemp -d "${TMPDIR:-/tmp}/adversarial-loop-gate-test.XXXXXX")

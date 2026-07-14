@@ -25,7 +25,7 @@ For a run that can exceed the ~10-minute shell cap, the wrapper holds it with it
 | Proven-mechanical task classes only | `gpt-5.6-luna` | `high`/`medium`/`low` | per task |
 | 5.6 unavailable on this surface | `gpt-5.5` | `xhigh` | per task |
 
-- **Reviewers and analysts get `read-only`.** A reviewer must not be able to mutate the bytes it inspects — prompt "boundaries" are advisory; the sandbox is the control.
+- **Reviewers and analysts get `read-only`.** Prompt "boundaries" are advisory; the sandbox is the control — but know its scope: `-s` sandboxes the model's shell/file operations, not user-configured MCP servers or hooks (those stay trusted inputs; inspect or disable them for high-stakes review). The gate's digest recompute remains the detection backstop for residual channels.
 - The chair's own main thread runs `xhigh`. Every dispatched child gets an **explicit** `$EFFORT` from this table — omitting it falls back to whatever Codex's loaded config or model default specifies (this machine's `config.toml` sets `ultra`; exactly why you never omit it). Children never request `max` (only the human sets `max`, and only on the session's own main thread); `ultra` is never used.
 - A fallback to a different model changes review credit — if the model you recorded isn't the one that ran, re-adjudicate.
 
@@ -70,7 +70,7 @@ Pin the five load-bearing settings every dispatch — `-C` working root (relativ
   (a) recover: allocate a **new attempt dir** and run
   ```bash
   codex exec resume <exact-uuid> \
-    -c "model_reasoning_effort=$EFFORT" \
+    -m "$MODEL" -c "model_reasoning_effort=$EFFORT" \
     --json -o "$ATT/last-message.md" \
     "<explicit continuation prompt>" </dev/null \
     > "$ATT/events.jsonl" 2> "$ATT/stderr.log"

@@ -19,6 +19,14 @@
             "command": "dvandva stop-guard"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/adversarial/gate.sh"
+          }
+        ]
       }
     ]
   }

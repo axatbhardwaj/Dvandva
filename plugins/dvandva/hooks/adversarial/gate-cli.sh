@@ -6,8 +6,8 @@
 set -o pipefail
 
 SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
-# shellcheck source=../lib/predicate.sh
-source "$SCRIPT_DIR/../lib/predicate.sh"
+# shellcheck source=predicate.sh
+source "$SCRIPT_DIR/predicate.sh"
 
 usage() {
   printf 'usage: %s [--session <id>]\n' "${0##*/}" >&2

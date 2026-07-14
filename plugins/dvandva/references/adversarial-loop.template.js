@@ -15,6 +15,7 @@ export const meta = {
   name: 'adversarial-loop',
   description: 'Propose → stamp → attack → gate: bind artifacts before independent review evidence',
   phases: [
+    { title: 'Preflight', detail: 'Require one clean tree before concurrent execute-step mutation' },
     { title: 'Execute', detail: 'GPT/Codex authors each execute-step artifact' },
     { title: 'Stamp', detail: 'One writer atomically binds revisions and artifact digests in goal.json' },
     { title: 'Attack', detail: 'Claude/Opus attacks each stamped artifact and appends review evidence' },
@@ -24,9 +25,26 @@ export const meta = {
 // args = { goal_id, mode?, steps: [ { id, artifact_path, author_family, author_agent_id?, revision } ] }
 const GOAL = args.goal_id
 const MODE = args.mode ?? 'cross-vendor'
+if (MODE !== 'cross-vendor') {
+  throw new Error('adversarial-loop.template.js implements cross-vendor only; claude-only/codex-only need their own lane casting')
+}
 const STEPS = args.steps // execute steps; plan steps run before this workflow
+const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/
 
-if (!Array.isArray(STEPS) || STEPS.some(s => !Number.isSafeInteger(s.revision) || s.revision < 1)) {
+if (typeof GOAL !== 'string' || !ID.test(GOAL)) {
+  throw new Error('workflow goal_id must match /^[a-z0-9][a-z0-9_-]{0,63}$/')
+}
+if (!Array.isArray(STEPS) || STEPS.length === 0) {
+  throw new Error('workflow steps must be a non-empty array')
+}
+if (STEPS.some(s => !s || typeof s.id !== 'string' || !ID.test(s.id))) {
+  throw new Error('each workflow step id must match /^[a-z0-9][a-z0-9_-]{0,63}$/')
+}
+const STEP_IDS = STEPS.map(s => s.id)
+if (new Set(STEP_IDS).size !== STEP_IDS.length) {
+  throw new Error('workflow step ids must be unique')
+}
+if (STEPS.some(s => !Number.isSafeInteger(s.revision) || s.revision < 1)) {
   throw new Error('each workflow step must have a positive integer revision')
 }
 
@@ -45,11 +63,19 @@ const executeAgentId = s => s.author_agent_id || `execute:${GOAL}:${s.id}:r${s.r
 const reviewerAgentId = s => `attack:${GOAL}:${s.id}:r${s.revision}`
 
 // GPT authors the artifact. STAMP, not this lane, is the sole goal.json writer.
-const executeLane = s => `Thin Codex wrapper — EXECUTE lane. Your dispatched agent id is ${executeAgentId(s)}. Build step '${s.id}' at ${s.artifact_path} per the plan; do not edit .adversarial-loop/goal.json.
+const executeLane = s => `Thin Codex wrapper — EXECUTE lane. Your dispatched agent id is ${executeAgentId(s)}. Build step '${s.id}' at ${s.artifact_path} per the plan; do not edit .adversarial-loop/goal.json. Each step's write paths are declared by the plan; do not touch paths outside this step's scope.
 
-Set REPO_ROOT to the repository root, MODEL=gpt-5.6-terra, EFFORT=xhigh, and SANDBOX=workspace-write. Before writing the self-contained brief at "$ATT/brief.md", allocate ATT as a new path such as "/tmp/codex-attempts/${GOAL}-${s.id}-r${s.revision}-a$N" and create it with `mkdir -p "$ATT"`. Do this before every dispatch, retry, and resume; N must increment and no output path may ever be reused. Capture the status baseline before dispatch.
+Set REPO_ROOT to the repository root, MODEL=gpt-5.6-terra, EFFORT=xhigh, and SANDBOX=workspace-write. Before writing the self-contained brief at "$ATT/brief.md", allocate ATT as a new path such as "/tmp/codex-attempts/${GOAL}-${s.id}-r${s.revision}-a$N" and create it with 'mkdir -p "$ATT"'. Do this before every dispatch, retry, and resume; N must increment and no output path may ever be reused. The self-contained brief must enumerate these six parts verbatim: (1) goal+acceptance criteria; (2) exact paths; (3) decisions already made with the why; (4) boundaries incl. no-commit; (5) verification commands+expected results; (6) output contract writable under the sandbox. Capture the status baseline before dispatch; the sequential PREFLIGHT lane guarantees the clean starting tree required for parallel mutation.
 
   git -C "$REPO_ROOT" status --short > "$ATT/pre.status"
+  if ! command -v codex > "$ATT/codex.path"; then
+    printf 'FAIL: codex is not available on PATH\n' >&2
+    exit 1
+  fi
+  if ! codex --version > "$ATT/codex.version" 2>&1; then
+    printf 'FAIL: codex --version failed; see %s\n' "$ATT/codex.version" >&2
+    exit 1
+  fi
   timeout --kill-after=10 600 codex exec \\
     -C "$REPO_ROOT" \\
     -m "$MODEL" -s "$SANDBOX" \\
@@ -60,13 +86,13 @@ Set REPO_ROOT to the repository root, MODEL=gpt-5.6-terra, EFFORT=xhigh, and SAN
   EXIT=$?
   printf 'EXIT:%s\\n' "$EXIT" > "$ATT/exit"
 
-Keep stdout (the --json JSONL) and stderr in those separate files: never merge stderr into events.jsonl, because it corrupts the stream. Treat the attempt as complete only when EXIT is 0, events.jsonl contains turn.completed, and last-message.md is non-empty; a nonzero exit, turn.failed/error event, missing turn.completed, or empty -o output is a failed attempt. On a timeout, first confirm the process is dead; any exact-thread resume uses a new ATT with new events.jsonl, stderr.log, and last-message.md (never resume --last). Rerun the plan's verification commands and verify the artifact and boundaries on disk before returning the artifact path and a one-line summary. If this Codex run may exceed the ~10-minute shell cap, hold it in wrapper-owned background Bash and wait for its completion notification; never use a sleep-poll loop.`
+Keep stdout (the --json JSONL) and stderr in those separate files: never merge stderr into events.jsonl, because it corrupts the stream. Treat the attempt as complete only when EXIT is 0, a JSONL event in events.jsonl has parsed .type exactly equal to 'turn.completed' (for example, run jq -e 'select(.type == "turn.completed")' "$ATT/events.jsonl" >/dev/null), and last-message.md is non-empty; a nonzero exit, any parsed 'turn.failed' or error-typed event, a missing terminal event, or empty -o output is a failed attempt. Workflow lanes have no old-build fallback: a missing terminal event is a failure here by design, stricter than the delegating-to-codex skill's verified-old-build fallback. On a timeout, first confirm the process is dead. After a failed attempt, allow at most ONE exact-thread retry or resume, using a new ATT with new events.jsonl, stderr.log, and last-message.md (never resume --last); if that recovery fails, report failure. Rerun the plan's verification commands, verify the artifact on disk, and verify no changes appeared outside this step's declared write paths, ignoring sibling lanes' changes inside their declared write paths. The workflow guarantees a clean start and disjoint per-step write scopes. Return the artifact path and a one-line summary. The normal execute budget is timeout --kill-after=10 600. Only when the plan explicitly marks this lane long-running, use timeout --kill-after=15 1500 in wrapper-owned background Bash and await its completion notification; backgrounding does not extend either timeout, and never use a sleep-poll loop.`
 
 const stampIds = STEPS.map(s => shellQuote(s.id)).join(' ')
 const stampRevisionCases = STEPS.map(s => `    ${shellQuote(s.id)}) REVISION=${s.revision} ;;`).join('\n')
 
 // Exactly one lane updates goal.json. Its same-directory mv is the barrier before Attack starts.
-const stampLane = () => `You are the sole STAMP writer. All execute lanes have finished. From the repository root, atomically stamp every listed step into .adversarial-loop/goal.json before returning. Run this procedure and fail closed on any error:
+const stampLane = () => `You are the sole STAMP writer. All execute lanes have finished. From the repository root, atomically stamp every listed step into .adversarial-loop/goal.json before returning. Before stamping, verify goal.json's goal_id equals the workflow goal '${GOAL}' and refuse to stamp on mismatch. Run this procedure and fail closed on any error:
 
   set -eu -o pipefail
   GOAL_FILE=.adversarial-loop/goal.json
@@ -204,6 +230,15 @@ Publish with this exact append-only procedure; do not use a heredoc, ls, wc, or 
 Set verdict to pass only if the stamped artifact genuinely survives the attack. Return {step_id, verdict, evidence_path: TARGET, findings}.`
 }
 
+phase('Preflight')
+const preflight = String(await agent(
+  `PREFLIGHT clean-tree check. Set REPO_ROOT to the repository root and run git -C "$REPO_ROOT" status --short. If the output is non-empty, return the dirty paths and the single word DIRTY. If it is empty, return CLEAN.`,
+  { label: 'preflight:clean-tree', phase: 'Preflight', model: 'sonnet', effort: 'low' },
+)).trim()
+if (preflight !== 'CLEAN') {
+  throw new Error(`execute preflight requires a clean starting tree; dirty paths:\n${preflight}`)
+}
+
 phase('Execute')
 const executions = await parallel(STEPS.map(s => () => agent(
   executeLane(s),
@@ -224,6 +259,27 @@ const results = await parallel(STEPS.map(s => () => agent(
 )))
 
 const verdicts = results.filter(Boolean)
+const reviewedStepIds = new Set()
+for (const verdict of verdicts) {
+  if (!STEP_IDS.includes(verdict.step_id)) {
+    throw new Error(`attack lane returned an unknown step_id: ${verdict.step_id}`)
+  }
+  if (reviewedStepIds.has(verdict.step_id)) {
+    throw new Error(`attack lanes returned duplicate step_id: ${verdict.step_id}`)
+  }
+  reviewedStepIds.add(verdict.step_id)
+}
 const failed = verdicts.filter(v => v.verdict !== 'pass')
-log(`${verdicts.length} stamped steps attacked; ${failed.length} failed → adjudicate, fix, bump revision, re-run those`)
-return { goal_id: GOAL, verdicts, failed }
+let missingAttacks = null
+if (verdicts.length !== STEPS.length) {
+  missingAttacks = STEP_IDS.filter(stepId => !reviewedStepIds.has(stepId))
+  log(`attack barrier incomplete; missing attacks: ${missingAttacks.join(', ')}`)
+} else {
+  log(`${verdicts.length} stamped steps attacked; ${failed.length} failed → adjudicate, fix, bump revision, re-run those`)
+}
+return {
+  goal_id: GOAL,
+  verdicts,
+  failed,
+  ...(missingAttacks ? { missing_attacks: missingAttacks } : {}),
+}

@@ -10,13 +10,15 @@ repository root:
   evidence. The latest attempt for every step must pass and match both the
   stamped step revision and artifact digest.
 
-`lib/predicate.sh` is the single sourceable decision function. Two adapters use
-that same predicate:
+`plugins/dvandva/hooks/adversarial/predicate.sh` is the single sourceable
+decision function. Two adapters use that same predicate:
 
-- `hooks/gate.sh` is the Claude Code Stop-hook adapter. A block is exit 0 plus
-  one Stop decision object on stdout; an allow is exit 0 with no stdout.
-- `hooks/gate-cli.sh` is the stdin-free CLI and Git pre-commit adapter. A block
-  is a nonzero exit plus its reason on stderr; an allow is exit 0.
+- `plugins/dvandva/hooks/adversarial/gate.sh` is the Claude Code Stop-hook
+  adapter. A block is exit 0 plus one Stop decision object on stdout; an allow
+  is exit 0 with no stdout.
+- `plugins/dvandva/hooks/adversarial/gate-cli.sh` is the stdin-free CLI and Git
+  pre-commit adapter. A block is a nonzero exit plus its reason on stderr; an
+  allow is exit 0.
 
 ## Goal modes and stamping
 
@@ -58,32 +60,22 @@ cross-vendor mode.
 
 ## Claude Code Stop-hook adapter
 
-Do not install this automatically. For this checkout's
-`plugins/dvandva/hooks/hooks.json`, add the following Stop entry manually. The
-path starts from the Dvandva plugin root and reaches this repository-level
-directory through Claude Code's plugin-root variable.
+The Claude Code Stop-hook adapter is shipped by default in the plugin's
+`hooks.json`:
 
 ```json
 {
-  "hooks": {
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/../../adversarial-loop/hooks/gate.sh"
-          }
-        ]
-      }
-    ]
-  }
+  "hooks": [
+    {
+      "type": "command",
+      "command": "${CLAUDE_PLUGIN_ROOT}/hooks/adversarial/gate.sh"
+    }
+  ]
 }
 ```
 
 The Stop adapter gets the owner identity from the hook payload's `session_id`
-and compares it with `goal.json.owner_session_id`. This relative path works
-only in this repository checkout. A marketplace install does not have the
-same repository-level path, so do not reuse the snippet there as-is.
+and compares it with `goal.json.owner_session_id`.
 
 ## CLI and Git pre-commit adapter
 
@@ -91,8 +83,8 @@ The CLI adapter reads no hook JSON. Run it from anywhere inside the target Git
 worktree and provide the owner session explicitly or through the environment:
 
 ```bash
-adversarial-loop/hooks/gate-cli.sh --session codex-run-42
-ADVERSARIAL_LOOP_SESSION=codex-run-42 adversarial-loop/hooks/gate-cli.sh
+plugins/dvandva/hooks/adversarial/gate-cli.sh --session codex-run-42
+ADVERSARIAL_LOOP_SESSION=codex-run-42 plugins/dvandva/hooks/adversarial/gate-cli.sh
 ```
 
 The supplied id must exactly equal `goal.json.owner_session_id`. **Warning:**
@@ -106,7 +98,7 @@ checkout:
 
 ```bash
 #!/usr/bin/env bash
-exec /absolute/path/to/Dvandva/adversarial-loop/hooks/gate-cli.sh
+exec /absolute/path/to/Dvandva/plugins/dvandva/hooks/adversarial/gate-cli.sh
 ```
 
 Then make the wrapper executable and preserve the owner id in the commit
