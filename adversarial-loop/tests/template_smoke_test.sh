@@ -53,8 +53,20 @@ execute_lane_prompt_body() {
   ' "$TEMPLATE"
 }
 
+attack_lane_prompt_body() {
+  awk '
+    /^  return `You are Opus, the adversarial ATTACK lane/{ in_prompt = 1; next }
+    /^}$/ && in_prompt { in_prompt = 0; next }
+    in_prompt {
+      sub(/`$/, "")
+      print
+    }
+  ' "$TEMPLATE"
+}
+
 lane_prompt_text=$(lane_prompt_bodies)
 execute_lane_prompt_text=$(execute_lane_prompt_body)
+attack_lane_prompt_text=$(attack_lane_prompt_body)
 
 if ! grep -Fq "typeof args === 'string'" "$TEMPLATE"; then
   printf 'FAIL: template must defensively normalize string workflow args\n' >&2
@@ -63,6 +75,11 @@ fi
 
 if ! grep -Fq 'Plan for this step:' <<< "$execute_lane_prompt_text"; then
   printf 'FAIL: execute lane must embed the Plan for this step block\n' >&2
+  exit 1
+fi
+
+if ! grep -Fq 'Never modify the artifact or any repository content' <<< "$attack_lane_prompt_text"; then
+  printf 'FAIL: attack lane must forbid modifying the artifact or repository content\n' >&2
   exit 1
 fi
 

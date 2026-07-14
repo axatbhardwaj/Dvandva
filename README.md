@@ -14,7 +14,7 @@ One rule generates the whole system: **the reviewer is never the author.** In th
 
 ## Install
 
-The product ships as the `dvandva` plugin (version `2.0.1`) — no binary, no build step.
+The product ships as the `dvandva` plugin (version `2.0.2`) — no binary, no build step.
 
 ```bash
 # Claude Code
@@ -42,7 +42,7 @@ Add the runtime state directory to your project's `.gitignore`:
 4. **Attack.** The *other* family reviews on a read-only sandbox: it re-reads the goal, recomputes the digest itself, refuses on mismatch, and writes an append-only evidence file with its verdict.
 5. **Gate.** The Stop hook validates every step on each turn-end attempt: latest attempt must be a `pass` from a valid cross-reviewer bound to the current digest. Fail → adjudicate findings, fix, bump revision, re-attack. `done` is validated identically to `active` — it is earned, not declared.
 
-Parallelism comes from the workflow template (`plugins/dvandva/references/adversarial-loop.template.js`): execute lanes fan out in parallel (each a thin sonnet wrapper running the pinned `codex exec` contract), a barrier collects them, one stamp writer stamps every completed step, then attack lanes fan out in parallel against the stamped digests.
+Parallelism comes from a **workflow the chair designs per goal** (the default in cross-vendor mode, run with Claude Code's native Workflow tool): execute lanes fan out in parallel (each a thin sonnet wrapper running the pinned `codex exec` contract), stamping is serialized through exactly one stamp lane, and attack lanes fan out against the stamped digests — dependency edges release only on upstream passing evidence. The reviewed building blocks and a runnable flat-case example live in `plugins/dvandva/references/adversarial-loop.template.js`.
 
 ## The three configs
 

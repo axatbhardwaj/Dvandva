@@ -1,8 +1,12 @@
-// Adversarial-loop workflow template — propose → stamp → attack → gate.
+// Adversarial-loop building blocks and flat-case Workflow example — propose → stamp → attack → gate.
 //
-// Execute lanes author artifacts, one STAMP lane atomically binds all completed steps in
-// goal.json, and only then do attack lanes read the stamped snapshot and write append-only
-// evidence. Copy this file per goal, fill the STEPS list, and run it with the Workflow tool.
+// The chair DESIGNS a workflow per goal. Compose this reviewed library verbatim into each
+// goal-shaped workflow: the hardened EXECUTE-lane brief, atomic STAMP procedure, and
+// append-only ATTACK/evidence publication block.
+//
+// This file also runs the simple flat case: N independent execute steps. Run it with the
+// Workflow tool using args { goal_id, mode, steps:[{id, artifact_path, author_family,
+// author_agent_id?, revision, spec}] }.
 //
 // Contract the review lanes MUST honor (the predicate checks it):
 //   - cross-vendor: reviewer_family differs from the step's author_family
@@ -162,6 +166,8 @@ Return only after the atomic mv succeeds. The values written must be each artifa
 const attackLane = s => {
   const reviewerId = reviewerAgentId(s)
   return `You are Opus, the adversarial ATTACK lane for step '${s.id}'. Your dispatched reviewer_agent_id is ${reviewerId}. The STAMP barrier has completed. Before reviewing, read .adversarial-loop/goal.json and require exactly one matching step whose revision is ${s.revision}, status is "complete", and artifact path is ${s.artifact_path}. Recompute the artifact with \`sha256sum --\` and refuse to review if it differs from the stamped artifact_digest. In cross-context mode, also require a non-empty author_agent_id different from ${reviewerId}.
+
+Never modify the artifact or any repository content; you may run the artifact's tests read-only, and your ONLY writes are inside this step's evidence directory via the publication procedure below.
 
 Adversarially review the stamped artifact for correctness, security, edge cases, and spec deviations; run its tests if any. Set VERDICT to pass or fail, FINDINGS_JSON to an actual JSON array of finding strings, and TRANSCRIPT_REF to your notes path. Immediately before publication, rerun the stamped-snapshot checks and digest comparison so changed bytes cannot receive evidence.
 

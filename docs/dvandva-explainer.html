@@ -11,7 +11,7 @@
   "artifact_type": "explainer",
   "title": "Dvandva — a governed loop for cross-vendor adversarial execution",
   "date": "2026-07-14",
-  "basis": "plugin 2.0.1 (skill + hook + workflow, engine removed) · v3 lineage sections describe the retired baton engine (dvandva 3.4.1 on crates.io)"
+  "basis": "plugin 2.0.2 (skill + hook + workflow, engine removed) · v3 lineage sections describe the retired baton engine (dvandva 3.4.1 on crates.io)"
 }
 </script>
 <style>
@@ -216,7 +216,7 @@ claude plugin install dvandva@dvandva
 # Codex
 codex plugin marketplace add axatbhardwaj/Dvandva
 codex plugin add dvandva@dvandva</code></pre>
-  <p class="quiet">No binary, no build step — the plugin (<code>2.0.1</code>) ships the skills, the Stop-hook gate, and the workflow template. The gate is inert until a session creates a goal; add <code>.adversarial-loop/</code> to your project's <code>.gitignore</code>.</p>
+  <p class="quiet">No binary, no build step — the plugin (<code>2.0.2</code>) ships the skills, the Stop-hook gate, and the workflow template. The gate is inert until a session creates a goal; add <code>.adversarial-loop/</code> to your project's <code>.gitignore</code>.</p>
   <p>Then, in one session on a feature branch:</p>
   <pre><code>Use the adversarial-loop skill: build &lt;feature&gt;, cross-vendor mode.
 Every step gets attacked before it counts — don't end until the gate lets you.</code></pre>
@@ -392,6 +392,6 @@ git rev-list --count 36f134c                                     # → 400, as o
 
 
 </main>
-<p class="foot">DVANDVA · a governed loop for cross-vendor adversarial execution · plugin 2.0.1, engine removed (v3 lineage: dvandva 3.4.1 on crates.io) · 2026-07-14</p>
+<p class="foot">DVANDVA · a governed loop for cross-vendor adversarial execution · plugin 2.0.2, engine removed (v3 lineage: dvandva 3.4.1 on crates.io) · 2026-07-14</p>
 </body>
 </html>

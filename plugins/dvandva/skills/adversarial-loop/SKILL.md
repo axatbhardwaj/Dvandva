@@ -65,7 +65,19 @@ Example (fields the hook checks):
 
 Rules the hook enforces, so honor them: `goal_id` **and every `steps[].id`** must match `^[a-z0-9][a-z0-9_-]{0,63}$` and be unique. Pending steps carry an empty `artifact_digest` (valid only while `pending`). **`author_family` is mode-dependent** (the hook does *not* couple `kind` to a family — you record who actually authored): in `cross-vendor`, split naturally (plan → `claude`, execute → `gpt`); in **claude-only** both are `claude`; in **codex-only** both are `gpt`. The reviewer distinctness comes from the mode: `cross-vendor` needs a different `reviewer_family`; `cross-context` (claude-only / codex-only) needs `author_agent_id` (required, non-empty) and a `reviewer_agent_id` that differs from it — that distinct dispatch id *is* the decorrelation.
 
-### 2. Run each step: propose → **stamp** → attack → gate
+### 2. Execute via a goal-designed workflow (the default)
+
+In the **cross-vendor config on Claude Code**, the default execution engine is a **workflow the chair designs for this specific goal** and runs with the native Workflow tool — not a fixed shape. Derive the lane structure from the goal's actual dependency graph: independent steps fan out in parallel; a step may be attacked while an *independent* sibling is still building. Design rules the workflow must honor, whatever its shape:
+
+- **Codex carries the execution volume** — every execute lane is a sonnet-low wrapper running the pinned `codex exec` contract, in parallel wherever the graph allows.
+- **A dependency edge `A → B` releases B only after A has passing evidence at A's current revision and digest.** If A is later revised, every transitive dependent is invalidated: rebuild, re-stamp, re-attack. Never let downstream evidence outlive an upstream revision.
+- **Every artifact is stamped (digest + revision) before its attack lane reads it, and all stamping is serialized through exactly one stamp lane** — the template's all-steps barrier, or a single sequential lane a pipeline routes every completed step through. Never two concurrent `goal.json` writers: atomic replacement is not mutual exclusion, and racing stampers lose steps.
+- **Attackers never modify the artifact or any repository content** — Codex reviewers run `-s read-only`; attack lanes' only writes are inside their step's evidence directory via the append-only publication block, and the pre-publication digest recheck plus the gate's own recompute detect artifact tampering.
+- The gate judges only the resulting state (`goal.json` + evidence) — it is workflow-shape-agnostic, so any design that produces valid state passes and any that doesn't blocks.
+
+Compose lanes from the reviewed building blocks in `../../references/adversarial-loop.template.js` (relative to this file) — the hardened execute-lane brief (six parts, red-green test-first contract, structural completion predicate), the atomic stamp procedure, and the append-only attack/evidence block. Those blocks took multiple adversarial review rounds to get right; reuse them verbatim rather than improvising enforcement-critical shell. The template also runs as-is for the simple flat case (N independent execute steps): pass `{goal_id, mode, steps:[{id, artifact_path, author_family, author_agent_id, revision, spec}]}` — every step needs a non-empty `spec` (the lane's build instruction) and the preflight requires a clean starting tree. **Claude-only (`cross-context`)** may use the same goal-designed-workflow approach with fresh Claude lanes (sonnet authors, a distinct fresh opus attacks) honoring these same invariants — the flat template itself is cross-vendor-only and will refuse. Without the Workflow tool (Codex-driven sessions), or for a single-step goal, run the per-step loop below directly instead.
+
+### The per-step loop: propose → **stamp** → attack → gate
 
 1. **Author** the artifact. Plan: Claude authors. Execute: dispatch the GPT executor (per the sibling `delegating-to-codex` skill) — or a fresh subagent in single-vendor mode. Write it to `artifact_path`.
 2. **Stamp** the step in `goal.json` (single-writer): set `status:"complete"` and `artifact_digest = $(sha256sum -- "<artifact_path>" | cut -d" " -f1)`. Do this **before** attacking, and never edit the artifact after stamping (any change breaks the digest bind — re-stamp if you do).
@@ -82,7 +94,7 @@ Rules the hook enforces, so honor them: `goal_id` **and every `steps[].id`** mus
 ```
 
    The reviewer must differ from the author (family in `cross-vendor`, `reviewer_agent_id` in `cross-context`). `created_at` must match `^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$` or it's rejected as malformed. Never overwrite a recorded `fail`; a later `pass` is a new attempt file.
-5. **Gate**: if the latest attempt is `fail`, adjudicate the findings, fix the artifact, **bump the step `revision`, re-stamp the digest, re-attack** (a new attempt). Loop until the latest attempt passes.
+5. **Gate**: if the latest attempt is `fail`, adjudicate the findings, fix the artifact, **bump the step `revision`, re-stamp the digest, re-attack** (a new attempt). If other steps depend on the revised artifact, they are invalidated too — rebuild, re-stamp, and re-attack every transitive dependent; downstream evidence never outlives an upstream revision. Loop until the latest attempt passes.
 
 ### 3. Reach done
 
@@ -106,4 +118,7 @@ The hook fails **closed** on the *procedure*: per-step evidence must exist, be c
 | Overwriting a failed attempt | Append-only; each attempt is a new file; the fail stays on record |
 | Non-canonical `created_at` | Fixed-width UTC Zulu (`date -u +%Y-%m-%dT%H:%M:%SZ`) or evidence is rejected |
 | Rubber-stamp reviews | The attacker must genuinely try to break the artifact |
+| Running steps serially by hand when a workflow fits | Design a goal-shaped workflow (parallel codex lanes, per-artifact stamp→attack); manual per-step is the fallback, not the default |
+| Forcing every goal into the flat template shape | The template is reference blocks + the simple case; the chair designs the structure per goal |
+| Execute lanes without a `spec` | Each step's spec is the lane's entire build instruction — codex sees nothing else |
 | Treating the hook as an absolute wall | It's a bounded nudge (8 blocks); the guarantee is against a lazy chair, stated honestly |
