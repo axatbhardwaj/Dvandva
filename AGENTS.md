@@ -1,5 +1,7 @@
 # AGENTS.md
 
+> **Archive status:** Dvandva is retired and archived. This file is preserved as historical documentation; no further protocol or product development is planned.
+
 ## Purpose
 
 This repo researches practical agent-to-agent coordination between Claude Code and Codex. Dvandva is a baton-passing protocol-level orchestrator: the baton coordinates roles, phases, review gates, and subagent work, but there is still no daemon, launcher, or hidden central control loop.

@@ -92,19 +92,35 @@ fn version_parity_passes_when_fixture_built_from_plugin_version_constant() {
     assert!(assert_source_manifest_version_parity(dir.path()).is_ok());
 }
 
-// The three real manifests in this repo, not a fixture: proves the shipped
-// `.claude-plugin/marketplace.json`, `plugins/dvandva/.claude-plugin/
-// plugin.json`, and `plugins/dvandva/.codex-plugin/plugin.json` all agree
-// with each other AND with the compiled `versions::PLUGIN_VERSION`, so a
-// release that bumps the constant but forgets a manifest (or vice versa)
-// fails the suite instead of shipping silently. Mirrors the
-// `parity_live_tree_passes` pattern in tests/lints.rs (same `resolve_root`
-// git-toplevel resolution, no fixture, no feature gate).
+// The archived repository no longer distributes either marketplace catalog,
+// but preserves both historical plugin source manifests. Pin that live-tree
+// shape separately from the strict active-distribution fixture coverage above.
 #[test]
-fn source_manifests_match_plugin_version_in_live_tree() {
+fn archived_live_tree_delists_marketplaces_and_preserves_plugin_versions() {
     let root = dvandva::lint::resolve_root(&[]);
-    assert_source_manifest_version_parity(&root)
-        .unwrap_or_else(|e| panic!("live-tree manifest version parity failed: {e}"));
+
+    for rel in [
+        ".claude-plugin/marketplace.json",
+        ".agents/plugins/marketplace.json",
+    ] {
+        assert!(!root.join(rel).exists(), "{rel} must remain delisted");
+    }
+
+    for rel in [
+        "plugins/dvandva/.claude-plugin/plugin.json",
+        "plugins/dvandva/.codex-plugin/plugin.json",
+    ] {
+        let path = root.join(rel);
+        let text = fs::read_to_string(&path)
+            .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
+        let manifest: Value = serde_json::from_str(&text)
+            .unwrap_or_else(|error| panic!("invalid JSON in {}: {error}", path.display()));
+        assert_eq!(
+            manifest.get("version").and_then(Value::as_str),
+            Some(PLUGIN_VERSION),
+            "{rel} must preserve plugin version {PLUGIN_VERSION}"
+        );
+    }
 }
 
 #[test]

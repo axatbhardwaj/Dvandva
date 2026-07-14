@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Dvandva pairs two adversarial AI roles — vadi and prativadi — around one validated baton file, so a thesis and its antithesis accumulate and get pressure-tested across checkpoints instead of resetting on every one-shot call.">
-<title>Dvandva — a governed-loop protocol for adversarial AI pairs</title>
+<meta name="description" content="Dvandva is retired and archived as a historical learning experiment in governed agent loops, subagent delegation, independent review, stateful handoffs, and two-agent coordination.">
+<title>Dvandva — retired and archived historical research</title>
 <script type="application/json" id="dvandva-artifact-meta">
 {
   "schema": "dvandva.artifact.explainer.v1",
   "artifact_type": "explainer",
-  "title": "Dvandva — a governed-loop protocol for adversarial AI pairs",
-  "date": "2026-07-12",
-  "basis": "engine truth on feat/delta-reverification · Option-B delta re-verification"
+  "title": "Dvandva — retired and archived historical research",
+  "date": "2026-07-14",
+  "basis": "final repository state on main · retired and archived · final crate release 3.4.2"
 }
 </script>
 <style>
@@ -124,12 +124,12 @@
   <details>
     <summary>Contents</summary>
     <div class="links">
-      <a href="#why">why it exists</a>
+      <a href="#why">why it existed</a>
       <a href="#loop">the loop</a>
       <a href="#proof">proof</a>
       <a href="#mechanics">mechanics</a>
       <a href="#delta">re-laps</a>
-      <a href="#start">get started</a>
+      <a href="#archive">archive status</a>
       <a class="nav-repo" href="https://github.com/axatbhardwaj/Dvandva">repo ↗</a>
     </div>
   </details>
@@ -145,23 +145,23 @@ document.getElementById('toc').addEventListener('click', function(e){
 
 <header>
   <p class="devan">द्वन्द्व · dvandva — a compound of two equal, opposing members</p>
-  <h1>Dvandva — a governed-loop protocol for adversarial AI pairs</h1>
-  <p class="thesis">Dvandva doesn't build its coordination core on isolated one-shot calls — no single call sustains a shared, role-bound thesis/antithesis dialectic. Its governed loop lets those positions accumulate and get pressure-tested across checkpoints.</p>
-  <p class="thesis sub">A caller could loop a one-shot call, but the shared state and convergence gate would be theirs to enforce, not the engine's. Dvandva makes both structural, surfacing blind spots through decorrelated review.</p>
+  <h1>Dvandva is retired and archived</h1>
+  <p class="thesis">Dvandva was a valuable learning experiment in how governed agent loops, subagent delegation, independent review, stateful handoffs, and two-agent coordination work in practice.</p>
+  <p class="thesis sub">Agent harnesses and models have evolved substantially. Task state, subagent dispatch, review loops, verification gates, and cross-agent coordination are increasingly native capabilities that work with much less ceremony; continuing Dvandva would add complexity, execution time, token usage, and cost without enough practical benefit.</p>
+  <p class="thesis sub">This page is a preserved technical record of the final implementation. The repository remains available as a historical research and learning artifact, but Dvandva is no longer maintained, supported, or recommended for new work.</p>
   <div class="strip">
-    <span class="chip">no coordination daemon — the baton file is the whole run-coordination channel</span>
-    <span class="chip">crash-tolerant: kill either side, rejoin at preflight</span>
-    <span class="chip">cross-vendor pairing is the recommended default, not an engine lock</span>
-    <span class="chip">walkaway or supervised</span>
-    <span class="chip">v3: each run declares its own workflow — peer-approved, invariant-checked</span>
+    <span class="chip">retired and archived</span>
+    <span class="chip">final crate release: 3.4.2</span>
+    <span class="chip">historical research and learning artifact</span>
+    <span class="chip">no longer maintained, supported, or recommended</span>
   </div>
-  <a class="scroll-hint" href="#proof">↓ the enforced guarantees, with citations</a>
+  <a class="scroll-hint" href="#proof">↓ the preserved technical record, with citations</a>
 </header>
 
 <main>
 <section id="why">
-  <p class="eyebrow">why it exists</p>
-  <h2>Different models have different blind spots. Dvandva weaponizes that.</h2>
+  <p class="eyebrow">why it existed</p>
+  <h2>Different models had different blind spots. Dvandva explored how to expose them.</h2>
   <div class="cards">
     <div class="card"><h4>Decorrelated review</h4><p>The reviewer is never the same role that produced the work — the engine locks two role identities, vadi and prativadi. Running those roles on different model vendors is a recommended decorrelation policy that reduces correlated blind spots, not a structural guarantee the engine enforces.</p></div>
     <div class="card"><h4>Proof, not prose</h4><p>A run cannot end because an agent <em>says</em> it's done. Termination demands both role-bound approvals, artifacts that exist on disk, and a verification matrix fresher than the last code change.</p></div>
@@ -209,7 +209,7 @@ document.getElementById('toc').addEventListener('click', function(e){
 
   <h3>The headline receipt</h3>
   <div class="strip">
-    <span class="chip hi">dvandva 3.2.0 &amp; 3.3.0 — both live on crates.io</span>
+    <span class="chip hi">dvandva 3.2.0 &amp; 3.3.0 — both published on crates.io</span>
     <span class="chip hi">206 / 400 commits carry a Dvandva-Checkpoint: trailer</span>
     <span class="chip">pinned @ main<code>@36f134c</code>, 2026-07-11</span>
   </div>
@@ -325,21 +325,13 @@ git rev-list --count 36f134c                                     # → 400, as o
   <p class="quiet">Carry is a best-effort optimization, not a cryptographic or terminal guarantee: every <code>verification_matrix</code> row still reruns. Legacy batons without carry fields follow the original full-rerun behavior.</p>
 </section>
 
-<section id="start">
-  <p class="eyebrow">boarding</p>
-  <h2>Get started</h2>
-  <pre><code># the runtime (one binary, published on crates.io)
-cargo install dvandva --version 3.4.1
-
-# the plugin, into each session's tool
-dvandva install</code></pre>
-  <p class="quiet">Later, <code>dvandva upgrade</code> refreshes the whole stack transactionally — all-new or fully-restored, exit-coded.</p>
-  <p>Then open two sessions on a feature branch:</p>
-  <pre><code>Session A (vadi):        Implement &lt;feature&gt; with peer review. Start a Dvandva development run in walkaway mode.
-Session B (prativadi):   Join the same Dvandva development run and review the baton.</code></pre>
-  <p class="quiet">Walkaway mode drives the baton autonomously until <span class="k-seal">done</span>. A genuine requirement gap can still route to you — <code>human_question</code> pauses one session's work for a direct answer, and <code>human_decision</code> is the exceptional, human-authorized way to re-route a run or reopen one that already reached <code>done</code>/<code>abandoned</code> — it is not a routine stop most runs ever take. One session surfaces the pause to you directly; the other keeps polling through it and resumes itself the instant your answer lands, so nothing silently stalls.</p>
+<section id="archive">
+  <p class="eyebrow">archive status</p>
+  <h2>Preserved for learning, closed to new work</h2>
+  <p>The repository, final crate release <code>3.4.2</code>, and this explainer preserve the protocol's implementation and lessons as historical research. No further protocol or product development is planned.</p>
+  <p class="quiet">Installation and onboarding commands have been removed from this page because Dvandva is no longer maintained, supported, or recommended for new work. The technical sections above remain in their original explanatory voice as a record of how the final system worked.</p>
 </section>
 </main>
-<p class="foot">DVANDVA · a governed-loop protocol for adversarial AI pairs · Option-B delta re-verification on feat/delta-reverification · 2026-07-12</p>
+<p class="foot">DVANDVA · RETIRED AND ARCHIVED · historical technical record · final crate release 3.4.2 · 2026-07-14</p>
 </body>
 </html>

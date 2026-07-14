@@ -1,5 +1,7 @@
 # Dvandva — project instructions
 
+> **Archive status:** Dvandva is retired and archived. This file is preserved as historical documentation; no further protocol or product development is planned.
+
 ## Model discipline
 
 - **Fable never writes code.** When this session runs on a Fable-class model (e.g. hosting the Dvandva vadi), all code — implementation, tests, even one-line fixes — is dispatched to subagents. Dispatch code to `gpt-5.6-terra` for routine work, `gpt-5.6-sol` for hard bounded work, and `gpt-5.6-luna` only for mechanically proven task classes; `gpt-5.5` is the fallback. Fable's job in the chair is judgment and taste only: decisions, plans, reviews, human-facing artifacts, and coordination writes (baton candidates, memory, todos). "Too small to dispatch" is the rationalization this rule exists to override.

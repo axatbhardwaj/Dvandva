@@ -1,8 +1,8 @@
 [package]
 name = "dvandva"
-version = "3.4.1"
+version = "3.4.2"
 edition = "2021"
-description = "A governed-loop protocol for adversarial AI pairs. Each run declares its own peer-approved workflow graph — validated against five locked invariants — instead of a frozen state machine. Multicall binary for two-role (vadi/prativadi) coordination over a JSON baton: graph interpreter, class-driven waits, preflights, git gates, installers, and lints. No daemon, no orchestrator."
+description = "Retired and archived. A historical learning experiment in governed agent loops, subagent delegation, review gates, and two-agent coordination for Claude Code and Codex."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/axatbhardwaj/Dvandva"
 readme = "README.md"

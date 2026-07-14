@@ -1,5 +1,7 @@
 # dvandva
 
+> **Dvandva is retired and archived.** This crate was the runtime for a valuable learning experiment in governed agent loops, subagent delegation, independent review, stateful handoffs, and two-agent coordination. It is preserved as a historical artifact and is no longer maintained, supported, or recommended for new work. Version `3.4.2` is the final release.
+
 A two-role (`vadi`/`prativadi`) multi-agent coordination engine.
 
 `dvandva` is a multicall binary implementing the full Dvandva runtime over a
@@ -31,12 +33,12 @@ The binary is a multicall executable: when invoked through a git-hook symlink
 (`pre-commit`, `prepare-commit-msg`, ...) the hook name is taken from `argv[0]`.
 `dvandva --version` prints the version line.
 
-Version `3.4.1`. Licensed under `MIT OR Apache-2.0`.
+Final release `3.4.2`. Licensed under `MIT OR Apache-2.0`.
 
-## Install
+## Historical installation (unsupported)
 
 ```bash
-cargo install dvandva --version 3.4.1
+cargo install dvandva --version 3.4.2
 # or, from a checkout: cargo install --path rust/dvandva
 ```
 
