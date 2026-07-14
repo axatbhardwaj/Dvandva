@@ -72,8 +72,9 @@ insight the drawing can't say. Real content only — never lorem.
 
 ## Verify & publish
 
-- In the Dvandva repo: `dvandva lint artifacts <file>` must pass. Elsewhere:
-  keep the meta block + `color-scheme: dark;` anyway (they cost nothing).
+- If a 3.x `dvandva` binary is installed, `dvandva lint artifacts <file>` must
+  pass (optional since 2.0.0 — the binary was retired). Everywhere: keep the
+  meta block + `color-scheme: dark;` (they cost nothing).
 - Publishing via the claude.ai Artifact tool: strip the outer
   doctype/html/head/body skeleton first (keep `<title>`, style, body content) —
   the tool wraps content itself.

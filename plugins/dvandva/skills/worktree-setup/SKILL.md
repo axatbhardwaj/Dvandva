@@ -1,19 +1,18 @@
 ---
 name: worktree-setup
-description: Use when preparing a Dvandva worktree, branch, PR-review workspace, ticket workspace, or repo-local setup before a paired run.
+description: Use when preparing a worktree, branch, PR-review workspace, ticket workspace, or repo-local setup before starting a run or goal.
 ---
 
 # Dvandva Worktree Setup
 
 ## Overview
 
-Use this to prepare isolated Dvandva work. It absorbs the worktree setup workflow into Dvandva while keeping repo-specific conventions as profiles rather than hard dependencies.
+Use this to prepare isolated work. It absorbs the worktree setup workflow while keeping repo-specific conventions as profiles rather than hard dependencies.
 
-Invoke `superpowers:using-git-worktrees` first. If the current harness cannot load that skill, record the capability gap in `BATON_STATE`, run the equivalent native git worktree preflight, and do not silently skip isolation.
+Invoke `superpowers:using-git-worktrees` first. If the current harness cannot load that skill, run the equivalent native git worktree preflight and do not silently skip isolation.
 
 ## Contract
 
-- Surface `BATON_STATE_COMPACT` if a baton already exists.
 - Create or select a worktree before starting a risky multi-phase run.
 - Copy local env files only when the repo convention allows it.
 - Confirm `.gitignore` covers `.dvandva/`, `/superpowers/`, and `agent-os/`.
@@ -33,8 +32,7 @@ Invoke `superpowers:using-git-worktrees` first. If the current harness cannot lo
 5. Install dependencies only when needed and remove setup-only lockfile noise when the repo convention calls for it.
 6. Run a bounded baseline command and record exact status, including whether validation is blocked by known repo-specific caveats.
 7. Always verify no leftover repo-specific baseline or test-runner process remains after the baseline command finishes or times out.
-8. Start or update Dvandva baton fields: `run_id`, `original_ask`, `work_split`, and `verification_matrix`.
-9. Record handoff in `BRANCH-NOTES.md` and `~/ACTIVE-WORK.md`.
+8. Record handoff in `BRANCH-NOTES.md` and `~/ACTIVE-WORK.md`.
 
 ## DeFi Profile
 
@@ -81,4 +79,3 @@ Return:
 - Worktree path, branch, base SHA, and dirty state.
 - Env/dependency/baseline actions taken.
 - `BRANCH-NOTES.md` and `~/ACTIVE-WORK.md` update status.
-- Suggested initial `work_split` and `verification_matrix`.

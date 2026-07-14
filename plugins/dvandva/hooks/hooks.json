@@ -1,25 +1,6 @@
 {
   "hooks": {
-    "PreToolUse": [
-      {
-        "matcher": "*",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "dvandva baton-guard"
-          }
-        ]
-      }
-    ],
     "Stop": [
-      {
-        "hooks": [
-          {
-            "type": "command",
-            "command": "dvandva stop-guard"
-          }
-        ]
-      },
       {
         "hooks": [
           {

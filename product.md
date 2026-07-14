@@ -1,5 +1,7 @@
 # Dvandva — Product Specification v1
 
+> **HISTORICAL (2026-07-14):** This specification describes the v1–v3 two-session baton engine, which was **retired in plugin 2.0.0** — the Rust binary, baton protocol, role skills, and agent roster no longer exist in this tree (final binary release: `dvandva 3.4.1` on crates.io; full source in git history at tag `v3.4.1` and earlier commits). The current product is the adversarial loop: see `README.md` and `plugins/dvandva/`. Path references below are stale by design; this document is preserved as the engineering record of the engine that proved the moat.
+
 Status: rewritten 2026-05-14 for richer flow (spec phase + phased implementation + mutual review + disagreement loop + `/goal` autonomy). Owner: axatbhardwaj. Supersedes the prompt-template-first approach in `templates/prompts/` and the single-shot doer→reviewer flow in the previous draft.
 
 > **Spec rev 2026-06-11:** §3.1 adds `dvandva-write.sh` (validated atomic baton install + auto-snapshot, bundled byte-identical in both skill script dirs) and `scripts/test-dvandva-write.sh`. The wait helper's default `--max-wait` drops 900→540 so one foreground invocation fits Claude Code's 600 s Bash-tool cap (§7.2, §8.2, §12); it wakes early on baton-directory inotify events and retries once on torn reads. This pulls §16's deterministic validator forward to script level (a PreToolUse hook remains future work).

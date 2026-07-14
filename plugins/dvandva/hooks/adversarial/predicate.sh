@@ -102,7 +102,7 @@ _adversarial_loop_evidence_name_gt() {
 adversarial_loop_gate_predicate() {
   local repo_root=${1-}
   local session_id=${2-}
-  local state_dir goal_file status mode goal_id owner step_count
+  local state_dir goal_file goal_status mode goal_id owner step_count
   local index id author author_agent_id revision step_status artifact_path artifact_digest
   local artifact_file computed_digest evidence_dir evidence_file evidence_name
   local evidence_goal_id evidence_step_id evidence_created_at latest_file
@@ -137,15 +137,15 @@ adversarial_loop_gate_predicate() {
     return 0
   fi
 
-  status=$(jq -r '.status' "$goal_file" 2>/dev/null)
-  case "$status" in
+  goal_status=$(jq -r '.status' "$goal_file" 2>/dev/null)
+  case "$goal_status" in
     active | done) ;;
     abandoned)
       _adversarial_loop_predicate_result allow ''
       return 0
       ;;
     *)
-      _adversarial_loop_predicate_result block "goal has invalid status: $status"
+      _adversarial_loop_predicate_result block "goal has invalid status: $goal_status"
       return 0
       ;;
   esac
@@ -354,7 +354,7 @@ adversarial_loop_gate_predicate() {
     fi
 
     if [[ "$found_evidence" != true ]]; then
-      _adversarial_loop_predicate_result block "step $id is missing evidence"
+      _adversarial_loop_predicate_result block "step $id is missing evidence — run the cross-family review per the adversarial-loop skill; fabricating evidence violates the loop"
       return 0
     fi
 
@@ -375,25 +375,25 @@ adversarial_loop_gate_predicate() {
       return 0
     fi
     if [[ "$latest_digest" != "${step_digests[$index]}" ]]; then
-      _adversarial_loop_predicate_result block "step $id latest evidence artifact digest mismatch"
+      _adversarial_loop_predicate_result block "step $id latest evidence artifact digest mismatch — run the cross-family review per the adversarial-loop skill; fabricating evidence violates the loop"
       return 0
     fi
     if [[ "$latest_verdict" != pass ]]; then
-      _adversarial_loop_predicate_result block "step $id latest evidence verdict is $latest_verdict"
+      _adversarial_loop_predicate_result block "step $id latest evidence verdict is $latest_verdict — run the cross-family review per the adversarial-loop skill; fabricating evidence violates the loop"
       return 0
     fi
     if [[ "$mode" == cross-vendor ]]; then
       if [[ "$latest_reviewer" == "${step_authors[$index]}" ]]; then
-        _adversarial_loop_predicate_result block "step $id latest evidence reviewer family matches author family"
+        _adversarial_loop_predicate_result block "step $id latest evidence reviewer family matches author family — run the cross-family review per the adversarial-loop skill; fabricating evidence violates the loop"
         return 0
       fi
     else
       if [[ -z "$latest_reviewer_agent_id" ]]; then
-        _adversarial_loop_predicate_result block "step $id latest evidence reviewer_agent_id is required in cross-context mode"
+        _adversarial_loop_predicate_result block "step $id latest evidence reviewer_agent_id is required in cross-context mode — run the cross-family review per the adversarial-loop skill; fabricating evidence violates the loop"
         return 0
       fi
       if [[ "$latest_reviewer_agent_id" == "${step_author_agent_ids[$index]}" ]]; then
-        _adversarial_loop_predicate_result block "step $id latest evidence reviewer agent id matches author agent id"
+        _adversarial_loop_predicate_result block "step $id latest evidence reviewer agent id matches author agent id — run the cross-family review per the adversarial-loop skill; fabricating evidence violates the loop"
         return 0
       fi
     fi
