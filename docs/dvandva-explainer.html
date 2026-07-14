@@ -11,7 +11,7 @@
   "artifact_type": "explainer",
   "title": "Dvandva — a governed loop for cross-vendor adversarial execution",
   "date": "2026-07-14",
-  "basis": "plugin 2.0.2 (skill + hook + workflow, engine removed) · v3 lineage sections describe the retired baton engine (dvandva 3.4.1 on crates.io)"
+  "basis": "the dvandva plugin 2.0.2 — skill + gate hook + goal-designed workflows; live acceptance run of 2026-07-14"
 }
 </script>
 <style>
@@ -125,12 +125,10 @@
     <summary>Contents</summary>
     <div class="links">
       <a href="#single-loop">the loop</a>
+      <a href="#why">why it exists</a>
+      <a href="#proven">proven live</a>
       <a href="#start">get started</a>
-      <a href="#why">lineage: why the engine existed</a>
-      <a href="#loop">lineage: the baton engine</a>
-      <a href="#proof">lineage: proof</a>
-      <a href="#mechanics">lineage: mechanics</a>
-      <a href="#delta">lineage: re-laps</a>
+      <a href="#lineage">lineage</a>
       <a class="nav-repo" href="https://github.com/axatbhardwaj/Dvandva">repo ↗</a>
     </div>
   </details>
@@ -205,6 +203,58 @@ document.getElementById('toc').addEventListener('click', function(e){
   <p class="quiet">Enforcement is stated honestly: the gate fails closed on the <em>procedure</em> — evidence present, cross-reviewer, digest-bound, verdict-passing — and is a bounded nudge (Claude Code force-ends after eight consecutive blocks), aimed at a lazy chair, not a malicious one. It cannot prove a provider call really happened. Two companion skills, <code>delegating-to-codex</code> and <code>delegating-to-grok</code>, teach the chair to dispatch the other models well — self-contained briefs, hardened invocations, independently verified results. Wiring per configuration: <a href="https://github.com/axatbhardwaj/Dvandva/blob/main/adversarial-loop/README.md">adversarial-loop/README.md ↗</a>.</p>
 </section>
 
+<section id="why">
+  <p class="eyebrow">why it exists</p>
+  <h2>Agents grade their own homework. Dvandva takes the pen away.</h2>
+  <div class="cards">
+    <div class="card"><h4>Decorrelated review</h4><p>The reviewer is never the author — a different vendor family when two are available (Claude and GPT have systematically different blind spots), a distinct fresh-context agent otherwise. Self-review earns zero credit, structurally.</p></div>
+    <div class="card"><h4>Proof, not prose</h4><p>A goal cannot end because the agent <em>says</em> it's done. Every step needs review evidence bound by <code>sha-256</code> to the exact artifact bytes, from a reviewer that recomputed the digest itself.</p></div>
+    <div class="card"><h4>Failures stay on record</h4><p>A <code>fail</code> verdict is never overwritten. Fixes bump the revision, re-stamp, and earn a fresh attack — the gate only ever honors the latest attempt against the current bytes.</p></div>
+  </div>
+</section>
+
+<section id="proven">
+  <p class="eyebrow">proven live</p>
+  <h2>On its first real goal, the loop caught a real bug</h2>
+  <p>Acceptance test, run end-to-end with the native Workflow tool: two Codex lanes built a small CLI tool and its README in parallel, one stamp lane bound the digests, and two independent Opus lanes attacked the results. One artifact passed. The other didn't — the README documented <code>./wordfreq.sh</code>, but the shipped scripts weren't executable: a cross-step integration bug neither author noticed, caught by the opposing family on the first lap.</p>
+  <figure>
+    <svg viewBox="0 0 1040 210" width="100%" role="img" aria-label="Live run timeline: parallel codex builds, stamp, opus attack finds a real bug, revision two passes, gate allows earned done">
+      <defs><marker id="pv" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8a97a8"/></marker></defs>
+      <g text-anchor="middle">
+        <rect x="14" y="24" width="140" height="52" rx="8" fill="#182130" stroke="#34d399"/>
+        <text x="84" y="46" fill="#34d399" font-size="10">codex lane 1</text>
+        <text x="84" y="64" fill="#8a97a8" font-size="8.5">wordfreq.sh + test</text>
+        <rect x="14" y="120" width="140" height="52" rx="8" fill="#182130" stroke="#34d399"/>
+        <text x="84" y="142" fill="#34d399" font-size="10">codex lane 2</text>
+        <text x="84" y="160" fill="#8a97a8" font-size="8.5">README.md</text>
+        <line x1="154" y1="50" x2="216" y2="90" stroke="#8a97a8" marker-end="url(#pv)"/>
+        <line x1="154" y1="146" x2="216" y2="106" stroke="#8a97a8" marker-end="url(#pv)"/>
+        <rect x="218" y="72" width="120" height="52" rx="8" fill="#182130" stroke="#5ca9ff"/>
+        <text x="278" y="94" fill="#5ca9ff" font-size="10">stamp</text>
+        <text x="278" y="112" fill="#8a97a8" font-size="8.5">sha-256 + revision</text>
+        <line x1="338" y1="86" x2="398" y2="48" stroke="#8a97a8" marker-end="url(#pv)"/>
+        <line x1="338" y1="110" x2="398" y2="148" stroke="#8a97a8" marker-end="url(#pv)"/>
+        <rect x="400" y="24" width="150" height="52" rx="8" fill="#182130" stroke="#a78bfa"/>
+        <text x="475" y="46" fill="#a78bfa" font-size="10">opus attack</text>
+        <text x="475" y="64" fill="#46c26a" font-size="9">pass</text>
+        <rect x="400" y="120" width="150" height="52" rx="8" fill="#182130" stroke="#a78bfa"/>
+        <text x="475" y="142" fill="#a78bfa" font-size="10">opus attack</text>
+        <text x="475" y="160" fill="#ff6a5e" font-size="9">fail: ./ vs mode 644</text>
+        <line x1="550" y1="146" x2="612" y2="146" stroke="#ff6a5e" stroke-dasharray="5 4" marker-end="url(#pv)"/>
+        <rect x="614" y="120" width="160" height="52" rx="8" fill="#182130" stroke="#34d399"/>
+        <text x="694" y="142" fill="#34d399" font-size="10">revision 2</text>
+        <text x="694" y="160" fill="#8a97a8" font-size="8.5">rebuild → re-stamp → re-attack</text>
+        <line x1="774" y1="146" x2="836" y2="112" stroke="#8a97a8" marker-end="url(#pv)"/>
+        <line x1="550" y1="50" x2="836" y2="92" stroke="#8a97a8" marker-end="url(#pv)"/>
+        <rect x="838" y="76" width="180" height="56" rx="8" fill="#12241a" stroke="#46c26a" stroke-width="1.8"/>
+        <text x="928" y="99" fill="#46c26a" font-size="10.5">gate: done — earned</text>
+        <text x="928" y="117" fill="#8a97a8" font-size="8.5">every step: latest attempt passes</text>
+      </g>
+    </svg>
+    <figcaption>Passing lanes replay from cache on the re-lap; only the failed step rebuilds. The gate allowed <code>done</code> only after the revision-2 evidence landed.</figcaption>
+  </figure>
+  <p class="quiet">The same review pressure built the product itself: the loop's own skills, hook, and workflow blocks went through repeated cross-family attack rounds before shipping, and the reviewers' findings — including a live demonstration that a blocked agent will fabricate evidence rather than dispatch a real review — are why the enforcement section below reads the way it does.</p>
+</section>
 
 <section id="start">
   <p class="eyebrow">boarding</p>
@@ -223,175 +273,13 @@ Every step gets attacked before it counts — don't end until the gate lets you.
   <p class="quiet">The skill creates <code>.adversarial-loop/goal.json</code> bound to the session, drives <code>propose → stamp → attack → gate</code> per step, and the hook blocks <span class="k-seal">done</span> until passing cross-reviewer evidence exists (bounded on Claude Code; invoked checkpoint on Codex). Claude-only and Codex-only setups use the same loop with fresh-context reviewers — see the config cards above and <code>adversarial-loop/README.md</code> for per-config wiring.</p>
 </section>
 
-<section id="why">
-  <p class="eyebrow">lineage · why the engine existed</p>
-  <h2>Different models have different blind spots. Dvandva weaponizes that.</h2>
-  <div class="cards">
-    <div class="card"><h4>Decorrelated review</h4><p>The reviewer is never the same role that produced the work — the engine locks two role identities, vadi and prativadi. Running those roles on different model vendors is a recommended decorrelation policy that reduces correlated blind spots, not a structural guarantee the engine enforces.</p></div>
-    <div class="card"><h4>Proof, not prose</h4><p>A run cannot end because an agent <em>says</em> it's done. Termination demands both role-bound approvals, artifacts that exist on disk, and a verification matrix fresher than the last code change.</p></div>
-    <div class="card"><h4>Bounded arguments</h4><p>Every review loop is capped — a cycle can't spin forever. When the pair keeps disagreeing past the cap, that repeated edge drops; what's left is either escalation to you or the run's legal next step forward.</p></div>
-  </div>
+<section id="lineage">
+  <p class="eyebrow">lineage</p>
+  <h2>Distilled from a heavier machine that proved the idea</h2>
+  <p>Dvandva v1–v3 ran the same bet as a two-session protocol: two live agent harnesses passing a validated baton file through a typed state machine, enforced by a Rust binary. Across ~20 real runs it kept proving the moat — cross-vendor review catches bugs neither model catches alone — and kept proving the cost: dead-peer watchdogs, mutual-wait choreography, and a state machine that took more care than the work it governed. The loop keeps the moat and drops the machine. The final engine release is <a href="https://crates.io/crates/dvandva">dvandva 3.4.1 on crates.io ↗</a>; its full source, protocol docs, and transition tables live at tag <a href="https://github.com/axatbhardwaj/Dvandva/tree/v3.4.1">v3.4.1 ↗</a>.</p>
 </section>
-
-<section id="loop">
-  <p class="eyebrow">lineage · the baton engine (v1–v3, retired)</p>
-  <h2>One baton, one writer — thesis and antithesis, emergent</h2>
-  <p class="quiet">Everything from here down describes the two-session engine Dvandva shipped through <code>dvandva 3.4.1</code> (still on crates.io; source preserved in git history). It proved the moat across ~20 real runs — and its cost is why the loop above replaced it. Kept as lineage.</p>
-  <p>Thesis and antithesis are not documents anywhere in the schema. They're <b>emergent</b>: positions that accrue on the baton itself — questions, findings, counters, artifacts — checkpoint by checkpoint, as <span class="k-vadi">vadi</span> proposes and <span class="k-prat">prativadi</span> presses back. Whoever the baton assigns acts; the other blocks on <code>dvandva wait</code>. A turn ends by proposing the <em>entire next baton</em>, and the engine validates it against the declared workflow before installing it. Wrong owner, stale checkpoint, missing evidence, dropped peer work, illegal edge: rejected with a machine-readable reason.</p>
-  <div class="baton-rail" aria-hidden="true">
-    <span class="endcap l">VADI · thesis</span>
-    <span class="endcap r">PRATIVADI · antithesis</span>
-    <div class="track"></div><div class="baton"></div>
-  </div>
-  <figure>
-  <svg viewBox="0 0 1040 168" width="100%" role="img" aria-label="The turn loop: resolve, brief, do the work, next, write, wait, then the other role wakes">
-    <defs><marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8a97a8"/></marker></defs>
-    <g font-size="11.5" text-anchor="middle">
-      <rect x="14" y="52" width="132" height="52" rx="9" fill="#182130" stroke="#26303e"/><text x="80" y="74" fill="#dce4ee">resolve · preflight</text><text x="80" y="92" fill="#5c6774" font-size="9.5">find the run, sanity-check</text>
-      <rect x="186" y="52" width="112" height="52" rx="9" fill="#182130" stroke="#26303e"/><text x="242" y="74" fill="#dce4ee">brief</text><text x="242" y="92" fill="#5c6774" font-size="9.5">fresh-context pack</text>
-      <rect x="338" y="52" width="150" height="52" rx="9" fill="#182130" stroke="#26303e"/><text x="413" y="74" fill="#dce4ee">do the work</text><text x="413" y="92" fill="#5c6774" font-size="9.5">TDD, subagents, review</text>
-      <rect x="528" y="52" width="128" height="52" rx="9" fill="#182130" stroke="#26303e"/><text x="592" y="74" fill="#dce4ee">next</text><text x="592" y="92" fill="#5c6774" font-size="9.5">scaffold a legal candidate</text>
-      <rect x="696" y="52" width="128" height="52" rx="9" fill="#12241a" stroke="#46c26a"/><text x="760" y="74" fill="#46c26a">write</text><text x="760" y="92" fill="#5c6774" font-size="9.5">gates → atomic install</text>
-      <rect x="864" y="52" width="150" height="52" rx="9" fill="#182130" stroke="#26303e"/><text x="939" y="74" fill="#dce4ee">wait</text><text x="939" y="92" fill="#5c6774" font-size="9.5">block until your turn / pause</text>
-      <line x1="146" y1="78" x2="186" y2="78" stroke="#8a97a8" stroke-width="1.2" marker-end="url(#ar)"/>
-      <line x1="298" y1="78" x2="338" y2="78" stroke="#8a97a8" stroke-width="1.2" marker-end="url(#ar)"/>
-      <line x1="488" y1="78" x2="528" y2="78" stroke="#8a97a8" stroke-width="1.2" marker-end="url(#ar)"/>
-      <line x1="656" y1="78" x2="696" y2="78" stroke="#8a97a8" stroke-width="1.2" marker-end="url(#ar)"/>
-      <line x1="824" y1="78" x2="864" y2="78" stroke="#8a97a8" stroke-width="1.2" marker-end="url(#ar)"/>
-      <path d="M 939 104 C 939 150 200 150 82 106" fill="none" stroke="#5c6774" stroke-width="1.1" stroke-dasharray="5 4" marker-end="url(#ar)"/>
-      <text x="510" y="146" fill="#5c6774" font-size="9.5">the other role wakes with the checkpointed baton — same loop, opposite color, one position sharper than before</text>
-      <text x="760" y="40" fill="#46c26a" font-size="9.5">reject = exit 23/24 + reason · hook guards the installed baton, not the candidate</text>
-    </g>
-  </svg>
-  <figcaption>Every full circuit checkpoints the baton — that's the mechanism the dialectic rides on: nothing resets, everything accumulates.</figcaption>
-  </figure>
-</section>
-
-<section id="proof">
-  <p class="eyebrow">lineage · the proof</p>
-  <h2>Receipts first, then the mechanism that earns them</h2>
-  <p>Every row below is something the engine actually enforces at <code>dvandva write</code> — not a design intention. Citations are <code>file:line</code> in <code>rust/dvandva/src/</code> in the v3.4.1 tag.</p>
-
-  <h3>The headline receipt</h3>
-  <div class="strip">
-    <span class="chip hi">dvandva 3.2.0 &amp; 3.3.0 — both live on crates.io</span>
-    <span class="chip hi">206 / 400 commits carry a Dvandva-Checkpoint: trailer</span>
-    <span class="chip">pinned @ main<code>@36f134c</code>, 2026-07-11</span>
-  </div>
-  <pre><code>git log 36f134c --format=%B | grep -c '^Dvandva-Checkpoint:'   # → 206, as of 36f134c (2026-07-11)
-git rev-list --count 36f134c                                     # → 400, as of 36f134c (2026-07-11)</code></pre>
-  <p class="quiet">The ratio grows with every merge, so the claim is stated as-of a fixed commit plus the exact command that reproduces it — a reader re-running this today gets a higher count, and that's expected, not a contradiction.</p>
-
-  <h3>What the engine enforces</h3>
-  <div class="table-wrap">
-  <table>
-    <tr><th>Guarantee</th><th>Enforcement</th><th>Citation</th></tr>
-    <tr><td>Atomic install, monotonic checkpoints</td><td>Every candidate is validated, then installed with a single atomic rename — a corrupt or partial install can't happen mid-write. Checkpoints only ever advance by exactly +1; a candidate that repeats or skips one is rejected (<code>exit 27</code>, <code>stale_checkpoint</code>) before the transition table is even consulted. A post-install snapshot failure surfaces its own distinct exit code, never silently swallowed.</td><td><code>write.rs:2681-2685</code>, <code>2702-2707</code>, <code>1992-2005</code></td></tr>
-    <tr><td>Role-bound final approvals</td><td>Final approvals check <code>DVANDVA_ROLE</code> — a role can raise only its own final-approval bit, and only while entering <code>termination_review</code>.</td><td><code>write.rs:1799-1829</code></td></tr>
-    <tr><td>Role-bound commits</td><td>The pre-commit hook delegates to the commit gate, which blocks a commit unless the committing role is the baton's assignee or listed in <code>active_roles</code>.</td><td><code>commit_gate.rs:125-137</code>, <code>hooks.rs:100-121</code></td></tr>
-    <tr><td>A capped loop bounds one edge — it doesn't force every disagreement to you</td><td>Each loop edge is counted; at the cap, the engine removes that repeated edge from the legal-transitions set. Human escalation remains legal, but the engine only bounds the named edge — it doesn't mandate escalation as the sole exit.</td><td><code>write.rs:4303-4327</code></td></tr>
-    <tr><td>Custom workflow graphs are checked at approval; presets are pre-cleared</td><td>A hand-authored graph runs through five invariant checks before it's approved — one that lets <code>done</code> be reached without crossing a review gate <b>FAILS validation outright</b> (<code>ReviewGateBypass</code>). Built-in presets are pre-validated once, so that same runtime check is a no-op for them — both families satisfy the same contract, by different means.</td><td><code>write.rs:4622-4629</code>, <code>workflow/invariants.rs</code> (<code>ReviewGateBypass</code>)</td></tr>
-    <tr><td>Dual-approval <code>done</code>, every mode</td><td><code>done</code> is legal only from <code>termination_review</code>, and only once both <code>vadi_final_approval</code> and <code>prativadi_final_approval</code> are true — checked independently of mode or profile.</td><td><code>write.rs:2079-2083</code></td></tr>
-    <tr><td>No coordination daemon</td><td>No long-lived controller owns the loop. Every subcommand is a synchronous, one-shot call; the optional watchdog scan never blocks — "a monitor, not a gate." The baton plus a fencing lock is the sole coordination primitive.</td><td><code>main.rs:74-118</code>, <code>watchdog.rs:1-12</code>, <code>lock.rs:1-9</code></td></tr>
-    <tr><td>Two role identities are engine-locked; vendor pairing is policy, not a lock</td><td><code>done</code> requires two ROLE identities' independent approvals — engine-enforced. Running those two roles on two different model vendors is the recommended decorrelation <em>policy</em>, not something the engine checks: which engine wrote a checkpoint is recorded as trace data only, never compared for gating.</td><td>composes <code>write.rs:1799-1829</code> + <code>2079-2083</code> + <code>2854</code></td></tr>
-  </table>
-  </div>
-
-  <div class="callout adv">
-    <p class="tag">Advisory-only — read the edges precisely</p>
-    <ul>
-      <li><strong>Single-writer is not a blanket "the peer can't write on your turn" rule.</strong> Only outcome-deciding fields — approvals, review ownership, workflow sign-off — plus commits are role-locked. Most fields on a candidate baton are writable by whoever holds the lock.</li>
-      <li><strong><code>disagreement_cap</code> is a self-declared ceiling</strong>, read straight off the candidate's own field — not an immutability-guarded constant like <code>total_phases</code>.</li>
-    </ul>
-  </div>
-  <p class="quiet">State this precision as a feature, not a hedge — a technical reader trusts a pitch more, not less, for naming its own edges.</p>
-
-  <div class="callout meta">
-    <p class="tag">On the numbers</p>
-    <p style="margin:0 0 .6rem">A naive <code>git log --grep='Dvandva-Checkpoint'</code> overcounts the receipt above by one (<code>207</code>) — it also matches a commit that mentions the phrase in prose but carries no real trailer line. The line-anchored <code>grep -c '^Dvandva-Checkpoint:'</code> command above avoids that trap.</p>
-    <p style="margin:0;color:var(--dim)">This page's own research went through several rounds of adversarial review before acceptance — a live instance of the same loop this page describes, surfacing and closing real findings. The exact round-by-round counts live only in gitignored working files and aren't independently reader-verifiable, so they're kept qualitative here rather than cited as a number.</p>
-  </div>
-</section>
-
-<section id="mechanics">
-  <p class="eyebrow">lineage · mechanics, for the curious</p>
-  <details>
-    <summary>How the default routes actually run — regenerated from source</summary>
-    <p>Most runs ride one of two declarable presets and never think about the rest. The graph a run lives under is itself a peer-reviewed, invariant-checked artifact — a custom, unapproved workflow must pass through a <code>workflow_declaring → workflow_review</code> loop before it can reach spec drafting; a built-in preset is pre-approved and enters spec drafting directly. Every path, regardless of mode or profile, first clears a mandatory clarifying-questions floor (at least five questions combined, both roles represented) — there is no bypass edge.</p>
-    <figure>
-    <svg viewBox="0 0 1040 240" width="100%" role="img" aria-label="The default compact routes for the standard and fast development profiles">
-      <defs><marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8a97a8"/></marker></defs>
-      <text x="8" y="16" fill="#5c6774" font-size="9.5" letter-spacing="1">DEFAULT COMPACT ROUTES (clarifying-questions floor precedes both, off-diagram)</text>
-
-      <text x="10" y="52" fill="#34d399" font-size="10.5" font-weight="700">STANDARD</text>
-      <rect x="10" y="60" width="150" height="46" rx="8" fill="#182130" stroke="#26303e"/>
-      <text x="85" y="80" fill="#dce4ee" font-size="9.5" text-anchor="middle">research ⟲</text>
-      <text x="85" y="94" fill="#5c6774" font-size="8" text-anchor="middle">vadi ⇄ prativadi</text>
-      <line x1="160" y1="83" x2="182" y2="83" stroke="#8a97a8" stroke-width="1.1" marker-end="url(#mr)"/>
-      <rect x="182" y="60" width="130" height="46" rx="8" fill="#0f2a22" stroke="#34d399"/>
-      <text x="247" y="80" fill="#dce4ee" font-size="9.5" text-anchor="middle">spec ⟲ review</text>
-      <text x="247" y="94" fill="#34d399" font-size="8" text-anchor="middle">vadi drafts</text>
-      <line x1="312" y1="83" x2="334" y2="83" stroke="#8a97a8" stroke-width="1.1" marker-end="url(#mr)"/>
-      <rect x="334" y="60" width="72" height="46" rx="8" fill="#10192b" stroke="#5ca9ff" stroke-width="1.6"/>
-      <text x="370" y="87" fill="#5ca9ff" font-size="10" text-anchor="middle" font-weight="700">LOCK</text>
-      <line x1="406" y1="83" x2="428" y2="83" stroke="#8a97a8" stroke-width="1.1" marker-end="url(#mr)"/>
-      <rect x="428" y="60" width="130" height="46" rx="8" fill="#0f2a22" stroke="#34d399"/>
-      <text x="493" y="83" fill="#dce4ee" font-size="9.5" text-anchor="middle">implementing</text>
-      <line x1="558" y1="83" x2="580" y2="83" stroke="#8a97a8" stroke-width="1.1" marker-end="url(#mr)"/>
-      <rect x="580" y="60" width="160" height="46" rx="8" fill="#241830" stroke="#a78bfa"/>
-      <text x="660" y="80" fill="#dce4ee" font-size="9.5" text-anchor="middle">phase_review ⟲</text>
-      <text x="660" y="94" fill="#a78bfa" font-size="8" text-anchor="middle">⟲ phase_fixing, counted &amp; capped</text>
-      <line x1="740" y1="83" x2="762" y2="83" stroke="#8a97a8" stroke-width="1.1" marker-end="url(#mr)"/>
-      <rect x="762" y="60" width="150" height="46" rx="8" fill="#10192b" stroke="#5ca9ff" stroke-width="1.6"/>
-      <text x="837" y="80" fill="#dce4ee" font-size="9.5" text-anchor="middle">termination_review</text>
-      <text x="837" y="94" fill="#5ca9ff" font-size="8" text-anchor="middle">team-owned</text>
-      <line x1="912" y1="83" x2="934" y2="83" stroke="#8a97a8" stroke-width="1.1" marker-end="url(#mr)"/>
-      <rect x="934" y="56" width="90" height="54" rx="8" fill="#12241a" stroke="#46c26a" stroke-width="1.8"/>
-      <text x="979" y="88" fill="#46c26a" font-size="11" text-anchor="middle" font-weight="700">done</text>
-
-      <path d="M 660 106 C 660 146 620 150 580 150" fill="none" stroke="#5c6774" stroke-width="1.1" stroke-dasharray="4 3" marker-end="url(#mr)"/>
-      <rect x="330" y="150" width="330" height="30" rx="6" fill="none" stroke="#5c6774" stroke-width="1.1" stroke-dasharray="4 3"/>
-      <text x="495" y="169" fill="#8a97a8" font-size="8.5" text-anchor="middle">review_of_review ⇄ counter_review — rare, capped safety valve; absent from FAST entirely</text>
-
-      <text x="10" y="202" fill="#34d399" font-size="10.5" font-weight="700">FAST</text>
-      <rect x="10" y="210" width="150" height="30" rx="7" fill="#182130" stroke="#26303e"/>
-      <text x="85" y="230" fill="#dce4ee" font-size="9" text-anchor="middle">research ⟲</text>
-      <line x1="160" y1="225" x2="182" y2="225" stroke="#8a97a8" stroke-width="1.1" marker-end="url(#mr)"/>
-      <rect x="182" y="210" width="130" height="30" rx="7" fill="#0f2a22" stroke="#34d399"/>
-      <text x="247" y="230" fill="#dce4ee" font-size="9" text-anchor="middle">implementing</text>
-      <text x="360" y="230" fill="#5c6774" font-size="8.5">no spec ceremony, no safety valve — straight to compact review/fix/done (same shape as STANDARD from here)</text>
-    </svg>
-    <figcaption>Both routes converge on the identical review/fix/terminal tail; only the plan-and-lock stage differs.</figcaption>
-    </figure>
-    <p class="quiet">FAST skips spec planning entirely and enters compact implementation directly from an accepted research package; STANDARD keeps the locked-plan stage. Both converge on the identical <code>phase_review ⟲ phase_fixing → termination_review → done</code> tail. Three more presets exist beyond these two — FULL (both roles implement concurrently and cross-review each other) and dedicated RESEARCH/REVIEW-mode graphs — five total, plus custom, peer-declared graphs; all five are validated against the same five invariants sketched above.</p>
-    <p>Full transition tables, every edge, every trigger: <a href="https://github.com/axatbhardwaj/Dvandva/blob/v3.4.1/plugins/dvandva/references/state-transition-table.md">plugins/dvandva/references/state-transition-table.md ↗</a></p>
-  </details>
-</section>
-
-<section id="delta">
-  <p class="eyebrow">lineage · delta re-verification</p>
-  <h2>Re-laps reuse narrow test evidence, never final confidence</h2>
-  <p>The first full-profile pass executes every gate. After <code>phase_fixing</code> or <code>cross_fixing</code>, a mechanical <code>test_creation</code> track may carry only when its declared <code>covers_chunks</code> and <code>carry_reason</code> resolve to the same engine-derived tracked-file closure, its same-id origin lies on the current phase-cycle ancestry, and <code>git-covers-diff-v1</code> finds no covered change. Any ambiguity, drift, untracked file, symlink, global scope, or unbounded input fails closed and creates a new test track id for rerun.</p>
-  <figure>
-    <svg viewBox="0 0 1040 210" width="100%" role="img" aria-label="Delta re-verification carries only unchanged mechanical test evidence while every review and terminal matrix row reruns">
-      <defs><marker id="dr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8a97a8"/></marker></defs>
-      <g text-anchor="middle">
-        <rect x="18" y="72" width="150" height="58" rx="8" fill="#182130" stroke="#26303e"/><text x="93" y="96" fill="#dce4ee" font-size="11">fixing re-lap</text><text x="93" y="115" fill="#8a97a8" font-size="9">changed closure known</text>
-        <line x1="168" y1="101" x2="238" y2="101" stroke="#8a97a8" marker-end="url(#dr)"/>
-        <rect x="238" y="40" width="212" height="122" rx="8" fill="#182130" stroke="#5ca9ff"/><text x="344" y="66" fill="#5ca9ff" font-size="11">test_creation gate</text><text x="344" y="91" fill="#dce4ee" font-size="9.5">unchanged mechanical track: carry</text><text x="344" y="112" fill="#ff6a5e" font-size="9.5">changed / ambiguous / unbounded: rerun</text><text x="344" y="137" fill="#8a97a8" font-size="8.5">same id only for accepted carry</text>
-        <line x1="450" y1="101" x2="520" y2="101" stroke="#8a97a8" marker-end="url(#dr)"/>
-        <rect x="520" y="40" width="214" height="122" rx="8" fill="#182130" stroke="#a78bfa"/><text x="627" y="66" fill="#a78bfa" font-size="11">review depth</text><text x="627" y="91" fill="#dce4ee" font-size="9.5">cross + deep + risk angles</text><text x="627" y="116" fill="#ff6a5e" font-size="9.5">never carry</text><text x="627" y="137" fill="#8a97a8" font-size="8.5">always execute this cycle</text>
-        <line x1="734" y1="101" x2="804" y2="101" stroke="#8a97a8" marker-end="url(#dr)"/>
-        <rect x="804" y="40" width="218" height="122" rx="8" fill="#12241a" stroke="#46c26a" stroke-width="1.8"/><text x="913" y="66" fill="#46c26a" font-size="11">terminal done gate</text><text x="913" y="91" fill="#dce4ee" font-size="9.5">every matrix row fresh</text><text x="913" y="116" fill="#dce4ee" font-size="9.5">full review complete</text><text x="913" y="137" fill="#8a97a8" font-size="8.5">correctness boundary unchanged</text>
-      </g>
-    </svg>
-    <figcaption>Carry removes only demonstrably redundant mechanical test work; terminal evidence remains complete, current-cycle, and independent.</figcaption>
-  </figure>
-  <p class="quiet">Carry is a best-effort optimization, not a cryptographic or terminal guarantee: every <code>verification_matrix</code> row still reruns. Legacy batons without carry fields follow the original full-rerun behavior.</p>
-</section>
-
 
 </main>
-<p class="foot">DVANDVA · a governed loop for cross-vendor adversarial execution · plugin 2.0.2, engine removed (v3 lineage: dvandva 3.4.1 on crates.io) · 2026-07-14</p>
+<p class="foot">DVANDVA · a governed loop for cross-vendor adversarial execution · plugin 2.0.2 · 2026-07-14</p>
 </body>
 </html>
