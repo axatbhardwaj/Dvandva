@@ -15,6 +15,8 @@ Dvandva is **a governed-loop protocol for adversarial AI pairs** — orchestrati
 
 Dvandva ships as an installable plugin (version `1.6.1`) for both engines. The repo lives at https://github.com/axatbhardwaj/Dvandva, and the interactive product explainer is live at https://axatbhardwaj.github.io/Dvandva/.
 
+> **Status note (2026-07-14):** a single-session "adversarial loop" redesign (skill + Stop-hook gate + parallel workflows, no binary) was built, shipped as plugin 2.0.0–2.0.2, evaluated live, and rolled back the same day — the two-harness protocol below is the product. That experiment is preserved intact on branch [`loop-2.x`](https://github.com/axatbhardwaj/Dvandva/tree/loop-2.x) and tags `dvandva--v2.0.x` if you want to study or revive any of it.
+
 ## Quickstart
 
 The `dvandva` binary IS the Dvandva runtime — the read path, the write path, waiting, preflight, git work-gating, the installers, and the lints, all in one multicall binary. It is published on crates.io as `dvandva 3.4.1`.
