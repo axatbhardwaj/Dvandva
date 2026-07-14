@@ -56,6 +56,16 @@ execute_lane_prompt_body() {
 lane_prompt_text=$(lane_prompt_bodies)
 execute_lane_prompt_text=$(execute_lane_prompt_body)
 
+if ! grep -Fq "typeof args === 'string'" "$TEMPLATE"; then
+  printf 'FAIL: template must defensively normalize string workflow args\n' >&2
+  exit 1
+fi
+
+if ! grep -Fq 'Plan for this step:' <<< "$execute_lane_prompt_text"; then
+  printf 'FAIL: execute lane must embed the Plan for this step block\n' >&2
+  exit 1
+fi
+
 raw_backtick_lines=$(grep -Ec '(^|[^\\])`' <<< "$lane_prompt_text" || true)
 if [[ "$raw_backtick_lines" -ne 0 ]]; then
   printf 'FAIL: found %s lane-prompt line(s) with raw backticks\n' "$raw_backtick_lines" >&2

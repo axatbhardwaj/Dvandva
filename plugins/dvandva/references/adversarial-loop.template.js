@@ -22,30 +22,45 @@ export const meta = {
   ],
 }
 
-// args = { goal_id, mode?, steps: [ { id, artifact_path, author_family, author_agent_id?, revision } ] }
-const GOAL = args.goal_id
-const MODE = args.mode ?? 'cross-vendor'
+// args = { goal_id, mode?, steps: [ { id, artifact_path, author_family, author_agent_id?, revision, spec } ] }
+const A = typeof args === 'string'
+  ? (() => {
+      try {
+        return JSON.parse(args)
+      } catch {
+        throw new Error('workflow args arrived as a non-JSON string')
+      }
+    })()
+  : args
+const GOAL = A && A.goal_id
+const MODE = (A && A.mode) ?? 'cross-vendor'
 if (MODE !== 'cross-vendor') {
-  throw new Error('adversarial-loop.template.js implements cross-vendor only; claude-only/codex-only need their own lane casting')
+  throw new Error('adversarial-loop.template.js implements cross-vendor only; claude-only/codex-only need their own lane casting — got: ' + JSON.stringify(A && A.mode))
 }
-const STEPS = args.steps // execute steps; plan steps run before this workflow
+const STEPS = A && A.steps // execute steps; plan steps run before this workflow
 const ID = /^[a-z0-9][a-z0-9_-]{0,63}$/
 
 if (typeof GOAL !== 'string' || !ID.test(GOAL)) {
-  throw new Error('workflow goal_id must match /^[a-z0-9][a-z0-9_-]{0,63}$/')
+  throw new Error('workflow goal_id must match /^[a-z0-9][a-z0-9_-]{0,63}$/ — got: ' + JSON.stringify(A && A.goal_id))
 }
 if (!Array.isArray(STEPS) || STEPS.length === 0) {
-  throw new Error('workflow steps must be a non-empty array')
+  throw new Error('workflow steps must be a non-empty array — got: ' + JSON.stringify(A && A.steps))
 }
-if (STEPS.some(s => !s || typeof s.id !== 'string' || !ID.test(s.id))) {
-  throw new Error('each workflow step id must match /^[a-z0-9][a-z0-9_-]{0,63}$/')
+const invalidIdIndex = STEPS.findIndex(s => !s || typeof s.id !== 'string' || !ID.test(s.id))
+if (invalidIdIndex !== -1) {
+  throw new Error('each workflow step id must match /^[a-z0-9][a-z0-9_-]{0,63}$/ — got: ' + JSON.stringify(STEPS[invalidIdIndex] && STEPS[invalidIdIndex].id))
 }
 const STEP_IDS = STEPS.map(s => s.id)
 if (new Set(STEP_IDS).size !== STEP_IDS.length) {
-  throw new Error('workflow step ids must be unique')
+  throw new Error('workflow step ids must be unique — got: ' + JSON.stringify(STEP_IDS))
 }
-if (STEPS.some(s => !Number.isSafeInteger(s.revision) || s.revision < 1)) {
-  throw new Error('each workflow step must have a positive integer revision')
+const invalidRevisionStep = STEPS.find(s => !Number.isSafeInteger(s.revision) || s.revision < 1)
+if (invalidRevisionStep) {
+  throw new Error('each workflow step must have a positive integer revision — got: ' + JSON.stringify(invalidRevisionStep.revision))
+}
+const invalidSpecStep = STEPS.find(s => typeof s.spec !== 'string' || s.spec.trim().length === 0)
+if (invalidSpecStep) {
+  throw new Error('workflow step ' + JSON.stringify(invalidSpecStep.id) + ' must have a non-empty string spec — got: ' + JSON.stringify(invalidSpecStep.spec))
 }
 
 const VERDICT = {
@@ -63,7 +78,12 @@ const executeAgentId = s => s.author_agent_id || `execute:${GOAL}:${s.id}:r${s.r
 const reviewerAgentId = s => `attack:${GOAL}:${s.id}:r${s.revision}`
 
 // GPT authors the artifact. STAMP, not this lane, is the sole goal.json writer.
-const executeLane = s => `Thin Codex wrapper — EXECUTE lane. Your dispatched agent id is ${executeAgentId(s)}. Build step '${s.id}' at ${s.artifact_path} per the plan; do not edit .adversarial-loop/goal.json. Each step's write paths are declared by the plan; do not touch paths outside this step's scope.
+const executeLane = s => `Thin Codex wrapper — EXECUTE lane. Your dispatched agent id is ${executeAgentId(s)}. Build step '${s.id}' at ${s.artifact_path}.
+
+Plan for this step:
+${s.spec}
+
+Do not edit .adversarial-loop/goal.json. Each step's write paths are declared by the plan; do not touch paths outside this step's scope.
 
 Set REPO_ROOT to the repository root, MODEL=gpt-5.6-terra, EFFORT=xhigh, and SANDBOX=workspace-write. Before writing the self-contained brief at "$ATT/brief.md", allocate ATT as a new path such as "/tmp/codex-attempts/${GOAL}-${s.id}-r${s.revision}-a$N" and create it with 'mkdir -p "$ATT"'. Do this before every dispatch, retry, and resume; N must increment and no output path may ever be reused. The self-contained brief must enumerate these six parts verbatim: (1) goal+acceptance criteria; (2) exact paths; (3) decisions already made with the why; (4) boundaries incl. no-commit; (5) verification commands+expected results, and for new or changed behavior instructions to EITHER write and run a new failing test BEFORE the implementation OR, when an existing failing test already pins the behavior, run and report that existing failing test red BEFORE the implementation without authoring another, with BOTH the red (pre-fix) and green (post-fix) outputs included in the report — no red evidence, no acceptance; only demonstrably behavior-free work (pure renames with references updated, formatting, comments) is exempt, and prompts/config that steer agents are NOT exempt; (6) output contract writable under the sandbox. Capture the status baseline before dispatch; the sequential PREFLIGHT lane guarantees the clean starting tree required for parallel mutation.
 
