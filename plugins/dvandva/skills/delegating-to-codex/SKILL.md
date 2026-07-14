@@ -37,7 +37,7 @@ Codex has none of your conversation. A complete brief IS, in order:
 2. **Exact paths** — files to read, files to write.
 3. **Decisions already made**, with the why — so it doesn't relitigate them.
 4. **Boundaries** — paths it must not touch; whether it may commit (default: no).
-5. **Verification to run** — commands + expected results. If the task didn't state them, derive them from the repo yourself; never leave this slot empty.
+5. **Verification to run** — commands + expected results. If the task didn't state them, derive them from the repo yourself; never leave this slot empty. **For new or changed behavior this slot is test-first:** the brief instructs codex to write the failing test *before* the implementation and to include both runs in its report — the red output from before the fix and the green output after. No red evidence, no acceptance. When an existing failing test already pins the change, that removes only the write-a-new-test step — the brief still requires running it and reporting it red before implementing. The only exemption is work demonstrated to carry no behavior: pure renames/moves with references updated, formatting, comments. **Not exempt:** lane/agent prompts, skill instructions, workflow templates, hook settings, model/effort/flag choices — text that steers an agent is behavior, and this table's last row exists because a "prose" change shipped our worst bug.
 6. **Output contract** — what to deliver where, and it must be **writable under the sandbox you chose**: for a `read-only` dispatch the deliverable is the final message / `-o` file, never a file the agent writes itself.
 
 ## The invocation (pinned)
@@ -102,4 +102,5 @@ Never accept the self-report. Rerun the verification commands yourself and check
 | `resume` to monitor or flush a live run | resume = recovery after confirmed death, with an explicit prompt |
 | `resume --last` | races other sessions; exact uuid only |
 | Thin brief ("fix the tests") | codex guesses scope; six parts, every brief |
+| Behavior change accepted without red evidence | test-first is in the brief; a report lacking the failing run is rejected — a parse check passing deceptively is how our worst bug shipped |
 | Accepting "all green" | rerun verification yourself; dirty-tree mutations go to a worktree |

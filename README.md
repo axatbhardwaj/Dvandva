@@ -14,7 +14,7 @@ One rule generates the whole system: **the reviewer is never the author.** In th
 
 ## Install
 
-The product ships as the `dvandva` plugin (version `2.0.0`) — no binary, no build step.
+The product ships as the `dvandva` plugin (version `2.0.1`) — no binary, no build step.
 
 ```bash
 # Claude Code

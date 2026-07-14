@@ -42,9 +42,38 @@ lane_prompt_bodies() {
   ' "$TEMPLATE"
 }
 
-raw_backtick_lines=$(lane_prompt_bodies | grep -Ec '(^|[^\\])`' || true)
+execute_lane_prompt_body() {
+  awk '
+    /^const executeLane = s => `/{ in_prompt = 1; next }
+    /^const stampIds =/{ in_prompt = 0 }
+    in_prompt {
+      sub(/`$/, "")
+      print
+    }
+  ' "$TEMPLATE"
+}
+
+lane_prompt_text=$(lane_prompt_bodies)
+execute_lane_prompt_text=$(execute_lane_prompt_body)
+
+raw_backtick_lines=$(grep -Ec '(^|[^\\])`' <<< "$lane_prompt_text" || true)
 if [[ "$raw_backtick_lines" -ne 0 ]]; then
   printf 'FAIL: found %s lane-prompt line(s) with raw backticks\n' "$raw_backtick_lines" >&2
+  exit 1
+fi
+
+if ! grep -Fq 'failing test BEFORE the implementation' <<< "$execute_lane_prompt_text"; then
+  printf 'FAIL: execute lane must require a failing test BEFORE the implementation\n' >&2
+  exit 1
+fi
+
+if ! grep -Fq 'red (pre-fix) and green (post-fix) outputs included in the report' <<< "$execute_lane_prompt_text"; then
+  printf 'FAIL: execute lane must require red and green verification outputs in the report\n' >&2
+  exit 1
+fi
+
+if ! grep -Fq 'existing failing test' <<< "$execute_lane_prompt_text"; then
+  printf 'FAIL: execute lane must allow an existing failing test to supply red evidence\n' >&2
   exit 1
 fi
 
