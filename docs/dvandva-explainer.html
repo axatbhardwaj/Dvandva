@@ -150,7 +150,7 @@ document.getElementById('toc').addEventListener('click', function(e){
   <p class="thesis">One rule generates the whole system: <b>the reviewer is never the author.</b> A model from a different training lineage attacks every step before the loop can call anything done — and a hook makes "done" something you earn with digest-bound evidence, not something you declare.</p>
   <p class="thesis sub">An agent could promise to self-review, but a promise isn't a gate. Dvandva makes the adversarial pass structural: digest-bound evidence (append-only by convention), cross-family verdicts, and — on Claude Code — a Stop hook that re-blocks the turn until the evidence earns it (bounded: eight consecutive blocks force-end; Codex gates via an invoked CLI/pre-commit checkpoint).</p>
   <div class="strip">
-    <span class="chip">a skill + a hook + a workflow template — no daemon, no binary, no second session</span>
+    <span class="chip">a skill + a hook + goal-designed workflows — no daemon, no binary, no second session</span>
     <span class="chip">propose → stamp → attack → gate, per step</span>
     <span class="chip">evidence-gated done — declaring victory early just blocks</span>
     <span class="chip">three configs: claude+codex · claude-only · codex-only</span>
@@ -163,7 +163,7 @@ document.getElementById('toc').addEventListener('click', function(e){
 <section id="single-loop">
   <p class="eyebrow">the product</p>
   <h2>The loop keeps the moat and drops the engine</h2>
-  <p>Dvandva distills adversarial AI review to what the moat actually requires: <b>the reviewer is never the author.</b> One chair session drives every step through <code>propose → stamp → attack → gate</code>; a hook blocks the turn from ending <code>done</code> until each step carries passing cross-reviewer evidence digest-bound to the artifact bytes (a bounded fail-closed nudge on Claude Code; an explicitly invoked CLI/pre-commit checkpoint on Codex). No daemon, no second live session, no binary — a skill, a hook, and a workflow template, shipped as the <code>dvandva</code> plugin (<a href="https://github.com/axatbhardwaj/Dvandva">repo ↗</a>).</p>
+  <p>Dvandva distills adversarial AI review to what the moat actually requires: <b>the reviewer is never the author.</b> One chair session drives every step through <code>propose → stamp → attack → gate</code>; a hook blocks the turn from ending <code>done</code> until each step carries passing cross-reviewer evidence digest-bound to the artifact bytes (a bounded fail-closed nudge on Claude Code; an explicitly invoked CLI/pre-commit checkpoint on Codex). No daemon, no second live session, no binary — a skill, a hook, and a <b>workflow the chair designs per goal</b> (parallel Codex execute lanes, one serialized stamp lane, other-family attack lanes; reviewed building blocks + a runnable flat-case example ship in the plugin), all as the <code>dvandva</code> plugin (<a href="https://github.com/axatbhardwaj/Dvandva">repo ↗</a>).</p>
   <figure>
     <svg viewBox="0 0 1040 240" width="100%" role="img" aria-label="The single adversarial loop: author proposes, the chair stamps a digest, the other family attacks, the gate blocks done until the latest attempt passes">
       <defs><marker id="sl" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0 0 L10 5 L0 10 z" fill="#8a97a8"/></marker>
@@ -216,7 +216,7 @@ claude plugin install dvandva@dvandva
 # Codex
 codex plugin marketplace add axatbhardwaj/Dvandva
 codex plugin add dvandva@dvandva</code></pre>
-  <p class="quiet">No binary, no build step — the plugin (<code>2.0.2</code>) ships the skills, the Stop-hook gate, and the workflow template. The gate is inert until a session creates a goal; add <code>.adversarial-loop/</code> to your project's <code>.gitignore</code>.</p>
+  <p class="quiet">No binary, no build step — the plugin (<code>2.0.2</code>) ships the skills, the Stop-hook gate, and the workflow building blocks (the chair designs the workflow per goal; a flat-case example runs as-is). The gate is inert until a session creates a goal; add <code>.adversarial-loop/</code> to your project's <code>.gitignore</code>.</p>
   <p>Then, in one session on a feature branch:</p>
   <pre><code>Use the adversarial-loop skill: build &lt;feature&gt;, cross-vendor mode.
 Every step gets attacked before it counts — don't end until the gate lets you.</code></pre>
