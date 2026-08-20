@@ -120,6 +120,17 @@ fn base_fixture(root: &Path, crate_version: &str, plugin_version: &str) {
     );
 }
 
+fn archived_fixture(root: &Path) {
+    base_fixture(root, CRATE_VERSION, PLUGIN_VERSION);
+    let readme = fs::read_to_string(root.join("README.md")).unwrap();
+    w(
+        root,
+        "README.md",
+        &format!("{readme}\nDvandva is retired and archived.\n"),
+    );
+    fs::remove_file(root.join(".claude-plugin/marketplace.json")).unwrap();
+}
+
 // ---------------------------------------------------------------------------
 // 1. clean-pass
 // ---------------------------------------------------------------------------
@@ -130,6 +141,72 @@ fn clean_fixture_passes() {
     base_fixture(d.path(), CRATE_VERSION, PLUGIN_VERSION);
     let r = stale_version_ref::report(d.path());
     assert!(r.passed(), "expected clean, failures: {}", r.failures());
+}
+
+#[test]
+fn active_fixture_missing_marketplace_fails_closed() {
+    let d = tmp();
+    base_fixture(d.path(), CRATE_VERSION, PLUGIN_VERSION);
+    fs::remove_file(d.path().join(".claude-plugin/marketplace.json")).unwrap();
+
+    let r = stale_version_ref::report(d.path());
+    assert!(
+        r.fails_with(".claude-plugin/marketplace.json declares a Dvandva plugin version"),
+        "active trees must retain the three-manifest version boundary: {}",
+        r.failures()
+    );
+}
+
+#[test]
+fn archived_fixture_with_delisted_catalogs_and_matching_sources_passes() {
+    let d = tmp();
+    archived_fixture(d.path());
+
+    let r = stale_version_ref::report(d.path());
+    assert!(
+        r.passed(),
+        "expected archived fixture to pass: {}",
+        r.failures()
+    );
+}
+
+#[test]
+fn archived_fixture_rejects_either_root_marketplace_catalog() {
+    for (rel, contents) in [
+        (
+            ".claude-plugin/marketplace.json",
+            "{\"plugins\": [{\"name\": \"dvandva\", \"version\": \"8.8.8\"}]}\n",
+        ),
+        (
+            ".agents/plugins/marketplace.json",
+            "{\"name\": \"dvandva\"}\n",
+        ),
+    ] {
+        let d = tmp();
+        archived_fixture(d.path());
+        w(d.path(), rel, contents);
+
+        let r = stale_version_ref::report(d.path());
+        assert!(
+            !r.passed(),
+            "archived fixture must reject preserved root catalog {rel}"
+        );
+    }
+}
+
+#[test]
+fn archived_fixture_rejects_internal_manifest_mismatch() {
+    let d = tmp();
+    archived_fixture(d.path());
+    edit(
+        d.path(),
+        "plugins/dvandva/.codex-plugin/plugin.json",
+        &format!("\"version\": \"{PLUGIN_VERSION}\""),
+        &format!("\"version\": \"{PLUGIN_VERSION_STALE}\""),
+    );
+
+    let r = stale_version_ref::report(d.path());
+    assert!(r.fails_with("Dvandva plugin manifests agree on one version"));
 }
 
 // ---------------------------------------------------------------------------

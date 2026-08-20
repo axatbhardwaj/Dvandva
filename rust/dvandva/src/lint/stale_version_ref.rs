@@ -23,6 +23,7 @@ const VERSIONS_RS: &str = "rust/dvandva/src/versions.rs";
 const CLAUDE_PLUGIN: &str = "plugins/dvandva/.claude-plugin/plugin.json";
 const CODEX_PLUGIN: &str = "plugins/dvandva/.codex-plugin/plugin.json";
 const MARKETPLACE: &str = ".claude-plugin/marketplace.json";
+const CODEX_MARKETPLACE: &str = ".agents/plugins/marketplace.json";
 
 static CARGO_TOML_VERSION_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"(?m)^version[[:space:]]*=[[:space:]]*"([^"]+)""#).unwrap());
@@ -50,6 +51,7 @@ static RETIRE_DEFAULT_VERSION_RE: LazyLock<Regex> =
 /// Build the stale-version-reference findings for a repo root.
 pub fn report(root: &Path) -> Report {
     let mut r = Report::new();
+    let archived = archived(root);
 
     let crate_version = cargo_version(root);
     r.add(
@@ -57,11 +59,26 @@ pub fn report(root: &Path) -> Report {
         format!("{CARGO_TOML} declares a package version"),
     );
 
-    let plugin_versions = [
-        (CLAUDE_PLUGIN, plugin_json_version(root, CLAUDE_PLUGIN)),
-        (CODEX_PLUGIN, plugin_json_version(root, CODEX_PLUGIN)),
-        (MARKETPLACE, marketplace_version(root)),
-    ];
+    if archived {
+        for rel in [MARKETPLACE, CODEX_MARKETPLACE] {
+            r.add(
+                !root.join(rel).exists(),
+                format!("{rel} must remain delisted"),
+            );
+        }
+    }
+    let plugin_versions = if archived {
+        vec![
+            (CLAUDE_PLUGIN, plugin_json_version(root, CLAUDE_PLUGIN)),
+            (CODEX_PLUGIN, plugin_json_version(root, CODEX_PLUGIN)),
+        ]
+    } else {
+        vec![
+            (CLAUDE_PLUGIN, plugin_json_version(root, CLAUDE_PLUGIN)),
+            (CODEX_PLUGIN, plugin_json_version(root, CODEX_PLUGIN)),
+            (MARKETPLACE, marketplace_version(root)),
+        ]
+    };
     let plugin_truth = plugin_manifest_consensus(&plugin_versions);
     for (rel, version) in &plugin_versions {
         r.add(
@@ -130,6 +147,10 @@ fn plugin_manifest_consensus(plugin_versions: &[(&str, Option<String>)]) -> Opti
     } else {
         None
     }
+}
+
+fn archived(root: &Path) -> bool {
+    read(root, "README.md").is_some_and(|text| text.contains("Dvandva is retired and archived"))
 }
 
 /// CLI entry: resolve root, run findings, print, return exit code.

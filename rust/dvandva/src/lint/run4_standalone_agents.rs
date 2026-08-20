@@ -19,6 +19,8 @@ use crate::lint::{
 use crate::versions::PLUGIN_VERSION;
 
 const EXPECTED_VERSION: &str = PLUGIN_VERSION;
+const CLAUDE_MARKETPLACE: &str = ".claude-plugin/marketplace.json";
+const CODEX_MARKETPLACE: &str = ".agents/plugins/marketplace.json";
 
 const EXPECTED_AGENTS: [&str; 15] = [
     "adversarial-analyst",
@@ -39,7 +41,7 @@ const EXPECTED_AGENTS: [&str; 15] = [
 ];
 
 fn marketplace_version(root: &Path) -> Option<String> {
-    let content = read(root, ".claude-plugin/marketplace.json")?;
+    let content = read(root, CLAUDE_MARKETPLACE)?;
     let value: Value = serde_json::from_str(&content).ok()?;
     value
         .get("plugins")?
@@ -63,6 +65,7 @@ fn plugin_version(root: &Path, rel: &str) -> Option<String> {
 /// Build the run4 standalone-agent retirement findings for a repo root.
 pub fn report(root: &Path) -> Report {
     let mut r = Report::new();
+    let archived = archived(root);
 
     let required = [
         "README.md",
@@ -74,7 +77,6 @@ pub fn report(root: &Path) -> Report {
         "rust/dvandva/src/retire.rs",
         "rust/dvandva/src/smoke.rs",
         "rust/dvandva/src/installers.rs",
-        ".claude-plugin/marketplace.json",
         "plugins/dvandva/.claude-plugin/plugin.json",
         "plugins/dvandva/.codex-plugin/plugin.json",
     ];
@@ -86,6 +88,25 @@ pub fn report(root: &Path) -> Report {
             format!("{rel} is missing")
         };
         r.add(exists, msg);
+    }
+
+    if archived {
+        for rel in [CLAUDE_MARKETPLACE, CODEX_MARKETPLACE] {
+            r.add(
+                !file_exists(root, rel),
+                format!("{rel} must remain delisted"),
+            );
+        }
+    } else {
+        let exists = file_exists(root, CLAUDE_MARKETPLACE);
+        r.add(
+            exists,
+            if exists {
+                format!("{CLAUDE_MARKETPLACE} exists")
+            } else {
+                format!("{CLAUDE_MARKETPLACE} is missing")
+            },
+        );
     }
 
     // RE-KEYED: `test-retire-standalone-agents.sh` -> retire port test coverage.
@@ -166,11 +187,18 @@ pub fn report(root: &Path) -> Report {
         );
     }
 
-    let versions_ok = marketplace_version(root).as_deref() == Some(EXPECTED_VERSION)
-        && plugin_version(root, "plugins/dvandva/.claude-plugin/plugin.json").as_deref()
+    let versions_ok = if archived {
+        plugin_version(root, "plugins/dvandva/.claude-plugin/plugin.json").as_deref()
             == Some(EXPECTED_VERSION)
-        && plugin_version(root, "plugins/dvandva/.codex-plugin/plugin.json").as_deref()
-            == Some(EXPECTED_VERSION);
+            && plugin_version(root, "plugins/dvandva/.codex-plugin/plugin.json").as_deref()
+                == Some(EXPECTED_VERSION)
+    } else {
+        marketplace_version(root).as_deref() == Some(EXPECTED_VERSION)
+            && plugin_version(root, "plugins/dvandva/.claude-plugin/plugin.json").as_deref()
+                == Some(EXPECTED_VERSION)
+            && plugin_version(root, "plugins/dvandva/.codex-plugin/plugin.json").as_deref()
+                == Some(EXPECTED_VERSION)
+    };
     r.add(
         versions_ok,
         format!("Dvandva manifest versions must all equal {EXPECTED_VERSION}"),
@@ -223,6 +251,10 @@ pub fn report(root: &Path) -> Report {
     );
 
     r
+}
+
+fn archived(root: &Path) -> bool {
+    read(root, "README.md").is_some_and(|text| text.contains("Dvandva is retired and archived"))
 }
 
 /// CLI entry: resolve root, run findings, print, return exit code.
