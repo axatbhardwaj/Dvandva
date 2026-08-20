@@ -1,14 +1,16 @@
 # dvandva
 
-A two-role (`vadi`/`prativadi`) multi-agent coordination engine.
+> **Retired and archived — final release `3.5.1`.** This crate is an unsupported historical record. Do not use these commands to install, upgrade, or start a new Dvandva workflow.
 
-`dvandva` is a multicall binary implementing the full Dvandva runtime over a
+A historical two-role (`vadi`/`prativadi`) multi-agent coordination engine.
+
+`dvandva` was a multicall binary implementing the Dvandva runtime over a
 JSON baton — the read path, the write path, foreground waiting, role preflight,
 git work-gating, and the installers. It is the runtime: earlier releases bundled
 these as shell helpers inside the plugin; that shell surface is now folded into
 this one binary.
 
-## Subcommands
+## Historical subcommands
 
 - **Runtime** — `state`, `resolve`, `write`, `wait`, `snapshot`.
   - `dvandva state --compact --file <baton> [--role <role>]` — emit the bounded
@@ -31,25 +33,25 @@ The binary is a multicall executable: when invoked through a git-hook symlink
 (`pre-commit`, `prepare-commit-msg`, ...) the hook name is taken from `argv[0]`.
 `dvandva --version` prints the version line.
 
-Version `3.5.0`. Licensed under `MIT OR Apache-2.0`.
+Version `3.5.1` — the final release. Licensed under `MIT OR Apache-2.0`.
 
-## Install
+## Historical installation record (unsupported)
 
 ```bash
-cargo install dvandva --version 3.5.0
+cargo install dvandva --version 3.5.1
 # or, from a checkout: cargo install --path rust/dvandva
 ```
 
-The binary must be on `PATH` for the Dvandva skills to run. `cargo install`
-installs only the Rust binary. After it is on `PATH`, register the Dvandva
-plugin into Claude Code and/or Codex with:
+This command is retained only to document the final package version. The binary
+and its internal plugin source must not be installed or registered from this
+archive.
 
 ```bash
 dvandva install
 ```
 
-`dvandva install` adds the Dvandva skills, commands, agents, and references to
-the engines; the plugin no longer bundles executables.
+Historically, `dvandva install` added Dvandva skills, commands, agents, and
+references to the engines; the plugin did not bundle executables.
 
 ## Known limitations
 

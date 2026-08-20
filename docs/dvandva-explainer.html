@@ -3,15 +3,15 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="Dvandva pairs two adversarial AI roles — vadi and prativadi — around one validated baton file, so a thesis and its antithesis accumulate and get pressure-tested across checkpoints instead of resetting on every one-shot call.">
-<title>Dvandva — a governed-loop protocol for adversarial AI pairs</title>
+<meta name="description" content="Dvandva is a retired and archived historical study of two-agent coordination around a validated baton file.">
+<title>Dvandva — archived protocol study</title>
 <script type="application/json" id="dvandva-artifact-meta">
 {
   "schema": "dvandva.artifact.explainer.v1",
   "artifact_type": "explainer",
-  "title": "Dvandva — a governed-loop protocol for adversarial AI pairs",
-  "date": "2026-07-12",
-  "basis": "engine truth on feat/delta-reverification · Option-B delta re-verification"
+  "title": "Dvandva — archived protocol study",
+  "date": "2026-08-20",
+  "basis": "final archived release 3.5.1; preserved 3.5.0-era implementation evidence"
 }
 </script>
 <style>
@@ -81,6 +81,7 @@
   .callout .tag{font:650 .74rem/1 var(--mono);letter-spacing:.08em;text-transform:uppercase;margin:0 0 .7rem}
   .callout.adv{border-color:var(--human)} .callout.adv .tag{color:var(--human)}
   .callout.meta{border-color:var(--team)} .callout.meta .tag{color:var(--team)}
+  .callout.stop{border-color:var(--stop)} .callout.stop .tag{color:var(--stop)}
   .callout ul{margin:.4rem 0;padding-left:1.2rem}
   .callout li{margin:.45rem 0;font-size:.9rem;color:var(--ink)}
   #toc{position:sticky;top:0;background:rgba(11,15,20,.94);backdrop-filter:blur(6px);border-bottom:1px solid var(--line);padding:.6rem 2.2rem;margin:0;font:.8rem var(--mono);z-index:9}
@@ -129,7 +130,7 @@
       <a href="#proof">proof</a>
       <a href="#mechanics">mechanics</a>
       <a href="#delta">re-laps</a>
-      <a href="#start">get started</a>
+      <a href="#start">archive record</a>
       <a class="nav-repo" href="https://github.com/axatbhardwaj/Dvandva">repo ↗</a>
     </div>
   </details>
@@ -145,9 +146,10 @@ document.getElementById('toc').addEventListener('click', function(e){
 
 <header>
   <p class="devan">द्वन्द्व · dvandva — a compound of two equal, opposing members</p>
-  <h1>Dvandva — a governed-loop protocol for adversarial AI pairs</h1>
-  <p class="thesis">Dvandva doesn't build its coordination core on isolated one-shot calls — no single call sustains a shared, role-bound thesis/antithesis dialectic. Its governed loop lets those positions accumulate and get pressure-tested across checkpoints.</p>
-  <p class="thesis sub">A caller could loop a one-shot call, but the shared state and convergence gate would be theirs to enforce, not the engine's. Dvandva makes both structural, surfacing blind spots through decorrelated review.</p>
+  <h1>Dvandva — archived protocol study</h1>
+  <div class="callout stop"><p class="tag">retired · final release 3.5.1</p><p>Dvandva is retired and archived. This page preserves the 3.5.0-era implementation as a historical learning experiment; it is unsupported and must not be used as installation or workflow onboarding.</p></div>
+  <p class="thesis">Dvandva did not build its coordination core on isolated one-shot calls — no single call sustained a shared, role-bound thesis/antithesis dialectic. Its governed loop let those positions accumulate and get pressure-tested across checkpoints.</p>
+  <p class="thesis sub">A caller could loop a one-shot call, but the shared state and convergence gate would have been theirs to enforce, not the engine's. Dvandva made both structural, surfacing blind spots through decorrelated review.</p>
   <div class="strip">
     <span class="chip">no coordination daemon — the baton file is the whole run-coordination channel</span>
     <span class="chip">crash-tolerant: kill either side, rejoin at preflight</span>
@@ -327,19 +329,19 @@ git rev-list --count 36f134c                                     # → 400, as o
 
 <section id="start">
   <p class="eyebrow">boarding</p>
-  <h2>Get started</h2>
-  <pre><code># the runtime (one binary, published on crates.io)
-cargo install dvandva --version 3.5.0
+  <h2>The final release is an archive record, not a starting point</h2>
+  <pre><code># historical final package reference — do not install
+cargo install dvandva --version 3.5.1
 
-# the plugin, into each session's tool
+# historical plugin command — do not run
 dvandva install</code></pre>
-  <p class="quiet">Later, <code>dvandva upgrade</code> refreshes the whole stack transactionally — all-new or fully-restored, exit-coded.</p>
-  <p>Then open two sessions on a feature branch:</p>
+  <p class="quiet"><code>3.5.1</code> is the final crate release. The internal plugin source remains at <code>1.7.0</code> for historical parity, but the root marketplaces are delisted and no upgrade path is supported.</p>
+  <p>The two-session text below is preserved only to explain historical behavior:</p>
   <pre><code>Session A (vadi):        Implement &lt;feature&gt; with peer review. Start a Dvandva development run in walkaway mode.
 Session B (prativadi):   Join the same Dvandva development run and review the baton.</code></pre>
-  <p class="quiet">Walkaway mode drives the baton autonomously until <span class="k-seal">done</span>. A genuine requirement gap can still route to you — <code>human_question</code> pauses one session's work for a direct answer, and <code>human_decision</code> is the exceptional, human-authorized way to re-route a run or reopen one that already reached <code>done</code>/<code>abandoned</code> — it is not a routine stop most runs ever take. One session surfaces the pause to you directly; the other keeps polling through it and resumes itself the instant your answer lands, so nothing silently stalls.</p>
+  <p class="quiet">Historically, walkaway mode drove the baton autonomously until <span class="k-seal">done</span>. This behavior remains documented for study only; do not resume or create a run from it.</p>
 </section>
 </main>
-<p class="foot">DVANDVA · a governed-loop protocol for adversarial AI pairs · Option-B delta re-verification on feat/delta-reverification · 2026-07-12</p>
+<p class="foot">DVANDVA · retired and archived · final crate release 3.5.1 · preserved 3.5.0-era implementation evidence · 2026-08-20</p>
 </body>
 </html>

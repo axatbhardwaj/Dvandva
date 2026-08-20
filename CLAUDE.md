@@ -1,16 +1,17 @@
-# Dvandva — project instructions
+# Dvandva — archived project instructions
 
-## Model discipline
+> **Retired archive — final crate release: `3.5.1`.** Preserve this tree as historical evidence. It is unsupported: do not install or update the plugin, invoke the binary for a new workflow, publish a release, or use the historical coordination rules as live operating policy.
 
-- **Fable never writes code.** When this session runs on a Fable-class model (e.g. hosting the Dvandva vadi), all code — implementation, tests, even one-line fixes — is dispatched to subagents. Dispatch code to `gpt-5.6-terra` for routine work, `gpt-5.6-sol` for hard bounded work, and `gpt-5.6-luna` only for mechanically proven task classes; if the required model is unavailable, route to `human_decision` instead of substituting an older generation. Fable's job in the chair is judgment and taste only: decisions, plans, reviews, human-facing artifacts, and coordination writes (baton candidates, memory, todos). "Too small to dispatch" is the rationalization this rule exists to override.
-- **Never invoke `codex exec` directly from the chair.** Every codex invocation rides a sonnet low-effort wrapper agent (standalone agent for one-offs, workflow lane for fan-outs) whose job is thin: assemble a self-contained brief (goal+acceptance, exact paths, decisions made, boundaries, verification, output contract), run the pinned invocation (`-C` root, `-m` model, `-s` sandbox, explicit `-c model_reasoning_effort`, per-attempt output paths, stdout/stderr split, `</dev/null`), verify ground truth on disk, and return verbatim. Long runs are held by the wrapper's background-Bash + completion notification, never a sleep-poll. (Battle-tested contract preserved on branch `loop-2.x` at `plugins/dvandva/skills/delegating-to-codex/`.)
-- Model casting guidance lives in `docs/model-selection.md` (advisory scored table; `intelligence > taste > cost`; never haiku). The enforced protocol surface is the four workload classes (`opus`/`sonnet`/`fable`/`gpt`) — the table never becomes baton policy.
+## Historical model discipline
 
-Research production is Sol-owned: `research_drafting` and `research_revision` dispatch `gpt-5.6-sol` to produce and revise the source-backed content for `research_ref`; the vadi only coordinates and serializes the result.
-Research review is Claude-only: a fresh Claude-family reviewer independently evaluates `research_ref`; a Codex-hosted prativadi may only serialize that reviewer's verdict into the baton and must not substitute its own approval.
+- Fable did not write code in a Dvandva role. Historical runs dispatched routine work to `gpt-5.6-terra`, hard bounded work to `gpt-5.6-sol`, and mechanically proven tasks to `gpt-5.6-luna`; unavailable required models routed to `human_decision`. This is archived protocol evidence, not an instruction for a new session.
+- Historical Claude-hosted roles did not invoke `codex exec` directly; they used a thin wrapper-agent contract preserved on branch `loop-2.x` at `plugins/dvandva/skills/delegating-to-codex/`.
+- Historical model-casting guidance lives in `docs/model-selection.md`; the recorded protocol surface used `opus`/`sonnet`/`fable`/`gpt` workload classes.
 
-## Release checklist (learned 2026-07-07)
+Research production was Sol-owned and research review was Claude-only. The retained details below exist only to interpret historical batons and source.
 
-- A release that touches plugin content (skills, commands, references) must bump the plugin version in **all three** manifests: `plugins/dvandva/.claude-plugin/plugin.json`, `plugins/dvandva/.codex-plugin/plugin.json`, `.claude-plugin/marketplace.json` — plugin caches are version-keyed and will silently serve stale content otherwise.
-- Before publishing, run `dvandva lint stale-version-ref .` (from a fresh tree-built binary, never the globally-installed one) — it fail-closes on any user-facing version reference (READMEs, SKILL install hints, explainer HTML, manifests, help-text defaults) that drifted from Cargo.toml / the shared plugin version.
-- After publishing: bring the whole stack current with `dvandva upgrade` (3.1.0+; runs cargo install + refreshes both plugin caches + prints a version table). On binaries older than 3.1.0 the manual sequence is `cargo install dvandva --version <new>`, `dvandva install`, `claude plugin update dvandva@dvandva` (the delete-the-codex-marketplace-first workaround died with the 3.0.0-alpha.2 installer fix).
+## Historical release record
+
+- The preserved internal manifests remain at plugin version `1.7.0`; they are source history, not an installable marketplace.
+- For archive-maintenance verification, run the tree-built `dvandva lint stale-version-ref .`; do not publish, upgrade, install, or update a plugin from this repository.
+- `3.5.1` is the final crate release. Historical `dvandva upgrade` and installation behavior must not be used to reactivate this archive.

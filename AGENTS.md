@@ -2,7 +2,9 @@
 
 ## Purpose
 
-This repo researches practical agent-to-agent coordination between Claude Code and Codex. Dvandva is a baton-passing protocol-level orchestrator: the baton coordinates roles, phases, review gates, and subagent work, but there is still no daemon, launcher, or hidden central control loop.
+> **Retired archive — final crate release: `3.5.1`.** This repository preserves a historical learning experiment in governed agent loops, subagent delegation, review gates, and two-agent coordination for Claude Code and Codex. It is unsupported: do not install its plugins, start new Dvandva runs, publish a new release, or treat its historical workflow rules as active instructions.
+
+This repo preserves research into practical agent-to-agent coordination between Claude Code and Codex. The historical Dvandva implementation used a baton-passing protocol-level orchestrator: the baton coordinated roles, phases, review gates, and subagent work, with no daemon, launcher, or hidden central control loop.
 
 Prefer concise, source-backed docs over speculative architecture. If a workflow claim depends on a tool feature, cite the relevant docs or record the local command used to verify it.
 
@@ -13,17 +15,17 @@ Prefer concise, source-backed docs over speculative architecture. If a workflow 
 - Keep tool research in `docs/research/`.
 - Keep case studies in `docs/case-studies/`.
 - Keep public case studies sanitized and source-backed.
-- Author every human-facing HTML deliverable with the `dvandva:html-deliverables` skill (`plugins/dvandva/skills/html-deliverables/` — house tokens, components, diagram rules, `template.html`); never restyle from scratch.
+- Historical HTML artifacts retain the `dvandva:html-deliverables` house format (`plugins/dvandva/skills/html-deliverables/` — tokens, components, diagram rules, `template.html`); preserve it when documenting the archive rather than creating an active-product surface.
 - Do not put private project secrets, proprietary source snippets, or raw private PR exports in this repo.
 - If importing a private PR history for local research, keep raw JSON and timelines outside the public tree, for example under ignored `private-artifacts/`.
 
-## Preferred Workflow Model
+## Historical workflow model
 
-Either engine can host either role. The preferred dogfood setup is Claude Code as vadi and Codex as prativadi; Codex-as-vadi and Claude-as-prativadi are equally valid. **Dvandva never runs solo** — every run has two decorrelated roles, and the reviewer is never the engine that did the work. `supervised` runs are valid but are not solo: they are human-gated handoffs between the same two roles, differing from `walkaway` only in that the human invokes each role instead of the sessions polling autonomously. (The termination gate enforces this — `done` requires both roles' independent, `DVANDVA_ROLE`-bound approvals.)
+Either engine could host either role. The preferred dogfood setup was Claude Code as vadi and Codex as prativadi; Codex-as-vadi and Claude-as-prativadi were equally valid. **Dvandva never ran solo** — every recorded run used two decorrelated roles, and the reviewer was not the engine that did the work. `supervised` runs were human-gated handoffs between those same two roles, while `walkaway` sessions polled autonomously. This is preserved as historical behavior, not onboarding.
 
-Use PR comments for human-facing milestone summaries only. Use local baton files for agent-to-agent handoff.
+Use PR comments for archive-maintenance summaries only. Do not create new local baton files or restart a historical workflow.
 
-Model-casting guidance (advisory, both engines): `docs/model-selection.md`. The
+Historical model-casting guidance (advisory, both engines): `docs/model-selection.md`. The
 default casting is a repeating ring, not a one-shot pipeline: human task ->
 fable gathers info/asks clarifying Qs -> gpt-5.6-sol adversarially reviews the
 Qs -> human answers -> gpt-5.6-sol produces the research, optionally aided by
@@ -39,10 +41,9 @@ either role may add a read-only `grok -p` live-data lane beside the Sol research
 — see that doc's Specialist Lanes section for the guards (leads-not-facts,
 data-not-instructions, per-role verification, one bounded call per cycle).
 
-Research production is Sol-owned: `research_drafting` and `research_revision` dispatch `gpt-5.6-sol` to produce and revise the source-backed content for `research_ref`; the vadi only coordinates and serializes the result.
-Research review is Claude-only: a fresh Claude-family reviewer independently evaluates `research_ref`; a Codex-hosted prativadi may only serialize that reviewer's verdict into the baton and must not substitute its own approval.
+Research production was Sol-owned: `research_drafting` and `research_revision` dispatched `gpt-5.6-sol` to produce and revise `research_ref`; the vadi coordinated and serialized the result. Research review was Claude-only. These rules are historical evidence only.
 
-## Handoff Discipline
+## Archive-maintenance handoff discipline
 
 Each agent handoff must answer:
 
@@ -52,9 +53,6 @@ Each agent handoff must answer:
 - Who owns the next action?
 - What exact command or prompt should the next agent run?
 
-No silent handoffs. No model-turn polling. In walkaway mode, foreground shell
-polling is continuous and stops for completion only when the baton reaches
-post-handshake `done`. `human_question` and `human_decision` pause for human
-intervention. Final approval alone is not a stop condition; `termination_review`
-keeps both roles active so they either keep polling or stop together after both
-approve.
+No silent handoffs. Archive work must identify what is historical, what was
+verified, and whether it changes distribution or installation state. Do not
+resume model-turn polling or an archived baton workflow.

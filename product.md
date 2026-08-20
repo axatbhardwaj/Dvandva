@@ -2,6 +2,8 @@
 
 Status: rewritten 2026-05-14 for richer flow (spec phase + phased implementation + mutual review + disagreement loop + `/goal` autonomy). Owner: axatbhardwaj. Supersedes the prompt-template-first approach in `templates/prompts/` and the single-shot doer→reviewer flow in the previous draft.
 
+> **Retired archive — final crate release `3.5.1`.** This product specification preserves the current 3.5.0-era implementation as historical evidence. It is unsupported: do not use its installation, upgrade, invocation, development, or release instructions to start or revive Dvandva. Internal plugin source remains at `1.7.0` only for historical parity.
+
 > **Spec rev 2026-08-20:** Full-profile development now uses credited Anthropic Opus as a cumulative final gate plus a risk-triggered mid-run escalation. Clean reciprocal cross-review advances non-final phases directly; every final phase still passes through `deep_review`, then `deslop`, shared `termination_review`, and post-handshake `done`.
 
 > **Spec rev 2026-06-11:** §3.1 adds `dvandva-write.sh` (validated atomic baton install + auto-snapshot, bundled byte-identical in both skill script dirs) and `scripts/test-dvandva-write.sh`. The wait helper's default `--max-wait` drops 900→540 so one foreground invocation fits Claude Code's 600 s Bash-tool cap (§7.2, §8.2, §12); it wakes early on baton-directory inotify events and retries once on torn reads. This pulls §16's deterministic validator forward to script level (a PreToolUse hook remains future work).
@@ -165,7 +167,7 @@ Status: rewritten 2026-05-14 for richer flow (spec phase + phased implementation
 > the human. These four statuses use `phase: "clarifying"` and are required for
 > every mode and development profile.
 
-## 1. What it is
+## 1. Historical implementation record
 
 Dvandva v1 is a pair of agent skills, written to the [agentskills.io](https://agentskills.io) open standard, that encode a disciplined two-agent collaboration protocol:
 
@@ -635,29 +637,30 @@ Auto-activation depends entirely on `description`. Tuning rules:
 - **Explicit anti-trigger** in each: *"Do not use this skill for solo work not paired with the other agent."*
 - **Calibration during pilot.** If a skill mis-fires or fails to fire, the pilot writeup records user phrasing → activation outcome, and the description gets one edit pass.
 
-## 11. Distribution and install
+## 11. Historical distribution and installation (unsupported)
 
-### 11.1 Primary install (marketplace)
+### 11.1 Historical marketplace install
 
 ```bash
+# Historical command only — do not run from this archive.
 dvandva install
 ```
 
-`dvandva install` wraps the public install path for users: it registers the Dvandva marketplace and installs `dvandva@dvandva` in both Claude Code and Codex. It accepts `--claude-only` and `--codex-only` for one-engine installs. For Codex, it delegates to `dvandva install-codex`, which runs `codex plugin add dvandva@dvandva` on current Codex builds and keeps the legacy app-server RPC install as a fallback for older builds. The `dvandva` binary must already be on `PATH` (`cargo install dvandva`, or `cargo install --path rust/dvandva` from a checkout). The authoritative preflight is whether the current agent session can see and invoke the required Superpowers skills.
+Historically, `dvandva install` wrapped the public install path: it registered the Dvandva marketplace and installed `dvandva@dvandva` in both engines. The root marketplaces are now delisted, so this behavior is preserved only to explain the source tree. Do not install the binary, plugin, or local checkout from this archive.
 
-### 11.2 Development install fallback
+### 11.2 Historical development-install fallback
 
-For local development against a checkout, prefer marketplace install from the checkout:
+For historical local development against a checkout, marketplace installation used:
 
 ```bash
 dvandva install "$(pwd)"
 ```
 
-For live skill-development work where plugin cache copies are too indirect, symlink or copy `plugins/dvandva/skills/vadi/` and `plugins/dvandva/skills/prativadi/` into the engine skill directories. Remove old pre-plugin `dvandva-*` symlinks first because root `skills/` no longer exists.
+For historical live skill-development work, contributors could symlink or copy `plugins/dvandva/skills/vadi/` and `plugins/dvandva/skills/prativadi/` into engine skill directories. Do not recreate those links now; the source is retained solely for study.
 
-### 11.3 Project-level adoption
+### 11.3 Historical project-level adoption
 
-Consumer repos may check the plugin into their own tree or use project-scoped marketplace declarations. Project-level skills can carry tool-permission frontmatter; review `SKILL.md` the same way you would any other `.claude/` or `.agents/` config.
+Consumer repos formerly could check the plugin into their own tree or use project-scoped marketplace declarations. That adoption path is retired and unsupported.
 
 ## 12. Failure modes the skills must handle
 

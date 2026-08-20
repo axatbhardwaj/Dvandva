@@ -1,6 +1,8 @@
 # Dvandva
 
-Dvandva is **a governed-loop protocol for adversarial AI pairs** — orchestration for paired AI coding agents without an orchestrator. There is no daemon, no launcher, and no hidden process that owns the control loop — two independently running agent sessions follow a shared state machine through a local baton file. One role, `vadi`, proposes plans and implements phases; the other, `prativadi`, adversarially reviews, applies narrow fixups from a strict allowlist, and hands control back through the baton. Because the protocol is just files plus the `dvandva` binary, it needs zero infrastructure and is crash-tolerant by construction: all state lives on disk, so either session can be killed and rejoin at preflight. The canonical dogfood pairing is Claude Code as `vadi` and Codex as `prativadi` — the cross-vendor split is the point, because different models have systematically different blind spots.
+> **Dvandva is retired and archived.** `3.5.1` is the final crate release; the internal plugin source remains at `1.7.0` solely for historical parity. This checkout is unsupported: do not install, upgrade, invoke, publish, or use it to start a new workflow. The root marketplace catalogs are deliberately delisted.
+
+Dvandva was **a governed-loop protocol for adversarial AI pairs** — orchestration for paired AI coding agents without an orchestrator. There was no daemon, launcher, or hidden process that owned the control loop: two independently running sessions followed a shared state machine through a local baton file. The current 3.5.0-era implementation is preserved below as a historical learning experiment in governed agent loops, subagent delegation, review gates, and two-agent coordination for Claude Code and Codex.
 
 **At a glance**
 
@@ -13,40 +15,40 @@ Dvandva is **a governed-loop protocol for adversarial AI pairs** — orchestrati
 
 **Superpowers is a hard runtime dependency.** Dvandva owns baton state, role handoff, phase gates, and cross-agent review; Superpowers owns the active-work discipline inside each turn — skills before action, brainstorming before design, TDD before implementation, verification before completion, and subagent-driven execution when parallel tracks exist. If the engine running a Dvandva role cannot see the Superpowers skills, that role must stop and surface setup instructions instead of continuing with a weakened workflow.
 
-Dvandva ships as an installable plugin (version `1.7.0`) for both engines. The repo lives at https://github.com/axatbhardwaj/Dvandva, and the interactive product explainer is live at https://axatbhardwaj.github.io/Dvandva/.
+Dvandva historically shipped as an installable plugin (version `1.7.0`) for both engines. The repository and Pages explainer remain available as archive records.
 
 > **Status note (2026-07-14):** a single-session "adversarial loop" redesign (skill + Stop-hook gate + parallel workflows, no binary) was built, shipped as plugin 2.0.0–2.0.2, evaluated live, and rolled back the same day — the two-harness protocol below is the product. That experiment is preserved intact on branch [`loop-2.x`](https://github.com/axatbhardwaj/Dvandva/tree/loop-2.x) and tags `dvandva--v2.0.x` if you want to study or revive any of it.
 
-## Quickstart
+## Historical installation and invocation record (unsupported)
 
-The `dvandva` binary IS the Dvandva runtime — the read path, the write path, waiting, preflight, git work-gating, the installers, and the lints, all in one multicall binary. It is published on crates.io as `dvandva 3.5.0`.
+The `dvandva` binary was the Dvandva runtime — the read path, the write path, waiting, preflight, git work-gating, the installers, and the lints, all in one multicall binary. The final crate release is published on crates.io as `dvandva 3.5.1`; it is not supported for new use.
 
-**1. Install the binary.** From crates.io, or from a checkout:
+**1. Historical install command.** Retained only as a version record; do not run it:
 
 ```bash
-cargo install dvandva --version 3.5.0
+cargo install dvandva --version 3.5.1
 # or, from a checkout: cargo install --path rust/dvandva
 ```
 
-The binary must be on `PATH` for the installed skills to run — the plugin bundles no executables.
+The binary had to be on `PATH` for installed skills to run — the plugin bundled no executables.
 
-**2. Install the plugin into both engines.**
+**2. Historical plugin command.** Do not register the archived plugin in either engine:
 
 ```bash
 dvandva install
 ```
 
-`dvandva install` registers the Dvandva marketplace and installs `dvandva@dvandva` into Claude Code and Codex; it adds the skills, commands, agents, and references, and is separate from installing the binary. Use `--claude-only` or `--codex-only` for a single engine, and pass a local path to develop against a checkout:
+Historically, `dvandva install` registered a marketplace and installed `dvandva@dvandva` into Claude Code and Codex. Those catalogs are now delisted; the command, its options, and the local-path form below are evidence only.
 
 ```bash
 dvandva install /path/to/your/Dvandva
 ```
 
-For Codex, `dvandva install` delegates to `dvandva install-codex`, which runs `codex plugin add dvandva@dvandva` non-interactively so no TUI navigation is required; older Codex builds without `plugin add` fall back to the legacy app-server RPC path. See `docs/research/2026-05-16-codex-install.md` for that history.
+For Codex, `dvandva install` historically delegated to `dvandva install-codex`; see `docs/research/2026-05-16-codex-install.md` for the preserved installation history.
 
-**3. Verify.** After install, `/skills` should list `dvandva:vadi`, `dvandva:prativadi`, `dvandva:research`, `dvandva:testing`, `dvandva:understanding`, and `dvandva:worktree-setup`, and the slash commands `/dvandva:vadi` and `/dvandva:prativadi` should appear.
+**3. Historical verification.** Previous installations exposed the listed skills and slash commands. A current installation should not be created from this archive.
 
-**4. Start a run.** On a feature-branch worktree, open both sessions:
+**4. Historical invocation.** The following was the two-session entrypoint; do not start a run:
 
 ```text
 Claude: Implement <small feature> with Codex review. Start a Dvandva development run in walkaway mode.
@@ -60,11 +62,11 @@ Claude: Research <topic> with Codex review. Start a Dvandva research run.
 Claude: Review <diff or artifact> with Codex cross-checking. Start a Dvandva review run.
 ```
 
-The `/dvandva:vadi` and `/dvandva:prativadi` slash commands start a walkaway run for that role by injecting the canonical `/goal` block from the corresponding skill (Codex auto-discovers them from `plugins/dvandva/commands/<role>.md`). The `$vadi` / `$prativadi` fallback invokes the skill directly when you do not want to start a `/goal` loop.
+The `/dvandva:vadi` and `/dvandva:prativadi` commands historically started walkaway runs by injecting canonical `/goal` blocks. This archive preserves their source, not a supported invocation surface.
 
-**Upgrading.** `dvandva upgrade` refreshes the whole stack — binary + both engine plugin caches — as one all-or-nothing transaction: it lands fully on the new version or fully restores the prior one, never a partial mix. Exit `0` means committed and verified, `20` means it failed with the prior state intact (rolled back, or nothing had been changed yet), and `21` means rollback itself was incomplete (a precise residual report prints in that case). An advisory lock at `~/.dvandva/upgrade.lock` blocks concurrent upgrades, and a crash mid-upgrade leaves a breadcrumb; the next run detects it, restores the prior state, and exits (code `20`) so you can re-run the upgrade cleanly.
+**Historical upgrade behavior.** `dvandva upgrade` once refreshed the binary and plugin caches transactionally. There is no supported upgrade path after final release `3.5.1`; do not use it to reactivate the archive.
 
-### Prerequisites
+### Historical prerequisites
 
 | Prerequisite | Verify |
 |---|---|
@@ -73,7 +75,7 @@ The `/dvandva:vadi` and `/dvandva:prativadi` slash commands start a walkaway run
 | Superpowers on every engine running a role (hard runtime dependency) | `/skills` lists `superpowers:using-superpowers`, `superpowers:brainstorming`, `superpowers:test-driven-development`, `superpowers:verification-before-completion` |
 | Work happens on a feature branch | `git branch --show-current` is not `main` or `master` |
 
-## How it works
+## Historical runtime behavior
 
 The baton is a single JSON file the two roles pass back and forth. Each turn a role runs `dvandva preflight --role <role>` (which asserts `DVANDVA_ROLE` and adopts the git hooks), reads the baton with `dvandva state` / `dvandva resolve`, does its bounded work, scaffolds the next baton with `dvandva next`, installs it atomically with `dvandva write` (which snapshots history), and blocks in `dvandva wait --until-actionable` until the baton assigns its role again. The assigned-away session is not model-polling — it is foreground-blocked in the wait helper, which wakes the instant the baton changes.
 
@@ -113,7 +115,7 @@ The final Opus review evaluates the cumulative branch diff from the branch basel
 Research production is Sol-owned: `research_drafting` and `research_revision` dispatch `gpt-5.6-sol` to produce and revise the source-backed content for `research_ref`; the vadi only coordinates and serializes the result.
 Research review is Claude-only: a fresh Claude-family reviewer independently evaluates `research_ref`; a Codex-hosted prativadi may only serialize that reviewer's verdict into the baton and must not substitute its own approval.
 
-## The human rail
+## Historical human rail
 
 Walkaway is autonomous, but three baton states are human-intervention pauses, not completion: `human_question`, `human_decision`, and the `abandoned` bailout reachable from them. `human_question` and `human_decision` pause the loop; on them a role stops working only to surface, never to quit.
 
@@ -129,9 +131,9 @@ Disputes run through bounded findings→fixing loops (`deep_review → phase_fix
 
 **Delta re-verification.** The first full-profile pass always executes every gate. On a re-lap through `phase_fixing` or `cross_fixing`, only a mechanical `test_creation` track may carry through the intermediate test gate, and only when its declared `covers_chunks`/`carry_reason`, same-id origin provenance, current-cycle ancestry, and engine-derived `git-covers-diff-v1` tracked regular-file closure validate unchanged. A failed check reruns under a new track id. Cross-review, deep-review, risk-angle, global/unbounded tracks, and every `verification_matrix` row never carry. The terminal `done` gate is unchanged: full review depth and every matrix row must be fresh after the latest implementation-family checkpoint. Legacy batons without carry fields keep full-rerun behavior.
 
-## The runtime
+## Historical runtime reference
 
-The `dvandva` binary is one multicall runtime. Invoked through a git-hook symlink (`pre-commit`, `prepare-commit-msg`, ...) it takes the hook name from `argv[0]`; `dvandva --version` prints the version line (`dvandva 3.5.0`).
+The `dvandva` binary was one multicall runtime. Invoked through a git-hook symlink (`pre-commit`, `prepare-commit-msg`, ...) it took the hook name from `argv[0]`; `dvandva --version` prints the historical final version line (`dvandva 3.5.1`).
 
 | Group | Subcommands |
 |---|---|
@@ -149,7 +151,7 @@ The `dvandva` binary is one multicall runtime. Invoked through a git-hook symlin
 
 Subcommands use exit codes to signal baton state (for example `wait` exits 11/12 on human pauses, 13 on `abandoned`, and 23 on a persist cap); `product.md` and the role skills carry the full convention.
 
-## Operating headless (VPS)
+## Historical headless operation (unsupported)
 
 In walkaway mode the assigned-away session blocks in:
 
@@ -177,9 +179,9 @@ The commit gate also crosschecks staged paths: a commit whose staged paths fall 
 
 **Terminal `done` gate.** Before post-handshake `done`, a run must satisfy the mode/profile-conditional terminal artifact gate. Full-profile development runs write a one-date run explainer HTML under `./superpowers/run-reports/`, set `run_explainer_ref`, and require both roles to record completed approved `run_explainer_reviews` for that exact artifact (role-owned; `DVANDVA_ROLE` must match the entry role). Use `YYYY-MM-DD-<run_id>-explainer.html` for date-less run IDs, or `<run_id>-explainer.html` when `run_id` already starts with `YYYY-MM-DD-`; never add a second date prefix. Fast and standard runs skip the explainer gate but still require `profile_decision`, passing final verification, a completed `verification_matrix`, approved prativadi `phase-review` evidence with a current-cycle `review_checkpoint`, a shared `termination_review`, and both role-owned final approvals.
 
-## Development
+## Historical development and release record (unsupported)
 
-Rust definition-of-done gate (run in `rust/`):
+The following definition-of-done gate was used during development (run in `rust/`):
 
 ```bash
 cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
@@ -210,7 +212,7 @@ claude plugin validate .
 
 `dvandva lint schema-parity` keeps the status catalog, the required-key list, the two byte-identical channel-doc copies, and the HISTORICAL v1 references in parity. `dvandva lint stale-version-ref` checks user-facing version references (READMEs, SKILL install hints, plugin manifests) against the Cargo.toml crate version and the shared plugin version, fail-closed, with tests/fixtures, product/agent config (`product.md`, `CLAUDE.md`), and dated planning artifacts under `superpowers/` allowlisted. `dvandva smoke-install` builds a temp marketplace, validates the Claude plugin path, adds and installs the marketplace in Codex under an isolated `CODEX_HOME`, runs the dual Claude/Codex installer and Codex-only helper under isolated homes, checks that Codex renders all six Dvandva skills, checks the installed cache version, and checks exact 15-agent roster parity in the installed copies.
 
-For direct skill-development work where you deliberately want live symlinks instead of plugin-cache copies, link the skill directories directly:
+For historical skill-development work, direct symlinks were used instead of plugin-cache copies:
 
 ```bash
 mkdir -p ~/.claude/skills ~/.agents/skills
@@ -224,9 +226,9 @@ ln -sfn "$(pwd)/plugins/dvandva/skills/prativadi" ~/.agents/skills/prativadi
 
 Old pre-plugin installs used `dvandva-vadi` and `dvandva-prativadi` symlinks pointing at deleted root `skills/` paths after the plugin migration — remove those before re-linking. Codex contributors read `AGENTS.md` for the routing Claude Code gets from the slash commands.
 
-**Release checklist**
+**Historical release checklist — completed at `3.5.1`; do not repeat it.**
 
-1. Bump `.claude-plugin/marketplace.json`, `plugins/dvandva/.claude-plugin/plugin.json`, and `plugins/dvandva/.codex-plugin/plugin.json` together.
+1. The former root marketplace catalogs are delisted; preserve the internal Claude and Codex plugin manifests at `1.7.0` as historical source.
 2. Run the validation commands above.
 3. Run `dvandva install <repo-or-path>` from an isolated `HOME` and `CODEX_HOME`, then verify `/skills` exposes all six Dvandva skills in the installed engines. To test the Codex-only fallback, run `dvandva install-codex <repo-or-path>` from an isolated `CODEX_HOME` and `HOME`.
 4. Tag the release, for example `vX.Y.Z`.
@@ -241,14 +243,14 @@ docs/
   protocol/local-baton-channel.md   # baton protocol spec
   workflows/two-mode-agent-workflow.md
   research/2026-05-16-codex-install.md
-plugins/dvandva/                    # the installable plugin: skills, commands, agents, references, hooks
+plugins/dvandva/                    # archived internal plugin source: skills, commands, agents, references, hooks
 rust/dvandva/                       # the dvandva binary + tests
 templates/prompts/                  # historical v0 goal prompts (see note below)
 product.md                          # product specification and acceptance criteria
 README.md                           # this file
 ```
 
-**What ships.** Dvandva is one `dvandva` plugin containing the `vadi`, `prativadi`, `research`, `testing`, `understanding`, and `worktree-setup` skills — the last three are Dvandva-native replacements for the standalone `testing` / `understanding` / `worktree-setup` skills during Dvandva work. Alongside them ship a **seed roster** of 15 canonical subagent roles under `plugins/dvandva/agents/` (researcher, architect, pattern-mapper, implementer, test-creator, debugger, cross-reviewer, adversarial-analyst, deep-reviewer, security-auditor, integration-checker, doc-verifier, deslopper, sandbox-verifier, baton-auditor; seed model classes remain the vendor-neutral `opus` / `sonnet`, while generated non-seed instances may use the expanded `opus` / `sonnet` / `fable` / `gpt` class vocabulary), plugin-local protocol references in `plugins/dvandva/references/` (the live v3 contract is `baton-schema-v3.json`; `baton-schema-v2.json` is the HISTORICAL `dvandva.baton.v2` read-path reference; `baton-schema.json` and `templates/channel/baton.json` are HISTORICAL `dvandva.baton.v1` references only, each carrying a `HISTORICAL: dvandva.baton.v1` marker and never written by the retired v1 path), and marketplace metadata in `.agents/plugins/marketplace.json` (Codex) and `.claude-plugin/marketplace.json` (root). The `dvandva` binary is the protocol runtime; the plugin bundles no executables.
+**What shipped.** Dvandva preserved one internal `dvandva` plugin source tree containing the `vadi`, `prativadi`, `research`, `testing`, `understanding`, and `worktree-setup` skills, plus the historical seed roster and protocol references. The root marketplace metadata is deliberately absent; the two internal manifests remain only to preserve the original `1.7.0` source parity. The `dvandva` binary was the protocol runtime; the plugin bundled no executables.
 
 **Run 3 — run-scoped dynamic agents.** Run 3 turns the seed roster into a foundation for run-scoped dynamic agent generation: parent roles generate additional named instances on demand, each recorded in `agent_instances` on the baton with its identity, parent role, model/permission class, read/write paths, base checkpoint, lifecycle state, output/evidence refs, and close result. Generated agents observe single-writer merge (they never own baton `assignee`, phase transitions, or final approval), explicit closure (every handle must be closed before its track counts complete), and dynamic write-path disjointness (write-path overlaps for live `planned` / `running` instances, or for instances sharing a `base_checkpoint`, are rejected unless a shared `conflict_group` with an explicit `depends_on` edge serializes the work). Generated instances are run-scoped and ephemeral; there is no roster sprawl, and it adds no daemon, mailbox, or hidden central process — the baton and the foreground wait remain the only coordination channel.
 
