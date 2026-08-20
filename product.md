@@ -1,7 +1,5 @@
 # Dvandva — Product Specification v1
 
-> **Archive status:** Dvandva is retired and archived. This file is preserved as historical documentation; no further protocol or product development is planned.
-
 Status: rewritten 2026-05-14 for richer flow (spec phase + phased implementation + mutual review + disagreement loop + `/goal` autonomy). Owner: axatbhardwaj. Supersedes the prompt-template-first approach in `templates/prompts/` and the single-shot doer→reviewer flow in the previous draft.
 
 > **Spec rev 2026-08-20:** Full-profile development now uses credited Anthropic Opus as a cumulative final gate plus a risk-triggered mid-run escalation. Clean reciprocal cross-review advances non-final phases directly; every final phase still passes through `deep_review`, then `deslop`, shared `termination_review`, and post-handshake `done`.

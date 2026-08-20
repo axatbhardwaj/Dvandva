@@ -92,35 +92,22 @@ fn version_parity_passes_when_fixture_built_from_plugin_version_constant() {
     assert!(assert_source_manifest_version_parity(dir.path()).is_ok());
 }
 
-// The archived repository no longer distributes either marketplace catalog,
-// but preserves both historical plugin source manifests. Pin that live-tree
-// shape separately from the strict active-distribution fixture coverage above.
+// The real release tree, not a fixture: proves both marketplace catalogs ship
+// and the version-bearing Claude marketplace/source manifests agree with the
+// compiled plugin version.
 #[test]
-fn archived_live_tree_delists_marketplaces_and_preserves_plugin_versions() {
+fn active_live_tree_lists_marketplaces_and_matches_plugin_versions() {
     let root = dvandva::lint::resolve_root(&[]);
 
     for rel in [
         ".claude-plugin/marketplace.json",
         ".agents/plugins/marketplace.json",
     ] {
-        assert!(!root.join(rel).exists(), "{rel} must remain delisted");
+        assert!(root.join(rel).is_file(), "{rel} must be distributed");
     }
 
-    for rel in [
-        "plugins/dvandva/.claude-plugin/plugin.json",
-        "plugins/dvandva/.codex-plugin/plugin.json",
-    ] {
-        let path = root.join(rel);
-        let text = fs::read_to_string(&path)
-            .unwrap_or_else(|error| panic!("cannot read {}: {error}", path.display()));
-        let manifest: Value = serde_json::from_str(&text)
-            .unwrap_or_else(|error| panic!("invalid JSON in {}: {error}", path.display()));
-        assert_eq!(
-            manifest.get("version").and_then(Value::as_str),
-            Some(PLUGIN_VERSION),
-            "{rel} must preserve plugin version {PLUGIN_VERSION}"
-        );
-    }
+    assert_source_manifest_version_parity(&root)
+        .unwrap_or_else(|error| panic!("live-tree manifest version parity failed: {error}"));
 }
 
 #[test]
