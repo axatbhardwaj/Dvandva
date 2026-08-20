@@ -153,7 +153,7 @@ document.getElementById('toc').addEventListener('click', function(e){
   <div class="strip">
     <span class="chip">no coordination daemon — the baton file is the whole run-coordination channel</span>
     <span class="chip">crash-tolerant: kill either side, rejoin at preflight</span>
-    <span class="chip">cross-vendor pairing is the recommended default, not an engine lock</span>
+    <span class="chip">cross-vendor pairing was a historical policy, not an engine lock</span>
     <span class="chip">walkaway or supervised</span>
     <span class="chip">v3: each run declares its own workflow — peer-approved, invariant-checked</span>
   </div>
@@ -165,7 +165,7 @@ document.getElementById('toc').addEventListener('click', function(e){
   <p class="eyebrow">why it exists</p>
   <h2>Different models have different blind spots. Dvandva weaponizes that.</h2>
   <div class="cards">
-    <div class="card"><h4>Decorrelated review</h4><p>The reviewer is never the same role that produced the work — the engine locks two role identities, vadi and prativadi. Running those roles on different model vendors is a recommended decorrelation policy that reduces correlated blind spots, not a structural guarantee the engine enforces.</p></div>
+    <div class="card"><h4>Decorrelated review</h4><p>The reviewer was never the same role that produced the work — the engine locked two role identities, vadi and prativadi. Running those roles on different model vendors was a historical decorrelation policy, not a structural guarantee the engine enforced.</p></div>
     <div class="card"><h4>Proof, not prose</h4><p>A run cannot end because an agent <em>says</em> it's done. Termination demands both role-bound approvals, artifacts that exist on disk, and a verification matrix fresher than the last code change.</p></div>
     <div class="card"><h4>Bounded arguments</h4><p>Every review loop is capped — a cycle can't spin forever. When the pair keeps disagreeing past the cap, that repeated edge drops; what's left is either escalation to you or the run's legal next step forward.</p></div>
   </div>
@@ -211,13 +211,14 @@ document.getElementById('toc').addEventListener('click', function(e){
 
   <h3>The headline receipt</h3>
   <div class="strip">
-    <span class="chip hi">dvandva 3.2.0 &amp; 3.3.0 — both live on crates.io</span>
+    <span class="chip hi">dvandva 3.5.1 — final archived crate release</span>
+    <span class="chip">3.2.0 &amp; 3.3.0 — dated historical crates.io milestones</span>
     <span class="chip hi">206 / 400 commits carry a Dvandva-Checkpoint: trailer</span>
     <span class="chip">pinned @ main<code>@36f134c</code>, 2026-07-11</span>
   </div>
   <pre><code>git log 36f134c --format=%B | grep -c '^Dvandva-Checkpoint:'   # → 206, as of 36f134c (2026-07-11)
 git rev-list --count 36f134c                                     # → 400, as of 36f134c (2026-07-11)</code></pre>
-  <p class="quiet">The ratio grows with every merge, so the claim is stated as-of a fixed commit plus the exact command that reproduces it — a reader re-running this today gets a higher count, and that's expected, not a contradiction.</p>
+  <p class="quiet">This is a dated receipt, pinned to a fixed historical commit and its exact reproducing command. The repository is archived; it is not a claim about ongoing merges or releases.</p>
 
   <h3>What the engine enforces</h3>
   <div class="table-wrap">
@@ -230,7 +231,7 @@ git rev-list --count 36f134c                                     # → 400, as o
     <tr><td>Custom workflow graphs are checked at approval; presets are pre-cleared</td><td>A hand-authored graph runs through five invariant checks before it's approved — one that lets <code>done</code> be reached without crossing a review gate <b>FAILS validation outright</b> (<code>ReviewGateBypass</code>). Built-in presets are pre-validated once, so that same runtime check is a no-op for them — both families satisfy the same contract, by different means.</td><td><code>write.rs:4622-4629</code>, <code>workflow/invariants.rs</code> (<code>ReviewGateBypass</code>)</td></tr>
     <tr><td>Dual-approval <code>done</code>, every mode</td><td><code>done</code> is legal only from <code>termination_review</code>, and only once both <code>vadi_final_approval</code> and <code>prativadi_final_approval</code> are true — checked independently of mode or profile.</td><td><code>write.rs:2079-2083</code></td></tr>
     <tr><td>No coordination daemon</td><td>No long-lived controller owns the loop. Every subcommand is a synchronous, one-shot call; the optional watchdog scan never blocks — "a monitor, not a gate." The baton plus a fencing lock is the sole coordination primitive.</td><td><code>main.rs:74-118</code>, <code>watchdog.rs:1-12</code>, <code>lock.rs:1-9</code></td></tr>
-    <tr><td>Two role identities are engine-locked; vendor pairing is policy, not a lock</td><td><code>done</code> requires two ROLE identities' independent approvals — engine-enforced. Running those two roles on two different model vendors is the recommended decorrelation <em>policy</em>, not something the engine checks: which engine wrote a checkpoint is recorded as trace data only, never compared for gating.</td><td>composes <code>write.rs:1799-1829</code> + <code>2079-2083</code> + <code>2854</code></td></tr>
+    <tr><td>Two role identities were engine-locked; vendor pairing was policy, not a lock</td><td><code>done</code> required two ROLE identities' independent approvals. Running those two roles on different model vendors was a historical decorrelation policy, not an engine check: which engine wrote a checkpoint was trace data only.</td><td>composes <code>write.rs:1799-1829</code> + <code>2079-2083</code> + <code>2854</code></td></tr>
   </table>
   </div>
 
@@ -246,7 +247,7 @@ git rev-list --count 36f134c                                     # → 400, as o
   <div class="callout meta">
     <p class="tag">On the numbers</p>
     <p style="margin:0 0 .6rem">A naive <code>git log --grep='Dvandva-Checkpoint'</code> overcounts the receipt above by one (<code>207</code>) — it also matches a commit that mentions the phrase in prose but carries no real trailer line. The line-anchored <code>grep -c '^Dvandva-Checkpoint:'</code> command above avoids that trap.</p>
-    <p style="margin:0;color:var(--dim)">This page's own research went through several rounds of adversarial review before acceptance — a live instance of the same loop this page describes, surfacing and closing real findings. The exact round-by-round counts live only in gitignored working files and aren't independently reader-verifiable, so they're kept qualitative here rather than cited as a number.</p>
+    <p style="margin:0;color:var(--dim)">This page's own research went through several rounds of adversarial review before acceptance — a historical instance of the loop it describes. The exact round-by-round counts remain qualitative because the working evidence was not independently reader-verifiable.</p>
   </div>
 </section>
 

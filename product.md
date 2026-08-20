@@ -282,12 +282,12 @@ If criterion #5 fails (any runaway loop observed during pilot), v1 does not ship
 
 ### 3.2 Out of v1 (non-goals)
 
-- No standalone `dvandva` binary and no full JSON Schema validator script. Enforcement is the skill-body checklist plus `/goal` transcript surfacing, the wait helper's exit-code contract, and the write helper's deterministic validation for the `dvandva.baton.v3` transition contract (retired v1/v2 candidates are rejected with `schema_retired`). A complete JSON Schema validator remains future work.
+- No standalone `dvandva` binary and no full JSON Schema validator script. Enforcement used the skill-body checklist plus `/goal` transcript surfacing, the wait helper's exit-code contract, and the write helper's deterministic validation for the `dvandva.baton.v3` transition contract (retired v1/v2 candidates were rejected with `schema_retired`). A complete JSON Schema validator was proposed but is canceled with the archive.
 - No runtime runner / daemon / process launcher. The user starts the two interactive sessions; in walkaway mode, the skills keep those sessions alive by blocking in the wait helper when assigned away.
 - No GitHub integration. No PR comment posting. Skills tell the agent what to surface in transcript; humans write any PR comments using the baton as source material.
 - No multi-engine enforcement. v1 does not verify which engine is running a given role. The `current_engine` field on the baton records which CLI wrote each checkpoint for traceability, but the protocol does not require a particular pairing. The canonical pairing (vadi=Claude, prativadi=Codex) is documented but not enforced.
 - No separate `dvandva-init` skill. The vadi skill scaffolds `.dvandva/` inline on first run.
-- No official marketplace-directory submission and no npm-first distribution. v1 is a GitHub-hosted plugin marketplace package.
+- No official marketplace-directory submission and no npm-first distribution. The historical v1 source was GitHub-hosted; official marketplace submission is abandoned.
 - v2 supports multiple named batons per repo/worktree via safe run directories. It does not isolate the git index; overlapping `changed_paths` between active runs must route to `human_decision` before final ship.
 - No PR creation. Walkaway mode may create local checkpoint commits after verified logical slices and may push only after dual final approval, but it must not raise a PR.
 
@@ -712,7 +712,7 @@ v1 has no automated test surface for skill behavior. What can be tested:
 - **Run 4 work-gate and retirement tests**: the commit-gate port's `cargo test` suite covers the repo-local `.dvandva/githooks` delegating hooks, `DVANDVA_ROLE`, `active_roles`, `Dvandva-Checkpoint`, installer idempotence, and drift lint; the retire port's `cargo test` suite (`rust/dvandva/src/retire.rs`) covers dry-run, five-symlink apply, manifest restore, cache parity refusal, Codex agent-axis no-op, and no skill touches; `dvandva lint run4-path-gates` plus `dvandva lint run4-standalone-agents` keep source docs, manifests, rust sources, and the 15-agent roster aligned with Run 4.
 - **Pilot as integration test:** the pilot is the v1 integration test. Success criteria #1–#5 in section 2 are the acceptance gate.
 
-## 14. Risks and open questions
+## 14. Historical risks and closed questions
 
 Named risks, ordered by severity:
 
@@ -724,11 +724,11 @@ Named risks, ordered by severity:
 6. **Mutual-review can re-introduce a regression the prativadi thought it fixed.** The vadi disapproves the prativadi's fix, writes a counter, the prativadi reviews the counter — but the prativadi may now be checking against its *own* prior view, not the original vadi implementation. Mitigation: the baton's `narrow_fixups` and `vadi_counter` arrays preserve diff context across the loop; the prativadi's Mode C re-reads from the baton not from session memory.
 7. **Same-GitHub-identity attribution unsolved.** PR 353's pain point. v1 stays out of GitHub entirely. Postponed, not solved.
 
-Open questions to revisit after the pilot:
+Unresolved historical questions — retained for study, with no follow-up planned after retirement:
 
-- Does the per-phase active-work turn cap need to scale with phase scope? Larger phases may legitimately need more than the v2 default of 60 active model-work turns, while shell wait heartbeats remain outside the cap.
-- Should the spec phase have its own turn cap separate from the per-phase one?
-- How does `claude --resume` behave when the baton has advanced past the paused session's state? Likely fine since skill preflight re-reads the baton, but the first occurrence should be documented.
+- Whether the per-phase active-work turn cap should have scaled with phase scope remains unanswered.
+- Whether the spec phase should have had its own turn cap remains unanswered.
+- The behavior of `claude --resume` after a baton advance remains a historical unknown.
 
 ## 15. Versioning policy
 
@@ -738,25 +738,25 @@ Open questions to revisit after the pilot:
 - **Policy fields in baton.** `allow_commit`, `allow_push`, and `allow_pr` intentionally live in the baton for v1 so every agent and transcript sees the run authority in the same file as state. `allow_commit` authorizes regular local checkpoint commits after verified logical slices; `allow_push` is still final-ship only. A separate `.dvandva/policy.json` is a v2 option if policy grows beyond these booleans.
 - **Skill versions:** each SKILL.md may carry a `# Skill version: <semver>` comment in the body. Bumped on body changes that alter agent behavior.
 
-## 16. Future work (v2 and beyond)
+## 16. Canceled future-work ideas
 
-In priority order:
+The following ideas were recorded before retirement. They are canceled, not a roadmap; no new Dvandva implementation or distribution work is planned.
 
-- **Deterministic validator script** + real JSON Schema at `templates/channel/baton.schema.json`. Skills invoke it as a pre-write gate. Rejects malformed batons and illegal transitions per the table in Appendix A. Closes the remaining schema-depth gap beyond the helper-level `dvandva.baton.v3` validation already in `dvandva write`.
-- **Runner / launcher.** Optional file watcher that starts fresh agent processes via engine-specific commands. v1 walkaway stays session-based and uses persistent sessions plus the wait helper. A future runner must preserve human visibility and avoid expensive non-interactive loops.
-- **Official marketplace submission.** Submit the GitHub-hosted plugin to official marketplace directories after public install smoke and pilot data.
-- **Generic role abstraction.** Promote `vadi` / `prativadi` to first-class abstract roles with Claude/Codex as canonical instantiations. Largest portability risk currently.
-- **GitHub PR summary integration.** Skill-side helper that turns the final baton state into a one-shot PR summary the human pastes in. Solves attribution if and only if it is the *only* PR comment.
-- **Concurrent-agent detection.** Lock file or PID file with stale-detection so v2 can refuse to start a second agent against a baton already in use.
-- **Explicit human-answer field.** Replace the v1 judgment call ("did the current prompt answer the question?") with a deterministic `human_answer` field or helper command that resumes `human_question` states only when populated.
-- **Per-phase scope refinement.** v2 could auto-suggest phase boundaries based on file-graph or churn analysis during the spec phase.
+- **Deterministic validator script.** A real JSON Schema pre-write gate was proposed but not pursued.
+- **Runner / launcher.** An optional engine-specific process watcher was proposed but not pursued.
+- **Official marketplace submission.** Abandoned: the GitHub-hosted plugin must not be submitted to official marketplace directories.
+- **Generic role abstraction.** A broader role abstraction was proposed but not pursued.
+- **GitHub PR summary integration.** A one-shot PR-summary helper was proposed but not pursued.
+- **Concurrent-agent detection.** A lock/PID-based detector was proposed but not pursued.
+- **Explicit human-answer field.** A deterministic pause-resume field was proposed but not pursued.
+- **Per-phase scope refinement.** File-graph or churn-assisted phase suggestions were proposed but not pursued.
 
-## 17. Roadmap and deferred scope
+## 17. Historical roadmap and deferred scope (closed)
 
-In design-run order:
+The following run descriptions record completed historical scope; they are not future work.
 
-- **Run 3 — super-parallel dynamic agent generation.** The static 15-agent roster is now the seed roster: parent roles generate additional named agent instances on demand during a run. `agent_instances` is a first-class baton array (separate from `subagent_tracks`) recording each generated instance's identity, parent role, seed agent, model class, permission class (`readonly`, `verify-only`, `edit-scoped`, or `write-artifact-only`), read/write paths, base checkpoint, lifecycle, output refs, evidence refs, and close result. Seed agents remain pinned to the vendor-neutral `opus` / `sonnet` classes; generated non-seed instances may use the expanded `opus` / `sonnet` / `fable` / `gpt` vocabulary, with `fable` reserved for frontier/taste-heavy work and `gpt` for Codex-wrapper or bulk-mechanical work when that class is appropriate. Three mandatory invariants: single-writer merge (generated agents never own baton `assignee`, phase transitions, or final approval; the parent role serializes evidence into one monotonic checkpoint), explicit closure (every generated handle must be explicitly closed with non-empty `work_item_ids` before its track counts as complete), and dynamic write-path disjointness (write-path overlaps for generated instances sharing the same `base_checkpoint`, or for any two live instances, are rejected unless sharing a `conflict_group` with explicit dependency serialization). No daemon, no hidden orchestrator. Generated instances are run-scoped and ephemeral; seed roster changes require a reviewed source commit.
-- **Run 4 — generalized path-gate + retire standalones + work-gating.** Off-protocol commits are guarded by role-preflight-exported `DVANDVA_ROLE`, local git hooks, and a `dvandva.hooksAdoptedAt` drift-lint baseline that keeps stamped-sandwich bypasses visible. Generalized `work_split` path-gate enforcement extends beyond the Run 3 dynamic disjointness check, and the user's standalone agent fleet is retired only for Dvandva-covered workflows with functional parity via Runs 1-4 usage, backup-manifest reversibility, Codex agent-axis no-op behavior, and no skill touches.
+- **Run 3 — super-parallel dynamic agent generation.** This recorded the historical seed-roster and generated-instance design, including single-writer merge, explicit closure, and dynamic write-path disjointness.
+- **Run 4 — generalized path-gate + retire standalones + work-gating.** This recorded the historical path-gate and standalone-agent retirement work, including functional parity via Runs 1-4 usage, backup-manifest reversibility, Codex agent-axis no-op behavior, and no skill touches.
 
 ## Appendix A — `dvandva.baton.v1` canonical schema and transitions
 

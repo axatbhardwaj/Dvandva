@@ -17,7 +17,7 @@ Dvandva was **a governed-loop protocol for adversarial AI pairs** — orchestrat
 
 Dvandva historically shipped as an installable plugin (version `1.7.0`) for both engines. The repository and Pages explainer remain available as archive records.
 
-> **Status note (2026-07-14):** a single-session "adversarial loop" redesign (skill + Stop-hook gate + parallel workflows, no binary) was built, shipped as plugin 2.0.0–2.0.2, evaluated live, and rolled back the same day — the two-harness protocol below is the product. That experiment is preserved intact on branch [`loop-2.x`](https://github.com/axatbhardwaj/Dvandva/tree/loop-2.x) and tags `dvandva--v2.0.x` if you want to study or revive any of it.
+> **Historical status note (2026-07-14):** a single-session "adversarial loop" redesign (skill + Stop-hook gate + parallel workflows, no binary) was built, shipped as plugin 2.0.0–2.0.2, evaluated live, and rolled back the same day. Both it and the two-harness protocol are preserved only as closed historical records; branch [`loop-2.x`](https://github.com/axatbhardwaj/Dvandva/tree/loop-2.x) and tags `dvandva--v2.0.x` are not revival paths.
 
 ## Historical installation and invocation record (unsupported)
 
@@ -181,13 +181,13 @@ The commit gate also crosschecks staged paths: a commit whose staged paths fall 
 
 ## Historical development and release record (unsupported)
 
-The following definition-of-done gate was used during development (run in `rust/`):
+The following was the development definition-of-done gate. It is retained as an inert record, not an instruction to run it:
 
 ```bash
 cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 ```
 
-The full suite covers the read path, write path, wait, preflight, git work-gating, installers, and every lint. Run the doc/artifact/schema lints, drift lint, the install smoke test, and plugin validation with:
+The final development suite covered the read path, write path, wait, preflight, git work-gating, installers, and every lint. The following is an inert command record from that work, not a procedure for this archive; in particular, do not run the install smoke test or plugin validation to recreate distribution state:
 
 ```bash
 dvandva lint protocol-phase1
@@ -210,9 +210,9 @@ claude plugin validate plugins/dvandva
 claude plugin validate .
 ```
 
-`dvandva lint schema-parity` keeps the status catalog, the required-key list, the two byte-identical channel-doc copies, and the HISTORICAL v1 references in parity. `dvandva lint stale-version-ref` checks user-facing version references (READMEs, SKILL install hints, plugin manifests) against the Cargo.toml crate version and the shared plugin version, fail-closed, with tests/fixtures, product/agent config (`product.md`, `CLAUDE.md`), and dated planning artifacts under `superpowers/` allowlisted. `dvandva smoke-install` builds a temp marketplace, validates the Claude plugin path, adds and installs the marketplace in Codex under an isolated `CODEX_HOME`, runs the dual Claude/Codex installer and Codex-only helper under isolated homes, checks that Codex renders all six Dvandva skills, checks the installed cache version, and checks exact 15-agent roster parity in the installed copies.
+Historically, `dvandva lint schema-parity` kept the status catalog and source copies in parity, while `dvandva lint stale-version-ref` checked user-facing anchors. `dvandva smoke-install` was a distribution smoke test: it built a temporary marketplace and exercised isolated engine installs. That behavior is retained as evidence only and must not be used to recreate an installation.
 
-For historical skill-development work, direct symlinks were used instead of plugin-cache copies:
+For historical skill-development work, direct symlinks were used instead of plugin-cache copies. The following is an inert transcript of that retired workflow; it must not be run because the archive must not relink engine skills:
 
 ```bash
 mkdir -p ~/.claude/skills ~/.agents/skills
@@ -224,15 +224,15 @@ ln -sfn "$(pwd)/plugins/dvandva/skills/vadi"      ~/.agents/skills/vadi
 ln -sfn "$(pwd)/plugins/dvandva/skills/prativadi" ~/.agents/skills/prativadi
 ```
 
-Old pre-plugin installs used `dvandva-vadi` and `dvandva-prativadi` symlinks pointing at deleted root `skills/` paths after the plugin migration — remove those before re-linking. Codex contributors read `AGENTS.md` for the routing Claude Code gets from the slash commands.
+Old pre-plugin installs used `dvandva-vadi` and `dvandva-prativadi` symlinks pointing at deleted root `skills/` paths after the plugin migration. This explains the transcript above; no relinking or cleanup is an archive-maintenance action.
 
-**Historical release checklist — completed at `3.5.1`; do not repeat it.**
+**Historical release workflow record — closed at `3.5.1`; not a checklist.**
 
-1. The former root marketplace catalogs are delisted; preserve the internal Claude and Codex plugin manifests at `1.7.0` as historical source.
-2. Run the validation commands above.
-3. Run `dvandva install <repo-or-path>` from an isolated `HOME` and `CODEX_HOME`, then verify `/skills` exposes all six Dvandva skills in the installed engines. To test the Codex-only fallback, run `dvandva install-codex <repo-or-path>` from an isolated `CODEX_HOME` and `HOME`.
-4. Tag the release, for example `vX.Y.Z`.
-5. Push the branch and tag only after both Dvandva roles approve the final diff.
+1. The former root marketplace catalogs were delisted; the internal Claude and Codex plugin manifests remain at `1.7.0` as historical source.
+2. Historical releases ran the validation record above.
+3. Historical distribution verification used `dvandva install <repo-or-path>` and `dvandva install-codex <repo-or-path>` under isolated homes; the archive does not authorize those installs.
+4. Earlier release workflow included creating a version tag.
+5. Earlier release workflow included pushing a reviewed branch and tag. No future tag or push is part of this archive record.
 
 ## Repo map & history
 
