@@ -86,7 +86,10 @@ research runs require `research_ref` and additionally `plan_ref` iff
 three v2 modes, `termination_review` plus both final approvals are shared and
 remain the only path to terminal `done`.
 
-Full-profile implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; the `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. `test_creation` routes to `cross_review` and records 100% test coverage evidence for new executable behavior or source-only rationale for docs/skills; `cross_review` may route to `cross_fixing`, and only completed cross-review evidence for both roles can advance to `deep_review`. Fast and standard development profiles use the compact `implementing -> phase_review -> termination_review -> done` path, still with `profile_decision`, passing final verification, completed `verification_matrix` evidence, a completed approved prativadi `phase-review` subagent track with current-cycle `review_checkpoint`, shared termination, and role-owned final approvals. Phase convention: implementation-chunk tracks use the numeric implementation phase, while cross-review, phase-review, and deep-review gate tracks use the status-name phase such as `phase: "cross_review"`, `phase: "phase_review"`, or `phase: "deep_review"`.
+Full-profile implementation-phase parallelism is mandatory for v2. Spec approval enters `parallel_implementing` with `assignee: "team"` and `active_roles: ["vadi", "prativadi"]`; the `work_split` must contain at least five implementation chunks split across both roles for two-team parallel implementation, each with reciprocal `cross_review_by`. `test_creation` routes to `cross_review` and records 100% test coverage evidence for new executable behavior or source-only rationale for docs/skills; `cross_review` may route to `cross_fixing`, directly to the next phase's profile-appropriate implementation state when clean and non-final, or to `deep_review` for risk escalation and every final-phase checkpoint. Fast and standard development profiles use the compact `implementing -> phase_review -> termination_review -> done` path, still with `profile_decision`, passing final verification, completed `verification_matrix` evidence, a completed approved prativadi `phase-review` subagent track with current-cycle `review_checkpoint`, shared termination, and role-owned final approvals. Phase convention: implementation-chunk tracks use the numeric implementation phase, while cross-review, phase-review, and deep-review gate tracks use the status-name phase such as `phase: "cross_review"`, `phase: "phase_review"`, or `phase: "deep_review"`.
+
+In full-profile development, clean non-final `cross_review` advances directly to phase N+1, while any risk-triggered escalation and every final-phase checkpoint enter `deep_review` for credited Anthropic Opus review.
+The final Opus review evaluates the cumulative branch diff from the branch baseline, not only the final phase's files; `termination_review` remains dual-role stop approval, not another Opus review.
 
 Run 4 generalizes the path gate from dynamic `agent_instances` to `work_split`.
 The write helper applies `safe_rel_path` to `work_split.paths`,
@@ -346,7 +349,7 @@ Run 3 turns the static 15-agent roster into a **seed roster** for run-scoped dyn
 }
 ```
 
-Model classes are durable workload-routing classes, not a literal ranked model table. Canonical compatibility strings for new generated instances remain vendor-neutral: `opus-class|gpt-5.5-xhigh` maps to `opus`, `sonnet-class|gpt-5.5-high` maps to `sonnet`, `fable-class|gpt-5.5-xhigh` maps to `fable`, and `gpt-class|gpt-5.5-high` maps to `gpt`. Legacy aliases `opus-class|gpt-5.5`, `sonnet-class|gpt-5.4`, `gpt-5.5`, and `gpt-5.4` remain validator-compatible for existing batons; `gpt-5.5` now resolves as a legacy alias of the `gpt` class and should not be emitted by new generated instances. Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available. Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra`, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface. Codex-side `opus` and `fable` executions are GPT hygiene only and never earn review credit; credited deep/adversarial review remains a cross-vendor Anthropic Opus gate. Codex reasoning effort is keyed to the thread role rather than the model class: the main session defaults to `xhigh` on every model and requests `max` only when the human sets it explicitly, while every dispatched Codex child is launched with an explicit `xhigh` effort because omitting it inherits the parent, may be lowered to `high`, `medium`, or `low` for proven-mechanical work, and never requests `max`; no Dvandva role uses `ultra` because its Codex-managed delegate threads run outside the baton's two-role coordination, and when a model does not support the requested effort the dispatching role keeps the selected model, drops to that model's highest supported effort, and logs the requested effort, effective effort, and reason. All current Codex models support `xhigh`; `max` is supported by `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`; `ultra` is supported only by `gpt-5.6-sol` and `gpt-5.6-terra` but is forbidden in Dvandva because it visibly performs proactive delegation outside the baton's two-role coordination; and `gpt-5.5` caps at `xhigh`. Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work. Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop. Permission classes are `readonly`, `verify-only`, `edit-scoped`, or `write-artifact-only`.
+Model classes are durable workload-routing classes, not a literal ranked model table. Canonical compatibility strings for new generated instances remain vendor-neutral: `opus-class|gpt-5.5-xhigh` maps to `opus`, `sonnet-class|gpt-5.5-high` maps to `sonnet`, `fable-class|gpt-5.5-xhigh` maps to `fable`, and `gpt-class|gpt-5.5-high` maps to `gpt`. Legacy aliases `opus-class|gpt-5.5`, `sonnet-class|gpt-5.4`, `gpt-5.5`, and `gpt-5.4` remain validator-compatible for existing batons; `gpt-5.5` now resolves as a legacy alias of the `gpt` class and should not be emitted by new generated instances. Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available. Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra` on the active surface; Dvandva does not automatically fall back to older model generations, and an unavailable required model routes to `human_decision`. Codex-side `opus` and `fable` executions are GPT hygiene only and never earn review credit; credited deep/adversarial review remains a cross-vendor Anthropic Opus gate. Codex reasoning effort is keyed to the thread role rather than the model class: the main session defaults to `xhigh` on every model and requests `max` only when the human sets it explicitly, while every dispatched Codex child is launched with an explicit `xhigh` effort because omitting it inherits the parent, may be lowered to `high`, `medium`, or `low` for proven-mechanical work, and never requests `max`; no Dvandva role uses `ultra` because its Codex-managed delegate threads run outside the baton's two-role coordination, and when a model does not support the requested effort the dispatching role keeps the selected model, drops to that model's highest supported effort, and logs the requested effort, effective effort, and reason. All current Codex models support `xhigh`; `max` is supported by `gpt-5.6-sol`, `gpt-5.6-terra`, and `gpt-5.6-luna`; `ultra` is supported only by `gpt-5.6-sol` and `gpt-5.6-terra` but is forbidden in Dvandva because it visibly performs proactive delegation outside the baton's two-role coordination. Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work. Use `sonnet` for bounded implementation, documentation, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop. Permission classes are `readonly`, `verify-only`, `edit-scoped`, or `write-artifact-only`.
 
 `spawned_by` is the executable provenance used for generated-instance validation. `seed_agent` is advisory human-readable metadata that records which seed-roster contract shaped the brief; the write helper does not currently validate that `seed_agent` equals `spawned_by` or belongs to the seed roster.
 
@@ -370,7 +373,7 @@ Model classes are durable workload-routing classes, not a literal ranked model t
 
 - `development` — delivery run with research, planning, implementation, and
   review gates selected by its separate `profile` field. `full` keeps the
-  32-edge v2 table; `fast` and `standard` use compact profile tables below.
+  34-edge v2 table; `fast` and `standard` use compact profile tables below.
 - `research` — research-only run. It may optionally emit a seed-development
   plan when `research_outcome == seed_development`, but the run still terminates
   as research.
@@ -391,10 +394,12 @@ Every v2 mode/profile starts with the mandatory clarifying prefix:
 five answered questions across both rounds, and requires at least one question
 from each role.
 
-#### Full profile (v2, 32 edges)
+#### Full profile (v2, 34 edges)
 
-- v2: `deslop` → `phase: N+1, parallel_implementing` is the non-final
-  phase-advance edge. Final phases route to `termination_review` instead.
+- v2: after a non-final risk escalation passes `deep_review`, `deslop` →
+  `phase: N+1, parallel_implementing` is the full-next-phase fallback (or
+  `implementing` for a standard next phase). Clean non-final `cross_review`
+  advances directly to phase N+1. Final phases route to `termination_review`.
 - `clarifying_questions_drafting` -> `clarifying_questions_answer`
 - `clarifying_questions_answer` -> `clarifying_questions_followup`
 - `clarifying_questions_followup` -> `clarifying_questions_followup_answer`
@@ -411,6 +416,8 @@ from each role.
 - `test_creation` -> `cross_review`
 - `cross_review` -> `cross_fixing`
 - `cross_fixing` -> `test_creation`
+- `cross_review` -> `parallel_implementing` (clean non-final phase; next effective profile is full)
+- `cross_review` -> `implementing` (clean non-final phase; next effective profile is standard)
 - `cross_review` -> `deep_review`
 - `deep_review` -> `phase_fixing`
 - `deep_review` -> `review_of_review`

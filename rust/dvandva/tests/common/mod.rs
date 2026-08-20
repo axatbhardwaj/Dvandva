@@ -393,6 +393,49 @@ pub fn parallel_chunks_phase(b: &mut Value, phase: &str) {
     }
 }
 
+/// Append a completed two-owner implementation seam whose shared conflict
+/// group requires integration review when the supplied phase is in scope.
+pub fn append_integration_risk_chunks(b: &mut Value, phase: &str) {
+    for (id, owner, reviewer, path, depends_on) in [
+        (
+            "integration-seam-a",
+            "vadi",
+            "prativadi",
+            "src/integration-a.ts",
+            json!([]),
+        ),
+        (
+            "integration-seam-b",
+            "prativadi",
+            "vadi",
+            "src/integration-b.ts",
+            json!(["integration-seam-a"]),
+        ),
+    ] {
+        push(
+            b,
+            "work_split",
+            json!({
+                "id": id,
+                "phase": phase,
+                "chunk_type": "implementation",
+                "owner": owner,
+                "owner_role": owner,
+                "suggested_agent": "dvandva-implementer",
+                "scope": "Cross-owner integration seam.",
+                "paths": [path],
+                "cross_review_by": reviewer,
+                "can_parallelize": true,
+                "parallel_rationale": "Serialized through the shared integration seam.",
+                "depends_on": depends_on,
+                "conflict_group": "integration-seam",
+                "status": "completed",
+                "artifact_refs": []
+            }),
+        );
+    }
+}
+
 /// F6: a completed current-cycle SECURITY-angle track (review_checkpoint 4).
 pub fn security_review_track(b: &mut Value) {
     push(

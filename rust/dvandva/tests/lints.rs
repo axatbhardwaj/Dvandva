@@ -66,7 +66,7 @@ Continuous polling is the hard rule.
 Phase convention: implementation-chunk N of M.
 clarifying_questions_drafting -> clarifying_questions_followup_answer before research.
 Legacy v1: `spec_review` → `phase: 1, implementing`.
-v2: `deslop` → `phase: N+1, parallel_implementing`.
+v2: after a non-final risk escalation passes `deep_review`, `deslop` → `phase: N+1, parallel_implementing`.
 Fast profile: `research_review` -> `implementing`.
 "#;
     w(root, "docs/protocol/local-baton-channel.md", channel);
@@ -120,6 +120,25 @@ fn protocol_phase1_accepts_complete_fixture() {
     protocol_fixture(d.path());
     let r = protocol_phase1::report(d.path());
     assert!(r.passed(), "expected clean, failures: {}", r.failures());
+}
+
+#[test]
+fn protocol_phase1_rejects_broad_deslop_phase_advance() {
+    let d = tmp();
+    protocol_fixture(d.path());
+    for file in [
+        "docs/protocol/local-baton-channel.md",
+        "plugins/dvandva/references/local-baton-channel.md",
+    ] {
+        let path = d.path().join(file);
+        let text = fs::read_to_string(&path).unwrap().replace(
+            "after a non-final risk escalation passes `deep_review`, `deslop`",
+            "`deslop`",
+        );
+        fs::write(path, text).unwrap();
+    }
+    let r = protocol_phase1::report(d.path());
+    assert!(r.fails_with("scopes v2 deslop advance to post-deep-review fallback"));
 }
 
 #[test]
@@ -347,11 +366,11 @@ write-helper validation exit 23
 
 const MODEL_CLASSES: &str = r#"Dvandva model classes are vendor-neutral.
 Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available.
-Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra`, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface.
+Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra` on the active surface; Dvandva does not automatically fall back to older model generations, and an unavailable required model routes to `human_decision`.
 Codex-side `opus` and `fable` executions are GPT hygiene only and never earn review credit; credited deep/adversarial review remains a cross-vendor Anthropic Opus gate.
 Codex reasoning effort is keyed to the thread role rather than the model class: the main session defaults to `xhigh` on every model and requests `max` only when the human sets it explicitly, while every dispatched Codex child is launched with an explicit `xhigh` effort because omitting it inherits the parent, may be lowered to `high`, `medium`, or `low` for proven-mechanical work, and never requests `max`; no Dvandva role uses `ultra` because its Codex-managed delegate threads run outside the baton's two-role coordination, and when a model does not support the requested effort the dispatching role keeps the selected model, drops to that model's highest supported effort, and logs the requested effort, effective effort, and reason.
 Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.
-Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
+Use `sonnet` for bounded implementation, documentation, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
 Do not use `haiku` for Dvandva subagents.
 "#;
 
@@ -363,6 +382,15 @@ Codex-side `opus` and `fable` executions are GPT hygiene only and never earn rev
 Fable-class owns plan authorship and terminal adjudication, may take routine non-code work when it clears the quality bar, and never writes code.
 "#;
 
+const RESEARCH_CASTING: &str = r#"Research production is Sol-owned: `research_drafting` and `research_revision` dispatch `gpt-5.6-sol` to produce and revise the source-backed content for `research_ref`; the vadi only coordinates and serializes the result.
+Research review is Claude-only: a fresh Claude-family reviewer independently evaluates `research_ref`; a Codex-hosted prativadi may only serialize that reviewer's verdict into the baton and must not substitute its own approval.
+"#;
+const FINAL_OPUS_CADENCE: &str = r#"In full-profile development, clean non-final `cross_review` advances directly to phase N+1, while any risk-triggered escalation and every final-phase checkpoint enter `deep_review` for credited Anthropic Opus review.
+The final Opus review evaluates the cumulative branch diff from the branch baseline, not only the final phase's files; `termination_review` remains dual-role stop approval, not another Opus review.
+"#;
+const FINAL_OPUS_WORKTREE_SCOPE: &str = "Final Opus intake compares the branch baseline to the working tree with `git diff <baseline>` and inventories `git status --short`; every intended untracked file must be opened and included in the review evidence.\n";
+const RESEARCH_DEEP_REVIEW_CADENCE: &str = "Deep review: after implementation, test_creation, and cross_review, plan `deep_review` only for a final phase or an explicit non-final risk escalation.\n";
+
 const GROK_PLAN_PULSE_DOC: &str = r#"Research phases, plus the plan-review loop's uncredited latest-tech pulse.
 Plan-pulse findings stay quarantined until a Claude-family role confirms them.
 The lane is never a credited review station whose approval gates anything, never the ring's execute stations, and never a code-touching subagent.
@@ -373,15 +401,15 @@ Findings land in a lane ledger, each is addressed or rejected in writing before 
 The fallback-bulk seat is out-of-ring only: a human-invoked lane for personal bulk work outside Dvandva runs.
 "#;
 
-const LUNA_PROBE_POLICY: &str = "`gpt-5.6-terra` remains the routine default; `gpt-5.6-luna` may take taste-light mechanical work only after a representative task-class quality probe passes; `gpt-5.5` is the runtime fallback.";
+const LUNA_PROBE_POLICY: &str = "`gpt-5.6-terra` remains the routine default; `gpt-5.6-luna` may take taste-light mechanical work only after a representative task-class quality probe passes; unavailable required models route to `human_decision` instead of an older-generation fallback.";
 const GROK_GPT_OPUS_SEQUENCE: &str = "Grok produces uncredited first-pass review leads; a gpt-class executor addresses or rejects each lead in writing; cross-vendor Anthropic Opus performs the credited deep review.";
 const CODEX_HOSTED_OPUS_DISPATCH: &str = "When Codex hosts the prativadi, the Claude-side vadi dispatches fresh Anthropic Opus subagents for the credited deep review; Codex-side opus execution remains uncredited GPT hygiene.";
-const AGENTS_GPT56_RING: &str = "gpt-5.6-sol reviews hard and adversarial work; gpt-5.6-terra executes routine tracks; gpt-5.5 is the fallback when a 5.6 model is unavailable.";
-const CLAUDE_GPT56_DISPATCH: &str = "Dispatch code to gpt-5.6-terra for routine work, gpt-5.6-sol for hard bounded work, and gpt-5.6-luna only for mechanically proven task classes; gpt-5.5 is the fallback.";
-const STATE_TABLE_CODEX_MAPPING: &str = r#"| `opus` | `opus-class\|gpt-5.5-xhigh` | Opus-class | gpt-5.6-sol (fallback gpt-5.5) |
-| `sonnet` | `sonnet-class\|gpt-5.5-high` | Sonnet-class | gpt-5.6-terra (fallback gpt-5.5) |
-| `fable` | `fable-class\|gpt-5.5-xhigh` | Fable-class | gpt-5.6-sol (fallback gpt-5.5) |
-| `gpt` | `gpt-class\|gpt-5.5-high` | Sonnet-class wrapper shells to Codex | gpt-5.6-terra (fallback gpt-5.5) |
+const AGENTS_GPT56_RING: &str = "gpt-5.6-sol reviews hard and adversarial work; gpt-5.6-terra executes routine tracks; an unavailable required model routes to human_decision instead of an older-generation fallback.";
+const CLAUDE_GPT56_DISPATCH: &str = "Dispatch code to gpt-5.6-terra for routine work, gpt-5.6-sol for hard bounded work, and gpt-5.6-luna only for mechanically proven task classes; an unavailable required model routes to human_decision instead of an older-generation fallback.";
+const STATE_TABLE_CODEX_MAPPING: &str = r#"| `opus` | `opus-class\|gpt-5.5-xhigh` | Opus-class | gpt-5.6-sol |
+| `sonnet` | `sonnet-class\|gpt-5.5-high` | Sonnet-class | gpt-5.6-terra |
+| `fable` | `fable-class\|gpt-5.5-xhigh` | Fable-class | gpt-5.6-sol |
+| `gpt` | `gpt-class\|gpt-5.5-high` | Sonnet-class wrapper shells to Codex | gpt-5.6-terra |
 "#;
 
 const SUPERPOWERS: &str = "Superpowers is a hard runtime dependency.\nDvandva owns baton state.\n";
@@ -515,6 +543,8 @@ fn phase4_fixture(root: &Path) {
     readme.push_str("`dvandva:vadi`, `dvandva:prativadi`, `dvandva:research`, `dvandva:testing`, `dvandva:understanding`, and `dvandva:worktree-setup` are installed.\n");
     readme.push_str("Validation exercises all six Dvandva skills.\n");
     readme.push_str(MODEL_CLASSES);
+    readme.push_str(RESEARCH_CASTING);
+    readme.push_str(FINAL_OPUS_CADENCE);
     readme.push_str("Definition of done: cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test\n");
     readme.push_str("claude plugin validate plugins/dvandva\n");
     readme.push_str("claude plugin validate .\n");
@@ -525,12 +555,20 @@ fn phase4_fixture(root: &Path) {
         root,
         "docs/model-selection.md",
         &format!(
-            "{GROK_PLAN_PULSE_DOC}\n{LUNA_PROBE_POLICY}\n{GROK_GPT_OPUS_SEQUENCE}\n{CODEX_HOSTED_OPUS_DISPATCH}\n"
+            "{GROK_PLAN_PULSE_DOC}\n{LUNA_PROBE_POLICY}\n{GROK_GPT_OPUS_SEQUENCE}\n{CODEX_HOSTED_OPUS_DISPATCH}\n{RESEARCH_CASTING}{FINAL_OPUS_CADENCE}"
         ),
     );
 
-    w(root, "AGENTS.md", AGENTS_GPT56_RING);
-    w(root, "CLAUDE.md", CLAUDE_GPT56_DISPATCH);
+    w(
+        root,
+        "AGENTS.md",
+        &format!("{AGENTS_GPT56_RING}\n{RESEARCH_CASTING}"),
+    );
+    w(
+        root,
+        "CLAUDE.md",
+        &format!("{CLAUDE_GPT56_DISPATCH}\n{RESEARCH_CASTING}"),
+    );
 
     // product.md
     let mut product = String::new();
@@ -541,6 +579,8 @@ fn phase4_fixture(root: &Path) {
     product.push_str("canonical Dvandva subagent roster.\n");
     product.push_str(NEW5);
     product.push_str(MODEL_CLASSES);
+    product.push_str(RESEARCH_CASTING);
+    product.push_str(FINAL_OPUS_CADENCE);
     product.push_str("Layout: adversarial-analyst.md and peers.\n");
     product.push_str("Deep review dispatches at least three angle-specific reviewers.\n");
     product.push_str("Produces a one-date explainer under `./superpowers/run-reports/`.\n");
@@ -550,7 +590,7 @@ fn phase4_fixture(root: &Path) {
     w(root, "product.md", &product);
 
     // channel docs
-    let channel = format!("{SUPERPOWERS}{BIG_LIST}{MODEL_CLASSES}");
+    let channel = format!("{SUPERPOWERS}{BIG_LIST}{MODEL_CLASSES}{FINAL_OPUS_CADENCE}");
     w(root, "docs/protocol/local-baton-channel.md", &channel);
     w(
         root,
@@ -560,7 +600,7 @@ fn phase4_fixture(root: &Path) {
     w(
         root,
         "plugins/dvandva/references/state-transition-table.md",
-        &format!("{BIG_LIST}{STATE_TABLE_CODEX_MAPPING}{MODEL_CLASSES}dvandva.baton.v3 is the sole writable schema; v1/v2 are retired from the WRITE path.\n"),
+        &format!("{BIG_LIST}{STATE_TABLE_CODEX_MAPPING}{MODEL_CLASSES}{FINAL_OPUS_CADENCE}dvandva.baton.v3 is the sole writable schema; v1/v2 are retired from the WRITE path.\n"),
     );
 
     // vadi skill
@@ -572,6 +612,9 @@ fn phase4_fixture(root: &Path) {
     vadi.push_str("For active batons, ask the user whether to continue.\n");
     vadi.push_str(MODEL_CLASSES);
     vadi.push_str(RING_DISPATCH);
+    vadi.push_str(RESEARCH_CASTING);
+    vadi.push_str(FINAL_OPUS_CADENCE);
+    vadi.push_str(FINAL_OPUS_WORKTREE_SCOPE);
     w(root, "plugins/dvandva/skills/vadi/SKILL.md", &vadi);
 
     // prativadi skill
@@ -581,6 +624,9 @@ fn phase4_fixture(root: &Path) {
     prativadi.push_str("Add `dvandva-adversarial-analyst` for boundary, state/concurrency, error-handling, or bypass-logic attack hypotheses.\n");
     prativadi.push_str(MODEL_CLASSES);
     prativadi.push_str(RING_DISPATCH);
+    prativadi.push_str(RESEARCH_CASTING);
+    prativadi.push_str(FINAL_OPUS_CADENCE);
+    prativadi.push_str(FINAL_OPUS_WORKTREE_SCOPE);
     w(
         root,
         "plugins/dvandva/skills/prativadi/SKILL.md",
@@ -601,13 +647,17 @@ fn phase4_fixture(root: &Path) {
     research.push_str("canonical Dvandva subagent roster.\n");
     research.push_str(NEW5);
     research.push_str(MODEL_CLASSES);
+    research.push_str(RESEARCH_CASTING);
+    research.push_str(RESEARCH_DEEP_REVIEW_CADENCE);
     w(root, "plugins/dvandva/skills/research/SKILL.md", &research);
 
     // commands
     let command = format!(
         "{SUPERPOWERS}research_ref work_split verification_matrix test_creation deep_review deslop\nparallel subagents\nconditional parallelism\nsubagent_tracks\nInvoke `dvandva:research`.\nregular local checkpoint commits\nA Codex-hosted role goes silent but keeps its --through-human wait running through the pause.\nCodex-hosted sessions append --through-human on the general wait; when no Claude Code-hosted session is part of the run, the role that wrote the pause surfaces it while the peer waits the pause out.\nModel-class mapping is vendor-neutral.\nNever use `haiku`.\n{MODEL_CLASSES}"
     );
-    let command = format!("{command}{RING_DISPATCH}");
+    let command = format!(
+        "{command}{RING_DISPATCH}{RESEARCH_CASTING}{FINAL_OPUS_CADENCE}{FINAL_OPUS_WORKTREE_SCOPE}"
+    );
     w(root, "plugins/dvandva/commands/vadi.md", &command);
     w(root, "plugins/dvandva/commands/prativadi.md", &command);
 
@@ -722,6 +772,106 @@ fn phase4_research_accepts_complete_fixture() {
 }
 
 #[test]
+fn phase4_research_requires_sol_owned_research_production_on_every_active_surface() {
+    for rel in [
+        "README.md",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "product.md",
+        "docs/model-selection.md",
+        "plugins/dvandva/skills/research/SKILL.md",
+        "plugins/dvandva/skills/vadi/SKILL.md",
+        "plugins/dvandva/skills/prativadi/SKILL.md",
+        "plugins/dvandva/commands/vadi.md",
+        "plugins/dvandva/commands/prativadi.md",
+    ] {
+        let d = tmp();
+        phase4_fixture(d.path());
+        let p = d.path().join(rel);
+        let text = fs::read_to_string(&p)
+            .unwrap()
+            .replace(RESEARCH_CASTING.lines().next().unwrap(), "");
+        fs::write(&p, text).unwrap();
+
+        let r = phase4_research::report(d.path());
+        assert!(
+            r.fails_with(&format!("{rel} pins Sol-owned research production")),
+            "removing Sol research ownership from {rel} did not fail the lint"
+        );
+    }
+}
+
+#[test]
+fn phase4_research_requires_claude_only_research_review_on_every_active_surface() {
+    let claude_policy = RESEARCH_CASTING.lines().nth(1).unwrap();
+    for rel in [
+        "README.md",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "product.md",
+        "docs/model-selection.md",
+        "plugins/dvandva/skills/research/SKILL.md",
+        "plugins/dvandva/skills/vadi/SKILL.md",
+        "plugins/dvandva/skills/prativadi/SKILL.md",
+        "plugins/dvandva/commands/vadi.md",
+        "plugins/dvandva/commands/prativadi.md",
+    ] {
+        let d = tmp();
+        phase4_fixture(d.path());
+        let p = d.path().join(rel);
+        let text = fs::read_to_string(&p).unwrap().replace(claude_policy, "");
+        fs::write(&p, text).unwrap();
+
+        let r = phase4_research::report(d.path());
+        assert!(
+            r.fails_with(&format!("{rel} pins Claude-only research review")),
+            "removing Claude-only research review from {rel} did not fail the lint"
+        );
+    }
+}
+
+#[test]
+fn phase4_research_rejects_legacy_fable_and_gpt_research_station_casting() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("docs/model-selection.md");
+    let mut text = fs::read_to_string(&p).unwrap();
+    text.push_str(
+        "`research_drafting` = fable (sonnet + grok), `research_review` = gpt (`gpt-5.6-sol` + grok).\n",
+    );
+    fs::write(&p, text).unwrap();
+
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("avoids legacy Fable/GPT research station casting"));
+}
+
+#[test]
+fn phase4_research_rejects_old_openai_models_as_live_fallbacks() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("docs/model-selection.md");
+    let mut text = fs::read_to_string(&p).unwrap();
+    text.push_str("When a 5.6 model is unavailable, this work falls back to\n`gpt-5.5`.\n");
+    fs::write(&p, text).unwrap();
+
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("avoids old OpenAI models in live routing"));
+}
+
+#[test]
+fn phase4_research_rejects_old_claude_models_as_live_stations() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("docs/model-selection.md");
+    let mut text = fs::read_to_string(&p).unwrap();
+    text.push_str("The default deep-review station is opus-4.5 for every run.\n");
+    fs::write(&p, text).unwrap();
+
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("avoids old Claude models in live routing"));
+}
+
+#[test]
 fn phase4_research_rejects_missing_cross_review_cycle_start_rule() {
     // xr-review-checkpoint-cycle-start-misstamp: both role SKILLs must pin that a
     // cross-review track's review_checkpoint is the current contiguous block's
@@ -777,7 +927,7 @@ fn phase4_research_rejects_unpinned_agents_ring_casting() {
     phase4_fixture(d.path());
     w(d.path(), "AGENTS.md", "The default ring uses gpt-5.5.\n");
     let r = phase4_research::report(d.path());
-    assert!(r.fails_with("AGENTS.md pins the Sol/Terra ring and GPT-5.5 fallback"));
+    assert!(r.fails_with("AGENTS.md pins the Sol/Terra ring without an older-model fallback"));
 }
 
 #[test]
@@ -791,10 +941,10 @@ fn phase4_research_rejects_agents_localized_sol_terra_swap() {
     w(
         d.path(),
         "AGENTS.md",
-        "gpt-5.6-terra reviews hard and adversarial work; gpt-5.6-sol executes routine tracks; gpt-5.5 is the fallback when a 5.6 model is unavailable.",
+        "gpt-5.6-terra reviews hard and adversarial work; gpt-5.6-sol executes routine tracks; an unavailable required model routes to human_decision instead of an older-generation fallback.",
     );
     let r = phase4_research::report(d.path());
-    assert!(r.fails_with("AGENTS.md pins the Sol/Terra ring and GPT-5.5 fallback"));
+    assert!(r.fails_with("AGENTS.md pins the Sol/Terra ring without an older-model fallback"));
 }
 
 #[test]
@@ -807,10 +957,10 @@ fn phase4_research_rejects_claude_localized_terra_sol_swap() {
     w(
         d.path(),
         "CLAUDE.md",
-        "Dispatch code to gpt-5.6-sol for routine work, gpt-5.6-terra for hard bounded work, and gpt-5.6-luna only for mechanically proven task classes; gpt-5.5 is the fallback.",
+        "Dispatch code to gpt-5.6-sol for routine work, gpt-5.6-terra for hard bounded work, and gpt-5.6-luna only for mechanically proven task classes; an unavailable required model routes to human_decision instead of an older-generation fallback.",
     );
     let r = phase4_research::report(d.path());
-    assert!(r.fails_with("CLAUDE.md pins the Sol/Terra/Luna dispatch and GPT-5.5 fallback"));
+    assert!(r.fails_with("CLAUDE.md pins Sol/Terra/Luna dispatch without an older-model fallback"));
 }
 
 #[test]
@@ -823,7 +973,7 @@ fn phase4_research_rejects_stale_claude_gpt55_bulk_dispatch() {
         "Dispatch mechanical bulk to gpt-5.5 via the Codex CLI.\n",
     );
     let r = phase4_research::report(d.path());
-    assert!(r.fails_with("CLAUDE.md pins the Sol/Terra/Luna dispatch and GPT-5.5 fallback"));
+    assert!(r.fails_with("CLAUDE.md pins Sol/Terra/Luna dispatch without an older-model fallback"));
 }
 
 #[test]
@@ -851,7 +1001,7 @@ fn phase4_research_rejects_stale_state_table_codex_mapping_cells() {
         .join("plugins/dvandva/references/state-transition-table.md");
     let text = fs::read_to_string(&p)
         .unwrap()
-        .replace("gpt-5.6-sol (fallback gpt-5.5)", "gpt-5.5 xhigh");
+        .replace("Opus-class | gpt-5.6-sol |", "Opus-class | gpt-5.6-terra |");
     fs::write(&p, text).unwrap();
     let r = phase4_research::report(d.path());
     assert!(r.fails_with("state-transition-table.md pins current Codex mapping cells"));
@@ -1671,12 +1821,79 @@ fn phase4_research_rejects_transition_table_missing_model_policy() {
 }
 
 #[test]
+fn phase4_research_rejects_missing_final_opus_cadence_policy() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("product.md");
+    let text = fs::read_to_string(&p).unwrap().replace(
+        "In full-profile development, clean non-final `cross_review` advances directly to phase N+1, while any risk-triggered escalation and every final-phase checkpoint enter `deep_review` for credited Anthropic Opus review.\n",
+        "",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with("product.md documents final cumulative Opus cadence"));
+}
+
+#[test]
+fn phase4_research_rejects_missing_cumulative_branch_diff_policy() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/skills/prativadi/SKILL.md");
+    let text = fs::read_to_string(&p).unwrap().replace(
+        "The final Opus review evaluates the cumulative branch diff from the branch baseline, not only the final phase's files; `termination_review` remains dual-role stop approval, not another Opus review.\n",
+        "",
+    );
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with(
+        "plugins/dvandva/skills/prativadi/SKILL.md scopes final Opus review cumulatively"
+    ));
+}
+
+#[test]
+fn phase4_research_rejects_missing_final_opus_worktree_intake_scope() {
+    for rel in [
+        "plugins/dvandva/skills/vadi/SKILL.md",
+        "plugins/dvandva/skills/prativadi/SKILL.md",
+        "plugins/dvandva/commands/vadi.md",
+        "plugins/dvandva/commands/prativadi.md",
+    ] {
+        let d = tmp();
+        phase4_fixture(d.path());
+        let p = d.path().join(rel);
+        let text = fs::read_to_string(&p)
+            .unwrap()
+            .replace(FINAL_OPUS_WORKTREE_SCOPE, "");
+        fs::write(&p, text).unwrap();
+        let r = phase4_research::report(d.path());
+        assert!(r.fails_with(&format!(
+            "{rel} includes dirty and untracked final Opus intake"
+        )));
+    }
+}
+
+#[test]
+fn phase4_research_rejects_research_skill_mandating_deep_review_every_phase() {
+    let d = tmp();
+    phase4_fixture(d.path());
+    let p = d.path().join("plugins/dvandva/skills/research/SKILL.md");
+    let text = fs::read_to_string(&p)
+        .unwrap()
+        .replace(RESEARCH_DEEP_REVIEW_CADENCE, "");
+    fs::write(&p, text).unwrap();
+    let r = phase4_research::report(d.path());
+    assert!(r.fails_with(
+        "research skill limits deep_review planning to final or risk-escalated phases"
+    ));
+}
+
+#[test]
 fn phase4_research_rejects_pre_5_6_codex_model_mapping() {
     let d = tmp();
     phase4_fixture(d.path());
     let p = d.path().join("product.md");
     let text = fs::read_to_string(&p).unwrap().replace(
-        "Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra`, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface.\n",
+        "Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra` on the active surface; Dvandva does not automatically fall back to older model generations, and an unavailable required model routes to `human_decision`.\n",
         "Codex maps `opus` and `fable` to `gpt-5.5` and `sonnet` and `gpt` to `gpt-5.5`.\n",
     );
     fs::write(&p, text).unwrap();
@@ -1800,12 +2017,12 @@ fn phase4_research_requires_cross_vendor_review_authority_on_every_mapping_surfa
 }
 
 #[test]
-fn phase4_research_rejects_codex_mapping_without_fallback() {
+fn phase4_research_rejects_missing_unavailable_model_human_decision_route() {
     let d = tmp();
     phase4_fixture(d.path());
     let p = d.path().join("product.md");
     let text = fs::read_to_string(&p).unwrap().replace(
-        ", falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface",
+        "; Dvandva does not automatically fall back to older model generations, and an unavailable required model routes to `human_decision`",
         "",
     );
     fs::write(&p, text).unwrap();
@@ -1892,10 +2109,10 @@ Dynamic write-path disjointness is required unless conflict_group serialization 
 There is no daemon and no mailbox.
 There is no hidden scheduler or hidden central process.
 Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available.
-Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra`, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface.
+Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra` on the active surface; Dvandva does not automatically fall back to older model generations, and an unavailable required model routes to `human_decision`.
 Codex reasoning effort is keyed to the thread role rather than the model class: the main session defaults to `xhigh` on every model and requests `max` only when the human sets it explicitly, while every dispatched Codex child is launched with an explicit `xhigh` effort because omitting it inherits the parent, may be lowered to `high`, `medium`, or `low` for proven-mechanical work, and never requests `max`; no Dvandva role uses `ultra` because its Codex-managed delegate threads run outside the baton's two-role coordination, and when a model does not support the requested effort the dispatching role keeps the selected model, drops to that model's highest supported effort, and logs the requested effort, effective effort, and reason.
 Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.
-Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
+Use `sonnet` for bounded implementation, documentation, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
 generated agents never own assignee, active_roles, or transitions.
 "#;
 
@@ -1908,10 +2125,10 @@ Dynamic write-path disjointness is required when instances share base_checkpoint
 There is no daemon and no mailbox.
 There is no hidden scheduler or hidden central process.
 Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available.
-Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra`, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface.
+Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra` on the active surface; Dvandva does not automatically fall back to older model generations, and an unavailable required model routes to `human_decision`.
 Codex reasoning effort is keyed to the thread role rather than the model class: the main session defaults to `xhigh` on every model and requests `max` only when the human sets it explicitly, while every dispatched Codex child is launched with an explicit `xhigh` effort because omitting it inherits the parent, may be lowered to `high`, `medium`, or `low` for proven-mechanical work, and never requests `max`; no Dvandva role uses `ultra` because its Codex-managed delegate threads run outside the baton's two-role coordination, and when a model does not support the requested effort the dispatching role keeps the selected model, drops to that model's highest supported effort, and logs the requested effort, effective effort, and reason.
 Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work.
-Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
+Use `sonnet` for bounded implementation, documentation, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop.
 generated agents never own assignee, active_roles, or transitions.
 "#;
 
@@ -2034,7 +2251,7 @@ fn run3_rejects_missing_codex_mapping() {
         d.path(),
         "plugins/dvandva/skills/research/SKILL.md",
         &RUN3_SURFACE.replace(
-            "Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra`, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface.\n",
+            "Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra` on the active surface; Dvandva does not automatically fall back to older model generations, and an unavailable required model routes to `human_decision`.\n",
             "",
         ),
     );

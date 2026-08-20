@@ -1019,6 +1019,25 @@ pub(crate) fn legal_transitions(current: &Value) -> Vec<TransitionOption> {
         if new_status == cur_status {
             continue;
         }
+        // A clean full-profile cross-review may skip the paid deep-review gate only
+        // between phases. Do not advertise the direct edge when the current phase
+        // is not provably non-final, or when a custom graph exposes it from a
+        // non-full phase; validate_candidate repeats these checks fail-closed for
+        // hand-authored candidates.
+        if cur_status == "cross_review"
+            && matches!(
+                new_status.as_str(),
+                "implementing" | "parallel_implementing"
+            )
+            && (edge_profile != "full"
+                || integration_trigger_present(current, &cur_phase)
+                || !matches!(
+                    (cur_phase_num, total_phases_num(current)),
+                    (Some(phase), Some(total)) if phase < total
+                ))
+        {
+            continue;
+        }
         // Amendment entry edge (F7): sets amendment_from_phase, loop-capped.
         let is_enter = is_v2
             && cur_eff_mode == "development"
@@ -1330,7 +1349,10 @@ fn classify_phase_move(cur_status: &str, new_status: &str, is_enter: bool) -> Ph
         | "workflow_revision" => PhaseMove::Spec,
         "implementing" | "parallel_implementing" => {
             // Entry from spec, or advancement from a prior phase's exit state.
-            if matches!(cur_status, "spec_review" | "deslop" | "phase_review") {
+            if matches!(
+                cur_status,
+                "spec_review" | "cross_review" | "deslop" | "phase_review"
+            ) {
                 PhaseMove::Advance
             } else {
                 PhaseMove::Same
@@ -1509,18 +1531,7 @@ fn security_trigger_present(cand: &Value, phase_key: &str) -> bool {
         })
 }
 
-/// F6 INTEGRATION trigger: the current phase has ≥2 write-capable chunks with
-/// different owner_role AND a real seam (cross-owner depends_on or shared
-/// conflict_group).
-fn integration_trigger_present(cand: &Value, phase_key: &str) -> bool {
-    let root_status = str_field(cand, "status");
-    let chunks: Vec<&Value> = iter_values(field(cand, "work_split"))
-        .into_iter()
-        .filter(|item| {
-            jq_render(field(item, "phase")) == phase_key
-                && !effective_write_paths(item, &root_status).is_empty()
-        })
-        .collect();
+fn integration_seam_present(chunks: &[&Value]) -> bool {
     if chunks.len() < 2 {
         return false;
     }
@@ -1529,8 +1540,8 @@ fn integration_trigger_present(cand: &Value, phase_key: &str) -> bool {
     if distinct_roles.len() < 2 {
         return false;
     }
-    for a in &chunks {
-        for b in &chunks {
+    for a in chunks {
+        for b in chunks {
             if owner_role_or_owner(a) == owner_role_or_owner(b) {
                 continue;
             }
@@ -1545,6 +1556,41 @@ fn integration_trigger_present(cand: &Value, phase_key: &str) -> bool {
         }
     }
     false
+}
+
+/// F6 INTEGRATION trigger: the current phase has ≥2 write-capable chunks with
+/// different owner_role AND a real seam (cross-owner depends_on or shared
+/// conflict_group). When phase tags do not expose the seam, the run-level
+/// changed_paths union selects write-capable chunks as a fail-closed fallback.
+fn integration_trigger_present(cand: &Value, phase_key: &str) -> bool {
+    let root_status = str_field(cand, "status");
+    let work_split = iter_values(field(cand, "work_split"));
+    let phase_chunks: Vec<&Value> = work_split
+        .iter()
+        .copied()
+        .filter(|item| {
+            jq_render(field(item, "phase")) == phase_key
+                && !effective_write_paths(item, &root_status).is_empty()
+        })
+        .collect();
+    if integration_seam_present(&phase_chunks) {
+        return true;
+    }
+
+    let changed_paths = string_array(field(cand, "changed_paths"));
+    let run_level_chunks: Vec<&Value> = work_split
+        .into_iter()
+        .filter(|item| {
+            effective_write_paths(item, &root_status)
+                .iter()
+                .any(|path| {
+                    changed_paths
+                        .iter()
+                        .any(|changed| provenance::path_overlap(path, changed))
+                })
+        })
+        .collect();
+    integration_seam_present(&run_level_chunks)
 }
 
 /// A completed current-cycle risk-review track whose name/track contains
@@ -2286,17 +2332,18 @@ fn decide_transition(
     // must use the entry state that matches the TARGET phase's effective profile
     // (implementing <=> standard, parallel_implementing <=> full). The whitelist
     // alone cannot enforce this for cross-profile advancement — a full phase's
-    // `deslop` reaches BOTH `implementing` and `parallel_implementing`, and a
-    // standard phase's `phase_review` likewise — so the entry state is pinned to
-    // the next phase's profile here. (The spec_review entry is already gated by
-    // the target-profile whitelist selection above; this makes it uniform.)
+    // `cross_review` or `deslop` reaches BOTH `implementing` and
+    // `parallel_implementing`, and a standard phase's `phase_review` likewise —
+    // so the entry state is pinned to the next phase's profile here. (The
+    // spec_review entry is already gated by the target-profile whitelist
+    // selection above; this makes it uniform.)
     if legal
         && cx.is_v2
         && cur_effective_mode == "development"
         && matches!(cx.new_status, "implementing" | "parallel_implementing")
         && matches!(
             cur_status.as_str(),
-            "spec_review" | "deslop" | "phase_review"
+            "spec_review" | "cross_review" | "deslop" | "phase_review"
         )
     {
         let want = if new_phase_eff == "full" {
@@ -2312,6 +2359,42 @@ fn decide_transition(
                     cx.new_status, cx.new_phase, new_phase_eff, want
                 ),
             ));
+        }
+    }
+    // Final cumulative Opus cadence: a clean full-profile cross_review may advance
+    // directly only to the immediately following, profile-appropriate phase entry.
+    // A final phase, missing ceiling, integration risk, or non-full custom source
+    // fails closed and must use the existing cross_review->deep_review path.
+    if legal
+        && cx.is_v2
+        && cur_effective_mode == "development"
+        && cur_status == "cross_review"
+        && matches!(cx.new_status, "implementing" | "parallel_implementing")
+    {
+        if cur_phase_eff != "full" {
+            legal = false;
+            reason =
+                "cross_review direct advance requires current effective profile full".to_string();
+        } else if !matches!(
+            (cur_phase_num, total_phases_num(cur_doc)),
+            (Some(phase), Some(total)) if phase < total
+        ) {
+            legal = false;
+            reason = "final-phase cross_review requires deep_review before termination_review"
+                .to_string();
+        } else if new_phase_num != cur_phase_num.map(|phase| phase + 1) {
+            legal = false;
+            reason = format!(
+                "cross_review direct advance requires phase=N+1 current_phase={cur_phase} candidate_phase={}",
+                cx.new_phase
+            );
+        } else if integration_trigger_present(cur_doc, &cur_phase)
+            || integration_trigger_present(cand, &cur_phase)
+        {
+            legal = false;
+            reason =
+                "non-final cross_review integration risk requires deep_review before phase advance"
+                    .to_string();
         }
     }
     // S4-T2 (D2): the spec→implementation boundary — including a plan-amendment
@@ -2398,11 +2481,21 @@ fn decide_transition(
             reason = "cross_review->cross_fixing requires current-cycle completed cross-review subagent_tracks with non-approval evidence".to_string();
         }
     }
-    if legal && cx.is_v2 && cur_status == "cross_review" && cx.new_status == "deep_review" {
+    if legal
+        && cx.is_v2
+        && cur_status == "cross_review"
+        && matches!(
+            cx.new_status,
+            "deep_review" | "implementing" | "parallel_implementing"
+        )
+    {
         let required = cross_review_cycle_checkpoint(baton_dir, cur_doc, cur_checkpoint_i64);
-        if !cross_review_to_deep_review_ok(cand, required) {
+        if !cross_review_approvals_ok(cand, required) {
             legal = false;
-            reason = "cross_review->deep_review requires current-cycle completed cross-review subagent_tracks for both roles with phase=\"cross_review\"".to_string();
+            reason = format!(
+                "cross_review->{} requires current-cycle completed cross-review subagent_tracks for both roles with phase=\"cross_review\"",
+                cx.new_status
+            );
         }
     }
     if legal && cx.is_v2 && cx.new_status == "review_of_review" && !narrow_fixups_ok(cand) {
@@ -5168,7 +5261,7 @@ fn cross_review_to_cross_fixing_ok(cand: &Value, required: i64) -> bool {
     })
 }
 
-fn cross_review_to_deep_review_ok(cand: &Value, required: i64) -> bool {
+fn cross_review_approvals_ok(cand: &Value, required: i64) -> bool {
     let done_cross = |role: &str| {
         arr(field(cand, "subagent_tracks")).iter().any(|t| {
             str_field(t, "phase") == "cross_review"

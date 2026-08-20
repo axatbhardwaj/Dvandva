@@ -5,6 +5,7 @@ journal/
 *.log
 /superpowers/
 /agent-os/
+/BRANCH-NOTES.md
 
 # Secrets — crates.io publish token etc. Never commit.
 .env

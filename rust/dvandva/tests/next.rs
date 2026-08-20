@@ -320,6 +320,176 @@ fn generate_cross_review_to_deep_review_scaffolds_dispatch_request_and_write_acc
     assert_eq!(read_json(&baton)["checkpoint"], 5);
 }
 
+#[test]
+fn generate_clean_cross_review_direct_advance_without_opus_dispatch() {
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    let candidate = dir.path().join("baton.next.json");
+    make_baton_v3(&baton, "cross_review", "team", 4, |b| {
+        b["master_plan_locked"] = json!(true);
+        b["total_phases"] = json!(2);
+        b["phase"] = json!(1);
+        common::parallel_chunks_phase(b, "2");
+        cross_review_tracks(b);
+    });
+
+    let (list_code, list_out, list_err) = run_next(&["--file", baton.to_str().unwrap()]);
+    assert_eq!(list_code, 0, "list exits 0\nstderr:\n{list_err}");
+    assert!(
+        list_out.contains("DVANDVA_NEXT parallel_implementing owner=team phase=advance"),
+        "clean non-final cross_review offers direct full-profile advance\n{list_out}"
+    );
+
+    let (code, stdout, stderr) = run_next(&[
+        "--file",
+        baton.to_str().unwrap(),
+        "--to",
+        "parallel_implementing",
+        "--phase",
+        "2",
+        "--summary",
+        "Reciprocal cross-review is clean; advancing directly to phase 2.",
+        "--next-action",
+        "team: execute the phase-2 implementation split.",
+    ]);
+    assert_eq!(code, 0, "direct advance exits 0\nstderr:\n{stderr}");
+    assert!(stdout.contains("to=parallel_implementing checkpoint=5"));
+
+    let cand = read_json(&candidate);
+    assert_eq!(cand["status"], "parallel_implementing");
+    assert_eq!(cand["phase"], 2);
+    assert_eq!(cand["assignee"], "team");
+    assert!(
+        cand["dispatch_requests"]
+            .as_array()
+            .is_none_or(Vec::is_empty),
+        "direct advance must not scaffold a credited Opus dispatch\n{cand}"
+    );
+    run(&baton, &candidate).assert("write accepts direct cross_review advance", 0);
+}
+
+#[test]
+fn integration_risk_cross_review_list_requires_deep_review() {
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    make_baton_v3(&baton, "cross_review", "team", 4, |b| {
+        b["master_plan_locked"] = json!(true);
+        b["total_phases"] = json!(2);
+        b["phase"] = json!(1);
+        common::parallel_chunks_phase(b, "2");
+        common::append_integration_risk_chunks(b, "1");
+        cross_review_tracks(b);
+    });
+
+    let (code, stdout, stderr) = run_next(&["--file", baton.to_str().unwrap()]);
+    assert_eq!(code, 0, "list exits 0\nstderr:\n{stderr}");
+    assert!(stdout.contains("DVANDVA_NEXT deep_review owner=prativadi phase=same"));
+    assert!(
+        !stdout.contains("DVANDVA_NEXT parallel_implementing owner=team phase=advance"),
+        "integration risk must route through deep_review\n{stdout}"
+    );
+}
+
+#[test]
+fn generate_clean_cross_review_uses_standard_next_phase_entry_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    let candidate = dir.path().join("baton.next.json");
+    make_baton_v3(&baton, "cross_review", "team", 4, |b| {
+        b["active_roles"] = json!(["vadi", "prativadi"]);
+        b["master_plan_locked"] = json!(true);
+        b["total_phases"] = json!(2);
+        b["phase"] = json!(1);
+        b["phase_profiles"] = json!({"2": "standard"});
+        cross_review_tracks(b);
+    });
+
+    let (list_code, list_out, list_err) = run_next(&["--file", baton.to_str().unwrap()]);
+    assert_eq!(list_code, 0, "list exits 0\nstderr:\n{list_err}");
+    assert!(list_out.contains("DVANDVA_NEXT implementing owner=vadi phase=advance"));
+    assert!(
+        !list_out.contains("DVANDVA_NEXT parallel_implementing owner=team phase=advance"),
+        "target phase profile pins the entry state\n{list_out}"
+    );
+
+    let (code, _stdout, stderr) = run_next(&[
+        "--file",
+        baton.to_str().unwrap(),
+        "--to",
+        "implementing",
+        "--phase",
+        "2",
+        "--summary",
+        "Reciprocal cross-review is clean; advancing to standard phase 2.",
+        "--next-action",
+        "vadi: implement the phase-2 standard-profile scope.",
+    ]);
+    assert_eq!(
+        code, 0,
+        "standard direct advance exits 0\nstderr:\n{stderr}"
+    );
+    let cand = read_json(&candidate);
+    assert_eq!(cand["status"], "implementing");
+    assert_eq!(cand["phase"], 2);
+    assert_eq!(cand["assignee"], "vadi");
+    assert!(
+        cand["dispatch_requests"]
+            .as_array()
+            .is_none_or(Vec::is_empty),
+        "standard target direct advance must not scaffold a credited Opus dispatch"
+    );
+    run(&baton, &candidate).assert("write accepts standard target direct advance", 0);
+}
+
+#[test]
+fn final_cross_review_list_requires_deep_review() {
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    make_baton_v3(&baton, "cross_review", "team", 4, |b| {
+        b["active_roles"] = json!(["vadi", "prativadi"]);
+        b["master_plan_locked"] = json!(true);
+        b["total_phases"] = json!(1);
+        b["phase"] = json!(1);
+        cross_review_tracks(b);
+    });
+
+    let (code, stdout, stderr) = run_next(&["--file", baton.to_str().unwrap()]);
+    assert_eq!(code, 0, "list exits 0\nstderr:\n{stderr}");
+    assert!(stdout.contains("DVANDVA_NEXT deep_review owner=prativadi phase=same"));
+    assert!(!stdout.contains("DVANDVA_NEXT implementing "));
+    assert!(!stdout.contains("DVANDVA_NEXT parallel_implementing "));
+}
+
+#[test]
+fn generate_cross_review_direct_advance_rejects_missing_evidence() {
+    let dir = tempfile::tempdir().unwrap();
+    let baton = dir.path().join("baton.json");
+    make_baton_v3(&baton, "cross_review", "team", 4, |b| {
+        b["master_plan_locked"] = json!(true);
+        b["total_phases"] = json!(2);
+        b["phase"] = json!(1);
+        common::parallel_chunks_phase(b, "2");
+    });
+
+    let (code, _stdout, stderr) = run_next(&[
+        "--file",
+        baton.to_str().unwrap(),
+        "--to",
+        "parallel_implementing",
+        "--phase",
+        "2",
+        "--summary",
+        "Attempt direct advance without reciprocal evidence.",
+        "--next-action",
+        "team: this candidate must be rejected.",
+    ]);
+    assert_eq!(code, 23, "content-gated direct advance exits 23");
+    assert!(
+        stderr.contains("current-cycle completed cross-review subagent_tracks for both roles"),
+        "missing evidence is the rejection cause\n{stderr}"
+    );
+}
+
 // tc-dispatch-request-ack-producer-wiring-r4 (FIX 2a): on a deep_review baton
 // where the addressed role's own dispatch request is OPEN, `dvandva next --to
 // deep_review` emits the same-status ack candidate (open->acknowledged) that the

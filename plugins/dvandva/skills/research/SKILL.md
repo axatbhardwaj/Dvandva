@@ -9,7 +9,7 @@ description: Use when a Dvandva run is in research_drafting, research_review, or
 
 Use this skill to turn the user's `original_ask` into source-backed preparation before planning, implementation, or review. It covers all three accepted v2 run intents while the baton is still in `research_drafting`, `research_review`, or `research_revision`:
 
-- **Development mode** writes `research_ref`, reconciles independent research from both engines, and prepares `work_split`, `subagent_tracks`, plus `verification_matrix` before spec drafting and implementation.
+- **Development mode** writes `research_ref` from Sol-produced research plus independent Claude review, and prepares `work_split`, `subagent_tracks`, plus `verification_matrix` before spec drafting and implementation.
 - **Research mode** writes `research_ref` plus the baton fields needed to decide whether the run stays exploratory or seeds later development.
 - **Review mode** reuses the same research statuses for scope and intake analysis before the actual review lifecycle begins.
 
@@ -32,7 +32,7 @@ In review mode, `research_ref` is the scope and intake analysis artifact. It is 
 
 | Intent | Research-stage contract | Later contract |
 |---|---|---|
-| `development` | Reuse `research_drafting` / `research_review` / `research_revision` to build `research_ref`, distribute work, reconcile independent research from both engines, and map verification before planning. | Accepted research advances to `phase: "spec", status: "spec_drafting"` before any implementation work. |
+| `development` | Reuse `research_drafting` / `research_review` / `research_revision` to build `research_ref`, distribute work, run Sol production plus independent Claude review, and map verification before planning. | Accepted research advances to `phase: "spec", status: "spec_drafting"` before any implementation work. |
 | `research` | Reuse `research_drafting` / `research_review` / `research_revision` to build `research_ref`, `work_split`, and `verification_matrix`, then record `research_outcome` as `exploratory` or `seed_development`. | `exploratory` may stop after accepted research. `seed_development` must continue through the existing planning lifecycle and cannot reach terminal `done` without `plan_ref`. |
 | `review` | Reuse the same research statuses for scoping and intake analysis. Produce `research_ref` for scope/intake, populate structured `review_intake`, and keep `review_target` as the existing string selector for the later review subject. | The actual review deliverable is `review_ref`, produced later by the existing `deep_review` / `deslop` review lifecycle, not by the initial research pass. |
 
@@ -72,22 +72,32 @@ Use parallel subagents aggressively when tools are available. Default tracks:
 - Profile map: compute `profile_floor` from actual or expected `changed_paths`, `work_split[*].paths/read_paths/write_paths`, and generated-agent read/write paths. Fast is allowlisted prose only; full is required for baton schema/templates, role skills, helper scripts, transition tables, protocol docs, hooks, lint/test/install scripts, dependency manifests, secrets/env surfaces, external API clients, artifact/history formats, or ambiguous behavior.
 - Work distribution: proposed owner and scope for each track or phase.
 - Test creation: every new behavior, helper, schema path, or generated workflow needs an explicit test or lint entry. Source-only documentation gets a lint/review entry rather than executable coverage.
-- Deep review: plan a `deep_review` pass after implementation, test_creation, and cross_review to hunt correctness bugs, stale wording, missed invariants, and low/minor issues.
+- Deep review: after implementation, test_creation, and cross_review, plan `deep_review` only for a final phase or an explicit non-final risk escalation.
 - De-slop: plan a `deslop` pass to remove fuzzy wording, duplicated instructions, overbroad abstractions, stale examples, and generated-looking clutter before final approval.
 
-If no subagent tool is available, do the same exploration directly and record the fallback in work_split.
+If no subagent tool is available, do the same exploration directly and record the fallback in work_split. This direct fallback applies only to supporting maps outside the ownership gates. If `gpt-5.6-sol` cannot be dispatched for production/revision, or a fresh Claude-family reviewer cannot be dispatched for review, route to `human_decision`; the hosting role must not take over that station.
 
-Subagents are read-only during research by default. The main agent synthesizes the artifact, writes baton fields, and owns the handoff.
+Research subagents are read-only with respect to the repository and baton. Sol produces or revises the source-backed artifact content; the vadi serializes that result into `research_ref`, writes baton fields, and owns the handoff. A fresh Claude-family reviewer evaluates the artifact without editing it, and the prativadi serializes that verdict.
 
 ## Dvandva Agent Roster
 
 Use the canonical Dvandva subagent roster under `plugins/dvandva/agents/` when the harness supports named subagents. These local roles are the source of truth for Dvandva; retired personal agent definitions from external skill repos should not be required.
 
-Dvandva model classes are vendor-neutral. Agent frontmatter uses `model: opus` and `model: sonnet` as class labels, not Anthropic-only product IDs. Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available. Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra`, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface. Codex-side `opus` and `fable` executions are GPT hygiene only and never earn review credit; credited deep/adversarial review remains a cross-vendor Anthropic Opus gate. Codex reasoning effort is keyed to the thread role rather than the model class: the main session defaults to `xhigh` on every model and requests `max` only when the human sets it explicitly, while every dispatched Codex child is launched with an explicit `xhigh` effort because omitting it inherits the parent, may be lowered to `high`, `medium`, or `low` for proven-mechanical work, and never requests `max`; no Dvandva role uses `ultra` because its Codex-managed delegate threads run outside the baton's two-role coordination, and when a model does not support the requested effort the dispatching role keeps the selected model, drops to that model's highest supported effort, and logs the requested effort, effective effort, and reason. Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work. Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop. Do not use `haiku` for Dvandva subagents.
+Dvandva model classes are vendor-neutral. Agent frontmatter uses `model: opus` and `model: sonnet` as class labels, not Anthropic-only product IDs. Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available. Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra` on the active surface; Dvandva does not automatically fall back to older model generations, and an unavailable required model routes to `human_decision`. Codex-side `opus` and `fable` executions are GPT hygiene only and never earn review credit; credited deep/adversarial review remains a cross-vendor Anthropic Opus gate. Codex reasoning effort is keyed to the thread role rather than the model class: the main session defaults to `xhigh` on every model and requests `max` only when the human sets it explicitly, while every dispatched Codex child is launched with an explicit `xhigh` effort because omitting it inherits the parent, may be lowered to `high`, `medium`, or `low` for proven-mechanical work, and never requests `max`; no Dvandva role uses `ultra` because its Codex-managed delegate threads run outside the baton's two-role coordination, and when a model does not support the requested effort the dispatching role keeps the selected model, drops to that model's highest supported effort, and logs the requested effort, effective effort, and reason. Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work. Use `sonnet` for bounded implementation, documentation, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop. Do not use `haiku` for Dvandva subagents.
+
+Research production is Sol-owned: `research_drafting` and `research_revision` dispatch `gpt-5.6-sol` to produce and revise the source-backed content for `research_ref`; the vadi only coordinates and serializes the result.
+Research review is Claude-only: a fresh Claude-family reviewer independently evaluates `research_ref`; a Codex-hosted prativadi may only serialize that reviewer's verdict into the baton and must not substitute its own approval.
+
+The `dvandva-researcher` seed is a reusable research brief, not the concrete model assignment for these statuses. The Sol/Claude casting above overrides its legacy seed-model class. Grok remains optional, read-only, uncredited, and unable to edit code, write the baton, or approve research.
+
+Model-family names in this contract identify actual executions, not portable class labels. `gpt-5.6-sol` means a real Sol dispatch. “Fresh Claude-family reviewer” means a new Anthropic-backed Claude execution; a Codex-resolved `opus` or `fable` class does not qualify. Record the dispatch handle, effective provider/model, and immutable output reference in the station's `subagent_tracks.outputs` and `evidence_refs`. Missing provenance fails closed to `human_decision`.
+
+Serialization is formatting-only: the vadi may wrap Sol's output in the required HTML, add metadata, and make non-substantive copy edits, but it must not add, remove, or reinterpret research claims. Preserve a reference to Sol's source output so the Claude reviewer can compare the artifact against what Sol produced. The prativadi applies the same rule to the Claude verdict: it may encode the verdict and route the baton, but it must not alter findings or add an independent approval.
 
 | Phase | Agent |
 |---|---|
-| `research_drafting` | `dvandva-researcher`, `dvandva-pattern-mapper`, `dvandva-architect`, `dvandva-baton-auditor` |
+| `research_drafting` / `research_revision` | `gpt-5.6-sol` using the `dvandva-researcher`, `dvandva-pattern-mapper`, `dvandva-architect`, and `dvandva-baton-auditor` briefs as needed; the concrete Sol assignment overrides their seed model classes |
+| `research_review` | A fresh Claude-family reviewer using the relevant research, deep-review, verification, and baton-audit briefs; a Codex host serializes the verdict only |
 | `spec_drafting` | `dvandva-architect`, `dvandva-baton-auditor` |
 | `parallel_implementing` / `implementing` | `dvandva-implementer`, optionally `dvandva-sandbox-verifier` |
 | `test_creation` | `dvandva-test-creator`, `dvandva-sandbox-verifier` |
@@ -108,7 +118,7 @@ Mandatory invariants:
 - Coordination invariant: no daemon, no hidden orchestrator — the baton is the only coordinator.
 - Single-writer: generated agents never own `assignee`, `active_roles`, phase transitions, or final approval.
 - Path invariant: dynamic write-path disjointness — generated instances with non-empty `write_paths` sharing the same `base_checkpoint`, or any two live (`planned`/`running`) instances regardless of base_checkpoint, must be pairwise disjoint unless explicitly serialized through `depends_on` within a shared `conflict_group`; closed instances from an earlier base_checkpoint do not block later sequential reuse.
-- Model-class mapping: the seed roster remains pinned to `opus-class|gpt-5.5-xhigh` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit seeds, and `sonnet-class|gpt-5.5-high` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop seeds. Generated non-seed instances may also emit `fable-class|gpt-5.5-xhigh` for fable-class frontier work or `gpt-class|gpt-5.5-high` for gpt-class Codex-wrapper/bulk work. Codex reasoning effort is keyed to the thread role rather than the model class: the main session defaults to `xhigh` on every model and requests `max` only when the human sets it explicitly, while every dispatched Codex child is launched with an explicit `xhigh` effort because omitting it inherits the parent, may be lowered to `high`, `medium`, or `low` for proven-mechanical work, and never requests `max`; no Dvandva role uses `ultra` because its Codex-managed delegate threads run outside the baton's two-role coordination, and when a model does not support the requested effort the dispatching role keeps the selected model, drops to that model's highest supported effort, and logs the requested effort, effective effort, and reason. Never use `haiku`.
+- Model-class mapping: the seed roster remains pinned to `opus-class|gpt-5.5-xhigh` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit seeds, and `sonnet-class|gpt-5.5-high` for bounded implementation, documentation, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop seeds. Generated non-seed instances may also emit `fable-class|gpt-5.5-xhigh` for fable-class frontier work or `gpt-class|gpt-5.5-high` for gpt-class Codex-wrapper/bulk work. Codex reasoning effort is keyed to the thread role rather than the model class: the main session defaults to `xhigh` on every model and requests `max` only when the human sets it explicitly, while every dispatched Codex child is launched with an explicit `xhigh` effort because omitting it inherits the parent, may be lowered to `high`, `medium`, or `low` for proven-mechanical work, and never requests `max`; no Dvandva role uses `ultra` because its Codex-managed delegate threads run outside the baton's two-role coordination, and when a model does not support the requested effort the dispatching role keeps the selected model, drops to that model's highest supported effort, and logs the requested effort, effective effort, and reason. Never use `haiku`.
 
 ## Absorbed Dvandva skills
 
@@ -125,9 +135,9 @@ These skills are available within the Dvandva run context. Use each only when it
 Development-mode runs pass through the mandatory `clarifying_questions_drafting` → `clarifying_questions_followup_answer` prefix before ever reaching `research_drafting` (see `dvandva:clarifying-questions`). Once a run is in the research statuses, the vadi runs first:
 
 1. Re-read `original_ask` and repo instructions, then identify whether the run is in `development`, `research`, or `review` mode. Development-mode research is mandatory and is not replaced by the lightweight research/review run modes.
-2. Dispatch parallel subagents or perform the same tracks directly.
-3. Create or update `research_ref` as the HTML artifact.
-4. In development mode, reconcile independent research inputs and populate implementation-ready `work_split`, `subagent_tracks`, `verification_matrix`, `profile`, `profile_floor`, `profile_decision`, and `profile_history` before handing to review. If hard-risk triggers are present, choose `full`; if fast is requested, require allowlist evidence and no hard-risk paths.
+2. Dispatch `gpt-5.6-sol` with the required source, codebase, verification, and risk tracks. Sol produces the source-backed research content; the vadi does not replace it with its own or Fable-authored synthesis. An optional Grok lane may supply read-only freshness leads for Sol to verify.
+3. Serialize Sol's result into `research_ref` as the HTML artifact. Only the vadi writes the artifact and baton.
+4. In development mode, consolidate Sol's research into implementation-ready `work_split`, `subagent_tracks`, `verification_matrix`, `profile`, `profile_floor`, `profile_decision`, and `profile_history` before handing to review. If hard-risk triggers are present, choose `full`; if fast is requested, require allowlist evidence and no hard-risk paths.
 5. In research mode, set `research_outcome` to `exploratory` or `seed_development`. If the run is `seed_development`, plan the downstream path to `plan_ref`.
 6. In review mode, populate structured `review_intake`, keep `review_target` as the existing string selector, and do not write `review_ref`.
 7. Populate `work_split` and `verification_matrix`, including `test_creation`, `deep_review`, and `deslop` entries when those later existing statuses are expected.
@@ -135,13 +145,13 @@ Development-mode runs pass through the mandatory `clarifying_questions_drafting`
 
 ### research_review
 
-The prativadi performs independent research review. Do not rely solely on the vadi's research_ref.
+The prativadi dispatches a fresh Claude-family reviewer for independent research review. Do not rely solely on the vadi's research_ref, and do not substitute a Codex or Sol review for this gate.
 
 1. Re-read `original_ask`.
 2. Open `research_ref`. In review mode, also inspect `review_intake` and confirm `review_target` still names the intended later review subject.
-3. Independently inspect relevant code, docs, tests, and local commands.
-4. Use parallel subagents when available.
-5. Compare independent findings against `research_ref`, `work_split`, `subagent_tracks`, `verification_matrix`, and any mode-specific baton fields already set.
+3. Have the fresh Claude-family reviewer independently inspect relevant code, docs, tests, and local commands.
+4. Use additional Claude-family review tracks when parallelism is useful. An optional Grok lane may supply read-only leads, but it earns no approval credit.
+5. Serialize the Claude reviewer's comparison of its independent findings against `research_ref`, `work_split`, `subagent_tracks`, `verification_matrix`, and any mode-specific baton fields already set. A Codex-hosted prativadi records that verdict without adding or substituting its own approval.
 6. Confirm test creation is separate from review and that new code/behavior has a 100% test coverage plan or an explicit documented reason why executable coverage is impossible.
 7. If gaps remain, write `findings` and route to `research_revision`.
 8. If research is sufficient, route according to the accepted intent:
@@ -155,8 +165,8 @@ The prativadi performs independent research review. Do not rely solely on the va
 The vadi addresses prativadi research findings:
 
 1. Read every finding.
-2. Re-run targeted research tracks or subagents as needed.
-3. Update the HTML artifact plus any affected mode fields: development-mode work/verification planning, `research_outcome` for research mode, or `review_intake` while preserving `review_target` for review mode.
+2. Re-dispatch `gpt-5.6-sol` for every targeted research revision. An optional Grok lane may supply read-only leads for Sol to verify.
+3. Serialize Sol's revised content into the HTML artifact plus any affected mode fields: development-mode work/verification planning, `research_outcome` for research mode, or `review_intake` while preserving `review_target` for review mode.
 4. Update `work_split`, `subagent_tracks`, and `verification_matrix`.
 5. Do not produce `review_ref` during this revision loop.
 6. Clear resolved findings and hand back to `research_review`.
@@ -167,7 +177,7 @@ The vadi addresses prativadi research findings:
 |---|---|
 | Treating research as prose in `summary` | Write `research_ref`, `work_split`, and `verification_matrix`. |
 | Letting prativadi only rubber-stamp the artifact | Require independent research review against sources. |
-| Claiming unavailable subagents were used | Record the direct fallback in `work_split`. |
+| Claiming unavailable supporting subagents were used | Record a direct fallback for supporting maps in `work_split`; required Sol production/revision and Claude review never fall back directly. |
 | Writing generated research as Markdown | Generated human-facing research is HTML; source/platform docs remain Markdown. |
 | Starting implementation from research | Research must feed spec drafting and verification planning before implementation. |
 | Treating `fast`, `standard`, or `full` as `mode` values | Keep `mode` as the run contract and store lifecycle depth in development-only `profile`. |

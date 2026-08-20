@@ -696,6 +696,446 @@ fn v2_cross_review_deep_review_after_team_sync() {
     );
 }
 
+#[test]
+fn full_cross_review_advances_to_full_next_phase_without_opus_dispatch() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+        parallel_chunks_phase(v, "2");
+        cross_review_tracks(v);
+    });
+    make_baton_v3(&n, "parallel_implementing", "team", 5, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(2);
+        parallel_chunks_phase(v, "2");
+        cross_review_tracks(v);
+    });
+
+    run(&b, &n).assert(
+        "clean full cross_review advances directly to full phase N+1 without Opus dispatch",
+        0,
+    );
+    let installed: Value = serde_json::from_slice(&std::fs::read(&b).unwrap()).unwrap();
+    assert!(
+        installed["dispatch_requests"]
+            .as_array()
+            .is_none_or(Vec::is_empty),
+        "direct non-final advance must not create a paid Opus dispatch request"
+    );
+}
+
+#[test]
+fn full_cross_review_advances_to_standard_next_phase_without_opus_dispatch() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+        v["phase_profiles"] = json!({"2": "standard"});
+        cross_review_tracks(v);
+    });
+    make_baton_v3(&n, "implementing", "vadi", 5, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(2);
+        v["phase_profiles"] = json!({"2": "standard"});
+        cross_review_tracks(v);
+    });
+
+    run(&b, &n).assert(
+        "clean full cross_review advances directly to standard phase N+1 without Opus dispatch",
+        0,
+    );
+}
+
+#[test]
+fn full_cross_review_direct_advance_rejects_current_phase_integration_risk() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+        parallel_chunks_phase(v, "2");
+        append_integration_risk_chunks(v, "1");
+        cross_review_tracks(v);
+    });
+    make_baton_v3(&n, "parallel_implementing", "team", 5, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(2);
+        parallel_chunks_phase(v, "2");
+        append_integration_risk_chunks(v, "1");
+        cross_review_tracks(v);
+    });
+
+    run(&b, &n).assert_contains(
+        "cross_review direct advance rejects current-phase integration risk",
+        24,
+        "integration risk requires deep_review",
+    );
+}
+
+#[test]
+fn full_cross_review_direct_advance_rejects_integration_risk_stripped_from_candidate() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+        parallel_chunks_phase(v, "2");
+        append_integration_risk_chunks(v, "1");
+        cross_review_tracks(v);
+    });
+    make_baton_v3(&n, "parallel_implementing", "team", 5, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(2);
+        parallel_chunks_phase(v, "2");
+        append_integration_risk_chunks(v, "1");
+        for chunk in v["work_split"].as_array_mut().unwrap() {
+            if matches!(
+                chunk["id"].as_str(),
+                Some("integration-seam-a" | "integration-seam-b")
+            ) {
+                let chunk = chunk.as_object_mut().unwrap();
+                chunk.remove("depends_on");
+                chunk.remove("conflict_group");
+            }
+        }
+        cross_review_tracks(v);
+    });
+
+    run(&b, &n).assert_contains(
+        "cross_review direct advance retains installed integration risk when candidate strips seam metadata",
+        24,
+        "integration risk requires deep_review",
+    );
+}
+
+#[test]
+fn full_cross_review_direct_advance_rejects_run_level_integration_risk() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+        v["changed_paths"] = json!(["src/integration-a.ts", "src/integration-b.ts"]);
+        parallel_chunks_phase(v, "2");
+        append_integration_risk_chunks(v, "prior-phase");
+        cross_review_tracks(v);
+    });
+    make_baton_v3(&n, "parallel_implementing", "team", 5, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(2);
+        v["changed_paths"] = json!(["src/integration-a.ts", "src/integration-b.ts"]);
+        parallel_chunks_phase(v, "2");
+        append_integration_risk_chunks(v, "prior-phase");
+        cross_review_tracks(v);
+    });
+
+    run(&b, &n).assert_contains(
+        "cross_review direct advance rejects changed-path integration risk without current-phase tags",
+        24,
+        "integration risk requires deep_review",
+    );
+}
+
+#[test]
+fn full_cross_review_direct_advance_rejects_phase_jump() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(3);
+        v["phase"] = json!(1);
+        parallel_chunks_phase(v, "3");
+        cross_review_tracks(v);
+    });
+    make_baton_v3(&n, "parallel_implementing", "team", 5, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(3);
+        v["phase"] = json!(3);
+        parallel_chunks_phase(v, "3");
+        cross_review_tracks(v);
+    });
+
+    run(&b, &n).assert_contains(
+        "cross_review direct advance rejects a phase jump",
+        24,
+        "cross_review direct advance requires phase=N+1",
+    );
+}
+
+#[test]
+fn final_full_cross_review_cannot_bypass_deep_review() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(2);
+        parallel_chunks_phase(v, "2");
+        cross_review_tracks(v);
+    });
+    make_baton_v3(&n, "parallel_implementing", "team", 5, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(2);
+        parallel_chunks_phase(v, "2");
+        cross_review_tracks(v);
+    });
+
+    run(&b, &n).assert_contains(
+        "final full cross_review cannot bypass deep_review",
+        24,
+        "final-phase cross_review requires deep_review",
+    );
+}
+
+#[test]
+fn full_cross_review_direct_advance_rejects_null_total_phases() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = Value::Null;
+        v["phase"] = json!(1);
+        parallel_chunks_phase(v, "2");
+        cross_review_tracks(v);
+    });
+    make_baton_v3(&n, "parallel_implementing", "team", 5, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = Value::Null;
+        v["phase"] = json!(2);
+        parallel_chunks_phase(v, "2");
+        cross_review_tracks(v);
+    });
+
+    run(&b, &n).assert_contains(
+        "cross_review direct advance fails closed for null total_phases",
+        24,
+        "final-phase cross_review requires deep_review",
+    );
+}
+
+#[test]
+fn full_cross_review_direct_advance_rejects_malformed_total_phases() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!("not-a-phase-count");
+        v["phase"] = json!(1);
+        parallel_chunks_phase(v, "2");
+        cross_review_tracks(v);
+    });
+    make_baton_v3(&n, "parallel_implementing", "team", 5, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!("not-a-phase-count");
+        v["phase"] = json!(2);
+        parallel_chunks_phase(v, "2");
+        cross_review_tracks(v);
+    });
+
+    run(&b, &n).assert_contains(
+        "cross_review direct advance fails closed for malformed total_phases",
+        24,
+        "final-phase cross_review requires deep_review",
+    );
+}
+
+#[test]
+fn custom_graph_cross_review_direct_advance_requires_full_effective_profile() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    let custom_workflow = || {
+        json!({
+            "source": "custom",
+            "declared_by": "vadi",
+            "declared_at_checkpoint": 1,
+            "approved_by": "prativadi",
+            "approved_at_checkpoint": 2,
+            "revision_round": 0,
+            "states": [
+                {"name": "implementing", "owner": "vadi", "class": "work"},
+                {"name": "cross_review", "owner": "team", "class": "review_gate"},
+                {"name": "deep_review", "owner": "prativadi", "class": "review_gate"},
+                {"name": "human_question", "owner": "human", "class": "pause"},
+                {"name": "human_decision", "owner": "human", "class": "pause"},
+                {"name": "abandoned", "owner": "human", "class": "terminal"},
+                {"name": "done", "owner": "team", "class": "terminal"}
+            ],
+            "edges": [
+                {"from": "implementing", "to": "cross_review"},
+                {"from": "cross_review", "to": "implementing"},
+                {"from": "cross_review", "to": "deep_review"},
+                {"from": "deep_review", "to": "done"},
+                {"from": "deep_review", "to": "human_question"},
+                {"from": "deep_review", "to": "human_decision"},
+                {"from": "human_question", "to": "human_decision"},
+                {"from": "human_question", "to": "abandoned"},
+                {"from": "human_decision", "to": "human_question"},
+                {"from": "human_decision", "to": "abandoned"}
+            ],
+            "amendments": []
+        })
+    };
+    make_baton_v3(&b, "cross_review", "team", 4, |v| {
+        standard_profile(v);
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+        v["run_workflow"] = custom_workflow();
+        cross_review_tracks(v);
+    });
+    make_baton_v3(&n, "implementing", "vadi", 5, |v| {
+        standard_profile(v);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(2);
+        v["run_workflow"] = custom_workflow();
+        cross_review_tracks(v);
+    });
+
+    run(&b, &n).assert_contains(
+        "custom graph cannot expose direct cross_review advance from a standard phase",
+        24,
+        "cross_review direct advance requires current effective profile full",
+    );
+}
+
+#[test]
+fn full_cross_review_direct_advance_requires_current_reciprocal_evidence() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+        parallel_chunks_phase(v, "2");
+    });
+    make_baton_v3(&n, "parallel_implementing", "team", 5, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(2);
+        parallel_chunks_phase(v, "2");
+    });
+
+    run(&b, &n).assert_contains(
+        "cross_review direct advance rejects missing reciprocal evidence",
+        24,
+        "current-cycle completed cross-review subagent_tracks for both roles",
+    );
+}
+
+#[test]
+fn full_cross_review_direct_advance_rejects_stale_reciprocal_evidence() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+        parallel_chunks_phase(v, "2");
+    });
+    make_baton_v3(&n, "parallel_implementing", "team", 5, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(2);
+        parallel_chunks_phase(v, "2");
+        cross_review_tracks(v);
+        for track in v["subagent_tracks"].as_array_mut().unwrap() {
+            if track["track"] == "cross-review" {
+                track["review_checkpoint"] = json!(3);
+            }
+        }
+    });
+
+    run(&b, &n).assert_contains(
+        "cross_review direct advance rejects stale reciprocal evidence",
+        24,
+        "current-cycle completed cross-review subagent_tracks for both roles",
+    );
+}
+
+#[test]
+fn full_cross_review_direct_advance_pins_target_profile_entry_state() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+        v["phase_profiles"] = json!({"2": "standard"});
+        parallel_chunks_phase(v, "2");
+        cross_review_tracks(v);
+    });
+    make_baton_v3(&n, "parallel_implementing", "team", 5, |v| {
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(2);
+        v["phase_profiles"] = json!({"2": "standard"});
+        parallel_chunks_phase(v, "2");
+        cross_review_tracks(v);
+    });
+
+    run(&b, &n).assert_contains(
+        "cross_review direct advance rejects the wrong target-profile entry state",
+        24,
+        "target_phase=2 effective_profile=standard requires=implementing",
+    );
+}
+
+#[test]
+fn full_cross_review_direct_advance_rejects_wrong_target_owner_shape() {
+    let d = tmp();
+    let (b, n) = paths(&d);
+    make_baton_v3(&b, "cross_review", "team", 4, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(1);
+        v["phase_profiles"] = json!({"2": "standard"});
+        cross_review_tracks(v);
+    });
+    make_baton_v3(&n, "implementing", "team", 5, |v| {
+        v["active_roles"] = json!(["vadi", "prativadi"]);
+        v["master_plan_locked"] = json!(true);
+        v["total_phases"] = json!(2);
+        v["phase"] = json!(2);
+        v["phase_profiles"] = json!({"2": "standard"});
+        cross_review_tracks(v);
+    });
+
+    run(&b, &n).assert_contains(
+        "cross_review direct advance rejects the wrong target owner shape",
+        23,
+        "bad_assignee_owner status=implementing want=vadi got=team",
+    );
+}
+
 // dr-dispatch-request-not-produced: the write ENTERING prativadi-owned
 // deep_review must PRODUCE the open `dispatch_requests` entry that `dvandva
 // wait` already consumes (the `dispatch_requested` wake). These three probe the

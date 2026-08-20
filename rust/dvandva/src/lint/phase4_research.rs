@@ -104,6 +104,12 @@ const MODEL_POLICY_GROK_UNCREDITED: &str =
     "A Grok lane may take routine read-only work when it clears the quality bar — always uncredited, never execute, never code-touching, never baton-writing.";
 const MODEL_POLICY_FABLE_NO_CODE: &str =
     "Fable-class owns plan authorship and terminal adjudication, may take routine non-code work when it clears the quality bar, and never writes code.";
+const RESEARCH_PRODUCTION_SOL_POLICY: &str = "Research production is Sol-owned: `research_drafting` and `research_revision` dispatch `gpt-5.6-sol` to produce and revise the source-backed content for `research_ref`; the vadi only coordinates and serializes the result.";
+const RESEARCH_REVIEW_CLAUDE_POLICY: &str = "Research review is Claude-only: a fresh Claude-family reviewer independently evaluates `research_ref`; a Codex-hosted prativadi may only serialize that reviewer's verdict into the baton and must not substitute its own approval.";
+const FINAL_OPUS_CADENCE_POLICY: &str = "In full-profile development, clean non-final `cross_review` advances directly to phase N+1, while any risk-triggered escalation and every final-phase checkpoint enter `deep_review` for credited Anthropic Opus review.";
+const FINAL_OPUS_SCOPE_POLICY: &str = "The final Opus review evaluates the cumulative branch diff from the branch baseline, not only the final phase's files; `termination_review` remains dual-role stop approval, not another Opus review.";
+const FINAL_OPUS_WORKTREE_SCOPE_POLICY: &str = "Final Opus intake compares the branch baseline to the working tree with `git diff <baseline>` and inventories `git status --short`; every intended untracked file must be opened and included in the review evidence.";
+const RESEARCH_DEEP_REVIEW_CADENCE_POLICY: &str = "Deep review: after implementation, test_creation, and cross_review, plan `deep_review` only for a final phase or an explicit non-final risk escalation.";
 /// The full literal Luna-gate policy sentence, pinned by exact substring rather
 /// than an ordered-token regex (dr-luna-semantic-inversion-bypass). A `.*`-gap
 /// regex matched an inverting narrative that kept the anchor words in order
@@ -121,11 +127,11 @@ const MODEL_POLICY_FABLE_NO_CODE: &str =
 /// positive substring pins above remain. General added-contradiction detection
 /// is deliberately out of scope (it would require comment/fence-region semantic
 /// parsing, not a substring/regex pin).
-const MODEL_POLICY_LUNA_PROBE_SENTENCE: &str = "`gpt-5.6-terra` remains the routine default; `gpt-5.6-luna` may take taste-light mechanical work only after a representative task-class quality probe passes; `gpt-5.5` is the runtime fallback.";
-const STATE_TABLE_CODEX_MAPPING: &str = r#"| `opus` | `opus-class\|gpt-5.5-xhigh` | Opus-class | gpt-5.6-sol (fallback gpt-5.5) |
-| `sonnet` | `sonnet-class\|gpt-5.5-high` | Sonnet-class | gpt-5.6-terra (fallback gpt-5.5) |
-| `fable` | `fable-class\|gpt-5.5-xhigh` | Fable-class | gpt-5.6-sol (fallback gpt-5.5) |
-| `gpt` | `gpt-class\|gpt-5.5-high` | Sonnet-class wrapper shells to Codex | gpt-5.6-terra (fallback gpt-5.5) |
+const MODEL_POLICY_LUNA_PROBE_SENTENCE: &str = "`gpt-5.6-terra` remains the routine default; `gpt-5.6-luna` may take taste-light mechanical work only after a representative task-class quality probe passes; unavailable required models route to `human_decision` instead of an older-generation fallback.";
+const STATE_TABLE_CODEX_MAPPING: &str = r#"| `opus` | `opus-class\|gpt-5.5-xhigh` | Opus-class | gpt-5.6-sol |
+| `sonnet` | `sonnet-class\|gpt-5.5-high` | Sonnet-class | gpt-5.6-terra |
+| `fable` | `fable-class\|gpt-5.5-xhigh` | Fable-class | gpt-5.6-sol |
+| `gpt` | `gpt-class\|gpt-5.5-high` | Sonnet-class wrapper shells to Codex | gpt-5.6-terra |
 "#;
 
 fn req(r: &mut Report, root: &Path, rel: &str, needle: &str, msg: impl Into<String>) {
@@ -404,12 +410,8 @@ fn req_current_model_routing(r: &mut Report, root: &Path) {
     r.add(
         file_slurp_matches_ci(root, agents, r"gpt-5\.6-sol[^.]{0,30}adversarial")
             && file_slurp_matches_ci(root, agents, r"gpt-5\.6-terra[^.]{0,30}routine")
-            && file_slurp_matches_ci(
-                root,
-                agents,
-                r"gpt-5\.5.*(fallback|when a 5\.6 model is unavailable)",
-            ),
-        "AGENTS.md pins the Sol/Terra ring and GPT-5.5 fallback",
+            && file_slurp_matches_ci(root, agents, r"unavailable[^.]{0,100}human_decision"),
+        "AGENTS.md pins the Sol/Terra ring without an older-model fallback",
     );
 
     let claude = "CLAUDE.md";
@@ -417,8 +419,8 @@ fn req_current_model_routing(r: &mut Report, root: &Path) {
         file_slurp_matches_ci(root, claude, r"gpt-5\.6-terra[^.]{0,30}routine")
             && file_slurp_matches_ci(root, claude, r"gpt-5\.6-sol[^.]{0,30}hard bounded")
             && file_slurp_matches_ci(root, claude, r"gpt-5\.6-luna[^.]{0,30}mechanically proven")
-            && file_slurp_matches_ci(root, claude, r"gpt-5\.5.*fallback"),
-        "CLAUDE.md pins the Sol/Terra/Luna dispatch and GPT-5.5 fallback",
+            && file_slurp_matches_ci(root, claude, r"unavailable[^.]{0,100}human_decision"),
+        "CLAUDE.md pins Sol/Terra/Luna dispatch without an older-model fallback",
     );
 
     req(
@@ -427,6 +429,114 @@ fn req_current_model_routing(r: &mut Report, root: &Path) {
         "plugins/dvandva/references/state-transition-table.md",
         STATE_TABLE_CODEX_MAPPING,
         "state-transition-table.md pins current Codex mapping cells",
+    );
+}
+
+fn req_research_casting(r: &mut Report, root: &Path) {
+    for rel in [
+        "README.md",
+        "AGENTS.md",
+        "CLAUDE.md",
+        "product.md",
+        "docs/model-selection.md",
+        "plugins/dvandva/skills/research/SKILL.md",
+        "plugins/dvandva/skills/vadi/SKILL.md",
+        "plugins/dvandva/skills/prativadi/SKILL.md",
+        "plugins/dvandva/commands/vadi.md",
+        "plugins/dvandva/commands/prativadi.md",
+    ] {
+        req(
+            r,
+            root,
+            rel,
+            RESEARCH_PRODUCTION_SOL_POLICY,
+            format!("{rel} pins Sol-owned research production"),
+        );
+        req(
+            r,
+            root,
+            rel,
+            RESEARCH_REVIEW_CLAUDE_POLICY,
+            format!("{rel} pins Claude-only research review"),
+        );
+    }
+
+    r.add(
+        !file_slurp_matches_ci(
+            root,
+            "docs/model-selection.md",
+            r"`?research_drafting`?\s*=\s*fable[^.]{0,160}`?research_review`?\s*=\s*gpt|`?research_review`?\s*=\s*gpt",
+        ),
+        "docs/model-selection.md avoids legacy Fable/GPT research station casting",
+    );
+    r.add(
+        !file_slurp_matches_ci(
+            root,
+            "docs/model-selection.md",
+            r"gpt-5\.[0-5][^.]{0,120}(fallback|falls? back|default|station|dispatch|route)|(fallback|falls? back|default|station|dispatch|route)[^.]{0,120}`?gpt-5\.[0-5]",
+        ),
+        "docs/model-selection.md avoids old OpenAI models in live routing",
+    );
+    r.add(
+        !file_slurp_matches_ci(
+            root,
+            "docs/model-selection.md",
+            r"(opus|sonnet|haiku)[- ]?4\.[0-7][^.]{0,120}(default|station|dispatch|route|review)|(default|station|dispatch|route|review)[^.]{0,120}(opus|sonnet|haiku)[- ]?4\.[0-7]",
+        ),
+        "docs/model-selection.md avoids old Claude models in live routing",
+    );
+}
+
+fn req_final_opus_cadence(r: &mut Report, root: &Path) {
+    for rel in [
+        "README.md",
+        "product.md",
+        "docs/model-selection.md",
+        "docs/protocol/local-baton-channel.md",
+        "plugins/dvandva/references/local-baton-channel.md",
+        "plugins/dvandva/references/state-transition-table.md",
+        "plugins/dvandva/skills/vadi/SKILL.md",
+        "plugins/dvandva/skills/prativadi/SKILL.md",
+        "plugins/dvandva/commands/vadi.md",
+        "plugins/dvandva/commands/prativadi.md",
+    ] {
+        req(
+            r,
+            root,
+            rel,
+            FINAL_OPUS_CADENCE_POLICY,
+            format!("{rel} documents final cumulative Opus cadence"),
+        );
+        req(
+            r,
+            root,
+            rel,
+            FINAL_OPUS_SCOPE_POLICY,
+            format!("{rel} scopes final Opus review cumulatively"),
+        );
+    }
+
+    for rel in [
+        "plugins/dvandva/skills/vadi/SKILL.md",
+        "plugins/dvandva/skills/prativadi/SKILL.md",
+        "plugins/dvandva/commands/vadi.md",
+        "plugins/dvandva/commands/prativadi.md",
+    ] {
+        req(
+            r,
+            root,
+            rel,
+            FINAL_OPUS_WORKTREE_SCOPE_POLICY,
+            format!("{rel} includes dirty and untracked final Opus intake"),
+        );
+    }
+
+    req(
+        r,
+        root,
+        "plugins/dvandva/skills/research/SKILL.md",
+        RESEARCH_DEEP_REVIEW_CADENCE_POLICY,
+        "research skill limits deep_review planning to final or risk-escalated phases",
     );
 }
 
@@ -461,6 +571,8 @@ pub fn report(root: &Path) -> Report {
     let research = "plugins/dvandva/skills/research/SKILL.md";
     req_grok_plan_pulse_policy(&mut r, root);
     req_current_model_routing(&mut r, root);
+    req_research_casting(&mut r, root);
+    req_final_opus_cadence(&mut r, root);
     req(
         &mut r,
         root,

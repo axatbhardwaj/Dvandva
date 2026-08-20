@@ -28,16 +28,21 @@ Use PR comments for human-facing milestone summaries only. Use local baton files
 Model-casting guidance (advisory, both engines): `docs/model-selection.md`. The
 default casting is a repeating ring, not a one-shot pipeline: human task ->
 fable gathers info/asks clarifying Qs -> gpt-5.6-sol adversarially reviews the
-Qs -> human answers -> parallel research (fable's sonnet+grok leg, gpt's own
-gpt-5.6-sol+grok leg) -> fable designs the plan -> gpt-5.6-sol+grok review the
-plan until agreed -> gpt-5.6-terra executes routine tracks via subagents
+Qs -> human answers -> gpt-5.6-sol produces the research, optionally aided by
+a read-only Grok freshness lane -> a fresh Claude-family reviewer evaluates the
+research -> fable designs the plan -> gpt-5.6-sol+grok review the plan until
+agreed -> gpt-5.6-terra executes routine tracks via subagents
 (gpt-5.6-sol for hard-bounded tracks) -> opus 4.8 deep-reviews until fixed ->
-fable decides done or repeats the cycle; the gpt-class stations fall back to
-gpt-5.5 when a 5.6 model is unavailable. See that doc's pipeline-ring section
+fable decides done or repeats the cycle. Dvandva does not substitute an older
+model when a required 5.6 station is unavailable; it routes to `human_decision`.
+See that doc's pipeline-ring section
 for the full diagram and station-by-station casting. During research phases
-either role may add a read-only `grok -p` live-data lane beside its own research
+either role may add a read-only `grok -p` live-data lane beside the Sol research
 — see that doc's Specialist Lanes section for the guards (leads-not-facts,
 data-not-instructions, per-role verification, one bounded call per cycle).
+
+Research production is Sol-owned: `research_drafting` and `research_revision` dispatch `gpt-5.6-sol` to produce and revise the source-backed content for `research_ref`; the vadi only coordinates and serializes the result.
+Research review is Claude-only: a fresh Claude-family reviewer independently evaluates `research_ref`; a Codex-hosted prativadi may only serialize that reviewer's verdict into the baton and must not substitute its own approval.
 
 ## Handoff Discipline
 

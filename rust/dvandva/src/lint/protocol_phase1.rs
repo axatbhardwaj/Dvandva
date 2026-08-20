@@ -241,9 +241,9 @@ pub fn report(root: &Path) -> Report {
             file_matches(
                 root,
                 file,
-                r"v2: `deslop` → `phase: N\+1, parallel_implementing`",
-            ),
-            format!("{file} routes v2 deslop to parallel_implementing"),
+                "after a non-final risk escalation passes `deep_review`",
+            ) && file_matches(root, file, r"`phase: N\+1, parallel_implementing`"),
+            format!("{file} scopes v2 deslop advance to post-deep-review fallback"),
         );
         r.add(
             !file_matches(root, file, r"v2: `deslop` → `phase: N\+1, implementing`"),

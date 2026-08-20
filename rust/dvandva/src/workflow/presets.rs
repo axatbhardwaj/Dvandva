@@ -235,6 +235,8 @@ pub fn full() -> WorkflowGraph {
         edge("test_creation", "cross_review"),
         edge("cross_review", "cross_fixing"),
         edge("cross_fixing", "test_creation"),
+        edge("cross_review", "parallel_implementing"),
+        edge("cross_review", "implementing"),
         edge("cross_review", "deep_review"),
         edge("deep_review", "phase_fixing"),
         edge("deep_review", "review_of_review"),
@@ -344,7 +346,7 @@ mod tests {
     fn edge_counts_match_source() {
         assert_eq!(fast().edges.len(), 14, "fast");
         assert_eq!(standard().edges.len(), 26, "standard");
-        assert_eq!(full().edges.len(), 32, "full");
+        assert_eq!(full().edges.len(), 34, "full");
         assert_eq!(research().edges.len(), 16, "research");
         assert_eq!(review().edges.len(), 14, "review");
     }
@@ -392,6 +394,8 @@ mod tests {
     fn full_contains_expected_spot_check_edges() {
         let g = full();
         assert!(has_edge(&g, "parallel_implementing", "test_creation"));
+        assert!(has_edge(&g, "cross_review", "parallel_implementing"));
+        assert!(has_edge(&g, "cross_review", "implementing"));
         assert!(has_edge(&g, "deslop", "termination_review"));
         assert!(has_edge(&g, "deslop", "implementing"));
         // F9: full advancing into a standard next phase is NOT present as

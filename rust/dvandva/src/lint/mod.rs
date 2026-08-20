@@ -29,7 +29,7 @@ pub(crate) const MODEL_POLICY_VENDOR_NEUTRAL_COMMANDS: &str =
 pub(crate) const MODEL_POLICY_CLAUDE_MAPPING: &str =
     "Claude Code maps `opus` to Opus-class, `sonnet` to Sonnet-class, `fable` to Fable-class, and `gpt` to a Sonnet-class wrapper that shells to Codex where available";
 pub(crate) const MODEL_POLICY_CODEX_MAPPING: &str =
-    "Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra`, falling back to `gpt-5.5` when a 5.6 model is unavailable on the active surface";
+    "Codex maps `opus` and `fable` to `gpt-5.6-sol` and `sonnet` and `gpt` to `gpt-5.6-terra` on the active surface; Dvandva does not automatically fall back to older model generations, and an unavailable required model routes to `human_decision`";
 pub(crate) const MODEL_POLICY_CODEX_REVIEW_AUTHORITY: &str =
     "Codex-side `opus` and `fable` executions are GPT hygiene only and never earn review credit; credited deep/adversarial review remains a cross-vendor Anthropic Opus gate";
 pub(crate) const MODEL_POLICY_CODEX_EFFORT: &str =
@@ -37,7 +37,7 @@ pub(crate) const MODEL_POLICY_CODEX_EFFORT: &str =
 pub(crate) const MODEL_POLICY_OPUS_ROUTING: &str =
     "Use `opus` for architecture, planning, deep review, adversarial/security/integration/doc-verification, and baton-audit work";
 pub(crate) const MODEL_POLICY_SONNET_ROUTING: &str =
-    "Use `sonnet` for bounded implementation, documentation, research, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop";
+    "Use `sonnet` for bounded implementation, documentation, verification, routine cross-review, debugging, test creation, sandbox probes, and deslop";
 pub(crate) const MODEL_POLICY_NO_HAIKU_SUBAGENTS: &str = "Do not use `haiku` for Dvandva subagents";
 pub(crate) const MODEL_POLICY_NO_HAIKU_COMMANDS: &str = "Never use `haiku`";
 pub(crate) const MODEL_POLICY_STALE_OPUS_ROUTING: &str =
