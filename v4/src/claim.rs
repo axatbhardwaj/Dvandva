@@ -120,6 +120,7 @@ pub fn heartbeat(
         return Err(ClaimError::Fenced);
     }
     claim.lease_expires_at = expiry(lease_seconds)?;
+    claim.lease_seconds = lease_seconds;
     baton.revision += 1;
     channel.compare_and_swap(expected_revision, &baton)?;
     Ok(baton.revision)
@@ -144,6 +145,16 @@ pub fn verify(
     Ok(())
 }
 
+pub fn renewal_lease(baton: &RunBaton, role: Role) -> Result<Option<u64>, ClaimError> {
+    let claim = participant(baton, role)
+        .claim
+        .as_ref()
+        .ok_or(ClaimError::Missing)?;
+    let remaining = parse_timestamp(&claim.lease_expires_at)? - OffsetDateTime::now_utc();
+    let threshold = Duration::seconds((claim.lease_seconds / 3).max(1) as i64);
+    Ok((remaining <= threshold).then_some(claim.lease_seconds))
+}
+
 fn install_claim(
     channel: &RunChannel,
     baton: &mut RunBaton,
@@ -159,6 +170,7 @@ fn install_claim(
         epoch,
         token_digest: digest(&token),
         lease_expires_at: expiry(lease_seconds)?,
+        lease_seconds,
     });
     baton.revision += 1;
     channel.compare_and_swap(expected_revision, baton)?;

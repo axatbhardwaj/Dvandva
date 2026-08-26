@@ -54,6 +54,7 @@ pub struct ParticipantClaim {
     pub epoch: u64,
     pub token_digest: String,
     pub lease_expires_at: String,
+    pub lease_seconds: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

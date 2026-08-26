@@ -52,6 +52,17 @@ pub fn wait(
             return Ok(baton);
         }
         claim::verify(&baton, role, session_id, token)?;
+        if let Some(lease_seconds) = claim::renewal_lease(&baton, role)? {
+            seen_revision = claim::heartbeat(
+                channel,
+                role,
+                session_id,
+                token,
+                lease_seconds,
+                baton.revision,
+            )?;
+            continue;
+        }
         if baton.revision > seen_revision {
             seen_revision = baton.revision;
             if is_actionable(&baton, role) {
