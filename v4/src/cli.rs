@@ -4,6 +4,7 @@ use clap::{Parser, Subcommand};
 use serde::Serialize;
 use thiserror::Error;
 
+use crate::claim::{self, ClaimError, Role};
 use crate::model::RunBaton;
 use crate::store::{RunChannel, StoreError};
 
@@ -32,6 +33,44 @@ enum Command {
         #[arg(long)]
         run_dir: PathBuf,
     },
+    Claim {
+        #[arg(long)]
+        run_dir: PathBuf,
+        #[arg(long)]
+        role: Role,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        lease_seconds: u64,
+        #[arg(long)]
+        expected_revision: u64,
+    },
+    Reclaim {
+        #[arg(long)]
+        run_dir: PathBuf,
+        #[arg(long)]
+        role: Role,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        lease_seconds: u64,
+        #[arg(long)]
+        expected_revision: u64,
+    },
+    Heartbeat {
+        #[arg(long)]
+        run_dir: PathBuf,
+        #[arg(long)]
+        role: Role,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        token: String,
+        #[arg(long)]
+        lease_seconds: u64,
+        #[arg(long)]
+        expected_revision: u64,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -42,6 +81,8 @@ pub enum CliError {
     Store(#[from] StoreError),
     #[error("invalid baton JSON: {0}")]
     Json(#[from] serde_json::Error),
+    #[error(transparent)]
+    Claim(#[from] ClaimError),
 }
 
 #[derive(Serialize)]
@@ -69,6 +110,59 @@ pub fn run() -> Result<(), CliError> {
             println!("{}", serde_json::to_string_pretty(&baton)?);
             Ok(())
         }
+        Command::Claim {
+            run_dir,
+            role,
+            session_id,
+            lease_seconds,
+            expected_revision,
+        } => {
+            let grant = claim::claim(
+                &RunChannel::open(run_dir),
+                role,
+                &session_id,
+                lease_seconds,
+                expected_revision,
+            )?;
+            println!("{}", serde_json::to_string(&grant)?);
+            Ok(())
+        }
+        Command::Reclaim {
+            run_dir,
+            role,
+            session_id,
+            lease_seconds,
+            expected_revision,
+        } => {
+            let grant = claim::reclaim(
+                &RunChannel::open(run_dir),
+                role,
+                &session_id,
+                lease_seconds,
+                expected_revision,
+            )?;
+            println!("{}", serde_json::to_string(&grant)?);
+            Ok(())
+        }
+        Command::Heartbeat {
+            run_dir,
+            role,
+            session_id,
+            token,
+            lease_seconds,
+            expected_revision,
+        } => {
+            let revision = claim::heartbeat(
+                &RunChannel::open(run_dir),
+                role,
+                &session_id,
+                &token,
+                lease_seconds,
+                expected_revision,
+            )?;
+            println!(r#"{{"revision":{revision}}}"#);
+            Ok(())
+        }
     }
 }
 
@@ -81,6 +175,20 @@ pub fn print_error(error: &CliError) {
         CliError::Store(StoreError::Io(_)) => "io_error",
         CliError::Store(StoreError::Json(_)) => "invalid_baton",
         CliError::Json(_) => "invalid_baton",
+        CliError::Claim(ClaimError::Store(StoreError::RevisionConflict { .. })) => {
+            "revision_conflict"
+        }
+        CliError::Claim(ClaimError::Store(StoreError::RunExists)) => "run_exists",
+        CliError::Claim(ClaimError::Store(StoreError::RunMissing)) => "run_missing",
+        CliError::Claim(ClaimError::Store(StoreError::Io(_))) => "io_error",
+        CliError::Claim(ClaimError::Store(StoreError::Json(_))) => "invalid_baton",
+        CliError::Claim(ClaimError::Active) => "claim_active",
+        CliError::Claim(ClaimError::NotExpired) => "claim_not_expired",
+        CliError::Claim(ClaimError::Missing) => "claim_missing",
+        CliError::Claim(ClaimError::Fenced) => "claim_fenced",
+        CliError::Claim(ClaimError::InvalidLease | ClaimError::InvalidSession) => "invalid_input",
+        CliError::Claim(ClaimError::Terminal) => "terminal_state",
+        CliError::Claim(ClaimError::InvalidTimestamp) => "invalid_baton",
     };
     let diagnostic = Diagnostic {
         error: code,

@@ -295,3 +295,223 @@ fn separate_run_directories_are_independent() {
         assert_eq!(baton["run_id"], run_id);
     }
 }
+
+#[test]
+fn expired_claim_replacement_fences_the_old_session() {
+    let dir = tempfile::tempdir().unwrap();
+    command()
+        .args([
+            "init",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--run-id",
+            "run-a",
+            "--objective",
+            "Implement DEF-123",
+            "--worker",
+            "codex",
+            "--reviewer",
+            "claude",
+        ])
+        .assert()
+        .success();
+
+    let first = command()
+        .args([
+            "claim",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-1",
+            "--lease-seconds",
+            "1",
+            "--expected-revision",
+            "0",
+        ])
+        .output()
+        .unwrap();
+    assert!(first.status.success());
+    let first: serde_json::Value = serde_json::from_slice(&first.stdout).unwrap();
+    let first_token = first["token"].as_str().unwrap();
+
+    command()
+        .args([
+            "claim",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-2",
+            "--lease-seconds",
+            "1",
+            "--expected-revision",
+            "1",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(r#""error":"claim_active""#));
+
+    std::thread::sleep(std::time::Duration::from_millis(1_100));
+    let replacement = command()
+        .args([
+            "reclaim",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-2",
+            "--lease-seconds",
+            "30",
+            "--expected-revision",
+            "1",
+        ])
+        .output()
+        .unwrap();
+    assert!(replacement.status.success());
+    let replacement: serde_json::Value = serde_json::from_slice(&replacement.stdout).unwrap();
+    let replacement_token = replacement["token"].as_str().unwrap();
+
+    command()
+        .args([
+            "heartbeat",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-1",
+            "--token",
+            first_token,
+            "--lease-seconds",
+            "30",
+            "--expected-revision",
+            "2",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(r#""error":"claim_fenced""#));
+
+    let heartbeat_args = [
+        "heartbeat",
+        "--run-dir",
+        dir.path().to_str().unwrap(),
+        "--role",
+        "worker",
+        "--session-id",
+        "worker-2",
+        "--token",
+        replacement_token,
+        "--lease-seconds",
+        "30",
+        "--expected-revision",
+        "2",
+    ];
+    command().args(heartbeat_args).assert().success();
+    command()
+        .args(heartbeat_args)
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(r#""error":"revision_conflict""#));
+}
+
+#[test]
+fn worker_and_reviewer_claims_are_independent_and_tokens_are_secret() {
+    let dir = tempfile::tempdir().unwrap();
+    command()
+        .args([
+            "init",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--run-id",
+            "run-a",
+            "--objective",
+            "Implement DEF-123",
+            "--worker",
+            "codex",
+            "--reviewer",
+            "claude",
+        ])
+        .assert()
+        .success();
+
+    let worker = command()
+        .args([
+            "claim",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-1",
+            "--lease-seconds",
+            "30",
+            "--expected-revision",
+            "0",
+        ])
+        .output()
+        .unwrap();
+    assert!(worker.status.success());
+    let worker: serde_json::Value = serde_json::from_slice(&worker.stdout).unwrap();
+    let token = worker["token"].as_str().unwrap();
+
+    command()
+        .args([
+            "claim",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--role",
+            "reviewer",
+            "--session-id",
+            "reviewer-1",
+            "--lease-seconds",
+            "30",
+            "--expected-revision",
+            "1",
+        ])
+        .assert()
+        .success();
+    command()
+        .args([
+            "reclaim",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-2",
+            "--lease-seconds",
+            "30",
+            "--expected-revision",
+            "2",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(r#""error":"claim_not_expired""#));
+    command()
+        .args([
+            "heartbeat",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-1",
+            "--token",
+            "wrong-token",
+            "--lease-seconds",
+            "30",
+            "--expected-revision",
+            "2",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(r#""error":"claim_fenced""#));
+
+    let baton = std::fs::read_to_string(dir.path().join("baton.json")).unwrap();
+    assert!(!baton.contains(token));
+    assert!(baton.contains("token_digest"));
+}

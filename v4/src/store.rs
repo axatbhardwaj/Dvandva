@@ -69,6 +69,12 @@ impl RunChannel {
                     actual: current.revision,
                 });
             }
+            if next.revision != expected_revision + 1 {
+                return Err(StoreError::RevisionConflict {
+                    expected: expected_revision + 1,
+                    actual: next.revision,
+                });
+            }
             self.install(next)?;
             self.write_history(next)?;
             Ok(next.clone())
