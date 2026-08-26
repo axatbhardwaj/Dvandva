@@ -1,8 +1,12 @@
 ---
-status: accepted
+status: superseded
 ---
 
 # Delegate explicit-only skill turns to lane adapters
+
+> Superseded by issue #3 and `docs/protocol/minimal-run-baton.md`. The minimal
+> kernel does not dispatch skills. Explicit-only skills remain human-invoked
+> before or alongside a run, and skill activation is not Baton state.
 
 Matt Pocock's top-level workflow skills are intentionally user-invoked, and
 his literal convention says a human types each command. Requiring a new human

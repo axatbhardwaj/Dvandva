@@ -1,6 +1,6 @@
 # Independent-Harness Dvandva V4 Design
 
-**Status:** Approved in conversation through ticket-distribution design on 2026-08-26; awaiting confirmation of this written revision
+**Status:** Superseded by issue #3 and `docs/protocol/minimal-run-baton.md`; retained as design history
 
 ## Objective
 

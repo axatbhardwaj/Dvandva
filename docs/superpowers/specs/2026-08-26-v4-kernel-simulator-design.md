@@ -1,6 +1,6 @@
 # Dvandva V4 Kernel and Simulator Design
 
-**Status:** Derived from the user-approved v4 architecture; awaiting written-spec confirmation
+**Status:** Superseded by issue #3 and `docs/protocol/minimal-run-baton.md`; the simulator/controller described below was not implemented
 
 ## Goal
 
