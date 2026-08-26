@@ -9,6 +9,7 @@ use crate::claim::{self, ClaimError, Role};
 use crate::model::RunBaton;
 use crate::store::{RunChannel, StoreError};
 use crate::transition::{self, TransitionError};
+use crate::wait::{self, WaitError};
 
 #[derive(Debug, Parser)]
 #[command(name = "dvandva-v4")]
@@ -87,6 +88,22 @@ enum Command {
         #[arg(long)]
         action: PathBuf,
     },
+    Wait {
+        #[arg(long)]
+        run_dir: PathBuf,
+        #[arg(long)]
+        role: Role,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        token: String,
+        #[arg(long)]
+        after_revision: u64,
+        #[arg(long, default_value_t = 1000)]
+        poll_interval_ms: u64,
+        #[arg(long, default_value_t = 300_000)]
+        timeout_ms: u64,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -101,6 +118,8 @@ pub enum CliError {
     Claim(#[from] ClaimError),
     #[error(transparent)]
     Transition(#[from] TransitionError),
+    #[error(transparent)]
+    Wait(#[from] WaitError),
 }
 
 #[derive(Serialize)]
@@ -202,6 +221,27 @@ pub fn run() -> Result<(), CliError> {
             println!("{}", serde_json::to_string_pretty(&baton)?);
             Ok(())
         }
+        Command::Wait {
+            run_dir,
+            role,
+            session_id,
+            token,
+            after_revision,
+            poll_interval_ms,
+            timeout_ms,
+        } => {
+            let baton = wait::wait(
+                &RunChannel::open(run_dir),
+                role,
+                &session_id,
+                &token,
+                after_revision,
+                std::time::Duration::from_millis(poll_interval_ms.max(1)),
+                std::time::Duration::from_millis(timeout_ms),
+            )?;
+            println!("{}", serde_json::to_string_pretty(&baton)?);
+            Ok(())
+        }
     }
 }
 
@@ -249,6 +289,15 @@ pub fn print_error(error: &CliError) {
         CliError::Transition(TransitionError::WrongContact) => "wrong_contact",
         CliError::Transition(TransitionError::PublicationRegression) => "publication_regression",
         CliError::Transition(TransitionError::MissingReason) => "missing_reason",
+        CliError::Wait(WaitError::Store(StoreError::RunMissing)) => "run_missing",
+        CliError::Wait(WaitError::Store(StoreError::Json(_))) => "invalid_baton",
+        CliError::Wait(WaitError::Store(StoreError::Io(_))) => "io_error",
+        CliError::Wait(WaitError::Store(StoreError::RunExists)) => "run_exists",
+        CliError::Wait(WaitError::Store(StoreError::RevisionConflict { .. })) => {
+            "revision_conflict"
+        }
+        CliError::Wait(WaitError::Claim(_)) => "claim_fenced",
+        CliError::Wait(WaitError::Timeout) => "timeout",
     };
     let diagnostic = Diagnostic {
         error: code,

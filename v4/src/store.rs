@@ -56,6 +56,10 @@ impl RunChannel {
         Ok(serde_json::from_slice(&fs::read(path)?)?)
     }
 
+    pub fn directory(&self) -> &Path {
+        &self.directory
+    }
+
     pub fn compare_and_swap(
         &self,
         expected_revision: u64,

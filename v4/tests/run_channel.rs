@@ -882,3 +882,61 @@ fn required_publication_blocks_done_until_synchronized() {
     )
     .success();
 }
+
+#[test]
+fn local_watcher_wakes_the_reviewer_after_a_checkpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
+    let reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+
+    let mut waiter = std::process::Command::new(env!("CARGO_BIN_EXE_dvandva-v4"))
+        .args([
+            "wait",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--role",
+            "reviewer",
+            "--session-id",
+            "reviewer-1",
+            "--token",
+            &reviewer,
+            "--after-revision",
+            "2",
+            "--poll-interval-ms",
+            "1000",
+            "--timeout-ms",
+            "5000",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    assert!(waiter.try_wait().unwrap().is_none());
+
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        2,
+        "wake.json",
+        serde_json::json!({
+            "type": "submit_checkpoint", "checkpoint": {
+                "kind": "artifact", "identity": "sha256:wake", "verification": ["tests passed"]
+            }
+        }),
+    )
+    .success();
+    let output = waiter.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let baton: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(baton["status"], "reviewing");
+    assert_eq!(baton["assignee"], "reviewer");
+    assert_eq!(baton["revision"], 3);
+}
