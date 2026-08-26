@@ -55,6 +55,7 @@ pub fn claim(
 ) -> Result<ClaimGrant, ClaimError> {
     validate_request(session_id, lease_seconds)?;
     let mut baton = read_expected(channel, expected_revision)?;
+    reject_terminal(&baton)?;
     if participant(&baton, role).claim.is_some() {
         return Err(ClaimError::Active);
     }
@@ -78,6 +79,7 @@ pub fn reclaim(
 ) -> Result<ClaimGrant, ClaimError> {
     validate_request(session_id, lease_seconds)?;
     let mut baton = read_expected(channel, expected_revision)?;
+    reject_terminal(&baton)?;
     let previous = participant(&baton, role)
         .claim
         .as_ref()
@@ -199,6 +201,13 @@ fn validate_request(session_id: &str, lease_seconds: u64) -> Result<(), ClaimErr
     }
     if lease_seconds == 0 || lease_seconds > i64::MAX as u64 {
         return Err(ClaimError::InvalidLease);
+    }
+    Ok(())
+}
+
+fn reject_terminal(baton: &RunBaton) -> Result<(), ClaimError> {
+    if matches!(baton.status, Status::Done | Status::Abandoned) {
+        return Err(ClaimError::Terminal);
     }
     Ok(())
 }
