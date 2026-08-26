@@ -4,9 +4,11 @@ use clap::{Parser, Subcommand};
 use serde::Serialize;
 use thiserror::Error;
 
+use crate::action::Action;
 use crate::claim::{self, ClaimError, Role};
 use crate::model::RunBaton;
 use crate::store::{RunChannel, StoreError};
+use crate::transition::{self, TransitionError};
 
 #[derive(Debug, Parser)]
 #[command(name = "dvandva-v4")]
@@ -71,6 +73,20 @@ enum Command {
         #[arg(long)]
         expected_revision: u64,
     },
+    Apply {
+        #[arg(long)]
+        run_dir: PathBuf,
+        #[arg(long)]
+        role: Role,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        token: String,
+        #[arg(long)]
+        expected_revision: u64,
+        #[arg(long)]
+        action: PathBuf,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -83,6 +99,8 @@ pub enum CliError {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Claim(#[from] ClaimError),
+    #[error(transparent)]
+    Transition(#[from] TransitionError),
 }
 
 #[derive(Serialize)]
@@ -163,6 +181,27 @@ pub fn run() -> Result<(), CliError> {
             println!(r#"{{"revision":{revision}}}"#);
             Ok(())
         }
+        Command::Apply {
+            run_dir,
+            role,
+            session_id,
+            token,
+            expected_revision,
+            action,
+        } => {
+            let action: Action =
+                serde_json::from_slice(&std::fs::read(action).map_err(StoreError::Io)?)?;
+            let baton = transition::apply(
+                &RunChannel::open(run_dir),
+                role,
+                &session_id,
+                &token,
+                expected_revision,
+                action,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&baton)?);
+            Ok(())
+        }
     }
 }
 
@@ -189,6 +228,23 @@ pub fn print_error(error: &CliError) {
         CliError::Claim(ClaimError::InvalidLease | ClaimError::InvalidSession) => "invalid_input",
         CliError::Claim(ClaimError::Terminal) => "terminal_state",
         CliError::Claim(ClaimError::InvalidTimestamp) => "invalid_baton",
+        CliError::Transition(TransitionError::Store(StoreError::RevisionConflict { .. })) => {
+            "revision_conflict"
+        }
+        CliError::Transition(TransitionError::Store(StoreError::RunExists)) => "run_exists",
+        CliError::Transition(TransitionError::Store(StoreError::RunMissing)) => "run_missing",
+        CliError::Transition(TransitionError::Store(StoreError::Io(_))) => "io_error",
+        CliError::Transition(TransitionError::Store(StoreError::Json(_))) => "invalid_baton",
+        CliError::Transition(TransitionError::Claim(_)) => "claim_fenced",
+        CliError::Transition(TransitionError::WrongOwner) => "wrong_owner",
+        CliError::Transition(TransitionError::IllegalState) => "invalid_transition",
+        CliError::Transition(TransitionError::InvalidCheckpoint) => "invalid_checkpoint",
+        CliError::Transition(TransitionError::MissingVerification) => "missing_verification",
+        CliError::Transition(TransitionError::StaleReview) => "stale_review",
+        CliError::Transition(TransitionError::MissingFindings) => "missing_findings",
+        CliError::Transition(TransitionError::BlockingFindings) => "blocking_findings",
+        CliError::Transition(TransitionError::PublicationStale) => "publication_stale",
+        CliError::Transition(TransitionError::Terminal) => "terminal_state",
     };
     let diagnostic = Diagnostic {
         error: code,

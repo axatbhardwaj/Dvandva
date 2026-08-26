@@ -5,6 +5,12 @@ fn command() -> Command {
     Command::new(env!("CARGO_BIN_EXE_dvandva-v4"))
 }
 
+fn write_action(dir: &std::path::Path, name: &str, action: serde_json::Value) -> String {
+    let path = dir.join(name);
+    std::fs::write(&path, serde_json::to_vec_pretty(&action).unwrap()).unwrap();
+    path.to_str().unwrap().to_owned()
+}
+
 #[test]
 fn init_creates_a_run_centric_baton() {
     let dir = tempfile::tempdir().unwrap();
@@ -514,4 +520,149 @@ fn worker_and_reviewer_claims_are_independent_and_tokens_are_secret() {
     let baton = std::fs::read_to_string(dir.path().join("baton.json")).unwrap();
     assert!(!baton.contains(token));
     assert!(baton.contains("token_digest"));
+}
+
+#[test]
+fn complete_review_fix_loop_reaches_done() {
+    let dir = tempfile::tempdir().unwrap();
+    command()
+        .args([
+            "init",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--run-id",
+            "run-a",
+            "--objective",
+            "Implement DEF-123",
+            "--worker",
+            "codex",
+            "--reviewer",
+            "claude",
+        ])
+        .assert()
+        .success();
+    let claim = |role: &str, session: &str, revision: &str| {
+        let output = command()
+            .args([
+                "claim",
+                "--run-dir",
+                dir.path().to_str().unwrap(),
+                "--role",
+                role,
+                "--session-id",
+                session,
+                "--lease-seconds",
+                "300",
+                "--expected-revision",
+                revision,
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()["token"]
+            .as_str()
+            .unwrap()
+            .to_owned()
+    };
+    let worker_token = claim("worker", "worker-1", "0");
+    let reviewer_token = claim("reviewer", "reviewer-1", "1");
+    let apply = |role: &str, session: &str, token: &str, revision: &str, action: String| {
+        command()
+            .args([
+                "apply",
+                "--run-dir",
+                dir.path().to_str().unwrap(),
+                "--role",
+                role,
+                "--session-id",
+                session,
+                "--token",
+                token,
+                "--expected-revision",
+                revision,
+                "--action",
+                &action,
+            ])
+            .assert()
+            .success();
+    };
+
+    apply(
+        "worker",
+        "worker-1",
+        &worker_token,
+        "2",
+        write_action(
+            dir.path(),
+            "first.json",
+            serde_json::json!({
+                "type": "submit_checkpoint", "checkpoint": {
+                    "kind": "artifact", "identity": "sha256:first", "verification": ["tests passed"]
+                }
+            }),
+        ),
+    );
+    apply(
+        "reviewer",
+        "reviewer-1",
+        &reviewer_token,
+        "3",
+        write_action(
+            dir.path(),
+            "changes.json",
+            serde_json::json!({
+                "type": "record_review", "verdict": "changes_requested",
+                "checkpoint_identity": "sha256:first", "findings": ["Handle the empty case"]
+            }),
+        ),
+    );
+    apply(
+        "worker",
+        "worker-1",
+        &worker_token,
+        "4",
+        write_action(
+            dir.path(),
+            "second.json",
+            serde_json::json!({
+                "type": "submit_checkpoint", "checkpoint": {
+                    "kind": "artifact", "identity": "sha256:second", "verification": ["tests passed"]
+                }
+            }),
+        ),
+    );
+    apply(
+        "reviewer",
+        "reviewer-1",
+        &reviewer_token,
+        "5",
+        write_action(
+            dir.path(),
+            "approve.json",
+            serde_json::json!({
+                "type": "record_review", "verdict": "approved",
+                "checkpoint_identity": "sha256:second", "findings": []
+            }),
+        ),
+    );
+    apply(
+        "worker",
+        "worker-1",
+        &worker_token,
+        "6",
+        write_action(
+            dir.path(),
+            "finalize.json",
+            serde_json::json!({
+                "type": "finalize"
+            }),
+        ),
+    );
+
+    let baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
+    assert_eq!(baton["status"], "done");
+    assert_eq!(baton["assignee"], "none");
+    assert_eq!(baton["checkpoint"]["identity"], "sha256:second");
+    assert_eq!(baton["review"]["checkpoint_identity"], "sha256:second");
 }
