@@ -1,10 +1,11 @@
-use std::{fs, path::PathBuf};
+use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 use serde::Serialize;
 use thiserror::Error;
 
 use crate::model::RunBaton;
+use crate::store::{RunChannel, StoreError};
 
 #[derive(Debug, Parser)]
 #[command(name = "dvandva-v4")]
@@ -37,10 +38,8 @@ enum Command {
 pub enum CliError {
     #[error("{0}")]
     Invalid(String),
-    #[error("run already exists")]
-    RunExists,
-    #[error("I/O error: {0}")]
-    Io(#[from] std::io::Error),
+    #[error(transparent)]
+    Store(#[from] StoreError),
     #[error("invalid baton JSON: {0}")]
     Json(#[from] serde_json::Error),
 }
@@ -61,18 +60,12 @@ pub fn run() -> Result<(), CliError> {
             reviewer,
         } => {
             validate_init(&run_id, &objective, &worker, &reviewer)?;
-            fs::create_dir_all(&run_dir)?;
-            let path = run_dir.join("baton.json");
-            if path.exists() {
-                return Err(CliError::RunExists);
-            }
             let baton = RunBaton::new(run_id, objective.trim(), worker, reviewer);
-            fs::write(path, serde_json::to_vec_pretty(&baton)?)?;
+            RunChannel::open(run_dir).create(&baton)?;
             Ok(())
         }
         Command::Read { run_dir } => {
-            let bytes = fs::read(run_dir.join("baton.json"))?;
-            let baton: RunBaton = serde_json::from_slice(&bytes)?;
+            let baton = RunChannel::open(run_dir).read()?;
             println!("{}", serde_json::to_string_pretty(&baton)?);
             Ok(())
         }
@@ -82,8 +75,11 @@ pub fn run() -> Result<(), CliError> {
 pub fn print_error(error: &CliError) {
     let code = match error {
         CliError::Invalid(_) => "invalid_input",
-        CliError::RunExists => "run_exists",
-        CliError::Io(_) => "io_error",
+        CliError::Store(StoreError::RunExists) => "run_exists",
+        CliError::Store(StoreError::RunMissing) => "run_missing",
+        CliError::Store(StoreError::RevisionConflict { .. }) => "revision_conflict",
+        CliError::Store(StoreError::Io(_)) => "io_error",
+        CliError::Store(StoreError::Json(_)) => "invalid_baton",
         CliError::Json(_) => "invalid_baton",
     };
     let diagnostic = Diagnostic {
