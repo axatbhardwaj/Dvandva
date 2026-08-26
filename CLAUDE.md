@@ -15,3 +15,17 @@ Research production was Sol-owned and research review was Claude-only. The retai
 - The preserved internal manifests remain at plugin version `1.7.0`; they are source history, not an installable marketplace.
 - For archive-maintenance verification, run the tree-built `dvandva lint stale-version-ref .`; do not publish, upgrade, install, or update a plugin from this repository.
 - `3.5.1` is the final crate release. Historical `dvandva upgrade` and installation behavior must not be used to reactivate this archive.
+
+## Agent skills
+
+### Issue tracker
+
+Issues and specifications are tracked in GitHub Issues for `axatbhardwaj/Dvandva`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+The repository uses the default Matt Pocock engineering-skill label vocabulary. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+This is a single-context repository using root `CONTEXT.md` and system-wide ADRs under `docs/adr/`. See `docs/agents/domain.md`.
