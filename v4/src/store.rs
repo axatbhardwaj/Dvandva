@@ -8,7 +8,7 @@ use fs2::FileExt;
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::model::RunBaton;
+use crate::model::{RecoveryProvenance, RunBaton, SCHEMA};
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -22,6 +22,8 @@ pub enum StoreError {
     Io(#[from] std::io::Error),
     #[error("invalid baton JSON: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("history is missing, incomplete, or inconsistent")]
+    InvalidHistory,
 }
 
 #[derive(Debug, Clone)]
@@ -82,6 +84,58 @@ impl RunChannel {
             self.install(next)?;
             self.write_history(next)?;
             Ok(next.clone())
+        })
+    }
+
+    pub fn recover(&self, from_revision: u64) -> Result<RunBaton, StoreError> {
+        self.with_lock(|| {
+            let history_dir = self.directory.join("history");
+            let mut revisions = fs::read_dir(&history_dir)?
+                .filter_map(Result::ok)
+                .filter_map(|entry| {
+                    entry
+                        .path()
+                        .file_stem()
+                        .and_then(|stem| stem.to_str())
+                        .and_then(|stem| stem.parse::<u64>().ok())
+                })
+                .collect::<Vec<_>>();
+            revisions.sort_unstable();
+            let high = *revisions.last().ok_or(StoreError::InvalidHistory)?;
+            if revisions != (0..=high).collect::<Vec<_>>() || from_revision > high {
+                return Err(StoreError::InvalidHistory);
+            }
+
+            let mut run_id = None;
+            let mut selected = None;
+            for revision in 0..=high {
+                let path = history_dir.join(format!("{revision:020}.json"));
+                let baton: RunBaton = serde_json::from_slice(&fs::read(path)?)?;
+                if baton.schema != SCHEMA || baton.revision != revision {
+                    return Err(StoreError::InvalidHistory);
+                }
+                match &run_id {
+                    Some(expected) if expected != &baton.run_id => {
+                        return Err(StoreError::InvalidHistory)
+                    }
+                    None => run_id = Some(baton.run_id.clone()),
+                    _ => {}
+                }
+                if revision == from_revision {
+                    selected = Some(baton);
+                }
+            }
+            let mut recovered = selected.ok_or(StoreError::InvalidHistory)?;
+            recovered.revision = high + 1;
+            recovered.participants.worker.claim = None;
+            recovered.participants.reviewer.claim = None;
+            recovered.recovery = Some(RecoveryProvenance {
+                from_revision,
+                previous_high_revision: high,
+            });
+            self.install(&recovered)?;
+            self.write_history(&recovered)?;
+            Ok(recovered)
         })
     }
 

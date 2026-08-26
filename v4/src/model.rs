@@ -99,6 +99,12 @@ pub struct TerminalProvenance {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecoveryProvenance {
+    pub from_revision: u64,
+    pub previous_high_revision: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunBaton {
     pub schema: String,
     pub run_id: String,
@@ -113,6 +119,7 @@ pub struct RunBaton {
     pub human_decision: Option<HumanDecision>,
     pub predecessor_run_id: Option<String>,
     pub terminal: Option<TerminalProvenance>,
+    pub recovery: Option<RecoveryProvenance>,
 }
 
 impl RunBaton {
@@ -153,6 +160,7 @@ impl RunBaton {
             human_decision: None,
             predecessor_run_id: None,
             terminal: None,
+            recovery: None,
         }
     }
 }

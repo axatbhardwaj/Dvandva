@@ -940,3 +940,49 @@ fn local_watcher_wakes_the_reviewer_after_a_checkpoint() {
     assert_eq!(baton["assignee"], "reviewer");
     assert_eq!(baton["revision"], 3);
 }
+
+#[test]
+fn recovery_fences_old_sessions_and_preserves_evidence() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
+    let _reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        2,
+        "checkpoint.json",
+        serde_json::json!({
+            "type": "submit_checkpoint", "checkpoint": {
+                "kind": "artifact", "identity": "sha256:recover", "verification": ["tests passed"]
+            }
+        }),
+    )
+    .success();
+    std::fs::write(dir.path().join("baton.json"), b"corrupt\n").unwrap();
+    command()
+        .args(["read", "--run-dir", dir.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(r#""error":"invalid_baton""#));
+
+    command()
+        .args([
+            "recover",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--from-revision",
+            "3",
+        ])
+        .assert()
+        .success();
+    let baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
+    assert_eq!(baton["revision"], 4);
+    assert_eq!(baton["checkpoint"]["identity"], "sha256:recover");
+    assert!(baton["participants"]["worker"]["claim"].is_null());
+    assert!(baton["participants"]["reviewer"]["claim"].is_null());
+    assert_eq!(baton["recovery"]["from_revision"], 3);
+}

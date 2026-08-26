@@ -104,6 +104,12 @@ enum Command {
         #[arg(long, default_value_t = 300_000)]
         timeout_ms: u64,
     },
+    Recover {
+        #[arg(long)]
+        run_dir: PathBuf,
+        #[arg(long)]
+        from_revision: u64,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -242,6 +248,14 @@ pub fn run() -> Result<(), CliError> {
             println!("{}", serde_json::to_string_pretty(&baton)?);
             Ok(())
         }
+        Command::Recover {
+            run_dir,
+            from_revision,
+        } => {
+            let baton = RunChannel::open(run_dir).recover(from_revision)?;
+            println!("{}", serde_json::to_string_pretty(&baton)?);
+            Ok(())
+        }
     }
 }
 
@@ -253,6 +267,7 @@ pub fn print_error(error: &CliError) {
         CliError::Store(StoreError::RevisionConflict { .. }) => "revision_conflict",
         CliError::Store(StoreError::Io(_)) => "io_error",
         CliError::Store(StoreError::Json(_)) => "invalid_baton",
+        CliError::Store(StoreError::InvalidHistory) => "invalid_history",
         CliError::Json(_) => "invalid_baton",
         CliError::Claim(ClaimError::Store(StoreError::RevisionConflict { .. })) => {
             "revision_conflict"
@@ -261,6 +276,7 @@ pub fn print_error(error: &CliError) {
         CliError::Claim(ClaimError::Store(StoreError::RunMissing)) => "run_missing",
         CliError::Claim(ClaimError::Store(StoreError::Io(_))) => "io_error",
         CliError::Claim(ClaimError::Store(StoreError::Json(_))) => "invalid_baton",
+        CliError::Claim(ClaimError::Store(StoreError::InvalidHistory)) => "invalid_history",
         CliError::Claim(ClaimError::Active) => "claim_active",
         CliError::Claim(ClaimError::NotExpired) => "claim_not_expired",
         CliError::Claim(ClaimError::Missing) => "claim_missing",
@@ -275,6 +291,9 @@ pub fn print_error(error: &CliError) {
         CliError::Transition(TransitionError::Store(StoreError::RunMissing)) => "run_missing",
         CliError::Transition(TransitionError::Store(StoreError::Io(_))) => "io_error",
         CliError::Transition(TransitionError::Store(StoreError::Json(_))) => "invalid_baton",
+        CliError::Transition(TransitionError::Store(StoreError::InvalidHistory)) => {
+            "invalid_history"
+        }
         CliError::Transition(TransitionError::Claim(_)) => "claim_fenced",
         CliError::Transition(TransitionError::WrongOwner) => "wrong_owner",
         CliError::Transition(TransitionError::IllegalState) => "invalid_transition",
@@ -296,6 +315,7 @@ pub fn print_error(error: &CliError) {
         CliError::Wait(WaitError::Store(StoreError::RevisionConflict { .. })) => {
             "revision_conflict"
         }
+        CliError::Wait(WaitError::Store(StoreError::InvalidHistory)) => "invalid_history",
         CliError::Wait(WaitError::Claim(_)) => "claim_fenced",
         CliError::Wait(WaitError::Timeout) => "timeout",
     };
