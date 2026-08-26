@@ -360,7 +360,7 @@ git add v4/src v4/tests
 git commit -m "feat: recover durable run state"
 ```
 
-### Task 8: Align active documentation and perform the current-harness canary
+### Task 8: Align active documentation and prepare the current-harness canary
 
 **Files:**
 - Modify: `CONTEXT.md`
@@ -373,19 +373,17 @@ git commit -m "feat: recover durable run state"
 **Interfaces:**
 - Documents the public CLI, schema, state graph, participant startup prompts, recovery, and boundary between the authoritative Run Baton and external projections.
 
-- [ ] **Step 1: Write a documentation conformance test that fails**
+- [ ] **Step 1: Audit the active documentation against the implemented CLI**
 
-Add a black-box test that reads the active protocol and README and asserts they name `dvandva.run.v1`, every public semantic state, the local watcher, the no-cross-harness rule, and the archived v3 boundary. Assert the superseded design and ADR contain an explicit superseded status rather than remaining simultaneously accepted.
+Compare the implemented schema, semantic states, commands, wake behavior, and recovery outcomes with the active protocol, domain glossary, ADR-0002, and both earlier v4 design documents. Record every contradiction before editing; human prose does not receive source-text tests.
 
-- [ ] **Step 2: Run the focused test and confirm RED**
-
-Run: `cargo test --manifest-path v4/Cargo.toml --test run_channel active_docs_match_the_minimal_protocol -- --exact`
-
-Expected: FAIL because active docs still describe the larger discarded design.
-
-- [ ] **Step 3: Simplify the domain and protocol documentation**
+- [ ] **Step 2: Simplify the domain and protocol documentation**
 
 Retain only Run Pair, Role Session, Walkaway Run, Run Channel, Coordination Kernel, Baton, Handoff, Handoff Checkpoint, Adversarial Review, Human Decision, participant claim, worker, and reviewer. Mark delegated explicit-skill dispatch and the larger v4 controller designs superseded by issue #3. Keep every v3 reference explicitly historical.
+
+- [ ] **Step 3: Verify documented examples through the real CLI**
+
+Run every initialization, claim, work/review/fix/finalization, Human Decision, and recovery command shown in the protocol against a temporary run directory. Assert their observable JSON and exit outcomes match the prose; do not add tests that merely inspect document text.
 
 - [ ] **Step 4: Run the automated verification suite**
 
@@ -397,9 +395,9 @@ Expected: formatting, clippy, both Rust suites, and whitespace checks pass.
 
 Document the two exact startup prompts and local commands for one Codex worker and one Claude reviewer against a disposable run directory and artifact-only objective. The human must start both harness sessions; one harness must not launch the other. Once both exist, confirm each foreground waiter resumes from a local Baton change without a T3 event or tracker update and exercise one findings/revision cycle plus approval/finalization. Do not install the binary globally, touch a real project branch, or publish external state.
 
-- [ ] **Step 6: Record canary evidence and commit**
+- [ ] **Step 6: Record available canary evidence and commit**
 
-Record only commands, versions, observed transitions, and sanitized results in the protocol document; do not include transcripts or hidden reasoning.
+Record only commands, versions, observed transitions, and sanitized results after both human-started harness sessions have run. If the second harness has not yet been started, record the prepared canary command and report execution as pending rather than claiming it passed. Do not include transcripts or hidden reasoning.
 
 ```bash
 git add CONTEXT.md docs/adr docs/protocol docs/superpowers/specs v4/README.md v4/tests
