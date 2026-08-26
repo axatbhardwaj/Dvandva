@@ -219,6 +219,8 @@ pub fn apply(
                 return Err(TransitionError::WrongOwner);
             }
             if desired_revision < baton.publication.desired_revision
+                || (baton.publication.required && !required)
+                || (baton.publication.published_revision.is_some() && published_revision.is_none())
                 || published_revision.is_some_and(|published| {
                     published < baton.publication.published_revision.unwrap_or(0)
                         || published > desired_revision

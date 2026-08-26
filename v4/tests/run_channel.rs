@@ -986,3 +986,209 @@ fn recovery_fences_old_sessions_and_preserves_evidence() {
     assert!(baton["participants"]["reviewer"]["claim"].is_null());
     assert_eq!(baton["recovery"]["from_revision"], 3);
 }
+
+#[test]
+fn recovery_refuses_to_reopen_a_terminal_run() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        1,
+        "abandon.json",
+        serde_json::json!({
+            "type": "abandon", "reason": "Objective was cancelled"
+        }),
+    )
+    .success();
+
+    command()
+        .args([
+            "recover",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--from-revision",
+            "1",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(r#""error":"terminal_state""#));
+    let baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
+    assert_eq!(baton["status"], "abandoned");
+}
+
+#[test]
+fn huge_lease_is_rejected_without_panicking() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    command()
+        .args([
+            "claim",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-1",
+            "--lease-seconds",
+            "9223372036854775807",
+            "--expected-revision",
+            "0",
+        ])
+        .assert()
+        .failure()
+        .code(1)
+        .stderr(predicate::str::contains(r#""error":"invalid_input""#));
+}
+
+#[test]
+fn one_second_wait_renews_at_most_once_before_timeout() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let reviewer = command()
+        .args([
+            "claim",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--role",
+            "reviewer",
+            "--session-id",
+            "reviewer-1",
+            "--lease-seconds",
+            "1",
+            "--expected-revision",
+            "0",
+        ])
+        .output()
+        .unwrap();
+    assert!(reviewer.status.success());
+    let reviewer: serde_json::Value = serde_json::from_slice(&reviewer.stdout).unwrap();
+    let token = reviewer["token"].as_str().unwrap();
+    let mut waiter = std::process::Command::new(env!("CARGO_BIN_EXE_dvandva-v4"))
+        .args([
+            "wait",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--role",
+            "reviewer",
+            "--session-id",
+            "reviewer-1",
+            "--token",
+            token,
+            "--after-revision",
+            "1",
+            "--poll-interval-ms",
+            "25",
+            "--timeout-ms",
+            "250",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while waiter.try_wait().unwrap().is_none() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    if waiter.try_wait().unwrap().is_none() {
+        waiter.kill().unwrap();
+    }
+    let output = waiter.wait_with_output().unwrap();
+    assert_eq!(output.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&output.stderr).contains(r#""error":"timeout""#));
+    assert!(
+        std::fs::read_dir(dir.path().join("history"))
+            .unwrap()
+            .count()
+            <= 3
+    );
+}
+
+#[test]
+fn publication_cannot_regress_to_unreported_or_optional() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        1,
+        "published.json",
+        serde_json::json!({
+            "type": "record_publication", "required": true, "desired_revision": 7,
+            "published_revision": 7, "refs": []
+        }),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        2,
+        "regress-null.json",
+        serde_json::json!({
+            "type": "record_publication", "required": true, "desired_revision": 7,
+            "published_revision": null, "refs": []
+        }),
+    )
+    .failure()
+    .stderr(predicate::str::contains(
+        r#""error":"publication_regression""#,
+    ));
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        2,
+        "disarm.json",
+        serde_json::json!({
+            "type": "record_publication", "required": false, "desired_revision": 7,
+            "published_revision": 7, "refs": []
+        }),
+    )
+    .failure()
+    .stderr(predicate::str::contains(
+        r#""error":"publication_regression""#,
+    ));
+}
+
+#[test]
+fn failed_history_write_does_not_advance_the_baton() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
+    std::fs::write(
+        dir.path().join("history/00000000000000000002.json"),
+        b"occupied",
+    )
+    .unwrap();
+    command()
+        .args([
+            "heartbeat",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-1",
+            "--token",
+            &worker,
+            "--lease-seconds",
+            "30",
+            "--expected-revision",
+            "1",
+        ])
+        .assert()
+        .failure();
+    let baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
+    assert_eq!(baton["revision"], 1);
+}

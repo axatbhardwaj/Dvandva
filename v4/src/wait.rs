@@ -53,14 +53,18 @@ pub fn wait(
         }
         claim::verify(&baton, role, session_id, token)?;
         if let Some(lease_seconds) = claim::renewal_lease(&baton, role)? {
-            seen_revision = claim::heartbeat(
+            match claim::heartbeat(
                 channel,
                 role,
                 session_id,
                 token,
                 lease_seconds,
                 baton.revision,
-            )?;
+            ) {
+                Ok(revision) => seen_revision = revision,
+                Err(ClaimError::Store(StoreError::RevisionConflict { .. })) => continue,
+                Err(error) => return Err(error.into()),
+            }
             continue;
         }
         if baton.revision > seen_revision {

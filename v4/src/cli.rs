@@ -268,6 +268,7 @@ pub fn print_error(error: &CliError) {
         CliError::Store(StoreError::Io(_)) => "io_error",
         CliError::Store(StoreError::Json(_)) => "invalid_baton",
         CliError::Store(StoreError::InvalidHistory) => "invalid_history",
+        CliError::Store(StoreError::TerminalState) => "terminal_state",
         CliError::Json(_) => "invalid_baton",
         CliError::Claim(ClaimError::Store(StoreError::RevisionConflict { .. })) => {
             "revision_conflict"
@@ -277,6 +278,7 @@ pub fn print_error(error: &CliError) {
         CliError::Claim(ClaimError::Store(StoreError::Io(_))) => "io_error",
         CliError::Claim(ClaimError::Store(StoreError::Json(_))) => "invalid_baton",
         CliError::Claim(ClaimError::Store(StoreError::InvalidHistory)) => "invalid_history",
+        CliError::Claim(ClaimError::Store(StoreError::TerminalState)) => "terminal_state",
         CliError::Claim(ClaimError::Active) => "claim_active",
         CliError::Claim(ClaimError::NotExpired) => "claim_not_expired",
         CliError::Claim(ClaimError::Missing) => "claim_missing",
@@ -294,6 +296,7 @@ pub fn print_error(error: &CliError) {
         CliError::Transition(TransitionError::Store(StoreError::InvalidHistory)) => {
             "invalid_history"
         }
+        CliError::Transition(TransitionError::Store(StoreError::TerminalState)) => "terminal_state",
         CliError::Transition(TransitionError::Claim(_)) => "claim_fenced",
         CliError::Transition(TransitionError::WrongOwner) => "wrong_owner",
         CliError::Transition(TransitionError::IllegalState) => "invalid_transition",
@@ -316,6 +319,7 @@ pub fn print_error(error: &CliError) {
             "revision_conflict"
         }
         CliError::Wait(WaitError::Store(StoreError::InvalidHistory)) => "invalid_history",
+        CliError::Wait(WaitError::Store(StoreError::TerminalState)) => "terminal_state",
         CliError::Wait(WaitError::Claim(_)) => "claim_fenced",
         CliError::Wait(WaitError::Timeout) => "timeout",
     };

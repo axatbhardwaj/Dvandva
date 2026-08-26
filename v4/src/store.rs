@@ -24,6 +24,8 @@ pub enum StoreError {
     Json(#[from] serde_json::Error),
     #[error("history is missing, incomplete, or inconsistent")]
     InvalidHistory,
+    #[error("terminal state cannot be recovered into an active state")]
+    TerminalState,
 }
 
 #[derive(Debug, Clone)]
@@ -44,8 +46,8 @@ impl RunChannel {
             if self.baton_path().exists() {
                 return Err(StoreError::RunExists);
             }
-            self.install(initial)?;
             self.write_history(initial)?;
+            self.install(initial)?;
             Ok(initial.clone())
         })
     }
@@ -81,14 +83,26 @@ impl RunChannel {
                     actual: next.revision,
                 });
             }
-            self.install(next)?;
             self.write_history(next)?;
+            self.install(next)?;
             Ok(next.clone())
         })
     }
 
     pub fn recover(&self, from_revision: u64) -> Result<RunBaton, StoreError> {
         self.with_lock(|| {
+            match self.read() {
+                Ok(current)
+                    if matches!(
+                        current.status,
+                        crate::model::Status::Done | crate::model::Status::Abandoned
+                    ) =>
+                {
+                    return Err(StoreError::TerminalState)
+                }
+                Ok(_) | Err(StoreError::Json(_)) => {}
+                Err(error) => return Err(error),
+            }
             let history_dir = self.directory.join("history");
             let mut revisions = fs::read_dir(&history_dir)?
                 .filter_map(Result::ok)
@@ -133,8 +147,8 @@ impl RunChannel {
                 from_revision,
                 previous_high_revision: high,
             });
-            self.install(&recovered)?;
             self.write_history(&recovered)?;
+            self.install(&recovered)?;
             Ok(recovered)
         })
     }

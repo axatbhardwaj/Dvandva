@@ -76,6 +76,13 @@ remains authoritative. Codex normally records the projection before and after
 handoffs; a stale required projection prevents `done` without changing who
 owns the semantic task.
 
+Publication progress is deliberately non-semantic: the worker may record a
+new projection revision while the reviewer owns the checkpoint turn so the
+explainer stays current around each handoff. Once publication is marked
+required it cannot be made optional, and a reported published revision cannot
+return to an unreported state; these monotonic rules prevent bypassing the
+finalization gate.
+
 The current-harness canary is prepared by these prompts but remains pending
 until a human starts both real harness sessions. Automated tests prove two
 local processes and filesystem wake-up; they do not claim a cross-harness

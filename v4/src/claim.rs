@@ -151,7 +151,12 @@ pub fn renewal_lease(baton: &RunBaton, role: Role) -> Result<Option<u64>, ClaimE
         .as_ref()
         .ok_or(ClaimError::Missing)?;
     let remaining = parse_timestamp(&claim.lease_expires_at)? - OffsetDateTime::now_utc();
-    let threshold = Duration::seconds((claim.lease_seconds / 3).max(1) as i64);
+    let threshold_millis = claim
+        .lease_seconds
+        .saturating_mul(1_000)
+        .saturating_div(3)
+        .clamp(1, i64::MAX as u64) as i64;
+    let threshold = Duration::milliseconds(threshold_millis);
     Ok((remaining <= threshold).then_some(claim.lease_seconds))
 }
 
@@ -225,7 +230,9 @@ fn reject_terminal(baton: &RunBaton) -> Result<(), ClaimError> {
 }
 
 fn expiry(lease_seconds: u64) -> Result<String, ClaimError> {
-    (OffsetDateTime::now_utc() + Duration::seconds(lease_seconds as i64))
+    OffsetDateTime::now_utc()
+        .checked_add(Duration::seconds(lease_seconds as i64))
+        .ok_or(ClaimError::InvalidLease)?
         .format(&Rfc3339)
         .map_err(|_| ClaimError::InvalidTimestamp)
 }
