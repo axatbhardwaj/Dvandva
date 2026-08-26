@@ -84,8 +84,18 @@ pub struct Publication {
 pub struct HumanDecision {
     pub question: String,
     pub requested_by: String,
+    pub evidence: Vec<String>,
+    pub options: Vec<String>,
+    pub contact_role: String,
     pub resume_status: Status,
     pub resume_assignee: Assignee,
+    pub answer: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TerminalProvenance {
+    pub outcome: String,
+    pub reason: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,6 +112,7 @@ pub struct RunBaton {
     pub publication: Publication,
     pub human_decision: Option<HumanDecision>,
     pub predecessor_run_id: Option<String>,
+    pub terminal: Option<TerminalProvenance>,
 }
 
 impl RunBaton {
@@ -141,6 +152,7 @@ impl RunBaton {
             },
             human_decision: None,
             predecessor_run_id: None,
+            terminal: None,
         }
     }
 }

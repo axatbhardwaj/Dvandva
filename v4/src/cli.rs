@@ -245,6 +245,10 @@ pub fn print_error(error: &CliError) {
         CliError::Transition(TransitionError::BlockingFindings) => "blocking_findings",
         CliError::Transition(TransitionError::PublicationStale) => "publication_stale",
         CliError::Transition(TransitionError::Terminal) => "terminal_state",
+        CliError::Transition(TransitionError::InvalidHumanDecision) => "invalid_human_decision",
+        CliError::Transition(TransitionError::WrongContact) => "wrong_contact",
+        CliError::Transition(TransitionError::PublicationRegression) => "publication_regression",
+        CliError::Transition(TransitionError::MissingReason) => "missing_reason",
     };
     let diagnostic = Diagnostic {
         error: code,

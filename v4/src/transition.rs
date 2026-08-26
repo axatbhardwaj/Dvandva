@@ -3,7 +3,7 @@ use thiserror::Error;
 use crate::{
     action::{Action, ReviewVerdict},
     claim::{self, ClaimError, Role},
-    model::{Assignee, ReviewReceipt, RunBaton, Status},
+    model::{Assignee, HumanDecision, ReviewReceipt, RunBaton, Status, TerminalProvenance},
     store::{RunChannel, StoreError},
 };
 
@@ -31,6 +31,14 @@ pub enum TransitionError {
     PublicationStale,
     #[error("terminal state cannot be mutated")]
     Terminal,
+    #[error("human decision metadata is incomplete")]
+    InvalidHumanDecision,
+    #[error("only the designated contact may resume the human decision")]
+    WrongContact,
+    #[error("publication revisions cannot regress or exceed the desired revision")]
+    PublicationRegression,
+    #[error("abandonment requires a non-blank reason")]
+    MissingReason,
 }
 
 pub fn apply(
@@ -143,11 +151,118 @@ pub fn apply(
             }
             baton.status = Status::Done;
             baton.assignee = Assignee::None;
+            baton.terminal = Some(TerminalProvenance {
+                outcome: "done".to_owned(),
+                reason: None,
+            });
+        }
+        Action::RequestHumanDecision {
+            question,
+            evidence,
+            options,
+            contact_role,
+            resume_status,
+            resume_assignee,
+        } => {
+            if baton
+                .human_decision
+                .as_ref()
+                .is_some_and(|decision| decision.answer.is_none())
+                || question.trim().is_empty()
+                || evidence.is_empty()
+                || evidence.iter().any(|item| item.trim().is_empty())
+                || options.len() < 2
+                || options.iter().any(|option| option.trim().is_empty())
+                || matches!(
+                    resume_status,
+                    Status::HumanDecision | Status::Done | Status::Abandoned
+                )
+                || !resume_target_matches(&resume_status, &resume_assignee)
+            {
+                return Err(TransitionError::InvalidHumanDecision);
+            }
+            baton.human_decision = Some(HumanDecision {
+                question,
+                requested_by: role_name(role).to_owned(),
+                evidence,
+                options,
+                contact_role: role_name(contact_role).to_owned(),
+                resume_status,
+                resume_assignee,
+                answer: None,
+            });
+            baton.status = Status::HumanDecision;
+            baton.assignee = Assignee::Human;
+        }
+        Action::ResumeHumanDecision { answer } => {
+            if baton.status != Status::HumanDecision || answer.trim().is_empty() {
+                return Err(TransitionError::InvalidHumanDecision);
+            }
+            let decision = baton
+                .human_decision
+                .as_mut()
+                .ok_or(TransitionError::InvalidHumanDecision)?;
+            if decision.contact_role != role_name(role) {
+                return Err(TransitionError::WrongContact);
+            }
+            decision.answer = Some(answer);
+            baton.status = decision.resume_status.clone();
+            baton.assignee = decision.resume_assignee.clone();
+        }
+        Action::RecordPublication {
+            required,
+            desired_revision,
+            published_revision,
+            refs,
+        } => {
+            if role != Role::Worker {
+                return Err(TransitionError::WrongOwner);
+            }
+            if desired_revision < baton.publication.desired_revision
+                || published_revision.is_some_and(|published| {
+                    published < baton.publication.published_revision.unwrap_or(0)
+                        || published > desired_revision
+                })
+            {
+                return Err(TransitionError::PublicationRegression);
+            }
+            baton.publication.required = required;
+            baton.publication.desired_revision = desired_revision;
+            baton.publication.published_revision = published_revision;
+            baton.publication.refs = refs;
+        }
+        Action::Abandon { reason } => {
+            if reason.trim().is_empty() {
+                return Err(TransitionError::MissingReason);
+            }
+            baton.status = Status::Abandoned;
+            baton.assignee = Assignee::None;
+            baton.terminal = Some(TerminalProvenance {
+                outcome: "abandoned".to_owned(),
+                reason: Some(reason),
+            });
         }
     }
     baton.revision += 1;
     channel.compare_and_swap(expected_revision, &baton)?;
     Ok(baton)
+}
+
+fn role_name(role: Role) -> &'static str {
+    match role {
+        Role::Worker => "worker",
+        Role::Reviewer => "reviewer",
+    }
+}
+
+fn resume_target_matches(status: &Status, assignee: &Assignee) -> bool {
+    matches!(
+        (status, assignee),
+        (
+            Status::Working | Status::Revising | Status::Finalizing,
+            Assignee::Worker
+        ) | (Status::Reviewing, Assignee::Reviewer)
+    )
 }
 
 fn require_owner(

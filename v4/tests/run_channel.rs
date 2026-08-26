@@ -11,6 +11,82 @@ fn write_action(dir: &std::path::Path, name: &str, action: serde_json::Value) ->
     path.to_str().unwrap().to_owned()
 }
 
+fn init_pair(dir: &std::path::Path) {
+    command()
+        .args([
+            "init",
+            "--run-dir",
+            dir.to_str().unwrap(),
+            "--run-id",
+            "run-a",
+            "--objective",
+            "Implement DEF-123",
+            "--worker",
+            "codex",
+            "--reviewer",
+            "claude",
+        ])
+        .assert()
+        .success();
+}
+
+fn claim_role(dir: &std::path::Path, role: &str, session: &str, revision: u64) -> String {
+    let output = command()
+        .args([
+            "claim",
+            "--run-dir",
+            dir.to_str().unwrap(),
+            "--role",
+            role,
+            "--session-id",
+            session,
+            "--lease-seconds",
+            "300",
+            "--expected-revision",
+            &revision.to_string(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_owned()
+}
+
+fn apply_action(
+    dir: &std::path::Path,
+    role: &str,
+    session: &str,
+    token: &str,
+    revision: u64,
+    name: &str,
+    action: serde_json::Value,
+) -> assert_cmd::assert::Assert {
+    let path = write_action(dir, name, action);
+    command()
+        .args([
+            "apply",
+            "--run-dir",
+            dir.to_str().unwrap(),
+            "--role",
+            role,
+            "--session-id",
+            session,
+            "--token",
+            token,
+            "--expected-revision",
+            &revision.to_string(),
+            "--action",
+            &path,
+        ])
+        .assert()
+}
+
 #[test]
 fn init_creates_a_run_centric_baton() {
     let dir = tempfile::tempdir().unwrap();
@@ -665,4 +741,144 @@ fn complete_review_fix_loop_reaches_done() {
     assert_eq!(baton["assignee"], "none");
     assert_eq!(baton["checkpoint"]["identity"], "sha256:second");
     assert_eq!(baton["review"]["checkpoint_identity"], "sha256:second");
+}
+
+#[test]
+fn human_decision_resumes_declared_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
+    let reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        2,
+        "pause.json",
+        serde_json::json!({
+            "type": "request_human_decision", "question": "Which API should win?",
+            "evidence": ["Both variants pass tests"], "options": ["Keep A", "Keep B"],
+            "contact_role": "reviewer", "resume_status": "reviewing", "resume_assignee": "reviewer"
+        }),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        3,
+        "wrong.json",
+        serde_json::json!({
+            "type": "resume_human_decision", "answer": "Keep A"
+        }),
+    )
+    .failure()
+    .stderr(predicate::str::contains(r#""error":"wrong_contact""#));
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        3,
+        "resume.json",
+        serde_json::json!({
+            "type": "resume_human_decision", "answer": "Keep A"
+        }),
+    )
+    .success();
+
+    let baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
+    assert_eq!(baton["status"], "reviewing");
+    assert_eq!(baton["assignee"], "reviewer");
+    assert_eq!(baton["human_decision"]["answer"], "Keep A");
+}
+
+#[test]
+fn required_publication_blocks_done_until_synchronized() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
+    let reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        2,
+        "publication.json",
+        serde_json::json!({
+            "type": "record_publication", "required": true, "desired_revision": 1,
+            "published_revision": null, "refs": [{"kind": "site", "value": "pending"}]
+        }),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        3,
+        "checkpoint.json",
+        serde_json::json!({
+            "type": "submit_checkpoint", "checkpoint": {
+                "kind": "artifact", "identity": "sha256:ready", "verification": ["tests passed"]
+            }
+        }),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        4,
+        "approval.json",
+        serde_json::json!({
+            "type": "record_review", "verdict": "approved",
+            "checkpoint_identity": "sha256:ready", "findings": []
+        }),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        5,
+        "blocked.json",
+        serde_json::json!({
+            "type": "finalize"
+        }),
+    )
+    .failure()
+    .stderr(predicate::str::contains(r#""error":"publication_stale""#));
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        5,
+        "published.json",
+        serde_json::json!({
+            "type": "record_publication", "required": true, "desired_revision": 1,
+            "published_revision": 1, "refs": [{"kind": "site", "value": "site:abc"}]
+        }),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        6,
+        "done.json",
+        serde_json::json!({
+            "type": "finalize"
+        }),
+    )
+    .success();
 }
