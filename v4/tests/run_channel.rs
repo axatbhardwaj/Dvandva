@@ -1016,9 +1016,48 @@ fn recovery_refuses_to_reopen_a_terminal_run() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(r#""error":"terminal_state""#));
+
+    std::fs::write(dir.path().join("baton.json"), b"corrupt\n").unwrap();
+    command()
+        .args([
+            "recover",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--from-revision",
+            "1",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(r#""error":"terminal_state""#));
+    let terminal: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(dir.path().join("history/00000000000000000002.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(terminal["status"], "abandoned");
+}
+
+#[test]
+fn recovery_restores_a_missing_baton_from_history() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let _worker = claim_role(dir.path(), "worker", "worker-1", 0);
+    std::fs::remove_file(dir.path().join("baton.json")).unwrap();
+
+    command()
+        .args([
+            "recover",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--from-revision",
+            "1",
+        ])
+        .assert()
+        .success();
     let baton: serde_json::Value =
         serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
-    assert_eq!(baton["status"], "abandoned");
+    assert_eq!(baton["status"], "working");
+    assert_eq!(baton["revision"], 2);
+    assert!(baton["participants"]["worker"]["claim"].is_null());
 }
 
 #[test]

@@ -8,7 +8,7 @@ use fs2::FileExt;
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::model::{RecoveryProvenance, RunBaton, SCHEMA};
+use crate::model::{RecoveryProvenance, RunBaton, Status, SCHEMA};
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -91,18 +91,6 @@ impl RunChannel {
 
     pub fn recover(&self, from_revision: u64) -> Result<RunBaton, StoreError> {
         self.with_lock(|| {
-            match self.read() {
-                Ok(current)
-                    if matches!(
-                        current.status,
-                        crate::model::Status::Done | crate::model::Status::Abandoned
-                    ) =>
-                {
-                    return Err(StoreError::TerminalState)
-                }
-                Ok(_) | Err(StoreError::Json(_)) => {}
-                Err(error) => return Err(error),
-            }
             let history_dir = self.directory.join("history");
             let mut revisions = fs::read_dir(&history_dir)?
                 .filter_map(Result::ok)
@@ -122,6 +110,7 @@ impl RunChannel {
 
             let mut run_id = None;
             let mut selected = None;
+            let mut terminal_head = false;
             for revision in 0..=high {
                 let path = history_dir.join(format!("{revision:020}.json"));
                 let baton: RunBaton = serde_json::from_slice(&fs::read(path)?)?;
@@ -135,9 +124,15 @@ impl RunChannel {
                     None => run_id = Some(baton.run_id.clone()),
                     _ => {}
                 }
+                if revision == high {
+                    terminal_head = matches!(&baton.status, Status::Done | Status::Abandoned);
+                }
                 if revision == from_revision {
                     selected = Some(baton);
                 }
+            }
+            if terminal_head {
+                return Err(StoreError::TerminalState);
             }
             let mut recovered = selected.ok_or(StoreError::InvalidHistory)?;
             recovered.revision = high + 1;
