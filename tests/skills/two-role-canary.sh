@@ -25,7 +25,8 @@ bash "$HOME/.agents/skills/setup-dvandva/scripts/setup-dvandva.sh" \
   install --version 0.1.0 >/dev/null
 
 vadi="$HOME/.agents/skills/vadi/scripts/dvandva-role.sh"
-prativadi="$HOME/.agents/skills/prativadi/scripts/dvandva-role.sh"
+prativadi="$HOME/.claude/skills/prativadi/scripts/dvandva-role.sh"
+test "$vadi" != "$prativadi"
 workspace="$test_root/workspace"
 mkdir -p "$workspace"
 git -C "$workspace" init --quiet
