@@ -12,7 +12,7 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use crate::{
     claim::Role,
-    model::{RunBaton, Status, LEGACY_SCHEMA, SCHEMA},
+    model::{Assignee, DeliverableRequirement, Objective, RunBaton, Status, LEGACY_SCHEMA, SCHEMA},
     store::RunChannel,
 };
 
@@ -38,6 +38,8 @@ pub enum DiscoveryKind {
     Match,
     UpgradeRequired,
     Busy,
+    RunMissing,
+    ScopeMismatch,
     None,
     Ambiguous,
     TaskMismatch,
@@ -50,7 +52,11 @@ pub struct RunCandidate {
     pub run_dir: PathBuf,
     pub task_reference: Option<String>,
     pub task_summary: String,
+    pub objective: Objective,
+    pub scope_revision: u64,
+    pub scope_deliverables: Vec<DeliverableRequirement>,
     pub status: Status,
+    pub assignee: Assignee,
     pub revision: u64,
     pub claim_state: ClaimState,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -83,6 +89,22 @@ pub struct DiscoveryOutcome {
     pub outcome: DiscoveryKind,
     pub candidates: Vec<RunCandidate>,
     pub corrupt: Vec<CorruptCandidate>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_scope: Option<RequestedScope>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_action: Option<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RequestedScope {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub objective_summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub objective_refs: Option<Vec<crate::model::ExternalRef>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_reference: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required_deliverables: Option<Vec<DeliverableRequirement>>,
 }
 
 pub fn discover(
@@ -90,7 +112,11 @@ pub fn discover(
     query: DiscoveryQuery<'_>,
 ) -> Result<DiscoveryOutcome, DiscoveryError> {
     if !runs_dir.exists() {
-        return Ok(outcome(Vec::new(), Vec::new(), Vec::new(), Vec::new()));
+        let mut result = outcome(Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        if query.run_id.is_some() {
+            result.outcome = DiscoveryKind::RunMissing;
+        }
+        return Ok(result);
     }
 
     let mut candidates = Vec::new();
@@ -124,7 +150,13 @@ pub fn discover(
     task_mismatches.sort_by(|left, right| left.run_id.cmp(&right.run_id));
     upgrades.sort_by(|left, right| left.run_id.cmp(&right.run_id));
     corrupt.sort_by(|left, right| left.run_dir.cmp(&right.run_dir));
-    Ok(outcome(candidates, task_mismatches, upgrades, corrupt))
+    let mut result = outcome(candidates, task_mismatches, upgrades, corrupt);
+    if query.run_id.is_some() && result.outcome == DiscoveryKind::None {
+        result.outcome = DiscoveryKind::RunMissing;
+    } else if query.run_id.is_some() && result.outcome == DiscoveryKind::Busy {
+        result.next_action = Some("wait");
+    }
+    Ok(result)
 }
 
 pub fn wait_for_match(
@@ -220,7 +252,7 @@ fn candidate(
                 .is_some_and(|session_id| claim.session_id == session_id)
             {
                 ClaimState::Owned
-            } else if query.role == Role::Worker {
+            } else if query.role == Role::Worker || query.run_id.is_some() {
                 ClaimState::Busy
             } else {
                 return Ok(None);
@@ -232,7 +264,11 @@ fn candidate(
         run_dir: run_dir.to_owned(),
         task_reference: task.reference.clone(),
         task_summary: task.summary.clone(),
+        objective: baton.objective,
+        scope_revision: baton.scope_revision,
+        scope_deliverables: baton.scope_deliverables,
         status: baton.status,
+        assignee: baton.assignee,
         revision: baton.revision,
         claim_state,
         migration: (baton.schema == LEGACY_SCHEMA).then(|| MigrationMetadata {
@@ -288,5 +324,7 @@ fn outcome(
         outcome,
         candidates,
         corrupt,
+        requested_scope: None,
+        next_action: None,
     }
 }

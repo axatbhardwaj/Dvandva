@@ -266,6 +266,74 @@ fn one_matching_active_run_is_returned() {
 }
 
 #[test]
+fn exact_missing_run_is_typed_immediately() {
+    let root = tempfile::tempdir().unwrap();
+    let output = command()
+        .args([
+            "discover",
+            "--runs-dir",
+            root.path().to_str().unwrap(),
+            "--repository-id",
+            REPOSITORY_ID,
+            "--reviewer-harness",
+            "claude",
+            "--run-id",
+            "missing-run",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let outcome: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(outcome["outcome"], "run_missing");
+    assert_eq!(outcome["candidates"], serde_json::json!([]));
+}
+
+#[test]
+fn exact_busy_reviewer_run_carries_canonical_candidate() {
+    let root = tempfile::tempdir().unwrap();
+    let run_dir = create_run(
+        root.path(),
+        "exact-busy",
+        REPOSITORY_ID,
+        Some("DEF-123"),
+        "claude",
+    );
+    claim::claim(
+        &RunChannel::open(&run_dir),
+        Role::Reviewer,
+        "existing-reviewer",
+        300,
+        0,
+    )
+    .unwrap();
+    let output = command()
+        .args([
+            "discover",
+            "--runs-dir",
+            root.path().to_str().unwrap(),
+            "--repository-id",
+            REPOSITORY_ID,
+            "--reviewer-harness",
+            "claude",
+            "--run-id",
+            "exact-busy",
+            "--session-id",
+            "other-reviewer",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let outcome: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(outcome["outcome"], "busy");
+    assert_eq!(
+        outcome["candidates"][0]["objective"]["summary"],
+        "Implement the ticket"
+    );
+    assert_eq!(outcome["candidates"][0]["scope_revision"], 0);
+    assert_eq!(outcome["candidates"][0]["assignee"], "worker");
+}
+
+#[test]
 fn a_live_reviewer_claim_is_not_joinable() {
     let root = tempfile::tempdir().unwrap();
     let run_dir = create_run(
