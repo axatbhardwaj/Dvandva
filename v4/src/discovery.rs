@@ -204,7 +204,7 @@ fn candidate(
         || !participant
             .harness
             .trim()
-            .eq_ignore_ascii_case(query.participant_harness)
+            .eq_ignore_ascii_case(query.participant_harness.trim())
     {
         return Ok(None);
     }

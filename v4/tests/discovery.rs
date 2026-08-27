@@ -37,6 +37,111 @@ fn write_legacy_run(runs: &std::path::Path, run_id: &str) -> std::path::PathBuf 
 }
 
 #[test]
+fn public_discover_normalizes_query_harness_for_v1_and_v2_candidates() {
+    for schema in ["v1", "v2"] {
+        let root = tempfile::tempdir().unwrap();
+        let run_id = format!("normalized-{schema}");
+        if schema == "v1" {
+            write_legacy_run(root.path(), &run_id);
+        } else {
+            create_run(
+                root.path(),
+                &run_id,
+                REPOSITORY_ID,
+                Some("DEF-123"),
+                "claude",
+            );
+        }
+
+        let output = command()
+            .args([
+                "discover",
+                "--runs-dir",
+                root.path().to_str().unwrap(),
+                "--repository-id",
+                REPOSITORY_ID,
+                "--reviewer-harness",
+                " CoDeX ",
+                "--role",
+                "worker",
+                "--run-id",
+                &run_id,
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            result["outcome"],
+            if schema == "v1" {
+                "upgrade_required"
+            } else {
+                "match"
+            }
+        );
+        assert_eq!(result["candidates"][0]["run_id"], run_id);
+    }
+}
+
+#[test]
+fn public_discover_wait_normalizes_query_harness_for_v1_and_v2_candidates() {
+    for schema in ["v1", "v2"] {
+        let root = tempfile::tempdir().unwrap();
+        let run_id = format!("normalized-wait-{schema}");
+        if schema == "v1" {
+            write_legacy_run(root.path(), &run_id);
+        } else {
+            create_run(
+                root.path(),
+                &run_id,
+                REPOSITORY_ID,
+                Some("DEF-123"),
+                "claude",
+            );
+        }
+
+        let output = command()
+            .args([
+                "discover-wait",
+                "--runs-dir",
+                root.path().to_str().unwrap(),
+                "--repository-id",
+                REPOSITORY_ID,
+                "--reviewer-harness",
+                " CoDeX ",
+                "--role",
+                "worker",
+                "--poll-only",
+                "--poll-interval-ms",
+                "1",
+                "--timeout-ms",
+                "5",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            result["outcome"],
+            if schema == "v1" {
+                "upgrade_required"
+            } else {
+                "match"
+            }
+        );
+        assert_eq!(result["candidates"][0]["run_id"], run_id);
+    }
+}
+
+#[test]
 fn upgrade_classifies_v1_as_upgrade_required_instead_of_corrupt_or_matchable() {
     let root = tempfile::tempdir().unwrap();
     let run_dir = write_legacy_run(root.path(), "legacy-run");
