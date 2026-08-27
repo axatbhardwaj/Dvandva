@@ -29,3 +29,12 @@ the v1 schema and role API 1 from `probe`. The baseline packager accepted and
 checksummed it, proving the missing compatibility gate rather than a tag or
 build-fixture failure. The same run recorded the expected active-document,
 ADR, and migration-aware workflow gaps.
+
+A second RED fixture supplied duplicate root and nested capability keys with
+invalid values first and valid values last. Against the unchanged packager it
+also exited 1 for the expected reason:
+
+```text
+FAIL: duplicate-key probe unexpectedly packaged
+FAIL: duplicate-key kernel was checksummed
+```

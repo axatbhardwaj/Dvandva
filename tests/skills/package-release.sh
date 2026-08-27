@@ -62,6 +62,31 @@ fi
 require_text 'probe_mismatch' "$test_root/incompatible.out"
 test ! -e "$incompatible/SHA256SUMS" || fail 'incompatible kernel was checksummed'
 
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -euo pipefail' \
+  'if test "${1:-}" = "--version"; then' \
+  '  printf "dvandva-v4 0.2.0\\n"' \
+  '  exit 0' \
+  'fi' \
+  'if test "${1:-}" = "probe"; then' \
+  "  printf '%s\\n' '{\"package\":\"dvandva-v4\",\"version\":\"0.2.0\",\"publish\":false,\"write_schema\":\"dvandva.run.v1\",\"write_schema\":\"dvandva.run.v2\",\"read_schemas\":[\"dvandva.run.v2\",\"dvandva.run.v1\"],\"role_api\":2,\"capabilities\":{\"upgrade_from_v1\":false,\"upgrade_from_v1\":true},\"compatible\":true}'" \
+  '  exit 0' \
+  'fi' \
+  'exit 2' \
+  >"$test_root/duplicate-kernel"
+chmod 755 "$test_root/duplicate-kernel"
+
+duplicate="$test_root/duplicate"
+if PATH="$fake_bin:$PATH" FAKE_KERNEL="$test_root/duplicate-kernel" \
+  CARGO_TARGET_DIR="$test_root/duplicate-target" \
+  bash "$packager" skills-v0.2.0 "$duplicate" \
+  >"$test_root/duplicate.out" 2>&1; then
+  fail 'duplicate-key probe unexpectedly packaged'
+fi
+require_text 'probe_mismatch' "$test_root/duplicate.out"
+test ! -e "$duplicate/SHA256SUMS" || fail 'duplicate-key kernel was checksummed'
+
 output="$test_root/output"
 CARGO_TARGET_DIR="$test_root/target" bash "$packager" skills-v0.2.0 "$output"
 
@@ -144,13 +169,24 @@ steps = workflow["jobs"]["verify"]["steps"]
 runs = "\n".join(step.get("run", "") for step in steps)
 assert "cargo test --manifest-path rust/dvandva/Cargo.toml --locked" in runs
 assert "bash tests/skills/two-role-canary.sh" in runs
+checkout = next(step for step in steps if step["name"] == "Check out the tested revision")
+assert checkout["with"]["fetch-depth"] == 0
+release_steps = workflow["jobs"]["release"]["steps"]
+release_checkout = next(step for step in release_steps if step["name"] == "Check out the release tag")
+assert release_checkout["with"]["fetch-depth"] == 0
 PY
 require_text 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' "$workflow"
 require_text 'probe --expected-schema dvandva.run.v2 --expected-role-api 2' "$workflow"
 reject_text 'cargo publish' "$workflow"
 
-test "$(sed -n '/^publish = /p' "$repo_root/v4/Cargo.toml")" = 'publish = false' || \
-  fail 'v4 crate is not explicitly private'
+python3 - "$repo_root/v4/Cargo.toml" <<'PY' || fail 'v4 crate is not explicitly private'
+import sys
+import tomllib
+
+with open(sys.argv[1], "rb") as stream:
+    manifest = tomllib.load(stream)
+assert manifest["package"]["publish"] is False
+PY
 reject_text 'cargo publish' "$repo_root/scripts/package-skills-release.sh"
 
 workflow_doc="$repo_root/docs/workflows/skill-only-run.md"
@@ -186,7 +222,7 @@ require_text 'dvandva.run.v2' "$repo_root/v4/README.md"
 require_text 'role API 2' "$repo_root/v4/README.md"
 require_text 'dedicated upgrade' "$repo_root/v4/README.md"
 require_text '--repository-id' "$repo_root/v4/README.md"
-require_text '--deliverable' "$repo_root/v4/README.md"
+require_text '--required-deliverable' "$repo_root/v4/README.md"
 
 protocol="$repo_root/docs/protocol/minimal-run-baton.md"
 require_text 'scope_revision' "$protocol"
@@ -197,11 +233,24 @@ require_text 'Codex Sites' "$protocol"
 require_text 'Claude' "$protocol"
 require_text 'goals' "$protocol"
 reject_text 'projection revision' "$protocol"
+reject_text 'publication is optional' "$protocol"
+reject_text 'prativadi implements fixes' "$protocol"
+reject_text 'Claude Artifact fallback' "$protocol"
+reject_text 'active schema is dvandva.run.v1' "$protocol"
 
 require_text 'Historical v3 archive guidance' \
   "$repo_root/docs/workflows/two-mode-agent-workflow.md"
 require_text 'docs/workflows/skill-only-run.md' \
   "$repo_root/docs/workflows/two-mode-agent-workflow.md"
+test "$(sed -n '/^# Two-Mode Agent Workflow/,$p' \
+  "$repo_root/docs/workflows/two-mode-agent-workflow.md" | sha256sum | cut -d' ' -f1)" = \
+  '12d51f85fc0ec5e945e99122f465ee5dcad205604993eeb7cb1340f65acdf6b8' || \
+  fail 'historical two-mode workflow body changed'
+
+test "$(sed -n '/^## Retired v3 archive/,$p' "$repo_root/README.md" | \
+  sha256sum | cut -d' ' -f1)" = \
+  '83182b2773ae4c52a71c2568cb856770b4269d1cdeb47bd92fb400fa4807629a' || \
+  fail 'README archive changed'
 
 context="$repo_root/CONTEXT.md"
 for term in 'Canonical Scope' 'Checkpoint Manifest' 'Checkpoint Binding' \
