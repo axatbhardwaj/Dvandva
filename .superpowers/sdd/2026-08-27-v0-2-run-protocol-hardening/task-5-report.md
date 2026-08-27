@@ -226,3 +226,112 @@ Final logs:
   `task_summary` alongside objective/scope/status/assignee/revision.
 
 No known blocker or residual concern remains.
+
+## Fix round 2: ambiguous upgrades and revision-bound snapshots
+
+Implementation commits:
+
+- `c1e356e` (`fix(v4): fail closed on ambiguous run discovery`)
+- `2158989` (`fix(v4): bind role snapshots to checked revisions`)
+
+### Strict TDD RED evidence
+
+The second review regressions were written and run against `14b1c8b` before
+production fixes.
+
+```bash
+cargo test --manifest-path v4/Cargo.toml --test discovery \
+  broad_discovery_is_ambiguous_for_multiple_or_mixed_upgrade_candidates
+# 1 run: 0 passed, 1 failed; returned upgrade_required instead of ambiguous
+
+cargo test --manifest-path v4/Cargo.toml --test discovery \
+  exact_named_non_directory_missing_head_and_terminal_identity_mismatch_are_corrupt
+# 1 run: 0 passed, 1 failed; named non-directory returned run_missing
+
+cargo test --manifest-path v4/Cargo.toml --lib \
+  resumed_candidate_revision_drift_is_rediscovered_before_snapshot
+# 1 run: 0 passed, 1 failed; revision-1 candidate emitted resumed revision 3
+
+cargo test --manifest-path v4/Cargo.toml --test role_session \
+  migration_broad_start_is_ambiguous_across_multiple_upgrade_candidates
+# 1 run: 0 passed, 1 failed; returned upgrade_required instead of ambiguous
+
+cargo test --manifest-path v4/Cargo.toml --lib \
+  created_start_accepts_an_immediate_peer_claim_without_recreating
+# 1 run: 0 passed, 1 failed; peer claim advanced revision 1 to 2 and caused
+# created start to return a revision conflict
+```
+
+Preserved logs:
+
+- `/tmp/dvandva-task5-fix2-ambiguity-red.log`
+- `/tmp/dvandva-task5-fix2-corrupt-red.log`
+- `/tmp/dvandva-task5-fix2-resume-red.log`
+- `/tmp/dvandva-task5-fix2-role-ambiguity-red.log`
+- `/tmp/dvandva-task5-fix2-created-race-red.log`
+
+### GREEN evidence
+
+```bash
+cargo test --manifest-path v4/Cargo.toml --test discovery exact
+# 6 passed, 0 failed, 20 filtered out
+
+cargo test --manifest-path v4/Cargo.toml --test role_session snapshot -- --test-threads=1
+# 9 passed, 0 failed, 22 filtered out
+
+cargo test --manifest-path v4/Cargo.toml --test role_session migration -- --test-threads=1
+# 9 passed, 0 failed, 22 filtered out
+
+cargo test --manifest-path v4/Cargo.toml --test skill_flow
+# 5 passed, 0 failed
+
+cargo test --manifest-path v4/Cargo.toml --lib
+# 2 passed, 0 failed
+
+cargo test --manifest-path v4/Cargo.toml --all-targets
+# 150 integration tests and 2 unit tests passed, 0 failed
+
+cargo fmt --manifest-path v4/Cargo.toml -- --check
+# exit 0
+
+cargo clippy --manifest-path v4/Cargo.toml --all-targets -- -D warnings
+# exit 0
+
+git diff --check
+# exit 0
+```
+
+Final logs:
+
+- `/tmp/dvandva-task5-fix2-discovery-exact-green.log`
+- `/tmp/dvandva-task5-fix2-snapshot-green.log`
+- `/tmp/dvandva-task5-fix2-migration-green.log`
+- `/tmp/dvandva-task5-fix2-skill-flow-green.log`
+- `/tmp/dvandva-task5-fix2-role-session-unit-green.log`
+- `/tmp/dvandva-task5-fix2-full-green.log`
+- `/tmp/dvandva-task5-fix2-fmt-green.log`
+- `/tmp/dvandva-task5-fix2-clippy-green.log`
+- `/tmp/dvandva-task5-fix2-diff-check.log`
+
+### Self-review and concerns
+
+- Confirmed two v1 upgrades, or any mixed set of multiple current/upgrade
+  candidates, returns sorted canonical `ambiguous` candidates. Only one unique
+  v1 candidate returns `upgrade_required`; discovery performs no mutation.
+- Confirmed an exact named non-directory, missing/unreadable Baton head, and
+  terminal Baton with a mismatched stored run ID fail closed as `corrupt`.
+  A truly absent name remains `run_missing`, unrelated corrupt siblings remain
+  isolated, and the query run ID is never joined into a filesystem path.
+- Confirmed candidate scope is reconciled at revision N and claimed/reclaimed
+  snapshots are checked at the exact successful CAS revision. Owned revision
+  drift becomes a typed revision conflict, enters bounded rediscovery, and
+  reclassifies the new canonical scope before emitting a snapshot.
+- Confirmed started output is built directly from the checked snapshot with no
+  post-check reread. Newly created runs use a separate non-recursive completion
+  path: an immediate peer claim can advance the revision and the creator still
+  returns the current authoritative snapshot without creating another run.
+- Confirmed round-1 objective/scope fences, explicit `--new-run`, exact v1
+  mismatch precedence and task identity, exact sibling isolation, actionable
+  wait ordering, and the full skill flow remain green.
+
+No known blocker or residual concern remains.
