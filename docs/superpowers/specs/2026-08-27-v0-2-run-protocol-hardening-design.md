@@ -54,6 +54,11 @@ The `0.2.0` kernel:
 6. accepts history with at most one monotonic `v1 -> v2` edge and never a
    downgrade.
 
+New v2 creation and v1 upgrade both require exactly two normalized
+participants: one `Codex` harness and one `Claude` harness. Missing, duplicate,
+or other harness topologies are rejected before creating or upgrading a run;
+the fixed publication gate must never be initialized without both actors.
+
 An exact v1 selection returns `upgrade_required` without claiming it. The
 participant invokes the dedicated atomic upgrade using its role, harness,
 session, expected revision, and facade API. The upgrade refuses a terminal
@@ -65,9 +70,9 @@ run or a live same-role claim owned by another session. It then:
   the canonical objective summary, so migration is deterministic without
   pretending to infer finer-grained scope; the roles amend scope before work
   when the legacy objective requires multiple separately votable outcomes;
-- clears the active checkpoint, semantic review, human decision, and both
-  participant claims;
-- installs the default v2 publication policy and a pending
+- clears the active checkpoint, semantic review, human decision, both
+  participant claims, and every legacy publication receipt;
+- installs the fixed v2 publication policy and a fresh pending
   `protocol_upgraded` explainer obligation;
 - routes the semantic state to `revising/worker`;
 - writes the v2 revision by CAS and forces both sessions to claim again.
@@ -76,10 +81,14 @@ Stale credential files never authorize a claim. A role start may replace its
 own stale credential only after the baton proves that its stored claim is
 absent or has a different epoch/token digest.
 
-Recovery validates mixed history but restores only a revision with the same
-schema as the history head. Once a v2 head exists, recovery from a pre-upgrade
-v1 revision is rejected. A crash after the v2 history write but before head
-installation remains recoverable from that v2 revision.
+Recovery validates mixed history but never rolls semantic state backward. V1
+recovery is rejected because v1 is read-only except for dedicated upgrade. If
+the validated history head is v2, recovery may select only that exact v2 head
+(`from_revision` must equal `high`) and writes a claim-cleared recovery
+successor; it never reinstalls an earlier v2 revision. Once a v2 head exists,
+recovery from v1 or any earlier v2 revision is rejected. A crash after the v2
+history write but before head installation remains recoverable from that v2
+head through this successor write.
 
 ## Canonical scope
 
@@ -92,11 +101,13 @@ bundle, while a multi-report review declares each separately.
 
 An exact `--run-id` selection behaves as follows:
 
-- no supplied objective: select the run and return its canonical objective;
-- byte-for-byte equivalent trimmed objective: select normally;
-- different supplied objective or explicitly supplied deliverable declaration:
-  return `scope_mismatch` with the run ID,
-  canonical objective, supplied objective, scope revision, status, assignee,
+- no supplied objective or scope coordinate: select the run and return its
+  canonical objective and scope;
+- every explicitly supplied coordinate matches canonically after required
+  normalization: select normally;
+- a different supplied objective summary, objective reference, task reference,
+  or required-deliverable declaration: return `scope_mismatch` with the run
+  ID, canonical and supplied coordinates, scope revision, status, assignee,
   and next safe action; do not claim, reclaim, or mutate;
 - missing exact run: return `run_missing` immediately;
 - live claim owned by another session: return `busy` immediately.
@@ -166,8 +177,7 @@ the request wins first, approval is rejected until the reviewer accepts it.
 ## One rolling explainer gate
 
 Publication is an orthogonal substate, not a numeric revision counter and not
-worker-owned. Every run has one explainer Site. The default immutable policy
-is:
+worker-owned. Every v2 run has one explainer Site under this fixed policy:
 
 ```text
 publisher harness: Codex
@@ -234,11 +244,11 @@ binding equals the current obligation and deployment. A mutable URL alone, a
 Claude Artifact, a local HTML file, or a publication revision number cannot
 satisfy it.
 
-An explicit human decision may replace the publication policy. The override
-must name two distinct existing participant harnesses plus non-blank channel
-and access values. It invalidates the existing deployment/review and creates a
-new obligation. No role or skill silently falls back when Codex Sites is
-unavailable; it raises a Human Decision instead.
+No in-run publication-policy override exists in v0.2. When Codex Sites is
+unavailable, the role raises a Human Decision and the run remains blocked; a
+Claude Artifact, generic local/hosted surface, or other alternative cannot
+satisfy the v0.2 gate or finalization. An explicitly desired alternative
+requires a future protocol/run version.
 
 ## Role snapshots and next actions
 
@@ -301,8 +311,7 @@ The kernel enforces these invariants on every v2 mutation:
 3. scope revision never decreases;
 4. an active semantic review binds the current complete checkpoint;
 5. a pending supersession forbids approval;
-6. one stable Site ID serves the run unless a human policy override explicitly
-   changes the channel contract;
+6. one stable Codex Sites Site ID serves the run;
 7. every deployment and explainer review binds the current obligation exactly;
 8. only the policy publisher harness records deployment;
 9. only the policy reviewer harness records explainer review;
@@ -327,7 +336,11 @@ Release verification must cover:
 - old facade + new kernel rejection before run mutation;
 - new facade + old kernel rejection before run mutation;
 - v1 upgrade fencing a live old waiter and clearing stale credentials;
-- mixed v1/v2 history validation and crash-window recovery;
+- exact-v2-head-only recovery and crash-window recovery without rollback;
+- creation/upgrade rejection for missing, duplicate, or non-Codex/Claude
+  normalized harness topology;
+- exact-run mismatch for every explicitly supplied objective, reference, task,
+  and deliverable coordinate;
 - the stale-checkpoint incident as a black-box regression;
 - both normal and reverse semantic casting with Codex publication and Claude
   explainer review unchanged;

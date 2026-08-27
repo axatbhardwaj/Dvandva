@@ -33,6 +33,8 @@ Actions, Agent Skills CLI, Codex Sites as an externally recorded deployment.
 - Use `dvandva.run.v2`, kernel version `0.2.0`, facade API `2`, and release tag
   `skills-v0.2.0` exactly.
 - Preserve every existing v1 history byte; migration appends one v2 revision.
+- V2 creation and v1 upgrade require exactly one normalized Codex participant
+  and one normalized Claude participant; reject every other topology.
 - V1 is read-only in v0.2 except the dedicated upgrade CAS. Ordinary claim,
   heartbeat, wait, and semantic apply must return `migration_required`.
 - Every role-facing command requires facade API 2 before reading or mutating a
@@ -40,9 +42,11 @@ Actions, Agent Skills CLI, Codex Sites as an externally recorded deployment.
   inspect/migrate v1.
 - Neither harness invokes the other. Dvandva never creates, updates, pauses,
   replaces, completes, or clears a harness goal.
-- Default publication is one owner-only Codex Site per run, published by the
+- Publication is fixed to one owner-only Codex Site per run, published by the
   Codex-harness participant and reviewed by the Claude-harness participant,
-  regardless of semantic role.
+  regardless of semantic role. No in-run policy override or fallback can
+  satisfy v0.2 publication or finalization; Sites unavailability blocks on a
+  Human Decision and an alternative requires a future protocol/run version.
 - No Claude Artifact or generic local/hosted fallback satisfies publication.
 - All new semantic bindings are kernel-derived, trim-validated, and SHA-256
   bound. A caller never supplies a trusted digest, scope revision, or harness.
@@ -97,6 +101,25 @@ pub struct PublicationBinding {
     pub scope_revision: u64,
     pub checkpoint: Option<CheckpointBinding>,
 }
+
+pub struct PublicationPolicy {
+    pub publisher_harness: Harness,
+    pub reviewer_harness: Harness,
+    pub channel: String,
+    pub access: String,
+}
+
+pub struct PendingExplainerObligation {
+    pub binding: PublicationBinding,
+}
+
+pub fn create_handoff_obligation(
+    policy: &PublicationPolicy,
+    kind: HandoffKind,
+    revision: u64,
+    scope_revision: u64,
+    checkpoint: Option<CheckpointBinding>,
+) -> PendingExplainerObligation;
 ```
 
 Every v2 run has a non-empty `scope_deliverables: Vec<DeliverableRequirement>`
@@ -180,22 +203,29 @@ git commit -m "docs(v4): specify run protocol hardening"
 
 Add black-box coverage proving:
 
-- fresh initialization writes v2;
+- fresh initialization writes v2 and creates the fixed `run_started`
+  publication policy/obligation;
 - v2 initialization rejects missing, blank, or duplicate required deliverable
   declarations;
+- v2 initialization rejects missing, duplicate, or non-Codex/Claude normalized
+  participant topology;
 - probe reports `write_schema`, `read_schemas`, `role_api`, version, and a v1
   migration capability; a mismatched expected schema/API exits nonzero;
 - a v1 run is classified `upgrade_required`, not corrupt or matchable;
 - every ordinary v1 role mutation is `migration_required`;
 - upgrade appends v2 without changing old history bytes, clears checkpoint,
-  review, publication, human decision, and both claims, and records migration
+  review, legacy publication receipts, human decision, and both claims,
+  installs a fresh fixed `protocol_upgraded` obligation, and records migration
   evidence;
+- upgrade rejects missing, duplicate, or non-Codex/Claude normalized
+  participant topology;
 - terminal v1 refuses upgrade;
 - a live same-role claim owned by another session makes upgrade busy;
 - an already-written v2 migration history head is recoverable after a missing
-  or corrupt baton head;
-- v1→v2→v2 history validates, while v2→v1, multiple crossings, and recovery
-  from a pre-upgrade revision after v2 are rejected;
+  or corrupt baton head only by selecting that exact history head and writing a
+  claim-cleared recovery successor;
+- v1→v2→v2 history validates, while v2→v1, multiple crossings, recovery from
+  any v1 head, and recovery from any earlier v2 revision are rejected;
 - stale credentials cannot authorize, but the same session can claim after
   the upgrade fence.
 
@@ -207,7 +237,14 @@ failing output in the task report.
 Add explicit legacy/current schema constants and `ROLE_API`. Validate supported
 schemas on read. Make CAS allow only same-schema writes or exactly one
 v1→v2 upgrade. Validate monotonic history and forbid recovery across the
-migration boundary. Keep `write_history` before `install`.
+migration boundary or to any v2 revision below the validated history head. Keep
+`write_history` before `install`; recovery writes a claim-cleared successor of
+the exact v2 history head.
+
+Define the fixed v2 `PublicationPolicy` and pending explainer-obligation model,
+plus the basic `create_handoff_obligation` helper, here. New creation uses it
+for `run_started`; upgrade clears legacy publication receipts, then uses it for
+the fresh `protocol_upgraded` obligation.
 
 ### Step 3: Implement dedicated upgrade
 
@@ -220,6 +257,9 @@ preserve a typed legacy-state digest/provenance, create a
 `legacy_objective` deliverable whose non-blank description is the canonical
 objective summary; require a later scope amendment before separately votable
 legacy outcomes are represented.
+
+Normalize and validate the participant topology before either v2 creation or
+upgrade: it must contain exactly one Codex harness and one Claude harness.
 
 Make stale credential replacement conditional on the current baton proving
 that the stored credential no longer matches an active claim.
@@ -268,6 +308,8 @@ Cover:
 - a pending supersession blocks approval;
 - reviewer acceptance returns ownership without mutating the old checkpoint
   history;
+- scope amendment, supersession acceptance, and approval withdrawal each use
+  Task 2's handoff helper to replace the pending v2 obligation;
 - approval-first/request-first CAS races have the specified outcomes;
 - worker withdrawal from `finalizing` reopens revision;
 - terminal mutations remain rejected.
@@ -284,9 +326,11 @@ Extend review receipts and validation to bind all coordinates.
 ### Step 3: Add scope amendment and supersession actions
 
 Extend `ResumeHumanDecision` with an optional objective/reference/required-
-deliverable amendment and optional publication-policy override, both accepted
-only through the human contact path. Add request/accept supersession and
+deliverable amendment accepted only through the human contact path. Do not add
+an in-run publication-policy override. Add request/accept supersession and
 approval withdrawal actions with non-blank reasons and exact ownership checks.
+Use Task 2's fixed-policy handoff helper for every resulting scope or
+supersession obligation.
 
 ### Step 4: Verify and commit
 
@@ -320,7 +364,7 @@ Add a black-box matrix proving:
   each blocked until their current rolling obligation is approved;
 - each semantic handoff produces the correct kind/revision/scope/checkpoint
   binding without making publication actions recursively stale;
-- only the Codex-harness participant can record the default deployment;
+- only the Codex-harness participant can record the fixed deployment;
 - only the Claude-harness participant can review it, in normal and reversed
   semantic casting;
 - publication requires a valid source SHA-256, stable Site ID, non-blank Site
@@ -329,17 +373,18 @@ Add a black-box matrix proving:
 - republishing clears Claude approval;
 - changes requested require findings and do not reopen semantic review;
 - a mutable URL or legacy `record_publication` action cannot satisfy v2;
-- a human policy override names two distinct existing harnesses and creates a
-  fresh obligation;
+- no human policy override, Claude Artifact, generic local/hosted channel, or
+  legacy `record_publication` action can satisfy v2 publication/finalization;
 - finalization requires current checkpoint, semantic approval, deployment,
   and Claude approval all bound exactly.
 
 ### Step 2: Implement publication state and helpers
 
-Deserialize legacy and v2 publication objects distinctly. Add default policy,
-obligation, deployment, and explainer-review receipt types. Implement helpers
-to create a handoff binding, compare full bindings, derive the caller harness,
-validate digests/refs, and decide whether the rolling gate is approved.
+Deserialize legacy and v2 publication objects distinctly. Consume Task 2's
+fixed policy, pending-obligation model, and handoff helper. Add deployment and
+explainer-review receipt types, then implement full-binding comparison,
+caller-harness derivation, digest/reference validation, and rolling-gate
+approval.
 
 ### Step 3: Apply the gate to transitions
 
@@ -382,8 +427,10 @@ Prove:
 - vadi creation output immediately includes run ID, canonical objective,
   scope, status, assignee, next actions, and exact copyable prativadi prompt;
 - exact join needs no caller objective and returns the canonical one;
-- a differing supplied objective returns `scope_mismatch` without claim or
-  revision change;
+- every explicitly supplied objective summary, objective reference, task
+  reference, or required-deliverable declaration that differs returns
+  `scope_mismatch` without claim or revision change; no supplied scope adopts
+  the canonical scope safely;
 - exact missing and exact busy return immediately even when `--wait` is set;
 - start/read/apply/wait expose the same current `next_actions` vocabulary;
 - next actions combine semantic and harness duties under both castings;
@@ -404,7 +451,10 @@ returning both when useful work can proceed in parallel.
 
 Wrap role start/read/apply/wait results consistently. Make objective optional
 only for exact-run joins; retain it as required for new worker creation.
-Include the peer prompt only where useful. Do not expose raw tokens.
+Add repeatable `--objective-ref` and `--required-deliverable` inputs to role
+start so exact joins can compare every explicitly supplied scope coordinate;
+the existing objective and task inputs remain part of that comparison. Include
+the peer prompt only where useful. Do not expose raw tokens.
 
 ### Step 4: Harden exact discovery and wait
 
