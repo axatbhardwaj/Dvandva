@@ -2959,6 +2959,48 @@ fn failed_history_write_does_not_advance_the_baton() {
 }
 
 #[test]
+fn interrupted_history_staging_never_exposes_a_partial_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    let oversized_objective = "x".repeat(8 * 1024);
+    let script = r#"ulimit -f 1; exec "$1" init --run-dir "$2" --run-id run-a --objective "$3" --worker codex --reviewer claude --repository-id github.com/axatbhardwaj/dvandva --required-deliverable implementation=output"#;
+    let output = std::process::Command::new("sh")
+        .args([
+            "-c",
+            script,
+            "history-stage-test",
+            env!("CARGO_BIN_EXE_dvandva-v4"),
+            dir.path().to_str().unwrap(),
+            &oversized_objective,
+        ])
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(!dir
+        .path()
+        .join("history/00000000000000000000.json")
+        .exists());
+}
+
+#[test]
+fn leaked_history_staging_file_does_not_wedge_the_next_mutation() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    std::fs::write(
+        dir.path().join("history/.00000000000000000001.leaked.tmp"),
+        b"partial",
+    )
+    .unwrap();
+
+    claim_role(dir.path(), "worker", "worker-1", 0);
+
+    assert!(dir
+        .path()
+        .join("history/00000000000000000001.json")
+        .is_file());
+}
+
+#[test]
 fn checkpoint_manifest_must_exactly_cover_canonical_scope() {
     let dir = tempfile::tempdir().unwrap();
     init_pair_with_scope(

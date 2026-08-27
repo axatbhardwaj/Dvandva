@@ -364,10 +364,24 @@ impl RunChannel {
         let directory = self.directory.join("history");
         fs::create_dir_all(&directory)?;
         let path = directory.join(format!("{:020}.json", baton.revision));
-        let mut file = OpenOptions::new().create_new(true).write(true).open(path)?;
-        file.write_all(&serde_json::to_vec_pretty(baton)?)?;
-        file.write_all(b"\n")?;
-        file.sync_all()?;
+        let temporary = directory.join(format!(".{:020}.{}.tmp", baton.revision, Uuid::new_v4()));
+        let bytes = serde_json::to_vec_pretty(baton)?;
+        let staged = (|| {
+            let mut file = OpenOptions::new()
+                .create_new(true)
+                .write(true)
+                .open(&temporary)?;
+            file.write_all(&bytes)?;
+            file.write_all(b"\n")?;
+            file.sync_all()?;
+            fs::hard_link(&temporary, &path)?;
+            Ok::<_, std::io::Error>(())
+        })();
+        if let Err(error) = staged {
+            let _ = fs::remove_file(&temporary);
+            return Err(StoreError::Io(error));
+        }
+        let _ = fs::remove_file(&temporary);
         sync_directory(&directory)?;
         Ok(())
     }
