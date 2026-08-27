@@ -36,6 +36,66 @@ fn init_pair(dir: &std::path::Path) {
         .success();
 }
 
+fn init_pair_with_scope(dir: &std::path::Path, deliverables: &[(&str, &str)]) {
+    let mut args = vec![
+        "init".to_owned(),
+        "--run-dir".to_owned(),
+        dir.to_str().unwrap().to_owned(),
+        "--run-id".to_owned(),
+        "run-a".to_owned(),
+        "--objective".to_owned(),
+        "Implement DEF-123".to_owned(),
+        "--worker".to_owned(),
+        "codex".to_owned(),
+        "--reviewer".to_owned(),
+        "claude".to_owned(),
+        "--repository-id".to_owned(),
+        "github.com/axatbhardwaj/dvandva".to_owned(),
+    ];
+    for (id, description) in deliverables {
+        args.push("--required-deliverable".to_owned());
+        args.push(format!("{id}={description}"));
+    }
+    command().args(args).assert().success();
+}
+
+fn checkpoint_submission(identity: &str, deliverables: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({
+        "type": "submit_checkpoint",
+        "checkpoint": {
+            "kind": "artifact",
+            "identity": identity,
+            "deliverables": deliverables,
+            "verification": ["tests passed"]
+        }
+    })
+}
+
+fn checkpoint_binding(dir: &std::path::Path) -> serde_json::Value {
+    let baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.join("baton.json")).unwrap()).unwrap();
+    serde_json::json!({
+        "checkpoint_identity": baton["checkpoint"]["identity"],
+        "manifest_digest": baton["checkpoint"]["manifest_digest"],
+        "scope_revision": baton["checkpoint"]["scope_revision"]
+    })
+}
+
+fn review_action(
+    verdict: &str,
+    binding: &serde_json::Value,
+    findings: serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "type": "record_review",
+        "verdict": verdict,
+        "checkpoint_identity": binding["checkpoint_identity"],
+        "manifest_digest": binding["manifest_digest"],
+        "scope_revision": binding["scope_revision"],
+        "findings": findings
+    })
+}
+
 fn write_legacy_run(
     dir: &std::path::Path,
     status: &str,
@@ -1550,13 +1610,15 @@ fn complete_review_fix_loop_reaches_done() {
         write_action(
             dir.path(),
             "first.json",
-            serde_json::json!({
-                "type": "submit_checkpoint", "checkpoint": {
-                    "kind": "artifact", "identity": "sha256:first", "verification": ["tests passed"]
-                }
-            }),
+            checkpoint_submission(
+                "sha256:first",
+                serde_json::json!([
+                    {"id": "implementation", "artifacts": [{"kind": "commit", "value": "first"}]}
+                ]),
+            ),
         ),
     );
+    let first_binding = checkpoint_binding(dir.path());
     apply(
         "reviewer",
         "reviewer-1",
@@ -1565,10 +1627,11 @@ fn complete_review_fix_loop_reaches_done() {
         write_action(
             dir.path(),
             "changes.json",
-            serde_json::json!({
-                "type": "record_review", "verdict": "changes_requested",
-                "checkpoint_identity": "sha256:first", "findings": ["Handle the empty case"]
-            }),
+            review_action(
+                "changes_requested",
+                &first_binding,
+                serde_json::json!(["Handle the empty case"]),
+            ),
         ),
     );
     apply(
@@ -1579,13 +1642,15 @@ fn complete_review_fix_loop_reaches_done() {
         write_action(
             dir.path(),
             "second.json",
-            serde_json::json!({
-                "type": "submit_checkpoint", "checkpoint": {
-                    "kind": "artifact", "identity": "sha256:second", "verification": ["tests passed"]
-                }
-            }),
+            checkpoint_submission(
+                "sha256:second",
+                serde_json::json!([
+                    {"id": "implementation", "artifacts": [{"kind": "commit", "value": "second"}]}
+                ]),
+            ),
         ),
     );
+    let second_binding = checkpoint_binding(dir.path());
     apply(
         "reviewer",
         "reviewer-1",
@@ -1594,10 +1659,7 @@ fn complete_review_fix_loop_reaches_done() {
         write_action(
             dir.path(),
             "approve.json",
-            serde_json::json!({
-                "type": "record_review", "verdict": "approved",
-                "checkpoint_identity": "sha256:second", "findings": []
-            }),
+            review_action("approved", &second_binding, serde_json::json!([])),
         ),
     );
     apply(
@@ -1717,13 +1779,15 @@ fn required_publication_blocks_done_until_synchronized() {
         &worker,
         3,
         "checkpoint.json",
-        serde_json::json!({
-            "type": "submit_checkpoint", "checkpoint": {
-                "kind": "artifact", "identity": "sha256:ready", "verification": ["tests passed"]
-            }
-        }),
+        checkpoint_submission(
+            "sha256:ready",
+            serde_json::json!([
+                {"id": "implementation", "artifacts": [{"kind": "commit", "value": "ready"}]}
+            ]),
+        ),
     )
     .success();
+    let ready_binding = checkpoint_binding(dir.path());
     apply_action(
         dir.path(),
         "reviewer",
@@ -1731,10 +1795,7 @@ fn required_publication_blocks_done_until_synchronized() {
         &reviewer,
         4,
         "approval.json",
-        serde_json::json!({
-            "type": "record_review", "verdict": "approved",
-            "checkpoint_identity": "sha256:ready", "findings": []
-        }),
+        review_action("approved", &ready_binding, serde_json::json!([])),
     )
     .success();
     apply_action(
@@ -1843,11 +1904,12 @@ fn local_watcher_wakes_the_reviewer_after_a_checkpoint() {
         &worker,
         2,
         "wake.json",
-        serde_json::json!({
-            "type": "submit_checkpoint", "checkpoint": {
-                "kind": "artifact", "identity": "sha256:wake", "verification": ["tests passed"]
-            }
-        }),
+        checkpoint_submission(
+            "sha256:wake",
+            serde_json::json!([
+                {"id": "implementation", "artifacts": [{"kind": "commit", "value": "wake"}]}
+            ]),
+        ),
     )
     .success();
     let output = waiter.wait_with_output().unwrap();
@@ -1875,11 +1937,12 @@ fn recovery_fences_old_sessions_and_preserves_evidence() {
         &worker,
         2,
         "checkpoint.json",
-        serde_json::json!({
-            "type": "submit_checkpoint", "checkpoint": {
-                "kind": "artifact", "identity": "sha256:recover", "verification": ["tests passed"]
-            }
-        }),
+        checkpoint_submission(
+            "sha256:recover",
+            serde_json::json!([
+                {"id": "implementation", "artifacts": [{"kind": "commit", "value": "recover"}]}
+            ]),
+        ),
     )
     .success();
     std::fs::write(dir.path().join("baton.json"), b"corrupt\n").unwrap();
@@ -2151,4 +2214,666 @@ fn failed_history_write_does_not_advance_the_baton() {
     let baton: serde_json::Value =
         serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
     assert_eq!(baton["revision"], 1);
+}
+
+#[test]
+fn checkpoint_manifest_must_exactly_cover_canonical_scope() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair_with_scope(
+        dir.path(),
+        &[("implementation", "Code"), ("report", "Report")],
+    );
+    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
+    let _reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+    let invalid = [
+        serde_json::json!([]),
+        serde_json::json!([
+            {"id": " ", "artifacts": [{"kind": "commit", "value": "abc"}]},
+            {"id": "report", "artifacts": [{"kind": "file", "value": "report.md"}]}
+        ]),
+        serde_json::json!([
+            {"id": "implementation", "artifacts": [{"kind": " ", "value": "abc"}]},
+            {"id": "report", "artifacts": [{"kind": "file", "value": "report.md"}]}
+        ]),
+        serde_json::json!([
+            {"id": "implementation", "artifacts": [{"kind": "commit", "value": "abc"}]}
+        ]),
+        serde_json::json!([
+            {"id": "implementation", "artifacts": [{"kind": "commit", "value": "abc"}]},
+            {"id": "report", "artifacts": [{"kind": "file", "value": "report.md"}]},
+            {"id": "extra", "artifacts": [{"kind": "file", "value": "extra.md"}]}
+        ]),
+        serde_json::json!([
+            {"id": "implementation", "artifacts": [{"kind": "commit", "value": "abc"}]},
+            {"id": "implementation", "artifacts": [{"kind": "file", "value": "report.md"}]}
+        ]),
+    ];
+    for (index, manifest) in invalid.into_iter().enumerate() {
+        apply_action(
+            dir.path(),
+            "worker",
+            "worker-1",
+            &worker,
+            2,
+            &format!("invalid-checkpoint-{index}.json"),
+            checkpoint_submission("checkpoint-a", manifest),
+        )
+        .failure()
+        .stderr(predicate::str::contains(r#""error":"invalid_checkpoint""#));
+    }
+}
+
+#[test]
+fn checkpoint_digest_is_deterministic_and_scope_stamped() {
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    for dir in [&first, &second] {
+        init_pair_with_scope(
+            dir.path(),
+            &[("implementation", "Code"), ("report", "Report")],
+        );
+        let worker = claim_role(dir.path(), "worker", "worker-1", 0);
+        let _reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+        let manifest = if dir.path() == first.path() {
+            serde_json::json!([
+                {"id": " report ", "artifacts": [{"kind": " file ", "value": " report.md "}]},
+                {"id": "implementation", "artifacts": [{"kind": "commit", "value": " abc "}]}
+            ])
+        } else {
+            serde_json::json!([
+                {"id": "implementation", "artifacts": [{"kind": "commit", "value": "abc"}]},
+                {"id": "report", "artifacts": [{"kind": "file", "value": "report.md"}]}
+            ])
+        };
+        apply_action(
+            dir.path(),
+            "worker",
+            "worker-1",
+            &worker,
+            2,
+            "checkpoint.json",
+            checkpoint_submission(" checkpoint-a ", manifest),
+        )
+        .success();
+    }
+    let read = |dir: &tempfile::TempDir| -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap()
+    };
+    let first = read(&first);
+    let second = read(&second);
+    assert_eq!(first["checkpoint"], second["checkpoint"]);
+    assert_eq!(first["checkpoint"]["identity"], "checkpoint-a");
+    assert_eq!(first["checkpoint"]["scope_revision"], 0);
+    let digest = first["checkpoint"]["manifest_digest"].as_str().unwrap();
+    assert_eq!(
+        digest,
+        "4e5a7ed7606fb766f9139460ec6e6f1fb0e5d73a92ee818f6d472e70e8527bc1"
+    );
+}
+
+#[test]
+fn checkpoint_review_binds_all_coordinates_and_identity_history() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
+    let reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        2,
+        "checkpoint.json",
+        checkpoint_submission(
+            "checkpoint-a",
+            serde_json::json!([
+                {"id": "implementation", "artifacts": [{"kind": "commit", "value": "abc"}]}
+            ]),
+        ),
+    )
+    .success();
+    let binding = checkpoint_binding(dir.path());
+    for (index, stale) in [
+        serde_json::json!({"checkpoint_identity": "other", "manifest_digest": binding["manifest_digest"], "scope_revision": 0}),
+        serde_json::json!({"checkpoint_identity": "checkpoint-a", "manifest_digest": "0".repeat(64), "scope_revision": 0}),
+        serde_json::json!({"checkpoint_identity": "checkpoint-a", "manifest_digest": binding["manifest_digest"], "scope_revision": 1}),
+    ].into_iter().enumerate() {
+        apply_action(
+            dir.path(), "reviewer", "reviewer-1", &reviewer, 3,
+            &format!("stale-review-{index}.json"),
+            review_action("changes_requested", &stale, serde_json::json!(["fix it"])),
+        ).failure().stderr(predicate::str::contains(r#""error":"stale_review""#));
+    }
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        3,
+        "changes.json",
+        review_action("changes_requested", &binding, serde_json::json!(["fix it"])),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        4,
+        "duplicate.json",
+        checkpoint_submission(
+            "checkpoint-a",
+            serde_json::json!([
+                {"id": "implementation", "artifacts": [{"kind": "commit", "value": "def"}]}
+            ]),
+        ),
+    )
+    .failure()
+    .stderr(predicate::str::contains(r#""error":"invalid_checkpoint""#));
+    let baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
+    assert_eq!(baton["checkpoint_history"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        baton["review"]["manifest_digest"],
+        binding["manifest_digest"]
+    );
+    assert_eq!(baton["review"]["scope_revision"], 0);
+}
+
+#[test]
+fn scope_checkpoint_identity_history_on_disk_remains_authoritative() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
+    let reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        2,
+        "checkpoint.json",
+        checkpoint_submission(
+            "checkpoint-a",
+            serde_json::json!([
+                {"id": "implementation", "artifacts": [{"kind": "commit", "value": "abc"}]}
+            ]),
+        ),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        3,
+        "human.json",
+        serde_json::json!({
+            "type": "request_human_decision", "question": "Replace scope?",
+            "evidence": ["New requirement"], "options": ["yes", "no"],
+            "contact_role": "reviewer", "resume_status": "reviewing", "resume_assignee": "reviewer"
+        }),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        4,
+        "amend.json",
+        serde_json::json!({
+            "type": "resume_human_decision", "answer": "yes",
+            "scope_amendment": {
+                "objective": "New objective", "objective_refs": [], "task_reference": null,
+                "scope_deliverables": [{"id": "implementation", "description": "New code"}]
+            }
+        }),
+    )
+    .success();
+    let baton_path = dir.path().join("baton.json");
+    let mut baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&baton_path).unwrap()).unwrap();
+    baton["checkpoint_history"] = serde_json::json!([]);
+    std::fs::write(&baton_path, serde_json::to_vec_pretty(&baton).unwrap()).unwrap();
+
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        5,
+        "duplicate.json",
+        checkpoint_submission(
+            "checkpoint-a",
+            serde_json::json!([
+                {"id": "implementation", "artifacts": [{"kind": "commit", "value": "def"}]}
+            ]),
+        ),
+    )
+    .failure()
+    .stderr(predicate::str::contains(r#""error":"invalid_checkpoint""#));
+}
+
+#[test]
+fn scope_amendment_replaces_scope_and_pending_handoff() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
+    let reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        2,
+        "checkpoint.json",
+        checkpoint_submission(
+            "checkpoint-a",
+            serde_json::json!([
+                {"id": "implementation", "artifacts": [{"kind": "commit", "value": "abc"}]}
+            ]),
+        ),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        3,
+        "supersede.json",
+        serde_json::json!({"type": "request_checkpoint_supersession", "reason": "scope changed"}),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        4,
+        "human.json",
+        serde_json::json!({
+            "type": "request_human_decision", "question": "Expand scope?",
+            "evidence": ["A report is required"], "options": ["yes", "no"],
+            "contact_role": "reviewer", "resume_status": "reviewing", "resume_assignee": "reviewer"
+        }),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        5,
+        "amend.json",
+        serde_json::json!({
+            "type": "resume_human_decision", "answer": "Include both",
+            "scope_amendment": {
+                "objective": " Ship code and report ",
+                "objective_refs": [{"kind": " issue ", "value": " DEF-456 "}],
+                "task_reference": " DEF-456 ",
+                "scope_deliverables": [
+                    {"id": " implementation ", "description": " Code "},
+                    {"id": "report", "description": " Report "}
+                ]
+            }
+        }),
+    )
+    .success();
+    let baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
+    assert_eq!(baton["scope_revision"], 1);
+    assert_eq!(baton["objective"]["summary"], "Ship code and report");
+    assert_eq!(
+        baton["objective"]["refs"],
+        serde_json::json!([{"kind": "issue", "value": "DEF-456"}])
+    );
+    assert_eq!(baton["task"]["reference"], "DEF-456");
+    assert_eq!(baton["status"], "revising");
+    assert_eq!(baton["assignee"], "worker");
+    assert!(baton["checkpoint"].is_null());
+    assert!(baton["review"].is_null());
+    assert!(baton["pending_checkpoint_supersession"].is_null());
+    assert_eq!(baton["checkpoint_history"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        baton["publication_binding"]["obligation"]["kind"],
+        "scope_amended"
+    );
+    assert_eq!(
+        baton["publication_binding"]["obligation"]["handoff_revision"],
+        6
+    );
+    assert_eq!(
+        baton["publication_binding"]["obligation"]["scope_revision"],
+        1
+    );
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        6,
+        "duplicate-after-scope.json",
+        checkpoint_submission(
+            "checkpoint-a",
+            serde_json::json!([
+                {"id": "implementation", "artifacts": [{"kind": "commit", "value": "def"}]},
+                {"id": "report", "artifacts": [{"kind": "file", "value": "report.md"}]}
+            ]),
+        ),
+    )
+    .failure()
+    .stderr(predicate::str::contains(r#""error":"invalid_checkpoint""#));
+}
+
+#[test]
+fn supersession_request_blocks_approval_and_acceptance_reopens_revision() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
+    let reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        2,
+        "checkpoint.json",
+        checkpoint_submission(
+            "checkpoint-a",
+            serde_json::json!([
+                {"id": "implementation", "artifacts": [{"kind": "commit", "value": "abc"}]}
+            ]),
+        ),
+    )
+    .success();
+    let binding = checkpoint_binding(dir.path());
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        3,
+        "blank.json",
+        serde_json::json!({"type": "request_checkpoint_supersession", "reason": " "}),
+    )
+    .failure()
+    .stderr(predicate::str::contains(r#""error":"missing_reason""#));
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        3,
+        "request.json",
+        serde_json::json!({"type": "request_checkpoint_supersession", "reason": "new evidence"}),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        4,
+        "blocked.json",
+        review_action("approved", &binding, serde_json::json!([])),
+    )
+    .failure()
+    .stderr(predicate::str::contains(
+        r#""error":"supersession_pending""#,
+    ));
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        4,
+        "accept.json",
+        serde_json::json!({"type": "accept_checkpoint_supersession"}),
+    )
+    .success();
+    let baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
+    assert_eq!(baton["status"], "revising");
+    assert_eq!(baton["assignee"], "worker");
+    assert!(baton["checkpoint"].is_null());
+    assert!(baton["review"].is_null());
+    assert!(baton["pending_checkpoint_supersession"].is_null());
+    assert_eq!(
+        baton["checkpoint_history"],
+        serde_json::json!([binding.clone()])
+    );
+    assert_eq!(
+        baton["publication_binding"]["obligation"]["kind"],
+        "checkpoint_superseded"
+    );
+    assert_eq!(
+        baton["publication_binding"]["obligation"]["checkpoint"],
+        binding
+    );
+}
+
+#[test]
+fn checkpoint_supersession_cas_races_are_fail_closed() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
+    let reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        2,
+        "checkpoint.json",
+        checkpoint_submission(
+            "checkpoint-a",
+            serde_json::json!([
+                {"id": "implementation", "artifacts": [{"kind": "commit", "value": "abc"}]}
+            ]),
+        ),
+    )
+    .success();
+    let binding = checkpoint_binding(dir.path());
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        3,
+        "approve-first.json",
+        review_action("approved", &binding, serde_json::json!([])),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        3,
+        "stale-request.json",
+        serde_json::json!({"type": "request_checkpoint_supersession", "reason": "too late"}),
+    )
+    .failure()
+    .stderr(predicate::str::contains(r#""error":"revision_conflict""#));
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        4,
+        "withdraw.json",
+        serde_json::json!({"type": "withdraw_approval", "reason": "new evidence"}),
+    )
+    .success();
+
+    let second = tempfile::tempdir().unwrap();
+    init_pair(second.path());
+    let worker = claim_role(second.path(), "worker", "worker-1", 0);
+    let reviewer = claim_role(second.path(), "reviewer", "reviewer-1", 1);
+    apply_action(
+        second.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        2,
+        "checkpoint.json",
+        checkpoint_submission(
+            "checkpoint-a",
+            serde_json::json!([
+                {"id": "implementation", "artifacts": [{"kind": "commit", "value": "abc"}]}
+            ]),
+        ),
+    )
+    .success();
+    let binding = checkpoint_binding(second.path());
+    apply_action(
+        second.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        3,
+        "request-first.json",
+        serde_json::json!({"type": "request_checkpoint_supersession", "reason": "new evidence"}),
+    )
+    .success();
+    apply_action(
+        second.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        3,
+        "stale-approval.json",
+        review_action("approved", &binding, serde_json::json!([])),
+    )
+    .failure()
+    .stderr(predicate::str::contains(r#""error":"revision_conflict""#));
+    apply_action(
+        second.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        4,
+        "blocked-approval.json",
+        review_action("approved", &binding, serde_json::json!([])),
+    )
+    .failure()
+    .stderr(predicate::str::contains(
+        r#""error":"supersession_pending""#,
+    ));
+}
+
+#[test]
+fn supersession_approval_withdrawal_reopens_revision_and_replaces_handoff() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
+    let reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        2,
+        "checkpoint.json",
+        checkpoint_submission(
+            "checkpoint-a",
+            serde_json::json!([
+                {"id": "implementation", "artifacts": [{"kind": "commit", "value": "abc"}]}
+            ]),
+        ),
+    )
+    .success();
+    let binding = checkpoint_binding(dir.path());
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        3,
+        "approve.json",
+        review_action("approved", &binding, serde_json::json!([])),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        4,
+        "blank.json",
+        serde_json::json!({"type": "withdraw_approval", "reason": " "}),
+    )
+    .failure()
+    .stderr(predicate::str::contains(r#""error":"missing_reason""#));
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        4,
+        "withdraw.json",
+        serde_json::json!({"type": "withdraw_approval", "reason": "new deliverable"}),
+    )
+    .success();
+    let baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
+    assert_eq!(baton["status"], "revising");
+    assert_eq!(baton["assignee"], "worker");
+    assert!(baton["checkpoint"].is_null());
+    assert!(baton["review"].is_null());
+    assert_eq!(baton["checkpoint_history"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        baton["publication_binding"]["obligation"]["kind"],
+        "approval_withdrawn"
+    );
+    assert_eq!(
+        baton["publication_binding"]["obligation"]["checkpoint"],
+        binding
+    );
+}
+
+#[test]
+fn supersession_mutations_reject_terminal_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        1,
+        "abandon.json",
+        serde_json::json!({"type": "abandon", "reason": "cancelled"}),
+    )
+    .success();
+    for (index, action) in [
+        serde_json::json!({"type": "request_checkpoint_supersession", "reason": "new"}),
+        serde_json::json!({"type": "accept_checkpoint_supersession"}),
+        serde_json::json!({"type": "withdraw_approval", "reason": "new"}),
+        serde_json::json!({
+            "type": "resume_human_decision", "answer": "new",
+            "scope_amendment": {
+                "objective": "new", "objective_refs": [], "task_reference": null,
+                "scope_deliverables": [{"id": "implementation", "description": "new"}]
+            }
+        }),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        apply_action(
+            dir.path(),
+            "worker",
+            "worker-1",
+            &worker,
+            2,
+            &format!("terminal-{index}.json"),
+            action,
+        )
+        .failure()
+        .stderr(predicate::str::contains(r#""error":"terminal_state""#));
+    }
 }

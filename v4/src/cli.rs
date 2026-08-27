@@ -901,6 +901,7 @@ fn transition_error_code(error: &TransitionError) -> &'static str {
         TransitionError::InvalidCheckpoint => "invalid_checkpoint",
         TransitionError::MissingVerification => "missing_verification",
         TransitionError::StaleReview => "stale_review",
+        TransitionError::SupersessionPending => "supersession_pending",
         TransitionError::MissingFindings => "missing_findings",
         TransitionError::BlockingFindings => "blocking_findings",
         TransitionError::PublicationStale => "publication_stale",

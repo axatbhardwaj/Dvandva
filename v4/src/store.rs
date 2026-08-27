@@ -11,9 +11,9 @@ use thiserror::Error;
 use uuid::Uuid;
 
 use crate::model::{
-    create_handoff_obligation, normalize_deliverables, normalize_participants,
-    DeliverableRequirement, HandoffKind, MigrationProvenance, Publication, PublicationPolicy,
-    RecoveryProvenance, RunBaton, Status, LEGACY_SCHEMA, SCHEMA,
+    checkpoint_manifest_digest, create_handoff_obligation, normalize_deliverables,
+    normalize_participants, Checkpoint, DeliverableRequirement, HandoffKind, MigrationProvenance,
+    Publication, PublicationPolicy, RecoveryProvenance, RunBaton, Status, LEGACY_SCHEMA, SCHEMA,
 };
 
 #[derive(Debug, Error)]
@@ -92,6 +92,34 @@ impl RunChannel {
 
     pub fn directory(&self) -> &Path {
         &self.directory
+    }
+
+    pub fn checkpoint_identity_seen(
+        &self,
+        identity: &str,
+        through_revision: u64,
+    ) -> Result<bool, StoreError> {
+        let history = self.directory.join("history");
+        for revision in 0..=through_revision {
+            let path = history.join(format!("{revision:020}.json"));
+            let baton = decode_baton(&fs::read(path)?).map_err(|_| StoreError::InvalidHistory)?;
+            if baton.revision != revision {
+                return Err(StoreError::InvalidHistory);
+            }
+            if baton.schema == SCHEMA
+                && (baton
+                    .checkpoint
+                    .as_ref()
+                    .is_some_and(|checkpoint| checkpoint.identity == identity)
+                    || baton
+                        .checkpoint_history
+                        .iter()
+                        .any(|checkpoint| checkpoint.checkpoint_identity == identity))
+            {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     pub fn compare_and_swap(
@@ -294,7 +322,9 @@ pub fn migrate_legacy_baton(current: &RunBaton) -> Result<RunBaton, StoreError> 
         description: current.objective.summary.trim().to_owned(),
     }];
     next.checkpoint = None;
+    next.checkpoint_history.clear();
     next.review = None;
+    next.pending_checkpoint_supersession = None;
     next.publication = Publication::default();
     next.publication_policy = Some(PublicationPolicy::fixed());
     next.publication_binding = Some(create_handoff_obligation(
@@ -329,6 +359,8 @@ fn validate_baton(baton: &RunBaton) -> Result<(), StoreError> {
             || !baton.scope_deliverables.is_empty()
             || baton.publication_policy.is_some()
             || baton.publication_binding.is_some()
+            || !baton.checkpoint_history.is_empty()
+            || baton.pending_checkpoint_supersession.is_some()
             || baton.migration.is_some()
         {
             return Err(StoreError::InvalidBaton(baton.schema.clone()));
@@ -357,6 +389,12 @@ fn validate_baton(baton: &RunBaton) -> Result<(), StoreError> {
         || !baton.publication.required
         || binding.obligation.scope_revision != baton.scope_revision
         || binding.obligation.handoff_revision > baton.revision
+        || binding
+            .obligation
+            .checkpoint
+            .as_ref()
+            .is_some_and(|checkpoint| !baton.checkpoint_history.contains(checkpoint))
+        || !valid_checkpoint_state(baton)
     {
         return Err(StoreError::InvalidBaton(baton.schema.clone()));
     }
@@ -373,6 +411,92 @@ fn validate_baton(baton: &RunBaton) -> Result<(), StoreError> {
         }
     }
     Ok(())
+}
+
+fn valid_checkpoint_state(baton: &RunBaton) -> bool {
+    let mut identities = std::collections::HashSet::new();
+    if baton.checkpoint_history.iter().any(|binding| {
+        binding.checkpoint_identity.trim() != binding.checkpoint_identity
+            || binding.checkpoint_identity.is_empty()
+            || !valid_sha256(&binding.manifest_digest)
+            || binding.scope_revision > baton.scope_revision
+            || !identities.insert(binding.checkpoint_identity.as_str())
+    }) {
+        return false;
+    }
+    let Some(checkpoint) = baton.checkpoint.as_ref() else {
+        return baton.review.is_none() && baton.pending_checkpoint_supersession.is_none();
+    };
+    let binding = checkpoint.binding();
+    if checkpoint.scope_revision != baton.scope_revision
+        || !valid_checkpoint(checkpoint, baton)
+        || !baton.checkpoint_history.contains(&binding)
+        || baton
+            .review
+            .as_ref()
+            .is_some_and(|review| review.binding() != binding)
+        || baton
+            .pending_checkpoint_supersession
+            .as_ref()
+            .is_some_and(|pending| {
+                pending.reason.trim().is_empty()
+                    || pending.reason.trim() != pending.reason
+                    || pending.checkpoint != binding
+            })
+    {
+        return false;
+    }
+    true
+}
+
+fn valid_checkpoint(checkpoint: &Checkpoint, baton: &RunBaton) -> bool {
+    if checkpoint.kind.trim().is_empty()
+        || checkpoint.kind.trim() != checkpoint.kind
+        || checkpoint.identity.trim().is_empty()
+        || checkpoint.identity.trim() != checkpoint.identity
+        || checkpoint.verification.is_empty()
+        || checkpoint
+            .verification
+            .iter()
+            .any(|item| item.trim().is_empty() || item.trim() != item)
+        || checkpoint.deliverables.is_empty()
+        || !checkpoint
+            .deliverables
+            .windows(2)
+            .all(|pair| pair[0].id < pair[1].id)
+        || checkpoint_manifest_digest(checkpoint) != checkpoint.manifest_digest
+    {
+        return false;
+    }
+    let required = baton
+        .scope_deliverables
+        .iter()
+        .map(|deliverable| deliverable.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let mut submitted = std::collections::HashSet::new();
+    checkpoint.deliverables.iter().all(|deliverable| {
+        !deliverable.id.is_empty()
+            && deliverable.id.trim() == deliverable.id
+            && submitted.insert(deliverable.id.as_str())
+            && !deliverable.artifacts.is_empty()
+            && deliverable
+                .artifacts
+                .windows(2)
+                .all(|pair| (&pair[0].kind, &pair[0].value) <= (&pair[1].kind, &pair[1].value))
+            && deliverable.artifacts.iter().all(|artifact| {
+                !artifact.kind.is_empty()
+                    && artifact.kind.trim() == artifact.kind
+                    && !artifact.value.is_empty()
+                    && artifact.value.trim() == artifact.value
+            })
+    }) && submitted == required
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
 fn validate_migration_edge(current: &RunBaton, next: &RunBaton) -> Result<(), StoreError> {

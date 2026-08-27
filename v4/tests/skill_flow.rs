@@ -201,6 +201,10 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
             "checkpoint": {
                 "kind": "git",
                 "identity": checkpoint_a,
+                "deliverables": [{
+                    "id": "implementation",
+                    "artifacts": [{"kind": "commit", "value": checkpoint_a}]
+                }],
                 "verification": ["cargo test"]
             }
         }),
@@ -216,6 +220,8 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
             "type": "record_review",
             "verdict": "changes_requested",
             "checkpoint_identity": checkpoint_a,
+            "manifest_digest": reviewing_a["checkpoint"]["manifest_digest"],
+            "scope_revision": reviewing_a["checkpoint"]["scope_revision"],
             "findings": ["Add the missing contention test"]
         }),
     );
@@ -231,6 +237,10 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
             "checkpoint": {
                 "kind": "git",
                 "identity": checkpoint_b,
+                "deliverables": [{
+                    "id": "implementation",
+                    "artifacts": [{"kind": "commit", "value": checkpoint_b}]
+                }],
                 "verification": ["cargo test", "contention test"]
             }
         }),
@@ -246,6 +256,8 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
             "type": "record_review",
             "verdict": "approved",
             "checkpoint_identity": checkpoint_b,
+            "manifest_digest": reviewing_b["checkpoint"]["manifest_digest"],
+            "scope_revision": reviewing_b["checkpoint"]["scope_revision"],
             "findings": []
         }),
     );

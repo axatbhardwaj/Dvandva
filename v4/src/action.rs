@@ -2,18 +2,29 @@ use serde::Deserialize;
 
 use crate::{
     claim::Role,
-    model::{Assignee, Checkpoint, ExternalRef, Status},
+    model::{Assignee, CheckpointSubmission, DeliverableRequirement, ExternalRef, Status},
 };
+
+#[derive(Debug, Deserialize)]
+pub struct ScopeAmendment {
+    pub objective: String,
+    #[serde(default)]
+    pub objective_refs: Vec<ExternalRef>,
+    pub task_reference: Option<String>,
+    pub scope_deliverables: Vec<DeliverableRequirement>,
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Action {
     SubmitCheckpoint {
-        checkpoint: Checkpoint,
+        checkpoint: CheckpointSubmission,
     },
     RecordReview {
         verdict: ReviewVerdict,
         checkpoint_identity: String,
+        manifest_digest: String,
+        scope_revision: u64,
         #[serde(default)]
         findings: Vec<String>,
     },
@@ -28,6 +39,15 @@ pub enum Action {
     },
     ResumeHumanDecision {
         answer: String,
+        #[serde(default)]
+        scope_amendment: Option<ScopeAmendment>,
+    },
+    RequestCheckpointSupersession {
+        reason: String,
+    },
+    AcceptCheckpointSupersession,
+    WithdrawApproval {
+        reason: String,
     },
     RecordPublication {
         required: bool,

@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
 use thiserror::Error;
 
@@ -78,18 +79,76 @@ pub struct DeliverableRequirement {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointDeliverable {
+    pub id: String,
+    pub artifacts: Vec<ExternalRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointSubmission {
+    pub kind: String,
+    pub identity: String,
+    #[serde(default)]
+    pub deliverables: Vec<CheckpointDeliverable>,
+    pub verification: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Checkpoint {
     pub kind: String,
     pub identity: String,
+    #[serde(default)]
+    pub deliverables: Vec<CheckpointDeliverable>,
     pub verification: Vec<String>,
+    #[serde(default)]
+    pub scope_revision: u64,
+    #[serde(default)]
+    pub manifest_digest: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointBinding {
+    pub checkpoint_identity: String,
+    pub manifest_digest: String,
+    pub scope_revision: u64,
+}
+
+impl Checkpoint {
+    pub fn binding(&self) -> CheckpointBinding {
+        CheckpointBinding {
+            checkpoint_identity: self.identity.clone(),
+            manifest_digest: self.manifest_digest.clone(),
+            scope_revision: self.scope_revision,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ReviewReceipt {
     pub verdict: String,
     pub checkpoint_identity: String,
+    #[serde(default)]
+    pub manifest_digest: String,
+    #[serde(default)]
+    pub scope_revision: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub findings: Vec<String>,
+}
+
+impl ReviewReceipt {
+    pub fn binding(&self) -> CheckpointBinding {
+        CheckpointBinding {
+            checkpoint_identity: self.checkpoint_identity.clone(),
+            manifest_digest: self.manifest_digest.clone(),
+            scope_revision: self.scope_revision,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CheckpointSupersession {
+    pub reason: String,
+    pub checkpoint: CheckpointBinding,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -136,6 +195,9 @@ impl PublicationPolicy {
 pub enum HandoffKind {
     RunStarted,
     ProtocolUpgraded,
+    ScopeAmended,
+    CheckpointSuperseded,
+    ApprovalWithdrawn,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -144,7 +206,7 @@ pub struct HandoffObligation {
     pub kind: HandoffKind,
     pub scope_revision: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub checkpoint_identity: Option<String>,
+    pub checkpoint: Option<CheckpointBinding>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -179,7 +241,7 @@ pub fn create_handoff_obligation(
             handoff_revision,
             kind,
             scope_revision,
-            checkpoint_identity: None,
+            checkpoint: None,
         },
         deployment: None,
         review: None,
@@ -249,7 +311,11 @@ pub struct RunBaton {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scope_deliverables: Vec<DeliverableRequirement>,
     pub checkpoint: Option<Checkpoint>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub checkpoint_history: Vec<CheckpointBinding>,
     pub review: Option<ReviewReceipt>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pending_checkpoint_supersession: Option<CheckpointSupersession>,
     #[serde(default)]
     pub publication: Publication,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -300,7 +366,9 @@ impl RunBaton {
             scope_revision: 0,
             scope_deliverables,
             checkpoint: None,
+            checkpoint_history: Vec::new(),
             review: None,
+            pending_checkpoint_supersession: None,
             publication: Publication {
                 required: true,
                 desired_revision: 0,
@@ -326,6 +394,39 @@ impl RunBaton {
         self.task = Some(task);
         self
     }
+}
+
+pub fn create_bound_handoff_obligation(
+    kind: HandoffKind,
+    handoff_revision: u64,
+    scope_revision: u64,
+    checkpoint: Option<CheckpointBinding>,
+) -> PublicationBinding {
+    let mut binding = create_handoff_obligation(kind, handoff_revision, scope_revision);
+    binding.obligation.checkpoint = checkpoint;
+    binding
+}
+
+pub fn checkpoint_manifest_digest(checkpoint: &Checkpoint) -> String {
+    #[derive(Serialize)]
+    struct CanonicalManifest<'a> {
+        kind: &'a str,
+        identity: &'a str,
+        deliverables: &'a [CheckpointDeliverable],
+        verification: &'a [String],
+        scope_revision: u64,
+    }
+    let canonical = CanonicalManifest {
+        kind: &checkpoint.kind,
+        identity: &checkpoint.identity,
+        deliverables: &checkpoint.deliverables,
+        verification: &checkpoint.verification,
+        scope_revision: checkpoint.scope_revision,
+    };
+    format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&canonical).expect("checkpoint manifest serializes"))
+    )
 }
 
 pub fn normalize_participants(

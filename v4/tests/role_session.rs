@@ -611,6 +611,13 @@ fn role_apply_loads_the_private_token_without_a_cli_argument() {
             "checkpoint": {
                 "kind": "git",
                 "identity": "0123456789abcdef0123456789abcdef01234567",
+                "deliverables": [{
+                    "id": "implementation",
+                    "artifacts": [{
+                        "kind": "commit",
+                        "value": "0123456789abcdef0123456789abcdef01234567"
+                    }]
+                }],
                 "verification": ["cargo test"]
             }
         }))
