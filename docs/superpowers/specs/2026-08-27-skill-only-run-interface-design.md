@@ -94,10 +94,11 @@ The user selects Claude Code and Codex as targets, then invokes
 6. creates `$XDG_STATE_HOME/dvandva/runs/` and the private credential root;
 7. runs a kernel compatibility probe and reports skill/kernel versions.
 
-Setup detects an existing `vadi` or `prativadi` skill before installation. It
-may atomically replace a version recorded in its own installation manifest;
-it refuses to overwrite an unowned or archived-v3 skill without explicit
-human confirmation and a recoverable backup.
+The standard Skills CLI owns installation, update, conflict handling, and
+removal for `setup-dvandva`, `vadi`, and `prativadi`. The setup skill begins
+only after those skills are installed and owns no engine skill paths. Its
+manifest covers only the private kernel data it creates, so it cannot overwrite
+or remove an unowned or archived-v3 skill.
 
 There is no post-install daemon. A skill resolves the private binary through
 the `current` link on each activation and rejects an incompatible schema or
@@ -105,8 +106,8 @@ major version before touching run state.
 
 Updates are explicit: update the skills, then invoke `$setup-dvandva update`.
 An active run stays pinned to the kernel major/schema it was created with;
-setup never changes its Baton. Uninstall removes only installer-owned skills,
-binary versions, and its installation manifest. Run history is preserved by
+setup never changes its Baton. Uninstall removes only marker-owned kernel
+versions and its installation manifest. Run history is preserved by
 default and is deleted only through a separately confirmed purge.
 
 The first development canary may use the repository-built release binary, but

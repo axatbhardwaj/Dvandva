@@ -1057,7 +1057,7 @@ fn required_publication_blocks_done_until_synchronized() {
         "published.json",
         serde_json::json!({
             "type": "record_publication", "required": true, "desired_revision": 1,
-            "published_revision": 1, "refs": [{"kind": "site", "value": "site:abc"}]
+            "published_revision": 1, "refs": []
         }),
     )
     .success();
@@ -1067,6 +1067,33 @@ fn required_publication_blocks_done_until_synchronized() {
         "worker-1",
         &worker,
         6,
+        "missing-explainer.json",
+        serde_json::json!({
+            "type": "finalize"
+        }),
+    )
+    .failure()
+    .stderr(predicate::str::contains(r#""error":"publication_stale""#));
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        6,
+        "explainer.json",
+        serde_json::json!({
+            "type": "record_publication", "required": true, "desired_revision": 1,
+            "published_revision": 1,
+            "refs": [{"kind": "explainer", "value": "https://example.test/run-a"}]
+        }),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        7,
         "done.json",
         serde_json::json!({
             "type": "finalize"

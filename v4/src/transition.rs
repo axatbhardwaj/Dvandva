@@ -145,7 +145,11 @@ pub fn apply(
                 return Err(TransitionError::StaleReview);
             }
             if baton.publication.required
-                && baton.publication.published_revision != Some(baton.publication.desired_revision)
+                && (baton.publication.published_revision
+                    != Some(baton.publication.desired_revision)
+                    || !baton.publication.refs.iter().any(|reference| {
+                        reference.kind == "explainer" && !reference.value.trim().is_empty()
+                    }))
             {
                 return Err(TransitionError::PublicationStale);
             }
