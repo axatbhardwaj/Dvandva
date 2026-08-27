@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use dvandva_v4::model::RunBaton;
 use predicates::prelude::*;
 
 fn command() -> Command {
@@ -25,6 +26,8 @@ fn init_pair(dir: &std::path::Path) {
             "codex",
             "--reviewer",
             "claude",
+            "--repository-id",
+            "github.com/axatbhardwaj/dvandva",
         ])
         .assert()
         .success();
@@ -103,6 +106,8 @@ fn init_creates_a_run_centric_baton() {
             "codex",
             "--reviewer",
             "claude",
+            "--repository-id",
+            "github.com/axatbhardwaj/dvandva",
         ])
         .assert()
         .success();
@@ -115,6 +120,154 @@ fn init_creates_a_run_centric_baton() {
     assert_eq!(baton["assignee"], "worker");
     assert_eq!(baton["participants"]["worker"]["harness"], "codex");
     assert_eq!(baton["participants"]["reviewer"]["harness"], "claude");
+}
+
+#[test]
+fn new_runs_require_a_synchronized_publication() {
+    let baton = RunBaton::new("run-publication", "Implement DEF-123", "codex", "claude");
+    assert!(baton.publication.required);
+    assert_eq!(baton.publication.published_revision, None);
+}
+
+#[test]
+fn init_persists_workspace_and_task_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    command()
+        .args([
+            "init",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--run-id",
+            "run-a",
+            "--objective",
+            "  Implement DEF-123  ",
+            "--worker",
+            "  codex  ",
+            "--reviewer",
+            "  claude  ",
+            "--repository-id",
+            "  github.com/axatbhardwaj/dvandva  ",
+            "--origin",
+            "  git@github.com:axatbhardwaj/Dvandva.git  ",
+            "--worktree",
+            "  /tmp/dvandva-a  ",
+            "--task-reference",
+            "  DEF-123  ",
+        ])
+        .assert()
+        .success();
+
+    let baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
+    assert_eq!(
+        baton["workspace"],
+        serde_json::json!({
+            "repository_id": "github.com/axatbhardwaj/dvandva",
+            "origin": "git@github.com:axatbhardwaj/Dvandva.git",
+            "worktree": "/tmp/dvandva-a"
+        })
+    );
+    assert_eq!(
+        baton["task"],
+        serde_json::json!({
+            "reference": "DEF-123",
+            "summary": "Implement DEF-123"
+        })
+    );
+    assert_eq!(baton["participants"]["worker"]["harness"], "codex");
+    assert_eq!(baton["participants"]["reviewer"]["harness"], "claude");
+}
+
+#[test]
+fn init_rejects_blank_repository_identity() {
+    let dir = tempfile::tempdir().unwrap();
+    command()
+        .args([
+            "init",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--run-id",
+            "run-a",
+            "--objective",
+            "Implement DEF-123",
+            "--worker",
+            "codex",
+            "--reviewer",
+            "claude",
+            "--repository-id",
+            "   ",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("repository id must not be blank"));
+}
+
+#[test]
+fn init_rejects_a_supplied_blank_task_reference() {
+    let dir = tempfile::tempdir().unwrap();
+    command()
+        .args([
+            "init",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--run-id",
+            "run-a",
+            "--objective",
+            "Implement the approved change",
+            "--worker",
+            "codex",
+            "--reviewer",
+            "claude",
+            "--repository-id",
+            "github.com/axatbhardwaj/dvandva",
+            "--task-reference",
+            "   ",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("task reference must not be blank"));
+}
+
+#[test]
+fn init_rejects_supplied_blank_workspace_metadata() {
+    for flag in ["--origin", "--worktree"] {
+        let dir = tempfile::tempdir().unwrap();
+        command()
+            .args([
+                "init",
+                "--run-dir",
+                dir.path().to_str().unwrap(),
+                "--run-id",
+                "run-a",
+                "--objective",
+                "Implement DEF-123",
+                "--worker",
+                "codex",
+                "--reviewer",
+                "claude",
+                "--repository-id",
+                "github.com/axatbhardwaj/dvandva",
+                flag,
+                "   ",
+            ])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("must not be blank"));
+    }
+}
+
+#[test]
+fn pre_discovery_batons_remain_deserializable() {
+    let legacy =
+        dvandva_v4::model::RunBaton::new("legacy-run", "Preserved objective", "codex", "claude");
+    let encoded = serde_json::to_value(legacy).unwrap();
+    assert!(encoded.get("workspace").is_none());
+    assert!(encoded.get("task").is_none());
+
+    let decoded: dvandva_v4::model::RunBaton = serde_json::from_value(encoded).unwrap();
+    assert_eq!(decoded.run_id, "legacy-run");
+    assert_eq!(decoded.workspace, None);
+    assert_eq!(decoded.task, None);
 }
 
 #[test]
@@ -133,6 +286,8 @@ fn init_rejects_unsafe_run_ids() {
             "codex",
             "--reviewer",
             "claude",
+            "--repository-id",
+            "github.com/axatbhardwaj/dvandva",
         ])
         .assert()
         .failure()
@@ -155,6 +310,8 @@ fn init_rejects_blank_objectives() {
             "codex",
             "--reviewer",
             "claude",
+            "--repository-id",
+            "github.com/axatbhardwaj/dvandva",
         ])
         .assert()
         .failure()
@@ -177,6 +334,8 @@ fn init_rejects_same_harness_family() {
             "Codex",
             "--reviewer",
             "codex",
+            "--repository-id",
+            "github.com/axatbhardwaj/dvandva",
         ])
         .assert()
         .failure()
@@ -198,6 +357,8 @@ fn init_rejects_duplicate_initialization() {
         "codex",
         "--reviewer",
         "claude",
+        "--repository-id",
+        "github.com/axatbhardwaj/dvandva",
     ];
     command().args(args).assert().success();
     command()
@@ -223,6 +384,8 @@ fn read_emits_canonical_baton_json() {
             "codex",
             "--reviewer",
             "claude",
+            "--repository-id",
+            "github.com/axatbhardwaj/dvandva",
         ])
         .assert()
         .success();
@@ -255,6 +418,8 @@ fn concurrent_initialization_has_one_winner() {
                 "codex",
                 "--reviewer",
                 "claude",
+                "--repository-id",
+                "github.com/axatbhardwaj/dvandva",
             ])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -323,6 +488,8 @@ fn initialization_history_is_immutable() {
             "codex",
             "--reviewer",
             "claude",
+            "--repository-id",
+            "github.com/axatbhardwaj/dvandva",
         ])
         .assert()
         .success();
@@ -342,6 +509,8 @@ fn initialization_history_is_immutable() {
             "codex",
             "--reviewer",
             "claude",
+            "--repository-id",
+            "github.com/axatbhardwaj/dvandva",
         ])
         .assert()
         .failure();
@@ -365,6 +534,8 @@ fn separate_run_directories_are_independent() {
                 "codex",
                 "--reviewer",
                 "claude",
+                "--repository-id",
+                "github.com/axatbhardwaj/dvandva",
             ])
             .assert()
             .success();
@@ -394,6 +565,8 @@ fn expired_claim_replacement_fences_the_old_session() {
             "codex",
             "--reviewer",
             "claude",
+            "--repository-id",
+            "github.com/axatbhardwaj/dvandva",
         ])
         .assert()
         .success();
@@ -516,6 +689,8 @@ fn worker_and_reviewer_claims_are_independent_and_tokens_are_secret() {
             "codex",
             "--reviewer",
             "claude",
+            "--repository-id",
+            "github.com/axatbhardwaj/dvandva",
         ])
         .assert()
         .success();
@@ -614,6 +789,8 @@ fn complete_review_fix_loop_reaches_done() {
             "codex",
             "--reviewer",
             "claude",
+            "--repository-id",
+            "github.com/axatbhardwaj/dvandva",
         ])
         .assert()
         .success();
@@ -726,6 +903,21 @@ fn complete_review_fix_loop_reaches_done() {
         "worker-1",
         &worker_token,
         "6",
+        write_action(
+            dir.path(),
+            "publication.json",
+            serde_json::json!({
+                "type": "record_publication", "required": true,
+                "desired_revision": 6, "published_revision": 6,
+                "refs": [{"kind": "explainer", "value": "https://example.test/run-a"}]
+            }),
+        ),
+    );
+    apply(
+        "worker",
+        "worker-1",
+        &worker_token,
+        "7",
         write_action(
             dir.path(),
             "finalize.json",
@@ -865,7 +1057,7 @@ fn required_publication_blocks_done_until_synchronized() {
         "published.json",
         serde_json::json!({
             "type": "record_publication", "required": true, "desired_revision": 1,
-            "published_revision": 1, "refs": [{"kind": "site", "value": "site:abc"}]
+            "published_revision": 1, "refs": []
         }),
     )
     .success();
@@ -875,6 +1067,33 @@ fn required_publication_blocks_done_until_synchronized() {
         "worker-1",
         &worker,
         6,
+        "missing-explainer.json",
+        serde_json::json!({
+            "type": "finalize"
+        }),
+    )
+    .failure()
+    .stderr(predicate::str::contains(r#""error":"publication_stale""#));
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        6,
+        "explainer.json",
+        serde_json::json!({
+            "type": "record_publication", "required": true, "desired_revision": 1,
+            "published_revision": 1,
+            "refs": [{"kind": "explainer", "value": "https://example.test/run-a"}]
+        }),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        7,
         "done.json",
         serde_json::json!({
             "type": "finalize"

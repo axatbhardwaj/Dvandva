@@ -25,8 +25,9 @@ any active state -> abandoned
 
 The worker submits a new immutable checkpoint from `working` or `revising`.
 The reviewer binds findings or approval to that exact identity. Finalization
-requires an unchanged approved identity and, when publication is required, a
-synchronized projection revision. Terminal state cannot be reopened.
+requires an unchanged approved identity and a synchronized publication
+revision. New v4 runs require publication from initialization; the requirement
+cannot be disabled. Terminal state cannot be reopened.
 
 ## Storage and authority
 

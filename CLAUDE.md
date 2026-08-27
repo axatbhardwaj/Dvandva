@@ -1,6 +1,21 @@
-# Dvandva — archived project instructions
+# Dvandva project instructions
 
-> **Retired archive — final crate release: `3.5.1`.** Preserve this tree as historical evidence. It is unsupported: do not install or update the plugin, invoke the binary for a new workflow, publish a release, or use the historical coordination rules as live operating policy.
+> **Active v4 skills; retired v3 archive.** Preserve the v3 crate/plugin tree as
+> historical evidence and never install or reactivate it. Active work may
+> publish only the root `setup-dvandva`, `vadi`, and `prativadi` skills plus the
+> private v4 kernel under `skills-v*` releases.
+
+## Active v4 discipline
+
+- The human starts Claude and Codex separately in T3 Code. Never invoke the
+  peer harness from a role.
+- Use only the root role skills and their private facade; never read or edit
+  Baton, history, or credential files directly.
+- Keep the helper outside `PATH`. `$setup-dvandva` is explicit-only.
+- Matt Pocock skills remain explicit human invocations inside an already joined
+  role session.
+- Vadi owns the per-run published explainer and keeps its plan/TODO list current
+  around every handoff. Prativadi reviews exact immutable checkpoints.
 
 ## Historical model discipline
 

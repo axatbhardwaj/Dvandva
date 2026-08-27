@@ -106,10 +106,27 @@ pub struct RecoveryProvenance {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorkspaceIdentity {
+    pub repository_id: String,
+    pub origin: Option<String>,
+    pub worktree: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskIdentity {
+    pub reference: Option<String>,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunBaton {
     pub schema: String,
     pub run_id: String,
     pub objective: Objective,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace: Option<WorkspaceIdentity>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub task: Option<TaskIdentity>,
     pub participants: Participants,
     pub status: Status,
     pub assignee: Assignee,
@@ -137,6 +154,8 @@ impl RunBaton {
                 summary: objective.into(),
                 refs: Vec::new(),
             },
+            workspace: None,
+            task: None,
             participants: Participants {
                 worker: Participant {
                     harness: worker_harness.into(),
@@ -153,7 +172,7 @@ impl RunBaton {
             checkpoint: None,
             review: None,
             publication: Publication {
-                required: false,
+                required: true,
                 desired_revision: 0,
                 published_revision: None,
                 refs: Vec::new(),
@@ -163,5 +182,15 @@ impl RunBaton {
             terminal: None,
             recovery: None,
         }
+    }
+
+    pub fn with_discovery_identity(
+        mut self,
+        workspace: WorkspaceIdentity,
+        task: TaskIdentity,
+    ) -> Self {
+        self.workspace = Some(workspace);
+        self.task = Some(task);
+        self
     }
 }

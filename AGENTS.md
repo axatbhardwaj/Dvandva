@@ -2,9 +2,18 @@
 
 ## Purpose
 
-> **Retired archive — final crate release: `3.5.1`.** This repository preserves a historical learning experiment in governed agent loops, subagent delegation, review gates, and two-agent coordination for Claude Code and Codex. It is unsupported: do not install its plugins, start new Dvandva runs, publish a new release, or treat its historical workflow rules as active instructions.
+> **Active v4 skills; retired v3 archive.** The final v3 crate release remains
+> `3.5.1`, and the v3 plugin is unsupported historical evidence. Do not install
+> or modify that plugin. New distribution is limited to `skills/setup-dvandva`,
+> `skills/vadi`, `skills/prativadi`, and versioned `skills-v*` private-kernel
+> releases.
 
 This repo preserves research into practical agent-to-agent coordination between Claude Code and Codex. The historical Dvandva implementation used a baton-passing protocol-level orchestrator: the baton coordinated roles, phases, review gates, and subagent work, with no daemon, launcher, or hidden central control loop.
+
+The active v4 interface is skill-only. Keep the v4 kernel private, outside
+`PATH`, and independent of either harness. One harness must never invoke the
+other. The human starts both T3 Code sessions; each role waits locally on its
+own run-scoped Baton.
 
 Prefer concise, source-backed docs over speculative architecture. If a workflow claim depends on a tool feature, cite the relevant docs or record the local command used to verify it.
 
@@ -15,6 +24,8 @@ Prefer concise, source-backed docs over speculative architecture. If a workflow 
 - Keep tool research in `docs/research/`.
 - Keep case studies in `docs/case-studies/`.
 - Keep public case studies sanitized and source-backed.
+- Keep active skill sources under root `skills/` and v4 release automation
+  isolated from `plugins/dvandva/` and `rust/dvandva/`.
 - Historical HTML artifacts retain the `dvandva:html-deliverables` house format (`plugins/dvandva/skills/html-deliverables/` — tokens, components, diagram rules, `template.html`); preserve it when documenting the archive rather than creating an active-product surface.
 - Do not put private project secrets, proprietary source snippets, or raw private PR exports in this repo.
 - If importing a private PR history for local research, keep raw JSON and timelines outside the public tree, for example under ignored `private-artifacts/`.
@@ -23,7 +34,9 @@ Prefer concise, source-backed docs over speculative architecture. If a workflow 
 
 Either engine could host either role. The preferred dogfood setup was Claude Code as vadi and Codex as prativadi; Codex-as-vadi and Claude-as-prativadi were equally valid. **Dvandva never ran solo** — every recorded run used two decorrelated roles, and the reviewer was not the engine that did the work. `supervised` runs were human-gated handoffs between those same two roles, while `walkaway` sessions polled autonomously. This is preserved as historical behavior, not onboarding.
 
-Use PR comments for archive-maintenance summaries only. Do not create new local baton files or restart a historical workflow.
+Use PR comments for archive-maintenance summaries only. Do not create new v3
+baton files or restart a historical workflow. Active v4 runs must use the
+released role skills and XDG run root, never the archived plugin.
 
 Historical model-casting guidance (advisory, both engines): `docs/model-selection.md`. The
 default casting is a repeating ring, not a one-shot pipeline: human task ->
