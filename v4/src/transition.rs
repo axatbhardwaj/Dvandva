@@ -8,7 +8,8 @@ use crate::{
     model::{
         checkpoint_manifest_digest, create_bound_handoff_obligation, normalize_deliverables,
         Assignee, Checkpoint, CheckpointBinding, CheckpointSubmission, CheckpointSupersession,
-        HandoffKind, HumanDecision, ReviewReceipt, RunBaton, Status, TerminalProvenance,
+        HandoffKind, HumanDecision, PublicationDeployment, PublicationReview, ReviewReceipt,
+        RunBaton, Status, TerminalProvenance,
     },
     store::{require_current_schema, RunChannel, StoreError},
 };
@@ -43,8 +44,18 @@ pub enum TransitionError {
     InvalidHumanDecision,
     #[error("only the designated contact may resume the human decision")]
     WrongContact,
-    #[error("publication revisions cannot regress or exceed the desired revision")]
-    PublicationRegression,
+    #[error("legacy numeric publication is unsupported for v2 runs")]
+    LegacyPublicationUnsupported,
+    #[error("only the Codex-harness participant may publish the explainer")]
+    WrongPublisherHarness,
+    #[error("only the Claude-harness participant may review the explainer")]
+    WrongReviewerHarness,
+    #[error("explainer publication metadata is invalid")]
+    InvalidExplainerPublication,
+    #[error("explainer receipt does not bind the current obligation and deployment")]
+    StalePublicationBinding,
+    #[error("explainer deployments must preserve the run Site ID")]
+    SiteIdMismatch,
     #[error("abandonment requires a non-blank reason")]
     MissingReason,
 }
@@ -77,6 +88,7 @@ pub fn apply(
             if !matches!(baton.status, Status::Working | Status::Revising) {
                 return Err(TransitionError::IllegalState);
             }
+            require_publication_gate(&baton)?;
             let checkpoint = normalize_checkpoint(checkpoint, &baton)?;
             if channel.checkpoint_identity_seen(&checkpoint.identity, expected_revision)?
                 || baton
@@ -90,12 +102,18 @@ pub fn apply(
             {
                 return Err(TransitionError::InvalidCheckpoint);
             }
-            baton.checkpoint_history.push(checkpoint.binding());
+            let checkpoint_binding = checkpoint.binding();
+            baton.checkpoint_history.push(checkpoint_binding.clone());
             baton.checkpoint = Some(checkpoint);
             baton.review = None;
             baton.pending_checkpoint_supersession = None;
             baton.status = Status::Reviewing;
             baton.assignee = Assignee::Reviewer;
+            replace_handoff_obligation(
+                &mut baton,
+                HandoffKind::WorkerToReviewer,
+                Some(checkpoint_binding),
+            );
         }
         Action::RecordReview {
             verdict,
@@ -108,6 +126,7 @@ pub fn apply(
             if baton.status != Status::Reviewing {
                 return Err(TransitionError::IllegalState);
             }
+            require_publication_gate(&baton)?;
             let checkpoint = baton
                 .checkpoint
                 .as_ref()
@@ -150,11 +169,16 @@ pub fn apply(
             };
             baton.review = Some(ReviewReceipt {
                 verdict: verdict_name.to_owned(),
-                checkpoint_identity: submitted_binding.checkpoint_identity,
-                manifest_digest: submitted_binding.manifest_digest,
+                checkpoint_identity: submitted_binding.checkpoint_identity.clone(),
+                manifest_digest: submitted_binding.manifest_digest.clone(),
                 scope_revision: submitted_binding.scope_revision,
                 findings,
             });
+            replace_handoff_obligation(
+                &mut baton,
+                HandoffKind::ReviewerToWorker,
+                Some(submitted_binding),
+            );
         }
         Action::Finalize => {
             require_owner(&baton, role, Role::Worker, Assignee::Worker)?;
@@ -172,15 +196,7 @@ pub fn apply(
             if review.verdict != "approved" || review.binding() != checkpoint.binding() {
                 return Err(TransitionError::StaleReview);
             }
-            if baton.publication.required
-                && (baton.publication.published_revision
-                    != Some(baton.publication.desired_revision)
-                    || !baton.publication.refs.iter().any(|reference| {
-                        reference.kind == "explainer" && !reference.value.trim().is_empty()
-                    }))
-            {
-                return Err(TransitionError::PublicationStale);
-            }
+            require_publication_gate(&baton)?;
             baton.status = Status::Done;
             baton.assignee = Assignee::None;
             baton.terminal = Some(TerminalProvenance {
@@ -298,12 +314,11 @@ pub fn apply(
             baton.pending_checkpoint_supersession = None;
             baton.status = Status::Revising;
             baton.assignee = Assignee::Worker;
-            baton.publication_binding = Some(create_bound_handoff_obligation(
+            replace_handoff_obligation(
+                &mut baton,
                 HandoffKind::CheckpointSuperseded,
-                baton.revision + 1,
-                baton.scope_revision,
                 Some(checkpoint),
-            ));
+            );
         }
         Action::WithdrawApproval { reason } => {
             require_owner(&baton, role, Role::Worker, Assignee::Worker)?;
@@ -327,36 +342,125 @@ pub fn apply(
             baton.pending_checkpoint_supersession = None;
             baton.status = Status::Revising;
             baton.assignee = Assignee::Worker;
-            baton.publication_binding = Some(create_bound_handoff_obligation(
+            replace_handoff_obligation(
+                &mut baton,
                 HandoffKind::ApprovalWithdrawn,
-                baton.revision + 1,
-                baton.scope_revision,
                 Some(checkpoint),
-            ));
+            );
         }
         Action::RecordPublication {
-            required,
-            desired_revision,
-            published_revision,
-            refs,
+            required: _,
+            desired_revision: _,
+            published_revision: _,
+            refs: _,
         } => {
-            if role != Role::Worker {
-                return Err(TransitionError::WrongOwner);
+            return Err(TransitionError::LegacyPublicationUnsupported);
+        }
+        Action::RecordExplainerPublication {
+            obligation,
+            source_digest,
+            site_id,
+            site_version,
+            url,
+            channel,
+            access,
+        } => {
+            if caller_harness(&baton, role) != "Codex" {
+                return Err(TransitionError::WrongPublisherHarness);
             }
-            if desired_revision < baton.publication.desired_revision
-                || (baton.publication.required && !required)
-                || (baton.publication.published_revision.is_some() && published_revision.is_none())
-                || published_revision.is_some_and(|published| {
-                    published < baton.publication.published_revision.unwrap_or(0)
-                        || published > desired_revision
-                })
+            let binding = baton
+                .publication_binding
+                .as_mut()
+                .ok_or(TransitionError::PublicationStale)?;
+            if binding.obligation != obligation {
+                return Err(TransitionError::StalePublicationBinding);
+            }
+            if !valid_sha256(&source_digest)
+                || !valid_exact_reference(&site_id)
+                || !valid_exact_reference(&site_version)
+                || !valid_exact_reference(&url)
+                || channel != "codex_sites"
+                || access != "owner_only"
             {
-                return Err(TransitionError::PublicationRegression);
+                return Err(TransitionError::InvalidExplainerPublication);
             }
-            baton.publication.required = required;
-            baton.publication.desired_revision = desired_revision;
-            baton.publication.published_revision = published_revision;
-            baton.publication.refs = refs;
+            if binding
+                .site_id
+                .as_ref()
+                .is_some_and(|stable| stable != &site_id)
+            {
+                return Err(TransitionError::SiteIdMismatch);
+            }
+            binding.site_id = Some(site_id.clone());
+            binding.deployment = Some(PublicationDeployment {
+                obligation,
+                source_digest,
+                site_id,
+                site_version,
+                url,
+                channel,
+                access,
+                publisher_harness: "Codex".to_owned(),
+            });
+            binding.review = None;
+        }
+        Action::RecordExplainerReview {
+            obligation,
+            source_digest,
+            site_id,
+            site_version,
+            url,
+            verdict,
+            findings,
+        } => {
+            if caller_harness(&baton, role) != "Claude" {
+                return Err(TransitionError::WrongReviewerHarness);
+            }
+            let binding = baton
+                .publication_binding
+                .as_mut()
+                .ok_or(TransitionError::PublicationStale)?;
+            let deployment = binding
+                .deployment
+                .as_ref()
+                .ok_or(TransitionError::PublicationStale)?;
+            if binding.obligation != obligation
+                || deployment.obligation != obligation
+                || deployment.source_digest != source_digest
+                || deployment.site_id != site_id
+                || deployment.site_version != site_version
+                || deployment.url != url
+            {
+                return Err(TransitionError::StalePublicationBinding);
+            }
+            let findings = findings
+                .into_iter()
+                .map(|finding| finding.trim().to_owned())
+                .collect::<Vec<_>>();
+            let verdict = match verdict {
+                ReviewVerdict::ChangesRequested => {
+                    if findings.is_empty() || findings.iter().any(String::is_empty) {
+                        return Err(TransitionError::MissingFindings);
+                    }
+                    "changes_requested"
+                }
+                ReviewVerdict::Approved => {
+                    if !findings.is_empty() {
+                        return Err(TransitionError::BlockingFindings);
+                    }
+                    "approved"
+                }
+            };
+            binding.review = Some(PublicationReview {
+                obligation,
+                source_digest,
+                site_id,
+                site_version,
+                url,
+                verdict: verdict.to_owned(),
+                findings,
+                reviewer_harness: "Claude".to_owned(),
+            });
         }
         Action::Abandon { reason } => {
             if reason.trim().is_empty() {
@@ -476,12 +580,7 @@ fn apply_scope_amendment(
     baton.pending_checkpoint_supersession = None;
     baton.status = Status::Revising;
     baton.assignee = Assignee::Worker;
-    baton.publication_binding = Some(create_bound_handoff_obligation(
-        HandoffKind::ScopeAmended,
-        baton.revision + 1,
-        baton.scope_revision,
-        None,
-    ));
+    replace_handoff_obligation(baton, HandoffKind::ScopeAmended, None);
     Ok(())
 }
 
@@ -500,6 +599,71 @@ fn resume_target_matches(status: &Status, assignee: &Assignee) -> bool {
             Assignee::Worker
         ) | (Status::Reviewing, Assignee::Reviewer)
     )
+}
+
+fn replace_handoff_obligation(
+    baton: &mut RunBaton,
+    kind: HandoffKind,
+    checkpoint: Option<CheckpointBinding>,
+) {
+    let site_id = baton
+        .publication_binding
+        .as_ref()
+        .and_then(|binding| binding.site_id.clone());
+    let mut binding =
+        create_bound_handoff_obligation(kind, baton.revision + 1, baton.scope_revision, checkpoint);
+    binding.site_id = site_id;
+    baton.publication_binding = Some(binding);
+}
+
+fn require_publication_gate(baton: &RunBaton) -> Result<(), TransitionError> {
+    let binding = baton
+        .publication_binding
+        .as_ref()
+        .ok_or(TransitionError::PublicationStale)?;
+    let deployment = binding
+        .deployment
+        .as_ref()
+        .ok_or(TransitionError::PublicationStale)?;
+    let review = binding
+        .review
+        .as_ref()
+        .ok_or(TransitionError::PublicationStale)?;
+    if binding.site_id.as_ref() != Some(&deployment.site_id)
+        || deployment.obligation != binding.obligation
+        || review.obligation != binding.obligation
+        || review.source_digest != deployment.source_digest
+        || review.site_id != deployment.site_id
+        || review.site_version != deployment.site_version
+        || review.url != deployment.url
+        || review.verdict != "approved"
+        || !review.findings.is_empty()
+        || deployment.channel != "codex_sites"
+        || deployment.access != "owner_only"
+        || deployment.publisher_harness != "Codex"
+        || review.reviewer_harness != "Claude"
+    {
+        return Err(TransitionError::PublicationStale);
+    }
+    Ok(())
+}
+
+fn caller_harness(baton: &RunBaton, role: Role) -> &str {
+    match role {
+        Role::Worker => &baton.participants.worker.harness,
+        Role::Reviewer => &baton.participants.reviewer.harness,
+    }
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn valid_exact_reference(value: &str) -> bool {
+    !value.is_empty() && value.trim() == value
 }
 
 fn require_owner(

@@ -603,23 +603,18 @@ fn role_apply_loads_the_private_token_without_a_cli_argument() {
         ])
         .assert()
         .success();
-    let action = root.path().join("checkpoint.json");
+    let action = root.path().join("publication.json");
     std::fs::write(
         &action,
         serde_json::to_vec_pretty(&serde_json::json!({
-            "type": "submit_checkpoint",
-            "checkpoint": {
-                "kind": "git",
-                "identity": "0123456789abcdef0123456789abcdef01234567",
-                "deliverables": [{
-                    "id": "implementation",
-                    "artifacts": [{
-                        "kind": "commit",
-                        "value": "0123456789abcdef0123456789abcdef01234567"
-                    }]
-                }],
-                "verification": ["cargo test"]
-            }
+            "type": "record_explainer_publication",
+            "obligation": {
+                "handoff_revision": 0, "kind": "run_started", "scope_revision": 0
+            },
+            "source_digest": "a".repeat(64),
+            "site_id": "site-run-a", "site_version": "deployment-1",
+            "url": "https://sites.openai.test/site-run-a/deployment-1",
+            "channel": "codex_sites", "access": "owner_only"
         }))
         .unwrap(),
     )
@@ -652,9 +647,13 @@ fn role_apply_loads_the_private_token_without_a_cli_argument() {
         String::from_utf8_lossy(&output.stderr)
     );
     let baton: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(baton["status"], "reviewing");
-    assert_eq!(baton["assignee"], "reviewer");
+    assert_eq!(baton["status"], "working");
+    assert_eq!(baton["assignee"], "worker");
     assert_eq!(baton["revision"], 2);
+    assert_eq!(
+        baton["publication_binding"]["deployment"]["site_id"],
+        "site-run-a"
+    );
 
     let private: serde_json::Value = serde_json::from_slice(
         &std::fs::read(credentials.join("worker-session/run-a/worker.json")).unwrap(),

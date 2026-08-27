@@ -2,7 +2,10 @@ use serde::Deserialize;
 
 use crate::{
     claim::Role,
-    model::{Assignee, CheckpointSubmission, DeliverableRequirement, ExternalRef, Status},
+    model::{
+        Assignee, CheckpointSubmission, DeliverableRequirement, ExternalRef, HandoffObligation,
+        Status,
+    },
 };
 
 #[derive(Debug, Deserialize)]
@@ -55,6 +58,25 @@ pub enum Action {
         published_revision: Option<u64>,
         #[serde(default)]
         refs: Vec<ExternalRef>,
+    },
+    RecordExplainerPublication {
+        obligation: HandoffObligation,
+        source_digest: String,
+        site_id: String,
+        site_version: String,
+        url: String,
+        channel: String,
+        access: String,
+    },
+    RecordExplainerReview {
+        obligation: HandoffObligation,
+        source_digest: String,
+        site_id: String,
+        site_version: String,
+        url: String,
+        verdict: ReviewVerdict,
+        #[serde(default)]
+        findings: Vec<String>,
     },
     Abandon {
         reason: String,

@@ -12,8 +12,9 @@ use uuid::Uuid;
 
 use crate::model::{
     checkpoint_manifest_digest, create_handoff_obligation, normalize_deliverables,
-    normalize_participants, Checkpoint, DeliverableRequirement, HandoffKind, MigrationProvenance,
-    Publication, PublicationPolicy, RecoveryProvenance, RunBaton, Status, LEGACY_SCHEMA, SCHEMA,
+    normalize_participants, Checkpoint, DeliverableRequirement, HandoffKind, LegacyPublication,
+    MigrationProvenance, PublicationPolicy, RecoveryProvenance, RunBaton, Status, LEGACY_SCHEMA,
+    SCHEMA,
 };
 
 #[derive(Debug, Error)]
@@ -323,7 +324,7 @@ pub fn migrate_legacy_baton(current: &RunBaton) -> Result<RunBaton, StoreError> 
     next.checkpoint_history.clear();
     next.review = None;
     next.pending_checkpoint_supersession = None;
-    next.publication = Publication::default();
+    next.publication = LegacyPublication::default();
     next.publication_policy = Some(PublicationPolicy::fixed());
     next.publication_binding = Some(create_handoff_obligation(
         HandoffKind::ProtocolUpgraded,
@@ -384,7 +385,7 @@ fn validate_baton(baton: &RunBaton) -> Result<(), StoreError> {
         )
         || normalized_deliverables != baton.scope_deliverables
         || baton.publication_policy.as_ref() != Some(&PublicationPolicy::fixed())
-        || !baton.publication.required
+        || !baton.publication.is_empty()
         || binding.obligation.scope_revision != baton.scope_revision
         || binding.obligation.handoff_revision > baton.revision
         || binding
@@ -393,6 +394,7 @@ fn validate_baton(baton: &RunBaton) -> Result<(), StoreError> {
             .as_ref()
             .is_some_and(|checkpoint| !baton.checkpoint_history.contains(checkpoint))
         || !valid_checkpoint_state(baton)
+        || !valid_publication_binding(binding)
     {
         return Err(StoreError::InvalidBaton(baton.schema.clone()));
     }
@@ -463,6 +465,49 @@ fn valid_review(review: &crate::model::ReviewReceipt, baton: &RunBaton) -> bool 
     }
 }
 
+fn valid_publication_binding(binding: &crate::model::PublicationBinding) -> bool {
+    if binding
+        .site_id
+        .as_ref()
+        .is_some_and(|site_id| !valid_exact_reference(site_id))
+    {
+        return false;
+    }
+    let Some(deployment) = binding.deployment.as_ref() else {
+        return binding.review.is_none();
+    };
+    if binding.site_id.as_ref() != Some(&deployment.site_id)
+        || deployment.obligation != binding.obligation
+        || !valid_sha256(&deployment.source_digest)
+        || !valid_exact_reference(&deployment.site_id)
+        || !valid_exact_reference(&deployment.site_version)
+        || !valid_exact_reference(&deployment.url)
+        || deployment.channel != "codex_sites"
+        || deployment.access != "owner_only"
+        || deployment.publisher_harness != "Codex"
+    {
+        return false;
+    }
+    let Some(review) = binding.review.as_ref() else {
+        return true;
+    };
+    let findings_are_normalized = review
+        .findings
+        .iter()
+        .all(|finding| valid_exact_reference(finding));
+    review.obligation == binding.obligation
+        && review.source_digest == deployment.source_digest
+        && review.site_id == deployment.site_id
+        && review.site_version == deployment.site_version
+        && review.url == deployment.url
+        && review.reviewer_harness == "Claude"
+        && match review.verdict.as_str() {
+            "approved" => review.findings.is_empty(),
+            "changes_requested" => !review.findings.is_empty() && findings_are_normalized,
+            _ => false,
+        }
+}
+
 fn valid_checkpoint(checkpoint: &Checkpoint, baton: &RunBaton) -> bool {
     if checkpoint.kind.trim().is_empty()
         || checkpoint.kind.trim() != checkpoint.kind
@@ -513,6 +558,10 @@ fn valid_sha256(value: &str) -> bool {
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
 }
 
+fn valid_exact_reference(value: &str) -> bool {
+    !value.is_empty() && value.trim() == value
+}
+
 fn validate_migration_edge(current: &RunBaton, next: &RunBaton) -> Result<(), StoreError> {
     if migrate_legacy_baton(current)? == *next {
         Ok(())
@@ -530,7 +579,17 @@ fn validate_history_edge(current: &RunBaton, next: &RunBaton) -> Result<(), Stor
             if next.scope_revision >= current.scope_revision
                 && next
                     .checkpoint_history
-                    .starts_with(&current.checkpoint_history) =>
+                    .starts_with(&current.checkpoint_history)
+                && current
+                    .publication_binding
+                    .as_ref()
+                    .and_then(|binding| binding.site_id.as_ref())
+                    .is_none_or(|site_id| {
+                        next.publication_binding
+                            .as_ref()
+                            .and_then(|binding| binding.site_id.as_ref())
+                            == Some(site_id)
+                    }) =>
         {
             Ok(())
         }

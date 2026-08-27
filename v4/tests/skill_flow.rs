@@ -141,6 +141,40 @@ impl Flow<'_> {
         );
         serde_json::from_slice(&output.stdout).unwrap()
     }
+
+    fn approve_explainer(&self, revision: u64, site_version: &str) -> serde_json::Value {
+        let baton: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(self.run_dir.join("baton.json")).unwrap())
+                .unwrap();
+        let obligation = baton["publication_binding"]["obligation"].clone();
+        let published = self.apply(
+            "worker",
+            "worker-session",
+            revision,
+            &format!("publish-{site_version}.json"),
+            serde_json::json!({
+                "type": "record_explainer_publication", "obligation": obligation,
+                "source_digest": "a".repeat(64), "site_id": "site-run",
+                "site_version": site_version,
+                "url": format!("https://sites.openai.test/site-run/{site_version}"),
+                "channel": "codex_sites", "access": "owner_only"
+            }),
+        );
+        let deployment = published["publication_binding"]["deployment"].clone();
+        self.apply(
+            "reviewer",
+            "reviewer-session",
+            revision + 1,
+            &format!("review-{site_version}.json"),
+            serde_json::json!({
+                "type": "record_explainer_review", "obligation": obligation,
+                "source_digest": deployment["source_digest"],
+                "site_id": deployment["site_id"],
+                "site_version": deployment["site_version"], "url": deployment["url"],
+                "verdict": "approved", "findings": []
+            }),
+        )
+    }
 }
 
 #[test]
@@ -191,10 +225,11 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
 
     let checkpoint_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let checkpoint_b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    flow.approve_explainer(2, "deployment-1");
     let reviewing_a = flow.apply(
         "worker",
         "worker-session",
-        2,
+        4,
         "checkpoint-a.json",
         serde_json::json!({
             "type": "submit_checkpoint",
@@ -211,10 +246,12 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
     );
     assert_eq!(reviewing_a["status"], "reviewing");
 
+    flow.approve_explainer(5, "deployment-2");
+
     let revising = flow.apply(
         "reviewer",
         "reviewer-session",
-        3,
+        7,
         "request-changes.json",
         serde_json::json!({
             "type": "record_review",
@@ -227,10 +264,12 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
     );
     assert_eq!(revising["status"], "revising");
 
+    flow.approve_explainer(8, "deployment-3");
+
     let reviewing_b = flow.apply(
         "worker",
         "worker-session",
-        4,
+        10,
         "checkpoint-b.json",
         serde_json::json!({
             "type": "submit_checkpoint",
@@ -247,10 +286,12 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
     );
     assert_eq!(reviewing_b["checkpoint"]["identity"], checkpoint_b);
 
+    flow.approve_explainer(11, "deployment-4");
+
     let approved = flow.apply(
         "reviewer",
         "reviewer-session",
-        5,
+        13,
         "approve.json",
         serde_json::json!({
             "type": "record_review",
@@ -263,30 +304,17 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
     );
     assert_eq!(approved["status"], "finalizing");
 
-    let published = flow.apply(
-        "worker",
-        "worker-session",
-        6,
-        "publication.json",
-        serde_json::json!({
-            "type": "record_publication",
-            "required": true,
-            "desired_revision": 6,
-            "published_revision": 6,
-            "refs": [{"kind": "explainer", "value": "https://example.test/run"}]
-        }),
-    );
-    assert_eq!(published["publication"]["published_revision"], 6);
+    flow.approve_explainer(14, "deployment-5");
 
     let done = flow.apply(
         "worker",
         "worker-session",
-        7,
+        16,
         "finalize.json",
         serde_json::json!({"type": "finalize"}),
     );
     assert_eq!(done["status"], "done");
-    assert_eq!(done["revision"], 8);
+    assert_eq!(done["revision"], 17);
     assert_eq!(done["checkpoint"]["identity"], checkpoint_b);
     assert_eq!(done["review"]["checkpoint_identity"], checkpoint_b);
 
@@ -309,7 +337,7 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
                 "--credentials-root",
                 credentials.to_str().unwrap(),
                 "--after-revision",
-                "7",
+                "16",
                 "--timeout-ms",
                 "500",
             ])

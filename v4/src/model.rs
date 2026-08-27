@@ -151,24 +151,13 @@ pub struct CheckpointSupersession {
     pub checkpoint: CheckpointBinding,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Publication {
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LegacyPublication {
     pub required: bool,
     pub desired_revision: u64,
     pub published_revision: Option<u64>,
     #[serde(default)]
     pub refs: Vec<ExternalRef>,
-}
-
-impl Default for Publication {
-    fn default() -> Self {
-        Self {
-            required: true,
-            desired_revision: 0,
-            published_revision: None,
-            refs: Vec::new(),
-        }
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -194,6 +183,8 @@ impl PublicationPolicy {
 #[serde(rename_all = "snake_case")]
 pub enum HandoffKind {
     RunStarted,
+    WorkerToReviewer,
+    ReviewerToWorker,
     ProtocolUpgraded,
     ScopeAmended,
     CheckpointSuperseded,
@@ -211,21 +202,33 @@ pub struct HandoffObligation {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicationDeployment {
+    pub obligation: HandoffObligation,
     pub source_digest: String,
     pub site_id: String,
     pub site_version: String,
     pub url: String,
+    pub channel: String,
+    pub access: String,
+    pub publisher_harness: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicationReview {
+    pub obligation: HandoffObligation,
+    pub source_digest: String,
+    pub site_id: String,
+    pub site_version: String,
+    pub url: String,
     pub verdict: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub findings: Vec<String>,
+    pub reviewer_harness: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicationBinding {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub site_id: Option<String>,
     pub obligation: HandoffObligation,
     pub deployment: Option<PublicationDeployment>,
     pub review: Option<PublicationReview>,
@@ -237,6 +240,7 @@ pub fn create_handoff_obligation(
     scope_revision: u64,
 ) -> PublicationBinding {
     PublicationBinding {
+        site_id: None,
         obligation: HandoffObligation {
             handoff_revision,
             kind,
@@ -316,8 +320,8 @@ pub struct RunBaton {
     pub review: Option<ReviewReceipt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_checkpoint_supersession: Option<CheckpointSupersession>,
-    #[serde(default)]
-    pub publication: Publication,
+    #[serde(default, skip_serializing_if = "LegacyPublication::is_empty")]
+    pub publication: LegacyPublication,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub publication_policy: Option<PublicationPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -369,12 +373,7 @@ impl RunBaton {
             checkpoint_history: Vec::new(),
             review: None,
             pending_checkpoint_supersession: None,
-            publication: Publication {
-                required: true,
-                desired_revision: 0,
-                published_revision: None,
-                refs: Vec::new(),
-            },
+            publication: LegacyPublication::default(),
             publication_policy: Some(PublicationPolicy::fixed()),
             publication_binding: Some(create_handoff_obligation(HandoffKind::RunStarted, 0, 0)),
             human_decision: None,
@@ -405,6 +404,12 @@ pub fn create_bound_handoff_obligation(
     let mut binding = create_handoff_obligation(kind, handoff_revision, scope_revision);
     binding.obligation.checkpoint = checkpoint;
     binding
+}
+
+impl LegacyPublication {
+    pub fn is_empty(&self) -> bool {
+        self == &Self::default()
+    }
 }
 
 pub fn checkpoint_manifest_digest(checkpoint: &Checkpoint) -> String {

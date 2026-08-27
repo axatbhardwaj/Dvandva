@@ -908,7 +908,12 @@ fn transition_error_code(error: &TransitionError) -> &'static str {
         TransitionError::Terminal => "terminal_state",
         TransitionError::InvalidHumanDecision => "invalid_human_decision",
         TransitionError::WrongContact => "wrong_contact",
-        TransitionError::PublicationRegression => "publication_regression",
+        TransitionError::LegacyPublicationUnsupported => "legacy_publication_unsupported",
+        TransitionError::WrongPublisherHarness => "wrong_publisher_harness",
+        TransitionError::WrongReviewerHarness => "wrong_reviewer_harness",
+        TransitionError::InvalidExplainerPublication => "invalid_explainer_publication",
+        TransitionError::StalePublicationBinding => "stale_publication_binding",
+        TransitionError::SiteIdMismatch => "site_id_mismatch",
         TransitionError::MissingReason => "missing_reason",
     }
 }
