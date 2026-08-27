@@ -1,8 +1,41 @@
 # Dvandva
 
-> **Dvandva is retired and archived.** `3.5.1` is the final crate release; the internal plugin source remains at `1.7.0` solely for historical parity. This checkout is unsupported: do not install, upgrade, invoke, publish, or use it to start a new workflow. The root marketplace catalogs are deliberately delisted.
+> **Dvandva v4 is an active skill-only successor.** The `3.5.1` crate and
+> `1.7.0` plugin remain retired historical artifacts and must not be installed
+> or reactivated. V4 uses three ordinary agent skills plus a private local
+> kernel; it does not publish a plugin or put a `dvandva` command on `PATH`.
 
-Dvandva was **a governed-loop protocol for adversarial AI pairs** — orchestration for paired AI coding agents without an orchestrator. There was no daemon, launcher, or hidden process that owned the control loop: two independently running sessions followed a shared state machine through a local baton file. The current 3.5.0-era implementation is preserved below as a historical learning experiment in governed agent loops, subagent delegation, review gates, and two-agent coordination for Claude Code and Codex.
+## Active v4 skill-only interface
+
+Install exactly the three skills for Claude Code and Codex:
+
+```bash
+npx --yes skills add axatbhardwaj/Dvandva --global \
+  --agent claude-code codex \
+  --skill setup-dvandva vadi prativadi
+```
+
+Then explicitly invoke `$setup-dvandva` with an install request once. The
+setup skill downloads and verifies the private `skills-v0.1.0` Linux kernel.
+It remains under XDG data and outside `PATH`.
+
+Start two independent T3 Code sessions for one ticket:
+
+```text
+Codex: Act as vadi and implement DEF-123.
+Claude: Join DEF-123 as prativadi.
+```
+
+The vadi implements and maintains one published explainer/TODO site for the
+run; the prativadi independently reviews immutable checkpoints. The sessions
+coordinate only through the local Run Baton. Neither harness invokes the
+other, there is no daemon, and Matt Pocock skills run only when the human
+explicitly invokes them in that joined session. See
+[`docs/workflows/skill-only-run.md`](docs/workflows/skill-only-run.md).
+
+## Retired v3 archive
+
+The archived Dvandva was **a governed-loop protocol for adversarial AI pairs** — orchestration for paired AI coding agents without an orchestrator. There was no daemon, launcher, or hidden process that owned the control loop: two independently running sessions followed a shared state machine through a local baton file. The 3.5.0-era implementation is preserved below as a historical learning experiment in governed agent loops, subagent delegation, review gates, and two-agent coordination for Claude Code and Codex.
 
 **At a glance**
 
