@@ -47,6 +47,32 @@ grep -Fq '"write_schema": "dvandva.run.v2"' <<<"$probe"
 grep -Fq '"read_schemas": [' <<<"$probe"
 grep -Fq '"role_api": 2' <<<"$probe"
 grep -Fq '"upgrade_from_v1": true' <<<"$probe"
+grep -Fq '"publish": false' <<<"$probe"
+
+# Correct strings hidden in a nested decoy cannot satisfy the top-level contract.
+mv "$binary" "$binary.real"
+cat >"$binary" <<'DECOY_KERNEL'
+#!/usr/bin/env bash
+if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.2.0\n'; exit 0; fi
+if test "${1:-}" = "probe"; then
+  printf '%s\n' '{' \
+    '  "package": 7, "version": false, "publish": true, "write_schema": [],' \
+    '  "read_schemas": "wrong", "role_api": "2",' \
+    '  "capabilities": {"upgrade_from_v1": "true"}, "compatible": "true",' \
+    '  "decoy": {' \
+    '    "package": "dvandva-v4", "version": "0.2.0", "publish": false,' \
+    '    "write_schema": "dvandva.run.v2",' \
+    '    "read_schemas": ["dvandva.run.v2", "dvandva.run.v1"],' \
+    '    "role_api": 2, "capabilities": {"upgrade_from_v1": true},' \
+    '    "compatible": true' \
+    '  }' '}'
+  exit 0
+fi
+exit 99
+DECOY_KERNEL
+chmod 755 "$binary"
+expect_failure 'incompatible kernel' bash "$vadi" probe
+mv "$binary.real" "$binary"
 
 # A truthful v1/API-1 kernel must be rejected before the facade reaches a role command.
 mv "$binary" "$binary.new"

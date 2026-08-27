@@ -25,6 +25,10 @@ incompatible_kernel() {
 }
 
 require_kernel() {
+  command -v python3 >/dev/null 2>&1 || {
+    printf 'dvandva-role: python3 is required to validate the kernel handshake\n' >&2
+    exit 1
+  }
   test -x "$binary" || {
     printf 'dvandva-role: kernel missing; explicitly invoke $setup-dvandva first\n' >&2
     exit 1
@@ -34,11 +38,26 @@ require_kernel() {
   test "$version_output" = "dvandva-v4 $kernel_version" || incompatible_kernel
   probe_output="$("$binary" probe \
     --expected-schema "$schema" --expected-role-api "$role_api" 2>/dev/null)" || incompatible_kernel
-  grep -Fq '"package": "dvandva-v4"' <<<"$probe_output" || incompatible_kernel
-  grep -Fq "\"version\": \"$kernel_version\"" <<<"$probe_output" || incompatible_kernel
-  grep -Fq "\"write_schema\": \"$schema\"" <<<"$probe_output" || incompatible_kernel
-  grep -Fq '"role_api": 2' <<<"$probe_output" || incompatible_kernel
-  grep -Fq '"compatible": true' <<<"$probe_output" || incompatible_kernel
+  python3 -c '
+import json, sys
+try:
+    probe = json.load(sys.stdin)
+except (json.JSONDecodeError, UnicodeDecodeError):
+    raise SystemExit(1)
+capabilities = probe.get("capabilities") if type(probe) is dict else None
+valid = (
+    type(probe) is dict
+    and probe.get("package") == "dvandva-v4"
+    and probe.get("version") == sys.argv[1]
+    and probe.get("publish") is False
+    and probe.get("write_schema") == "dvandva.run.v2"
+    and probe.get("read_schemas") == ["dvandva.run.v2", "dvandva.run.v1"]
+    and type(probe.get("role_api")) is int and probe["role_api"] == 2
+    and type(capabilities) is dict and capabilities.get("upgrade_from_v1") is True
+    and probe.get("compatible") is True
+)
+raise SystemExit(0 if valid else 1)
+' "$kernel_version" <<<"$probe_output" || incompatible_kernel
 }
 
 session_id() {
