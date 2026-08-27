@@ -240,17 +240,16 @@ fn candidate(
     {
         return Err("baton run id does not match its named directory".to_owned());
     }
-    if baton.schema == SCHEMA && matches!(baton.status, Status::Done | Status::Abandoned) {
+    let terminal =
+        baton.schema == SCHEMA && matches!(baton.status, Status::Done | Status::Abandoned);
+    if terminal && query.run_id.is_none() {
         return Ok(None);
     }
     let workspace = baton
         .workspace
         .as_ref()
         .ok_or_else(|| "baton has no workspace identity".to_owned())?;
-    let task = baton
-        .task
-        .as_ref()
-        .ok_or_else(|| "baton has no task identity".to_owned())?;
+    let task = baton.task.as_ref();
     let participant = match query.role {
         Role::Worker => &baton.participants.worker,
         Role::Reviewer => &baton.participants.reviewer,
@@ -263,26 +262,34 @@ fn candidate(
     {
         return Ok(None);
     }
-    let claim_state = match participant.claim.as_ref() {
-        None => ClaimState::Unclaimed,
-        Some(claim) => {
-            let expiry = OffsetDateTime::parse(&claim.lease_expires_at, &Rfc3339)
-                .map_err(|_| "participant claim has an invalid expiry".to_owned())?;
-            if expiry <= OffsetDateTime::now_utc() {
-                ClaimState::Expired
-            } else if query
-                .session_id
-                .is_some_and(|session_id| claim.session_id == session_id)
-            {
-                ClaimState::Owned
-            } else if query.role == Role::Worker || query.run_id.is_some() {
-                ClaimState::Busy
-            } else {
-                return Ok(None);
+    let claim_state = if terminal {
+        ClaimState::Unclaimed
+    } else {
+        match participant.claim.as_ref() {
+            None => ClaimState::Unclaimed,
+            Some(claim) => {
+                let expiry = OffsetDateTime::parse(&claim.lease_expires_at, &Rfc3339)
+                    .map_err(|_| "participant claim has an invalid expiry".to_owned())?;
+                if expiry <= OffsetDateTime::now_utc() {
+                    ClaimState::Expired
+                } else if query
+                    .session_id
+                    .is_some_and(|session_id| claim.session_id == session_id)
+                {
+                    ClaimState::Owned
+                } else if query.role == Role::Worker || query.run_id.is_some() {
+                    ClaimState::Busy
+                } else {
+                    return Ok(None);
+                }
             }
         }
     };
     let legacy = baton.schema == LEGACY_SCHEMA;
+    let task_reference = task.and_then(|identity| identity.reference.clone());
+    let task_summary = task
+        .map(|identity| identity.summary.clone())
+        .unwrap_or_else(|| baton.objective.summary.clone());
     let objective = baton.objective;
     let scope_deliverables = if legacy {
         vec![DeliverableRequirement {
@@ -295,8 +302,8 @@ fn candidate(
     let candidate = RunCandidate {
         run_id: baton.run_id,
         run_dir: run_dir.to_owned(),
-        task_reference: task.reference.clone(),
-        task_summary: task.summary.clone(),
+        task_reference,
+        task_summary,
         objective,
         scope_revision: baton.scope_revision,
         scope_deliverables,
@@ -310,8 +317,7 @@ fn candidate(
         }),
     };
     let task_matches = query.task_reference.is_none_or(|expected| {
-        task.reference
-            .as_deref()
+        task.and_then(|identity| identity.reference.as_deref())
             .is_some_and(|actual| actual == expected.trim())
     });
     if baton.schema == LEGACY_SCHEMA && (query.run_id.is_some() || task_matches) {

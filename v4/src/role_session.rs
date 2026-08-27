@@ -107,8 +107,10 @@ pub struct StartedRole {
     pub disposition: &'static str,
     #[serde(flatten)]
     pub snapshot: RoleSnapshot,
-    pub credential: PathBuf,
-    pub private_credential_path: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub credential: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_credential_path: Option<PathBuf>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub peer_prompt: Option<String>,
 }
@@ -368,6 +370,30 @@ fn start_candidate(
     session_id: &str,
     lease_seconds: u64,
 ) -> Result<RoleStartResult, RoleSessionError> {
+    if matches!(candidate.status, Status::Done | Status::Abandoned) {
+        let baton = RunChannel::open(&candidate.run_dir).read()?;
+        require_current_schema(&baton)?;
+        if baton.revision != candidate.revision {
+            return Err(StoreError::RevisionConflict {
+                expected: candidate.revision,
+                actual: baton.revision,
+            }
+            .into());
+        }
+        if !matches!(baton.status, Status::Done | Status::Abandoned) {
+            return Err(RoleSessionError::Invalid(
+                "selected terminal run became active".to_owned(),
+            ));
+        }
+        return Ok(RoleStartResult::Started(Box::new(StartedRole {
+            outcome: "started",
+            disposition: "terminal",
+            snapshot: snapshot(baton, &candidate.run_dir, role),
+            credential: None,
+            private_credential_path: None,
+            peer_prompt: None,
+        })));
+    }
     match candidate.claim_state {
         ClaimState::Unclaimed => {
             let grant = claim(
@@ -469,8 +495,8 @@ fn started_role(
         outcome: "started",
         disposition,
         snapshot,
-        private_credential_path: credential.clone(),
-        credential,
+        private_credential_path: Some(credential.clone()),
+        credential: Some(credential),
         peer_prompt,
     }))
 }
