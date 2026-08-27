@@ -334,6 +334,135 @@ fn exact_busy_reviewer_run_carries_canonical_candidate() {
 }
 
 #[test]
+fn exact_discovery_ignores_unrelated_corrupt_siblings() {
+    let root = tempfile::tempdir().unwrap();
+    create_run(
+        root.path(),
+        "exact-good",
+        REPOSITORY_ID,
+        Some("DEF-123"),
+        "claude",
+    );
+    let corrupt = root.path().join("unrelated-corrupt");
+    std::fs::create_dir_all(&corrupt).unwrap();
+    std::fs::write(corrupt.join("baton.json"), b"not json").unwrap();
+
+    for (run_id, expected) in [("exact-good", "match"), ("missing-run", "run_missing")] {
+        let output = command()
+            .args([
+                "discover",
+                "--runs-dir",
+                root.path().to_str().unwrap(),
+                "--repository-id",
+                REPOSITORY_ID,
+                "--reviewer-harness",
+                "claude",
+                "--run-id",
+                run_id,
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let outcome: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(outcome["outcome"], expected);
+        assert_eq!(outcome["corrupt"], serde_json::json!([]));
+    }
+
+    claim::claim(
+        &RunChannel::open(root.path().join("exact-good")),
+        Role::Reviewer,
+        "existing-reviewer",
+        300,
+        0,
+    )
+    .unwrap();
+    let output = command()
+        .args([
+            "discover",
+            "--runs-dir",
+            root.path().to_str().unwrap(),
+            "--repository-id",
+            REPOSITORY_ID,
+            "--reviewer-harness",
+            "claude",
+            "--run-id",
+            "exact-good",
+            "--session-id",
+            "other-reviewer",
+        ])
+        .output()
+        .unwrap();
+    let outcome: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(outcome["outcome"], "busy");
+    assert_eq!(outcome["corrupt"], serde_json::json!([]));
+}
+
+#[test]
+fn exact_discovery_fails_closed_when_the_named_run_is_corrupt() {
+    let root = tempfile::tempdir().unwrap();
+    let corrupt = root.path().join("named-corrupt");
+    std::fs::create_dir_all(&corrupt).unwrap();
+    std::fs::write(corrupt.join("baton.json"), b"not json").unwrap();
+    create_run(
+        root.path(),
+        "unrelated-good",
+        REPOSITORY_ID,
+        Some("DEF-123"),
+        "claude",
+    );
+
+    let output = command()
+        .args([
+            "discover",
+            "--runs-dir",
+            root.path().to_str().unwrap(),
+            "--repository-id",
+            REPOSITORY_ID,
+            "--reviewer-harness",
+            "claude",
+            "--run-id",
+            "named-corrupt",
+        ])
+        .output()
+        .unwrap();
+    let outcome: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(outcome["outcome"], "corrupt");
+    assert_eq!(outcome["corrupt"].as_array().unwrap().len(), 1);
+    assert_eq!(outcome["corrupt"][0]["run_dir"], corrupt.to_str().unwrap());
+}
+
+#[test]
+fn exact_discovery_treats_named_run_identity_mismatch_as_corrupt() {
+    let root = tempfile::tempdir().unwrap();
+    let original = create_run(
+        root.path(),
+        "stored-other-id",
+        REPOSITORY_ID,
+        Some("DEF-123"),
+        "claude",
+    );
+    std::fs::rename(&original, root.path().join("named-run")).unwrap();
+
+    let output = command()
+        .args([
+            "discover",
+            "--runs-dir",
+            root.path().to_str().unwrap(),
+            "--repository-id",
+            REPOSITORY_ID,
+            "--reviewer-harness",
+            "claude",
+            "--run-id",
+            "named-run",
+        ])
+        .output()
+        .unwrap();
+    let outcome: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(outcome["outcome"], "corrupt");
+    assert_eq!(outcome["corrupt"].as_array().unwrap().len(), 1);
+}
+
+#[test]
 fn a_live_reviewer_claim_is_not_joinable() {
     let root = tempfile::tempdir().unwrap();
     let run_dir = create_run(

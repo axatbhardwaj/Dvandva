@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsStr,
     fs,
     path::{Path, PathBuf},
     sync::mpsc,
@@ -125,6 +126,12 @@ pub fn discover(
     let mut corrupt = Vec::new();
     for entry in fs::read_dir(runs_dir)? {
         let entry = entry?;
+        if query
+            .run_id
+            .is_some_and(|run_id| entry.file_name() != OsStr::new(run_id))
+        {
+            continue;
+        }
         let run_dir = entry.path();
         if !entry.file_type()?.is_dir() {
             continue;
@@ -232,7 +239,10 @@ fn candidate(
     if query
         .run_id
         .is_some_and(|expected| baton.run_id != expected)
-        || workspace.repository_id != query.repository_id
+    {
+        return Err("baton run id does not match its named directory".to_owned());
+    }
+    if workspace.repository_id != query.repository_id
         || !participant
             .harness
             .trim()
@@ -259,19 +269,29 @@ fn candidate(
             }
         }
     };
+    let legacy = baton.schema == LEGACY_SCHEMA;
+    let objective = baton.objective;
+    let scope_deliverables = if legacy {
+        vec![DeliverableRequirement {
+            id: "legacy_objective".to_owned(),
+            description: objective.summary.trim().to_owned(),
+        }]
+    } else {
+        baton.scope_deliverables
+    };
     let candidate = RunCandidate {
         run_id: baton.run_id,
         run_dir: run_dir.to_owned(),
         task_reference: task.reference.clone(),
         task_summary: task.summary.clone(),
-        objective: baton.objective,
+        objective,
         scope_revision: baton.scope_revision,
-        scope_deliverables: baton.scope_deliverables,
+        scope_deliverables,
         status: baton.status,
         assignee: baton.assignee,
         revision: baton.revision,
         claim_state,
-        migration: (baton.schema == LEGACY_SCHEMA).then(|| MigrationMetadata {
+        migration: legacy.then(|| MigrationMetadata {
             from_schema: LEGACY_SCHEMA.to_owned(),
             next_action: "upgrade_protocol",
         }),
