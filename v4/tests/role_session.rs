@@ -589,6 +589,119 @@ fn migration_discovery_normalizes_v1_storage_and_v2_resume_harnesses() {
 }
 
 #[test]
+fn taskless_legacy_upgrade_is_discoverable_and_exactly_joinable() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = initialize_workspace(root.path(), "https://example.com/team/project.git");
+    let runs = root.path().join("runs");
+    let run_dir = runs.join("legacy-run");
+    write_legacy_run(&run_dir);
+    let mut legacy: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(run_dir.join("baton.json")).unwrap()).unwrap();
+    legacy["task"] = serde_json::Value::Null;
+    let bytes = serde_json::to_vec_pretty(&legacy).unwrap();
+    std::fs::write(run_dir.join("baton.json"), &bytes).unwrap();
+    std::fs::write(run_dir.join("history/00000000000000000000.json"), &bytes).unwrap();
+    let credentials = root.path().join("credentials");
+
+    command()
+        .args([
+            "role",
+            "upgrade",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "upgrade-session",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--expected-revision",
+            "0",
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let joined = command()
+        .args([
+            "role",
+            "start",
+            "--api",
+            "2",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-session",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--objective",
+            "Migrate safely",
+            "--run-id",
+            "legacy-run",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        joined.status.success(),
+        "{}",
+        String::from_utf8_lossy(&joined.stderr)
+    );
+    let joined: serde_json::Value = serde_json::from_slice(&joined.stdout).unwrap();
+    assert_eq!(joined["outcome"], "started");
+    assert_eq!(joined["run_id"], "legacy-run");
+    assert!(joined["task"].is_null());
+
+    let mismatch = command()
+        .args([
+            "role",
+            "start",
+            "--api",
+            "2",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "other-session",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--run-id",
+            "legacy-run",
+            "--task-reference",
+            "DEF-123",
+        ])
+        .output()
+        .unwrap();
+    assert!(mismatch.status.success());
+    let mismatch: serde_json::Value = serde_json::from_slice(&mismatch.stdout).unwrap();
+    assert_eq!(mismatch["outcome"], "scope_mismatch");
+    assert_eq!(
+        mismatch["candidates"][0]["task_reference"],
+        serde_json::Value::Null
+    );
+    assert_eq!(mismatch["candidates"][0]["task_summary"], "Migrate safely");
+}
+
+#[test]
 fn migration_upgrade_live_own_claim_is_busy_even_with_matching_private_credential() {
     for credential_token in [None, Some("wrong-token"), Some("valid-token")] {
         let root = tempfile::tempdir().unwrap();
@@ -2291,6 +2404,173 @@ fn snapshot_exact_missing_and_busy_ignore_discovery_wait() {
 }
 
 #[test]
+fn exact_terminal_start_returns_stop_snapshot_without_a_new_credential() {
+    use dvandva_v4::model::{
+        Assignee, DeliverableRequirement, RunBaton, Status, TaskIdentity, TerminalProvenance,
+        WorkspaceIdentity,
+    };
+
+    let root = tempfile::tempdir().unwrap();
+    let workspace = initialize_workspace(root.path(), "git@github.com:axatbhardwaj/Dvandva.git");
+    let runs = root.path().join("runs");
+    let credentials = root.path().join("credentials");
+    let started = create_worker_run(
+        &workspace,
+        &runs,
+        &credentials,
+        "Terminal objective",
+        "DEF-123",
+    );
+    let abandoned_id = started["run_id"].as_str().unwrap();
+    let abandoned_dir = runs.join(abandoned_id);
+    let action = root.path().join("abandon.json");
+    std::fs::write(&action, br#"{"type":"abandon","reason":"cancelled"}"#).unwrap();
+    command()
+        .args([
+            "role",
+            "apply",
+            "--api",
+            "2",
+            "--run-dir",
+            abandoned_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-session",
+            "--expected-revision",
+            "1",
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--action",
+            action.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    let done_id = "done-run";
+    let done_dir = runs.join(done_id);
+    std::fs::create_dir_all(&done_dir).unwrap();
+    let mut done = RunBaton::new(
+        done_id,
+        "Terminal objective",
+        "codex",
+        "claude",
+        vec![DeliverableRequirement {
+            id: "implementation".into(),
+            description: "Canonical implementation".into(),
+        }],
+    )
+    .unwrap()
+    .with_discovery_identity(
+        WorkspaceIdentity {
+            repository_id: "github.com/axatbhardwaj/dvandva".into(),
+            origin: Some("git@github.com:axatbhardwaj/Dvandva.git".into()),
+            worktree: None,
+        },
+        TaskIdentity {
+            reference: Some("DEF-123".into()),
+            summary: "Terminal objective".into(),
+        },
+    );
+    done.status = Status::Done;
+    done.assignee = Assignee::None;
+    done.terminal = Some(TerminalProvenance {
+        outcome: "done".into(),
+        reason: None,
+    });
+    std::fs::write(
+        done_dir.join("baton.json"),
+        serde_json::to_vec_pretty(&done).unwrap(),
+    )
+    .unwrap();
+
+    for (run_id, session_id) in [
+        (abandoned_id, "worker-session"),
+        (abandoned_id, "late-session"),
+        (done_id, "done-late-session"),
+    ] {
+        let private = credentials
+            .join(session_id)
+            .join(run_id)
+            .join("worker.json");
+        let existed = private.exists();
+        let output = command()
+            .args([
+                "role",
+                "start",
+                "--api",
+                "2",
+                "--workspace",
+                workspace.to_str().unwrap(),
+                "--runs-dir",
+                runs.to_str().unwrap(),
+                "--credentials-root",
+                credentials.to_str().unwrap(),
+                "--role",
+                "worker",
+                "--session-id",
+                session_id,
+                "--current-harness",
+                "codex",
+                "--peer-harness",
+                "claude",
+                "--objective",
+                "Terminal objective",
+                "--task-reference",
+                "DEF-123",
+                "--run-id",
+                run_id,
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let snapshot: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(snapshot["outcome"], "started");
+        assert_eq!(snapshot["disposition"], "terminal");
+        assert_eq!(snapshot["next_actions"], serde_json::json!(["stop"]));
+        assert!(snapshot.get("credential").is_none());
+        assert_eq!(private.exists(), existed);
+    }
+
+    let mismatch = command()
+        .args([
+            "role",
+            "start",
+            "--api",
+            "2",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "mismatch",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--objective",
+            "Different objective",
+            "--run-id",
+            done_id,
+        ])
+        .output()
+        .unwrap();
+    assert!(mismatch.status.success());
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&mismatch.stdout).unwrap()["outcome"],
+        "scope_mismatch"
+    );
+}
+
+#[test]
 fn snapshot_classifier_keeps_semantic_and_harness_duties_independent() {
     use dvandva_v4::{claim::Role, model::*, next_action};
 
@@ -2356,10 +2636,14 @@ fn snapshot_classifier_keeps_semantic_and_harness_duties_independent() {
         checkpoint: stale.checkpoint.as_ref().unwrap().binding(),
     });
     let reviewer = next_action::classify(&stale, Role::Reviewer, "Claude");
-    assert!(reviewer
+    assert!(!reviewer
         .next_actions
         .contains(&"accept_checkpoint_supersession"));
     assert!(!reviewer.next_actions.contains(&"record_review"));
+    assert_eq!(
+        reviewer.blocking_reason,
+        Some("accept_checkpoint_supersession awaits current explainer approval")
+    );
 }
 
 #[test]
