@@ -335,3 +335,104 @@ Final logs:
   wait ordering, and the full skill flow remain green.
 
 No known blocker or residual concern remains.
+
+## Fix round 3: claim linearization and same-run creation retry
+
+Implementation commit: `7fa9238` (`fix(v4): linearize role start claim
+completion`).
+
+### Strict TDD RED evidence
+
+The deterministic private-seam regressions were written and run against
+`b98da09` before their production fixes.
+
+```bash
+cargo test --manifest-path v4/Cargo.toml --lib \
+  new_run_creation_conflict_retries_worker_claim_on_the_same_run
+# 1 run: 0 passed, 1 failed; after reviewer claim revision 1, the worker
+# continuation returned a new def-123-* run instead of the created run-a
+
+cargo test --manifest-path v4/Cargo.toml --lib \
+  claimed_and_reclaimed_completion_keep_the_committed_scope
+# 1 run: 0 passed, 1 failed; the post-CAS head advanced from claimed scope A
+# revision 1 to amended scope B revision 3, and retry reclassified the
+# successful claim as scope_mismatch
+
+cargo test --manifest-path v4/Cargo.toml --lib \
+  new_run_creation_retry_rejects_a_changed_canonical_scope
+# 1 run: 0 passed, 1 failed; recovered amended scope B was silently claimed
+# as the continuation of newly created scope A
+```
+
+Preserved logs:
+
+- `/tmp/dvandva-task5-fix3-create-claim-red.log`
+- `/tmp/dvandva-task5-fix3-post-claim-red.log`
+- `/tmp/dvandva-task5-fix3-scope-change-red.log`
+
+### GREEN evidence
+
+```bash
+cargo test --manifest-path v4/Cargo.toml --lib
+# 5 passed, 0 failed
+
+cargo test --manifest-path v4/Cargo.toml --test discovery exact
+# 6 passed, 0 failed, 20 filtered out
+
+cargo test --manifest-path v4/Cargo.toml --test role_session snapshot -- --test-threads=1
+# 9 passed, 0 failed, 22 filtered out
+
+cargo test --manifest-path v4/Cargo.toml --test role_session migration -- --test-threads=1
+# 9 passed, 0 failed, 22 filtered out
+
+cargo test --manifest-path v4/Cargo.toml --test skill_flow
+# 5 passed, 0 failed
+
+cargo test --manifest-path v4/Cargo.toml --all-targets
+# 150 integration tests and 5 unit tests passed, 0 failed
+
+cargo fmt --manifest-path v4/Cargo.toml -- --check
+# exit 0
+
+cargo clippy --manifest-path v4/Cargo.toml --all-targets -- -D warnings
+# exit 0
+
+git diff --check
+# exit 0
+```
+
+Final logs:
+
+- `/tmp/dvandva-task5-fix3-unit-green.log`
+- `/tmp/dvandva-task5-fix3-discovery-green.log`
+- `/tmp/dvandva-task5-fix3-snapshot-green.log`
+- `/tmp/dvandva-task5-fix3-migration-green.log`
+- `/tmp/dvandva-task5-fix3-skill-flow-green.log`
+- `/tmp/dvandva-task5-fix3-full-green.log`
+- `/tmp/dvandva-task5-fix3-fmt-green.log`
+- `/tmp/dvandva-task5-fix3-clippy-green.log`
+- `/tmp/dvandva-task5-fix3-diff-check.log`
+
+### Self-review and concerns
+
+- Confirmed a post-create claim conflict spends the existing bounded retry
+  budget against the same run directory. It never returns to discovery or
+  creation, including with explicit `--new-run`; the peer and worker claims and
+  private credentials remain bound to one run ID.
+- Confirmed each same-run retry accepts only revision/participant-claim drift.
+  Worker ownership and terminal state fail through typed claim errors; corrupt
+  storage fails through the store error; any identity, scope, task, status, or
+  other semantic change fails before a worker claim or credential mutation.
+- Confirmed claim and reclaim grants carry the exact Baton produced inside the
+  locked CAS. Claimed/reclaimed start snapshots linearize on that immutable
+  result, so later scope amendments cannot trigger rediscovery or a false
+  no-mutation `scope_mismatch` after claim/history/credential side effects.
+- Confirmed owned/resumed candidates retain the revision-bound authoritative
+  reread and scope reclassification behavior. Newly created completion still
+  reads one current verified snapshot after its successful same-run claim and
+  tolerates later orthogonal peer revisions.
+- Confirmed the committed Baton is skipped from both claim JSON contracts; raw
+  tokens remain private, and the existing public claim/snapshot/skill-flow
+  compatibility tests remain green.
+
+No known blocker or residual concern remains.
