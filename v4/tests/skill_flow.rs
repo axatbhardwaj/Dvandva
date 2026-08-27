@@ -1,5 +1,7 @@
 use assert_cmd::Command;
+use dvandva_v4::action::Action;
 use predicates::prelude::*;
+use std::collections::BTreeSet;
 
 fn command() -> Command {
     Command::new(env!("CARGO_BIN_EXE_dvandva-v4"))
@@ -12,27 +14,19 @@ fn repository_file(path: &str) -> String {
     std::fs::read_to_string(repository.join(path)).unwrap()
 }
 
-#[test]
-fn active_role_skill_sources_define_the_complete_v2_contract() {
-    let vadi = format!(
-        "{}\n{}",
-        repository_file("skills/vadi/SKILL.md"),
-        repository_file("skills/vadi/references/run-contract.md")
-    );
-    let prativadi = format!(
-        "{}\n{}",
-        repository_file("skills/prativadi/SKILL.md"),
-        repository_file("skills/prativadi/references/run-contract.md")
-    );
-    let both = format!("{vadi}\n{prativadi}");
+fn role_sources(role: &str) -> (String, String) {
+    (
+        repository_file(&format!("skills/{role}/SKILL.md")),
+        repository_file(&format!("skills/{role}/references/run-contract.md")),
+    )
+}
 
+fn assert_role_source_contract(role: &str) {
+    let (skill, contract) = role_sources(role);
+    let source = format!("{skill}\n{contract}");
     for required in [
-        "first user-visible protocol output",
-        "canonical objective and scope",
-        "status and assignee",
-        "next_actions",
-        "peer_prompt",
         "fresh facade snapshot",
+        "next_actions",
         "advisory_actions",
         "legal_actions",
         "new human scope or ambiguity",
@@ -65,16 +59,23 @@ fn active_role_skill_sources_define_the_complete_v2_contract() {
         "Who owns the next action",
         "Exact command or prompt",
         "foreground local wait",
+        "upgrade_required",
+        "upgrade SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION",
+        "claim SESSION RUN_DIR EXPECTED_REVISION",
+        "reclaim SESSION RUN_DIR EXPECTED_REVISION",
     ] {
         assert!(
-            both.contains(required),
-            "role contract omitted {required:?}"
+            source.contains(required),
+            "{role} contract omitted {required:?}"
         );
     }
 
-    assert!(both.contains("Exact joins pass only `--run-id`"));
-    assert!(both.contains("Publication never substitutes for supersession or withdrawal."));
-    assert!(prativadi.contains("Prativadi never creates a run."));
+    assert!(source.contains("Exact joins pass only `--run-id`"));
+    assert!(source.contains("Publication never substitutes for supersession or withdrawal."));
+    assert!(skill.contains(
+        "Dvandva never creates, replaces, pauses, completes, or clears any harness goal."
+    ));
+    assert!(skill.contains("Goals the user sets in a launch prompt remain outside the protocol."));
     for forbidden in [
         "create_goal",
         "update_goal",
@@ -84,38 +85,209 @@ fn active_role_skill_sources_define_the_complete_v2_contract() {
         "clear_goal",
     ] {
         assert!(
-            !both.contains(forbidden),
-            "role skill names goal tool {forbidden}"
+            !source.contains(forbidden),
+            "{role} skill names goal tool {forbidden}"
         );
     }
 
-    for required_json in [
-        r#""type":"submit_checkpoint""#,
-        r#""deliverables""#,
-        r#""verification""#,
-        r#""type":"record_review""#,
-        r#""checkpoint_identity""#,
-        r#""manifest_digest""#,
-        r#""scope_revision""#,
-        r#""type":"request_human_decision""#,
-        r#""question""#,
-        r#""evidence""#,
-        r#""options""#,
-        r#""type":"record_explainer_publication""#,
-        r#""channel":"codex_sites""#,
-        r#""access":"owner_only""#,
-        r#""type":"record_explainer_review""#,
+    assert!(
+        !contract.contains(r#""scope_revision":1"#),
+        "{role} hardcodes a facade-derived scope revision"
+    );
+    assert!(
+        !contract.contains(r#""handoff_revision":12"#),
+        "{role} hardcodes a facade-derived handoff revision"
+    );
+    assert!(
+        !contract.contains(r#""identity":"<checkpoint.identity>""#),
+        "{role} uses identity where CheckpointBinding requires checkpoint_identity"
+    );
+    assert!(contract.contains("copy the exact current `checkpoint` coordinates"));
+    assert!(contract.contains("copy `publication_binding.obligation` unchanged"));
+}
+
+#[test]
+fn vadi_skill_sources_define_the_complete_v2_contract() {
+    assert_role_source_contract("vadi");
+    let (skill, contract) = role_sources("vadi");
+    let source = format!("{skill}\n{contract}");
+    for required in [
+        "first user-visible protocol output",
+        "canonical objective and scope",
+        "status and assignee",
+        "peer_prompt",
     ] {
-        assert!(
-            both.contains(required_json),
-            "role references omitted v2 JSON member {required_json:?}"
-        );
+        assert!(source.contains(required), "vadi omitted {required:?}");
     }
+}
 
-    for skill in [&vadi, &prativadi] {
-        assert!(skill.contains("fresh facade snapshot"));
-        assert!(skill.contains("user-created harness goals remain unchanged"));
-        assert!(skill.contains("human starts the peer session"));
+#[test]
+fn prativadi_skill_sources_define_the_complete_v2_contract() {
+    assert_role_source_contract("prativadi");
+    let (_, contract) = role_sources("prativadi");
+    assert!(contract.contains("Prativadi never creates a run."));
+}
+
+fn documented_json_blocks(markdown: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut current = None::<String>;
+    for line in markdown.lines() {
+        if line == "```json" {
+            current = Some(String::new());
+        } else if line == "```" {
+            if let Some(block) = current.take() {
+                blocks.push(block);
+            }
+        } else if let Some(block) = current.as_mut() {
+            block.push_str(line);
+            block.push('\n');
+        }
+    }
+    blocks
+}
+
+fn normalize_documented_action(template: &str) -> serde_json::Value {
+    let obligation = serde_json::json!({
+        "handoff_revision": 5,
+        "kind": "worker_to_reviewer",
+        "scope_revision": 0,
+        "checkpoint": {
+            "checkpoint_identity": "checkpoint-a",
+            "manifest_digest": "b".repeat(64),
+            "scope_revision": 0
+        }
+    });
+    let normalized = template
+        .replace(
+            r#""<snapshot.publication_binding.obligation>""#,
+            &serde_json::to_string(&obligation).unwrap(),
+        )
+        .replace("<snapshot.checkpoint.identity>", "checkpoint-a")
+        .replace("<snapshot.checkpoint.manifest_digest>", &"b".repeat(64))
+        .replace(r#""<snapshot.checkpoint.scope_revision>""#, "0")
+        .replace(
+            "<snapshot.publication_binding.deployment.source_digest>",
+            &"a".repeat(64),
+        )
+        .replace(
+            "<snapshot.publication_binding.deployment.site_id>",
+            "site-run",
+        )
+        .replace(
+            "<snapshot.publication_binding.deployment.site_version>",
+            "site-version",
+        )
+        .replace(
+            "<snapshot.publication_binding.deployment.url>",
+            "https://sites.openai.test/site-run/site-version",
+        );
+    serde_json::from_str(&normalized).unwrap_or_else(|error| {
+        panic!("documented action is not normalizable JSON: {error}\n{template}")
+    })
+}
+
+fn documented_actions(role: &str) -> Vec<serde_json::Value> {
+    let (_, contract) = role_sources(role);
+    documented_json_blocks(&contract)
+        .iter()
+        .flat_map(|block| block.lines())
+        .filter(|template| !template.trim().is_empty())
+        .map(normalize_documented_action)
+        .collect()
+}
+
+fn documented_action(role: &str, action_type: &str) -> serde_json::Value {
+    documented_actions(role)
+        .into_iter()
+        .find(|action| action["type"] == action_type)
+        .unwrap_or_else(|| panic!("{role} omitted documented {action_type} payload"))
+}
+
+#[test]
+fn every_documented_role_action_deserializes_against_the_v2_schema() {
+    let expected = BTreeSet::from([
+        "accept_checkpoint_supersession",
+        "finalize",
+        "record_explainer_publication",
+        "record_explainer_review",
+        "record_review",
+        "request_checkpoint_supersession",
+        "request_human_decision",
+        "resume_human_decision",
+        "submit_checkpoint",
+        "withdraw_approval",
+    ]);
+    for role in ["vadi", "prativadi"] {
+        let actions = documented_actions(role);
+        let actual = actions
+            .iter()
+            .map(|action| action["type"].as_str().unwrap())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(actual, expected, "{role} action map is incomplete");
+        for action in actions {
+            serde_json::from_value::<Action>(action.clone()).unwrap_or_else(|error| {
+                panic!("{role} documented invalid action {action}: {error}")
+            });
+        }
+    }
+}
+
+#[test]
+fn documented_human_decision_payload_transitions_for_each_role() {
+    for role in ["vadi", "prativadi"] {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        let runs = root.path().join("state/runs");
+        let credentials = root.path().join("state/credentials");
+        std::fs::create_dir(&workspace).unwrap();
+        git(&workspace, &["init", "--quiet"]);
+        git(
+            &workspace,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:axatbhardwaj/Dvandva.git",
+            ],
+        );
+        let worker = start_role(
+            &workspace,
+            &runs,
+            &credentials,
+            "worker",
+            "worker-session",
+            "codex",
+            "claude",
+        );
+        let reviewer = start_role(
+            &workspace,
+            &runs,
+            &credentials,
+            "reviewer",
+            "reviewer-session",
+            "claude",
+            "codex",
+        );
+        let run_dir = runs.join(worker["run_id"].as_str().unwrap());
+        let flow = Flow {
+            root: root.path(),
+            run_dir: &run_dir,
+            credentials: &credentials,
+        };
+        let (kernel_role, session) = if role == "vadi" {
+            ("worker", "worker-session")
+        } else {
+            ("reviewer", "reviewer-session")
+        };
+        let action = documented_action(role, "request_human_decision");
+        assert!(action["options"].as_array().unwrap().len() >= 2);
+        let human = flow.apply(kernel_role, session, 2, "human.json", action);
+        assert_eq!(human["status"], "human_decision");
+        assert_eq!(
+            human["human_decision"]["options"].as_array().unwrap().len(),
+            2
+        );
+        assert_eq!(reviewer["run_id"], worker["run_id"]);
     }
 }
 
@@ -129,6 +301,9 @@ fn setup_skill_sources_pin_v2_without_implicit_run_migration() {
     for required in [
         "0.2.0",
         "skills-v0.2.0",
+        "source and planned release target",
+        "installation is available only after",
+        "tag and release asset exist",
         "dvandva.run.v2",
         "facade API 2",
         "v1 read support is only for explicit migration",

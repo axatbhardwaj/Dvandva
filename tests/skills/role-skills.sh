@@ -152,6 +152,43 @@ setup_contract="$repo_root/skills/setup-dvandva/references/installation.md"
 role_contract="$(cat "$vadi_skill" "$vadi_contract" "$prativadi_skill" "$prativadi_contract")"
 setup_docs="$(cat "$setup_skill" "$setup_contract")"
 
+for role_skill in "$vadi_skill" "$prativadi_skill"; do
+  grep -Fq 'Dvandva never creates, replaces, pauses, completes, or clears any harness goal.' \
+    "$role_skill"
+  grep -Fq 'Goals the user sets in a launch prompt remain outside the protocol.' \
+    "$role_skill"
+done
+
+for role_source in \
+  "$(cat "$vadi_skill" "$vadi_contract")" \
+  "$(cat "$prativadi_skill" "$prativadi_contract")"
+do
+  for required in \
+    'fresh facade snapshot' \
+    'next_actions' \
+    'advisory_actions' \
+    'legal_actions' \
+    'scope_mismatch' \
+    'complete deliverable manifest' \
+    'request_checkpoint_supersession' \
+    'accept_checkpoint_supersession' \
+    'withdraw_approval' \
+    'Codex harness publishes' \
+    'Claude harness reviews' \
+    'user-created harness goals remain unchanged' \
+    'human starts the peer session' \
+    'foreground local wait' \
+    'upgrade_required' \
+    'upgrade SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION' \
+    'claim SESSION RUN_DIR EXPECTED_REVISION' \
+    'reclaim SESSION RUN_DIR EXPECTED_REVISION' \
+    '"type":"resume_human_decision"' \
+    '"type":"finalize"'
+  do
+    grep -Fq "$required" <<<"$role_source"
+  done
+done
+
 for required in \
   'first user-visible protocol output' \
   'canonical objective and scope' \
@@ -226,6 +263,9 @@ done
 for required in \
   '0.2.0' \
   'skills-v0.2.0' \
+  'source and planned release target' \
+  'installation is available only after' \
+  'tag and release asset exist' \
   'dvandva.run.v2' \
   'facade API 2' \
   'v1 read support is only for explicit migration' \
