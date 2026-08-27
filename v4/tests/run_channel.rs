@@ -298,8 +298,7 @@ fn setup_scope_amended_checkpoint(dir: &std::path::Path) -> (String, String) {
         "human.json",
         serde_json::json!({
             "type": "request_human_decision", "question": "Replace scope?",
-            "evidence": ["New requirement"], "options": ["yes", "no"],
-            "contact_role": "reviewer", "resume_status": "reviewing", "resume_assignee": "reviewer"
+            "evidence": ["New requirement"], "options": ["yes", "no"]
         }),
     )
     .success();
@@ -2268,7 +2267,7 @@ fn complete_review_fix_loop_reaches_done() {
 }
 
 #[test]
-fn human_decision_resumes_declared_owner() {
+fn human_decision_resumes_authoritative_pre_request_owner() {
     let dir = tempfile::tempdir().unwrap();
     init_pair(dir.path());
     let worker = claim_role(dir.path(), "worker", "worker-1", 0);
@@ -2276,15 +2275,14 @@ fn human_decision_resumes_declared_owner() {
 
     apply_action_raw(
         dir.path(),
-        "worker",
-        "worker-1",
-        &worker,
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
         2,
         "pause.json",
         serde_json::json!({
             "type": "request_human_decision", "question": "Which API should win?",
-            "evidence": ["Both variants pass tests"], "options": ["Keep A", "Keep B"],
-            "contact_role": "reviewer", "resume_status": "reviewing", "resume_assignee": "reviewer"
+            "evidence": ["Both variants pass tests"], "options": ["Keep A", "Keep B"]
         }),
     )
     .success();
@@ -2316,9 +2314,94 @@ fn human_decision_resumes_declared_owner() {
 
     let baton: serde_json::Value =
         serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
-    assert_eq!(baton["status"], "reviewing");
-    assert_eq!(baton["assignee"], "reviewer");
+    assert_eq!(baton["status"], "working");
+    assert_eq!(baton["assignee"], "worker");
     assert_eq!(baton["human_decision"]["answer"], "Keep A");
+}
+
+#[test]
+fn human_decision_derives_requester_contact_and_authoritative_resume_target() {
+    let dir = tempfile::tempdir().unwrap();
+    let (worker, _reviewer, _) = setup_reviewing_checkpoint(dir.path());
+
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        5,
+        "pause.json",
+        serde_json::json!({
+            "type": "request_human_decision",
+            "question": "Should the new requirement enter scope?",
+            "evidence": ["The ticket changed during review"],
+            "options": ["Amend scope", "Keep current scope"]
+        }),
+    )
+    .success();
+
+    let paused: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
+    assert_eq!(paused["human_decision"]["requested_by"], "worker");
+    assert_eq!(paused["human_decision"]["contact_role"], "worker");
+    assert_eq!(paused["human_decision"]["resume_status"], "reviewing");
+    assert_eq!(paused["human_decision"]["resume_assignee"], "reviewer");
+
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        6,
+        "resume.json",
+        serde_json::json!({"type": "resume_human_decision", "answer": "Keep current scope"}),
+    )
+    .success();
+
+    let resumed: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
+    assert_eq!(resumed["status"], "reviewing");
+    assert_eq!(resumed["assignee"], "reviewer");
+}
+
+#[test]
+fn human_decision_rejects_legacy_caller_supplied_routing() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
+
+    for (index, legacy_field) in [
+        ("contact_role", serde_json::json!("reviewer")),
+        ("resume_status", serde_json::json!("reviewing")),
+        ("resume_assignee", serde_json::json!("reviewer")),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let mut action = serde_json::json!({
+            "type": "request_human_decision",
+            "question": "Choose",
+            "evidence": ["Evidence"],
+            "options": ["A", "B"]
+        });
+        action[legacy_field.0] = legacy_field.1;
+        apply_action_raw(
+            dir.path(),
+            "worker",
+            "worker-1",
+            &worker,
+            1,
+            &format!("legacy-{index}.json"),
+            action,
+        )
+        .failure()
+        .stderr(predicate::str::contains("unknown field"));
+    }
+
+    let baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
+    assert_eq!(baton["revision"], 1);
+    assert!(baton["human_decision"].is_null());
 }
 
 #[test]
@@ -2820,8 +2903,7 @@ fn scope_checkpoint_identity_history_on_disk_remains_authoritative() {
         "human.json",
         serde_json::json!({
             "type": "request_human_decision", "question": "Replace scope?",
-            "evidence": ["New requirement"], "options": ["yes", "no"],
-            "contact_role": "reviewer", "resume_status": "reviewing", "resume_assignee": "reviewer"
+            "evidence": ["New requirement"], "options": ["yes", "no"]
         }),
     )
     .success();
@@ -2910,8 +2992,7 @@ fn scope_amendment_replaces_scope_and_pending_handoff() {
         "human.json",
         serde_json::json!({
             "type": "request_human_decision", "question": "Expand scope?",
-            "evidence": ["A report is required"], "options": ["yes", "no"],
-            "contact_role": "reviewer", "resume_status": "reviewing", "resume_assignee": "reviewer"
+            "evidence": ["A report is required"], "options": ["yes", "no"]
         }),
     )
     .success();

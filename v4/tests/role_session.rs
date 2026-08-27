@@ -1125,6 +1125,60 @@ fn role_wait_returns_immediately_when_the_current_role_is_actionable() {
 }
 
 #[test]
+fn role_wait_keeps_blocking_when_human_escape_is_the_only_extra_legal_action() {
+    let root = tempfile::tempdir().unwrap();
+    let run_dir = root.path().join("runs/run-a");
+    let credentials = root.path().join("credentials");
+    init_run(&run_dir);
+    command()
+        .args([
+            "role",
+            "claim",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "reviewer",
+            "--session-id",
+            "reviewer-session",
+            "--lease-seconds",
+            "300",
+            "--expected-revision",
+            "0",
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    command()
+        .args([
+            "role",
+            "wait",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "reviewer",
+            "--session-id",
+            "reviewer-session",
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--after-revision",
+            "1",
+            "--poll-interval-ms",
+            "10",
+            "--timeout-ms",
+            "100",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(r#""error":"timeout""#));
+}
+
+#[test]
 fn role_reclaim_fences_an_expired_session_with_a_new_private_credential() {
     let root = tempfile::tempdir().unwrap();
     let run_dir = root.path().join("runs/run-a");
@@ -1487,7 +1541,7 @@ fn worker_start_creates_claims_and_idempotently_resumes_one_run() {
     assert_eq!(created["advisory_actions"], serde_json::json!(["work"]));
     assert_eq!(
         created["legal_actions"],
-        serde_json::json!(["publish_explainer"])
+        serde_json::json!(["publish_explainer", "request_human_decision"])
     );
     assert_eq!(
         created["next_actions"],
@@ -2253,7 +2307,10 @@ fn snapshot_classifier_keeps_semantic_and_harness_duties_independent() {
     .unwrap();
     let worker = next_action::classify(&normal, Role::Worker, "Codex");
     assert_eq!(worker.advisory_actions, vec!["work"]);
-    assert_eq!(worker.legal_actions, vec!["publish_explainer"]);
+    assert_eq!(
+        worker.legal_actions,
+        vec!["publish_explainer", "request_human_decision"]
+    );
     assert_eq!(
         worker.blocking_reason,
         Some("submit_checkpoint awaits current explainer approval")
@@ -2303,6 +2360,102 @@ fn snapshot_classifier_keeps_semantic_and_harness_duties_independent() {
         .next_actions
         .contains(&"accept_checkpoint_supersession"));
     assert!(!reviewer.next_actions.contains(&"record_review"));
+}
+
+#[test]
+fn claimed_active_snapshots_advertise_human_escape_without_making_wait_actionable() {
+    use dvandva_v4::{claim::Role, model::*, next_action};
+
+    for (status, assignee) in [
+        (Status::Working, Assignee::Worker),
+        (Status::Revising, Assignee::Worker),
+        (Status::Reviewing, Assignee::Reviewer),
+        (Status::Finalizing, Assignee::Worker),
+    ] {
+        for role in [Role::Worker, Role::Reviewer] {
+            let mut baton = RunBaton::new(
+                "active",
+                "Objective",
+                "codex",
+                "claude",
+                vec![DeliverableRequirement {
+                    id: "output".into(),
+                    description: "Output".into(),
+                }],
+            )
+            .unwrap();
+            baton.status = status.clone();
+            baton.assignee = assignee.clone();
+
+            let snapshot = next_action::classify(&baton, role, "Other");
+            assert!(
+                snapshot.legal_actions.contains(&"request_human_decision"),
+                "{status:?}/{assignee:?}/{role:?} omitted the escape action"
+            );
+            assert!(!snapshot.next_actions.contains(&"request_human_decision"));
+        }
+    }
+
+    let waiting = RunBaton::new(
+        "waiting",
+        "Objective",
+        "codex",
+        "claude",
+        vec![DeliverableRequirement {
+            id: "output".into(),
+            description: "Output".into(),
+        }],
+    )
+    .unwrap();
+    let waiting = next_action::classify(&waiting, Role::Reviewer, "Other");
+    assert_eq!(waiting.next_actions, vec!["wait"]);
+    assert_eq!(
+        waiting.legal_actions,
+        vec!["wait", "request_human_decision"]
+    );
+    assert!(!waiting.actionable);
+}
+
+#[test]
+fn human_decision_and_terminal_snapshots_do_not_advertise_another_request() {
+    use dvandva_v4::{claim::Role, model::*, next_action};
+
+    let mut baton = RunBaton::new(
+        "inactive",
+        "Objective",
+        "codex",
+        "claude",
+        vec![DeliverableRequirement {
+            id: "output".into(),
+            description: "Output".into(),
+        }],
+    )
+    .unwrap();
+    baton.status = Status::HumanDecision;
+    baton.assignee = Assignee::Human;
+    baton.human_decision = Some(HumanDecision {
+        question: "Choose".into(),
+        requested_by: "worker".into(),
+        evidence: vec!["Evidence".into()],
+        options: vec!["A".into(), "B".into()],
+        contact_role: "worker".into(),
+        resume_status: Status::Working,
+        resume_assignee: Assignee::Worker,
+        answer: None,
+    });
+    for role in [Role::Worker, Role::Reviewer] {
+        assert!(!next_action::classify(&baton, role, "Other")
+            .legal_actions
+            .contains(&"request_human_decision"));
+    }
+
+    for status in [Status::Done, Status::Abandoned] {
+        baton.status = status;
+        baton.assignee = Assignee::None;
+        assert!(!next_action::classify(&baton, Role::Worker, "Other")
+            .legal_actions
+            .contains(&"request_human_decision"));
+    }
 }
 
 #[test]

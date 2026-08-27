@@ -1,12 +1,6 @@
 use serde::Deserialize;
 
-use crate::{
-    claim::Role,
-    model::{
-        Assignee, CheckpointSubmission, DeliverableRequirement, ExternalRef, HandoffObligation,
-        Status,
-    },
-};
+use crate::model::{CheckpointSubmission, DeliverableRequirement, ExternalRef, HandoffObligation};
 
 #[derive(Debug, Deserialize)]
 pub struct ScopeAmendment {
@@ -18,7 +12,7 @@ pub struct ScopeAmendment {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Action {
     SubmitCheckpoint {
         checkpoint: CheckpointSubmission,
@@ -36,9 +30,6 @@ pub enum Action {
         question: String,
         evidence: Vec<String>,
         options: Vec<String>,
-        contact_role: Role,
-        resume_status: Status,
-        resume_assignee: Assignee,
     },
     ResumeHumanDecision {
         answer: String,

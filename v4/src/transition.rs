@@ -221,9 +221,6 @@ fn apply_locked(
             question,
             evidence,
             options,
-            contact_role,
-            resume_status,
-            resume_assignee,
         } => {
             if baton
                 .human_decision
@@ -234,20 +231,17 @@ fn apply_locked(
                 || evidence.iter().any(|item| item.trim().is_empty())
                 || options.len() < 2
                 || options.iter().any(|option| option.trim().is_empty())
-                || matches!(
-                    resume_status,
-                    Status::HumanDecision | Status::Done | Status::Abandoned
-                )
-                || !resume_target_matches(&resume_status, &resume_assignee)
             {
                 return Err(TransitionError::InvalidHumanDecision);
             }
+            let resume_status = baton.status.clone();
+            let resume_assignee = baton.assignee.clone();
             baton.human_decision = Some(HumanDecision {
                 question,
                 requested_by: role_name(role).to_owned(),
                 evidence,
                 options,
-                contact_role: role_name(contact_role).to_owned(),
+                contact_role: role_name(role).to_owned(),
                 resume_status,
                 resume_assignee,
                 answer: None,
@@ -592,16 +586,6 @@ fn role_name(role: Role) -> &'static str {
         Role::Worker => "worker",
         Role::Reviewer => "reviewer",
     }
-}
-
-fn resume_target_matches(status: &Status, assignee: &Assignee) -> bool {
-    matches!(
-        (status, assignee),
-        (
-            Status::Working | Status::Revising | Status::Finalizing,
-            Assignee::Worker
-        ) | (Status::Reviewing, Assignee::Reviewer)
-    )
 }
 
 fn replace_handoff_obligation(

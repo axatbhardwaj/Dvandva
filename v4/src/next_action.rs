@@ -102,7 +102,11 @@ pub fn classify(baton: &RunBaton, role: Role, participant_harness: &str) -> Next
     if advisory.is_empty() && legal.is_empty() {
         legal.push("wait");
     }
-    result(role_state, wake_reason, advisory, legal, blocking_reason)
+    let mut actions = result(role_state, wake_reason, advisory, legal, blocking_reason);
+    if baton.status != Status::HumanDecision {
+        actions.legal_actions.push("request_human_decision");
+    }
+    actions
 }
 
 fn result(

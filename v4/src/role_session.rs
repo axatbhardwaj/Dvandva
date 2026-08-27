@@ -848,10 +848,7 @@ pub fn upgrade(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        action::ScopeAmendment,
-        model::{Assignee, WorkspaceIdentity},
-    };
+    use crate::{action::ScopeAmendment, model::WorkspaceIdentity};
 
     fn fixture_workspace(root: &Path) -> (PathBuf, WorkspaceIdentity) {
         let workspace = root.join("workspace");
@@ -948,9 +945,6 @@ mod tests {
                 question: "Use amended scope?".to_owned(),
                 evidence: vec!["new requirement".to_owned()],
                 options: vec!["yes".to_owned(), "no".to_owned()],
-                contact_role: Role::Worker,
-                resume_status: Status::Working,
-                resume_assignee: Assignee::Worker,
             },
         )
         .unwrap();
@@ -1241,9 +1235,6 @@ mod tests {
                 question: "Use amended scope?".to_owned(),
                 evidence: vec!["new requirement".to_owned()],
                 options: vec!["yes".to_owned(), "no".to_owned()],
-                contact_role: Role::Worker,
-                resume_status: Status::Working,
-                resume_assignee: Assignee::Worker,
             },
         )
         .unwrap();
