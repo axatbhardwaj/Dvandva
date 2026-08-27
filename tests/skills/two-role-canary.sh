@@ -304,7 +304,11 @@ PY
   python3 -c '
 import json, sys
 terminal, worker, reviewer = (json.loads(value) for value in sys.stdin.read().split("\n---\n"))
-assert worker["checkpoint"] == reviewer["checkpoint"] == terminal["checkpoint"]
+checkpoint_bytes = [
+    json.dumps(snapshot["checkpoint"], ensure_ascii=False, separators=(",", ":")).encode()
+    for snapshot in (terminal, worker, reviewer)
+]
+assert checkpoint_bytes[0] == checkpoint_bytes[1] == checkpoint_bytes[2]
 assert worker["terminal"] == reviewer["terminal"] == {"outcome": "done", "reason": None}
 ' <<<"$terminal
 ---
