@@ -1,6 +1,6 @@
 interface:
   display_name: "Dvandva Vadi"
-  short_description: "Implement inside a paired Dvandva run"
-  default_prompt: "Use $vadi to implement this ticket in a paired Dvandva run."
+  short_description: "Work inside a paired Dvandva run"
+  default_prompt: "Use $vadi to start or resume this paired Dvandva run."
 policy:
   allow_implicit_invocation: true

@@ -1,64 +1,117 @@
 # Prativadi run contract
 
-Use only `scripts/dvandva-role.sh`; the helper remains private and outside
-`PATH`. First run `probe`. Resolve the session with `session-id`; if unavailable,
-run `session-id --generate` once and retain that value in this harness session.
+The facade JSON is authoritative. Use only `scripts/dvandva-role.sh`; first
+`probe`, then resolve one stable session with `session-id` or one retained
+`session-id --generate` fallback.
 
 ```text
-start SESSION CURRENT_HARNESS PEER_HARNESS WORKSPACE OBJECTIVE [TASK] --wait [--run-id ID]
+start SESSION CURRENT_HARNESS PEER_HARNESS WORKSPACE [OBJECTIVE [TASK]] [--objective-ref KIND=VALUE] [--required-deliverable ID=DESCRIPTION] [--wait|--new-run|--run-id ID]
 read  SESSION RUN_DIR
 apply SESSION RUN_DIR EXPECTED_REVISION ACTION_JSON
 wait  SESSION RUN_DIR AFTER_REVISION [TIMEOUT_MS]
 heartbeat SESSION RUN_DIR EXPECTED_REVISION
 ```
 
-`TASK` is a copied identity field. When the human supplies an explicit ticket
-ID or URL, trim its surrounding whitespace and pass the remaining string
-verbatim. When neither appears, omit `TASK`. Keep the same copied identity on
-later starts; a human-selected `--run-id` is authoritative if a supplied task
-identity differs from that run.
+## Start and snapshot contract
 
-`start --wait` watches for a matching run without consuming model turns.
-Exactly one valid candidate is claimed. None continues waiting; several are
-returned for human selection, after which `start --wait` is repeated with the
-selected exact `--run-id`. `task_mismatch` returns compatible candidates
-immediately; surface them instead of starting another discovery window.
-Corrupt, terminal, wrong-repository, wrong-family, and live-claimed candidates
-are never silently selected. A lost claim race returns to discovery.
+Exact joins pass only `--run-id` unless the human explicitly supplied
+objective, reference, task, or deliverable coordinates to compare. Never
+invent an objective for an exact join. Exact run ID selects state but never
+amends or overrides scope: surface `scope_mismatch` without claiming or
+working. Without an exact run, use `--wait`; surface multiple matches for human
+selection rather than choosing newest.
 
-Drive these states:
+Surface `ambiguous`, `busy`, `run_missing`, and `upgrade_required` rather than
+guessing. Surface the start outcome and canonical snapshot before domain-tool
+work.
 
-| Status/assignee | Prativadi action |
-|---|---|
-| `working/worker`, `revising/worker` | `wait` |
-| `reviewing/reviewer` | Review exact checkpoint, record verdict |
-| `finalizing/worker` | `wait`; approval is not completion |
-| `human_decision/human` | Surface the recorded question; do not guess |
-| `done`, `abandoned` | Report terminal evidence and stop |
+After every facade operation, use the fresh facade snapshot. `next_actions`
+combines `advisory_actions` and ordinary `legal_actions`; semantic work happens
+only when the returned advisory action authorizes it. Apply only a returned
+legal action. `request_human_decision` may be selected directly from
+`legal_actions` solely for new human scope or ambiguity; it is never an
+ordinary wake or action.
 
-Create action files in a private temporary directory, mode 0600, and delete
-them after `apply`. Never include credentials. Supported reviewer actions:
+## Checkpoint and review bindings
+
+Review only when `advisory_actions` includes `review_checkpoint`. Materialize
+the exact immutable checkpoint, whose complete deliverable manifest covers the
+canonical deliverable IDs exactly once. Never review branch `HEAD` or the
+vadi's mutable worktree. A submission has this v2 shape:
 
 ```json
-{"type":"record_review","verdict":"changes_requested","checkpoint_identity":"<exact identity>","findings":["<actionable finding>"]}
-{"type":"record_review","verdict":"approved","checkpoint_identity":"<exact identity>","findings":[]}
-{"type":"request_human_decision","question":"<decision>","evidence":["<fact>"],"options":["<option>"],"contact_role":"reviewer","resume_status":"reviewing","resume_assignee":"reviewer"}
+{"type":"submit_checkpoint","checkpoint":{"kind":"git","identity":"<immutable SHA>","deliverables":[{"id":"<canonical ID>","artifacts":[{"kind":"commit","value":"<immutable SHA>"}]}],"verification":["<exact command and result>"]}}
 ```
 
-Before submission, confirm the inspected object still equals
-`checkpoint.identity` and use the current Baton revision for CAS. On a stale
-revision, reread and review the newly assigned identity; never force the old
-verdict. After submission, `wait` again. A timeout means wait again after a
-sanitized reread, not role completion; a pre-claim timeout means repeat
-discovery. Call `heartbeat` with the current revision before a long review. The
-facade uses a 30-minute claim lease.
+Bind every verdict to checkpoint identity, `manifest_digest`, and
+`scope_revision`; reread before applying and discard a stale verdict:
 
-For Git, prove the identity is a commit with
-`git cat-file -e '<identity>^{commit}'`, inspect that exact object and its
-relevant base diff, and recheck it before submission. For an artifact, verify
-the recorded cryptographic digest against the materialized artifact. If exact
-materialization is impossible, request Human Decision.
+```json
+{"type":"record_review","verdict":"changes_requested","checkpoint_identity":"<checkpoint.identity>","manifest_digest":"<checkpoint.manifest_digest>","scope_revision":1,"findings":["<actionable finding>"]}
+```
 
-Review the published explainer as evidence, but do not maintain it: vadi owns
-the one-site-per-run projection and its shared TODO list. Publication does not
-replace checkpoint-bound source review.
+In `reviewing`, newly discovered work uses
+`request_checkpoint_supersession`; when returned, the reviewer uses
+`accept_checkpoint_supersession`. After approval, new work uses
+`withdraw_approval`.
+
+Publication never substitutes for supersession or withdrawal.
+
+```json
+{"type":"request_checkpoint_supersession","reason":"<new required work>"}
+{"type":"accept_checkpoint_supersession"}
+{"type":"withdraw_approval","reason":"<new required work>"}
+```
+
+## Human Decision
+
+Use only the minimal request. The kernel derives contact and resume routing:
+
+```json
+{"type":"request_human_decision","question":"<one decision>","evidence":["<verified fact>"],"options":["<concrete option>"]}
+```
+
+## Explainer obligation
+
+At every semantic handoff, the Codex harness publishes or updates one
+owner-only Codex Site and the Claude harness reviews that exact deployment,
+regardless of semantic casting. The explainer carries this exact content:
+canonical scope, complete manifest, findings and decisions, and a current plan/TODO.
+Reuse one stable Site ID for the run and record a new Site version for each
+obligation.
+
+The Codex participant copies the exact current obligation and records:
+
+```json
+{"type":"record_explainer_publication","obligation":{"handoff_revision":12,"kind":"worker_to_reviewer","scope_revision":1,"checkpoint":{"identity":"<checkpoint.identity>","manifest_digest":"<checkpoint.manifest_digest>","scope_revision":1}},"source_digest":"<64 lowercase hex>","site_id":"<stable run Site ID>","site_version":"<new version>","url":"<exact deployment URL>","channel":"codex_sites","access":"owner_only"}
+```
+
+The Claude participant binds review to that obligation and deployment:
+
+```json
+{"type":"record_explainer_review","obligation":{"handoff_revision":12,"kind":"worker_to_reviewer","scope_revision":1,"checkpoint":{"identity":"<checkpoint.identity>","manifest_digest":"<checkpoint.manifest_digest>","scope_revision":1}},"source_digest":"<deployment.source_digest>","site_id":"<deployment.site_id>","site_version":"<deployment.site_version>","url":"<deployment.url>","verdict":"approved","findings":[]}
+```
+
+A Claude Artifact, generic publisher, public access, or silent fallback cannot
+satisfy the gate. Missing Sites or exact review capability routes to Human
+Decision and leaves the run blocked.
+
+## Run boundaries and handoff
+
+The human starts the peer session with the returned prompt. Neither role
+invokes or wakes the other harness. User-created harness goals remain
+unchanged. Third-party and explicit-only skills, including Matt Pocock's
+skills, run only when the human explicitly invokes them in this session.
+
+After each handoff, report these exact fields and continue in a foreground
+local wait until terminal state or human stop:
+
+- What changed
+- What was verified
+- What is blocked
+- Who owns the next action
+- Exact command or prompt
+
+On timeout, read a fresh snapshot and wait again. Heartbeat before long
+authorized work. Keep action files private (mode 0600), exclude credentials,
+and delete them after `apply`.

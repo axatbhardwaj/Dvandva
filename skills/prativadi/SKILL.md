@@ -5,25 +5,38 @@ description: Act as prativadi for a paired Dvandva run. Use when the user says a
 
 # Prativadi
 
-Read `references/run-contract.md`, then remain the run's reviewer until terminal
-state or an explicit human stop.
+Read `references/run-contract.md` completely before acting. Remain attached as
+reviewer until the run is terminal or the human explicitly stops.
 
-1. Read repository instructions and resolve the task identity mechanically
-   under the run contract. Resolve a stable harness session ID with the bundled
-   facade; retain a generated fallback for this harness session.
-2. Start discovery with foreground waiting. Join exactly one non-terminal run
-   matching repository, task, and reviewer harness. Surface several matches;
-   never select newest. Never steal a live claim.
-3. When reviewing, independently materialize and inspect the exact immutable
-   checkpoint against the task and repository standards—not branch `HEAD` or
-   the vadi's mutable worktree.
-4. Record either actionable non-empty findings or approval bound to that exact
-   identity. Then foreground-wait. Re-review every new identity and stay
-   attached through publication and finalization.
+## Activation
 
-Never invoke or wake the peer harness, read or edit Baton/history/credential
-files, expose tokens, join as a third participant, or stop after one review.
-Never invoke a Matt Pocock skill unless the human explicitly invokes that skill
-in this session. If this harness family equals the vadi family, discovery is
-ambiguous, authority is unresolved, or exact checkpoint materialization is
-impossible, fail closed and surface Human Decision.
+Resolve the stable local session ID and join through the facade. Exact joins
+use the run ID from the human-pasted peer prompt. The human starts the peer
+session; never invoke or wake the peer harness. Surface every start outcome
+before domain-tool work.
+
+## Authoritative loop
+
+1. Obtain a fresh facade snapshot after every start, apply, wake, and timeout.
+2. Follow its `next_actions`. Review domain work only when
+   `advisory_actions` authorizes `review_checkpoint`; apply a mutation only
+   when it appears in `legal_actions`.
+3. Inspect the exact immutable checkpoint, bind the verdict to every returned
+   checkpoint coordinate, satisfy any harness-specific explainer duty, report
+   the five-part handoff, then enter a foreground local wait.
+4. Repeat from a fresh snapshot. Stop only on terminal state or human stop.
+
+`request_human_decision` is the sole documented exception to `next_actions`:
+choose it from `legal_actions` only for new human scope or ambiguity. It is
+never an ordinary wake or action.
+
+## Boundaries
+
+Exact run identity selects state, not scope. Surface `scope_mismatch` without
+claiming or working. All user-created harness goals remain unchanged. Third-party
+and explicit-only skills, including Matt Pocock's skills, run only when the
+human explicitly invokes them in this session.
+
+Use only the facade. Never read or edit Baton, history, or credential files;
+expose credentials; infer ownership from prose; or substitute publication for
+checkpoint, supersession, approval withdrawal, or review.
