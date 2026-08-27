@@ -5,7 +5,8 @@ use thiserror::Error;
 
 use crate::{
     claim::{self, ClaimError, Role},
-    model::{Assignee, RunBaton, Status},
+    model::{RunBaton, Status},
+    next_action,
     store::{require_current_schema, RunChannel, StoreError},
 };
 
@@ -53,6 +54,13 @@ pub fn wait(
             return Ok(baton);
         }
         claim::verify(&baton, role, session_id, token)?;
+        let harness = match role {
+            Role::Worker => &baton.participants.worker.harness,
+            Role::Reviewer => &baton.participants.reviewer.harness,
+        };
+        if next_action::classify(&baton, role, harness).actionable {
+            return Ok(baton);
+        }
         if let Some(lease_seconds) = claim::renewal_lease(&baton, role)? {
             match claim::heartbeat(
                 channel,
@@ -70,9 +78,6 @@ pub fn wait(
         }
         if baton.revision > seen_revision {
             seen_revision = baton.revision;
-            if is_actionable(&baton, role) {
-                return Ok(baton);
-            }
         }
 
         let now = std::time::Instant::now();
@@ -83,20 +88,4 @@ pub fn wait(
         let interval = poll_interval.min(remaining);
         let _ = receiver.recv_timeout(interval);
     }
-}
-
-fn is_actionable(baton: &RunBaton, role: Role) -> bool {
-    let assigned = matches!(
-        (role, &baton.assignee),
-        (Role::Worker, Assignee::Worker) | (Role::Reviewer, Assignee::Reviewer)
-    );
-    let human_contact = baton.status == Status::HumanDecision
-        && baton.human_decision.as_ref().is_some_and(|decision| {
-            decision.contact_role
-                == match role {
-                    Role::Worker => "worker",
-                    Role::Reviewer => "reviewer",
-                }
-        });
-    assigned || human_contact
 }

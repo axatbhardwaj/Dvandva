@@ -13,12 +13,14 @@ use crate::{
     credential::{self, Credential, CredentialError},
     discovery::{
         self, ClaimState, DiscoveryError, DiscoveryKind, DiscoveryOutcome, DiscoveryQuery,
+        RequestedScope,
     },
     identity::{self, IdentityError},
     model::{
-        normalize_participants, DeliverableRequirement, ModelError, RunBaton, Status, TaskIdentity,
-        LEGACY_SCHEMA,
+        normalize_participants, DeliverableRequirement, ExternalRef, ModelError, RunBaton, Status,
+        TaskIdentity, LEGACY_SCHEMA,
     },
+    next_action::{self, NextActions},
     store::{require_current_schema, RunChannel, StoreError},
     transition::{self, TransitionError},
     wait::{self, WaitError},
@@ -75,7 +77,7 @@ pub enum UpgradeError {
 #[derive(Debug, Serialize)]
 #[serde(untagged)]
 pub enum RoleStartResult {
-    Started(StartedRole),
+    Started(Box<StartedRole>),
     Discovery(DiscoveryOutcome),
     Upgrade(UpgradeRequiredRole),
 }
@@ -88,16 +90,34 @@ pub struct UpgradeRequiredRole {
     pub revision: u64,
     pub from_schema: &'static str,
     pub next_action: &'static str,
+    pub next_actions: [&'static str; 1],
+    pub actionable: bool,
+    pub objective: crate::model::Objective,
+    pub scope_revision: u64,
+    pub scope_deliverables: Vec<DeliverableRequirement>,
+    pub status: Status,
+    pub assignee: crate::model::Assignee,
 }
 
 #[derive(Debug, Serialize)]
 pub struct StartedRole {
     pub outcome: &'static str,
     pub disposition: &'static str,
-    pub run_id: String,
-    pub run_dir: PathBuf,
-    pub revision: u64,
+    #[serde(flatten)]
+    pub snapshot: RoleSnapshot,
     pub credential: PathBuf,
+    pub private_credential_path: PathBuf,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub peer_prompt: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RoleSnapshot {
+    #[serde(flatten)]
+    pub baton: RunBaton,
+    pub run_dir: PathBuf,
+    #[serde(flatten)]
+    pub actions: NextActions,
 }
 
 #[derive(Clone, Copy)]
@@ -109,7 +129,8 @@ pub struct RoleStartRequest<'a> {
     pub session_id: &'a str,
     pub current_harness: &'a str,
     pub peer_harness: &'a str,
-    pub objective: &'a str,
+    pub objective: Option<&'a str>,
+    pub objective_refs: &'a [ExternalRef],
     pub task_reference: Option<&'a str>,
     pub run_id: Option<&'a str>,
     pub lease_seconds: u64,
@@ -133,6 +154,7 @@ fn start_with_retries(
         request.current_harness,
         request.peer_harness,
         request.objective,
+        request.objective_refs,
         request.task_reference,
     )?;
     let normalized = match request.role {
@@ -170,7 +192,22 @@ fn start_with_retries(
         session_id: Some(request.session_id),
     };
     let mut outcome = discovery::discover(request.runs_dir, query)?;
-    if request.new_run {
+    if request.run_id.is_some()
+        && matches!(outcome.outcome, DiscoveryKind::Match | DiscoveryKind::Busy)
+        && !scope_matches(&outcome.candidates[0], &request)
+    {
+        outcome.outcome = DiscoveryKind::ScopeMismatch;
+        outcome.next_action = Some("retry_with_canonical_scope");
+        outcome.requested_scope = Some(RequestedScope {
+            objective_summary: request.objective.map(|value| value.trim().to_owned()),
+            objective_refs: (!request.objective_refs.is_empty())
+                .then(|| request.objective_refs.to_vec()),
+            task_reference: request.task_reference.map(|value| value.trim().to_owned()),
+            required_deliverables: (!request.required_deliverables.is_empty())
+                .then(|| request.required_deliverables.to_vec()),
+        });
+    }
+    if request.new_run && request.run_id.is_none() {
         if request.role != Role::Worker {
             return Err(RoleSessionError::Invalid(
                 "only a worker may create a separate run".to_owned(),
@@ -211,11 +248,21 @@ fn start_with_retries(
                 revision: candidate.revision,
                 from_schema: LEGACY_SCHEMA,
                 next_action: "upgrade_protocol",
+                next_actions: ["upgrade_protocol"],
+                actionable: true,
+                objective: candidate.objective,
+                scope_revision: candidate.scope_revision,
+                scope_deliverables: candidate.scope_deliverables,
+                status: candidate.status,
+                assignee: candidate.assignee,
             }))
         }
         DiscoveryKind::None if request.role == Role::Worker => {
             std::fs::create_dir_all(request.runs_dir).map_err(StoreError::Io)?;
-            let run_id = new_run_id(request.task_reference.unwrap_or(request.objective));
+            let objective = request.objective.ok_or_else(|| {
+                RoleSessionError::Invalid("new worker creation requires an objective".to_owned())
+            })?;
+            let run_id = new_run_id(request.task_reference.unwrap_or(objective));
             let run_dir = request.runs_dir.join(&run_id);
             let (worker, reviewer) = match request.role {
                 Role::Worker => (request.current_harness, request.peer_harness),
@@ -223,16 +270,17 @@ fn start_with_retries(
             };
             let task = TaskIdentity {
                 reference: request.task_reference.map(|value| value.trim().to_owned()),
-                summary: request.objective.trim().to_owned(),
+                summary: objective.trim().to_owned(),
             };
-            let baton = RunBaton::new(
+            let mut baton = RunBaton::new(
                 &run_id,
-                request.objective.trim(),
+                objective.trim(),
                 worker,
                 reviewer,
                 request.required_deliverables.to_vec(),
             )?
             .with_discovery_identity(workspace_identity, task);
+            baton.objective.refs = request.objective_refs.to_vec();
             RunChannel::open(&run_dir).create(&baton)?;
             let grant = claim(
                 &run_dir,
@@ -249,14 +297,13 @@ fn start_with_retries(
                 }
                 Err(error) => return Err(error),
             };
-            Ok(RoleStartResult::Started(StartedRole {
-                outcome: "started",
-                disposition: "created",
-                run_id,
-                run_dir,
-                revision: grant.revision,
-                credential: grant.credential,
-            }))
+            started_role(
+                "created",
+                &run_dir,
+                request.role,
+                grant.credential,
+                request.role == Role::Worker,
+            )
         }
         _ => Ok(RoleStartResult::Discovery(outcome)),
     }
@@ -315,7 +362,7 @@ fn start_candidate(
         ClaimState::Owned => {
             let baton = read(&candidate.run_dir, credentials_root, role, session_id)?;
             let path = credential::path(credentials_root, session_id, &candidate.run_id, role)?;
-            ("resumed", baton.revision, path)
+            ("resumed", baton.baton.revision, path)
         }
         ClaimState::Busy => {
             return Err(RoleSessionError::Invalid(
@@ -323,28 +370,71 @@ fn start_candidate(
             ));
         }
     };
-    Ok(RoleStartResult::Started(StartedRole {
+    let _ = revision;
+    started_role(
+        disposition,
+        &candidate.run_dir,
+        role,
+        credential_path,
+        role == Role::Worker,
+    )
+}
+
+fn started_role(
+    disposition: &'static str,
+    run_dir: &Path,
+    role: Role,
+    credential: PathBuf,
+    include_peer_prompt: bool,
+) -> Result<RoleStartResult, RoleSessionError> {
+    let snapshot = snapshot(RunChannel::open(run_dir).read()?, run_dir, role);
+    let peer_prompt = include_peer_prompt.then(|| {
+        format!(
+            "Act as prativadi and join Dvandva run {}.",
+            snapshot.baton.run_id
+        )
+    });
+    Ok(RoleStartResult::Started(Box::new(StartedRole {
         outcome: "started",
         disposition,
-        run_id: candidate.run_id,
-        run_dir: candidate.run_dir,
-        revision,
-        credential: credential_path,
-    }))
+        snapshot,
+        private_credential_path: credential.clone(),
+        credential,
+        peer_prompt,
+    })))
+}
+
+fn scope_matches(
+    candidate: &crate::discovery::RunCandidate,
+    request: &RoleStartRequest<'_>,
+) -> bool {
+    request
+        .objective
+        .is_none_or(|value| candidate.objective.summary == value.trim())
+        && (request.objective_refs.is_empty() || candidate.objective.refs == request.objective_refs)
+        && request
+            .task_reference
+            .is_none_or(|value| candidate.task_reference.as_deref() == Some(value.trim()))
+        && (request.required_deliverables.is_empty()
+            || candidate.scope_deliverables == request.required_deliverables)
 }
 
 fn validate_start(
     session_id: &str,
     current_harness: &str,
     peer_harness: &str,
-    objective: &str,
+    objective: Option<&str>,
+    objective_refs: &[ExternalRef],
     task_reference: Option<&str>,
 ) -> Result<(), RoleSessionError> {
     if session_id.trim().is_empty()
         || current_harness.trim().is_empty()
         || peer_harness.trim().is_empty()
-        || objective.trim().is_empty()
+        || objective.is_some_and(|value| value.trim().is_empty())
         || task_reference.is_some_and(|reference| reference.trim().is_empty())
+        || objective_refs
+            .iter()
+            .any(|reference| reference.kind.trim().is_empty() || reference.value.trim().is_empty())
     {
         return Err(RoleSessionError::Invalid(
             "role start fields must not be blank".to_owned(),
@@ -381,13 +471,13 @@ pub fn read(
     credentials_root: &Path,
     role: Role,
     session_id: &str,
-) -> Result<crate::model::RunBaton, RoleSessionError> {
+) -> Result<RoleSnapshot, RoleSessionError> {
     let channel = RunChannel::open(run_dir);
     let baton = channel.read()?;
     require_current_schema(&baton)?;
     let credential = load_for_run(run_dir, credentials_root, role, session_id, &baton.run_id)?;
     claim::verify(&baton, role, session_id, &credential.token)?;
-    Ok(baton)
+    Ok(snapshot(baton, run_dir, role))
 }
 
 pub fn heartbeat(
@@ -420,12 +510,12 @@ pub fn wait(
     after_revision: u64,
     poll_interval: Duration,
     timeout: Duration,
-) -> Result<crate::model::RunBaton, RoleSessionError> {
+) -> Result<RoleSnapshot, RoleSessionError> {
     let channel = RunChannel::open(run_dir);
     let baton = channel.read()?;
     require_current_schema(&baton)?;
     let credential = load_for_run(run_dir, credentials_root, role, session_id, &baton.run_id)?;
-    Ok(wait::wait(
+    let baton = wait::wait(
         &channel,
         role,
         session_id,
@@ -433,7 +523,8 @@ pub fn wait(
         after_revision,
         poll_interval,
         timeout,
-    )?)
+    )?;
+    Ok(snapshot(baton, run_dir, role))
 }
 
 pub fn apply(
@@ -443,19 +534,33 @@ pub fn apply(
     session_id: &str,
     expected_revision: u64,
     action: Action,
-) -> Result<crate::model::RunBaton, RoleSessionError> {
+) -> Result<RoleSnapshot, RoleSessionError> {
     let channel = RunChannel::open(run_dir);
     let baton = channel.read()?;
     require_current_schema(&baton)?;
     let credential = load_for_run(run_dir, credentials_root, role, session_id, &baton.run_id)?;
-    Ok(transition::apply(
+    let baton = transition::apply(
         &channel,
         role,
         session_id,
         &credential.token,
         expected_revision,
         action,
-    )?)
+    )?;
+    Ok(snapshot(baton, run_dir, role))
+}
+
+fn snapshot(baton: RunBaton, run_dir: &Path, role: Role) -> RoleSnapshot {
+    let harness = match role {
+        Role::Worker => &baton.participants.worker.harness,
+        Role::Reviewer => &baton.participants.reviewer.harness,
+    };
+    let actions = next_action::classify(&baton, role, harness);
+    RoleSnapshot {
+        baton,
+        run_dir: std::fs::canonicalize(run_dir).unwrap_or_else(|_| run_dir.to_owned()),
+        actions,
+    }
 }
 
 fn load_for_run(

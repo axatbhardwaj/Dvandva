@@ -9,8 +9,8 @@ use crate::claim::{self, ClaimError, Role};
 use crate::discovery::{self, DiscoveryError, DiscoveryQuery};
 use crate::identity::{self, IdentityError};
 use crate::model::{
-    normalize_participants, DeliverableRequirement, ModelError, RunBaton, TaskIdentity,
-    WorkspaceIdentity, LEGACY_SCHEMA, ROLE_API, SCHEMA,
+    normalize_participants, DeliverableRequirement, ExternalRef, ModelError, RunBaton,
+    TaskIdentity, WorkspaceIdentity, LEGACY_SCHEMA, ROLE_API, SCHEMA,
 };
 use crate::role_session::{self, RoleSessionError, RoleStartRequest, UpgradeError};
 use crate::store::{RunChannel, StoreError};
@@ -198,7 +198,9 @@ enum RoleCommand {
         #[arg(long)]
         peer_harness: String,
         #[arg(long)]
-        objective: String,
+        objective: Option<String>,
+        #[arg(long = "objective-ref")]
+        objective_refs: Vec<String>,
         #[arg(long)]
         task_reference: Option<String>,
         #[arg(long)]
@@ -474,6 +476,7 @@ pub fn run() -> Result<(), CliError> {
                 current_harness,
                 peer_harness,
                 objective,
+                objective_refs,
                 task_reference,
                 run_id,
                 lease_seconds,
@@ -485,6 +488,7 @@ pub fn run() -> Result<(), CliError> {
             } => {
                 require_role_api(api)?;
                 let required_deliverables = parse_deliverables(required_deliverables)?;
+                let objective_refs = parse_objective_refs(objective_refs)?;
                 let result = role_session::start(RoleStartRequest {
                     workspace: &workspace,
                     runs_dir: &runs_dir,
@@ -493,7 +497,8 @@ pub fn run() -> Result<(), CliError> {
                     session_id: &session_id,
                     current_harness: &current_harness,
                     peer_harness: &peer_harness,
-                    objective: &objective,
+                    objective: objective.as_deref(),
+                    objective_refs: &objective_refs,
                     task_reference: task_reference.as_deref(),
                     run_id: run_id.as_deref(),
                     lease_seconds,
@@ -985,9 +990,28 @@ fn parse_deliverables(declarations: Vec<String>) -> Result<Vec<DeliverableRequir
                 CliError::Invalid("required deliverable must use id=description syntax".to_owned())
             })?;
             Ok(DeliverableRequirement {
-                id: id.to_owned(),
-                description: description.to_owned(),
+                id: id.trim().to_owned(),
+                description: description.trim().to_owned(),
             })
+        })
+        .collect()
+}
+
+fn parse_objective_refs(declarations: Vec<String>) -> Result<Vec<ExternalRef>, CliError> {
+    declarations
+        .into_iter()
+        .map(|declaration| {
+            let (kind, value) = declaration.split_once('=').ok_or_else(|| {
+                CliError::Invalid("objective reference must use kind=value syntax".to_owned())
+            })?;
+            let kind = kind.trim().to_owned();
+            let value = value.trim().to_owned();
+            if kind.is_empty() || value.is_empty() {
+                return Err(CliError::Invalid(
+                    "objective reference must not be blank".to_owned(),
+                ));
+            }
+            Ok(ExternalRef { kind, value })
         })
         .collect()
 }

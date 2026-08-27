@@ -717,6 +717,9 @@ fn role_read_verifies_the_private_credential_against_the_baton() {
     );
     let baton: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(baton["revision"], 1);
+    assert!(baton["next_actions"].is_array());
+    assert!(baton["actionable"].is_boolean());
+    assert!(baton["role_state"].is_string());
     assert_eq!(
         baton["participants"]["worker"]["claim"]["session_id"],
         "worker-session"
@@ -790,7 +793,7 @@ fn role_heartbeat_renews_without_exposing_the_token() {
 }
 
 #[test]
-fn role_wait_blocks_in_the_foreground_until_the_role_is_actionable() {
+fn role_wait_returns_immediately_when_the_current_role_is_actionable() {
     let root = tempfile::tempdir().unwrap();
     let run_dir = root.path().join("runs/run-a");
     let credentials = root.path().join("credentials");
@@ -873,8 +876,9 @@ fn role_wait_blocks_in_the_foreground_until_the_role_is_actionable() {
         String::from_utf8_lossy(&output.stderr)
     );
     let baton: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(baton["revision"], 2);
+    assert_eq!(baton["revision"], 1);
     assert_eq!(baton["assignee"], "worker");
+    assert_eq!(baton["actionable"], true);
 }
 
 #[test]
@@ -1232,6 +1236,30 @@ fn worker_start_creates_claims_and_idempotently_resumes_one_run() {
     assert_eq!(created["outcome"], "started");
     assert_eq!(created["disposition"], "created");
     assert_eq!(created["revision"], 1);
+    assert_eq!(created["objective"]["summary"], "Implement DEF-123");
+    assert_eq!(created["scope_revision"], 0);
+    assert_eq!(created["status"], "working");
+    assert_eq!(created["assignee"], "worker");
+    assert_eq!(created["role_state"], "assigned");
+    assert_eq!(created["advisory_actions"], serde_json::json!(["work"]));
+    assert_eq!(
+        created["legal_actions"],
+        serde_json::json!(["publish_explainer"])
+    );
+    assert_eq!(
+        created["next_actions"],
+        serde_json::json!(["work", "publish_explainer"])
+    );
+    assert_eq!(created["actionable"], true);
+    assert_eq!(
+        created["peer_prompt"],
+        format!(
+            "Act as prativadi and join Dvandva run {}.",
+            created["run_id"].as_str().unwrap()
+        )
+    );
+    assert!(created.get("token").is_none());
+    assert_eq!(created["private_credential_path"], created["credential"]);
     let run_id = created["run_id"].as_str().unwrap();
     let run_dir = runs.join(run_id);
     assert_eq!(created["run_dir"], run_dir.to_str().unwrap());
@@ -1301,6 +1329,468 @@ fn worker_start_creates_claims_and_idempotently_resumes_one_run() {
     assert_eq!(separate["disposition"], "created");
     assert_ne!(separate["run_id"], run_id);
     assert_eq!(std::fs::read_dir(&runs).unwrap().count(), 2);
+}
+
+#[test]
+fn snapshot_exact_join_needs_no_objective_and_returns_canonical_scope() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    let runs = root.path().join("state/runs");
+    let credentials = root.path().join("state/credentials");
+    std::fs::create_dir(&workspace).unwrap();
+    let git = |args: &[&str]| {
+        assert!(std::process::Command::new("git")
+            .arg("-C")
+            .arg(&workspace)
+            .args(args)
+            .status()
+            .unwrap()
+            .success());
+    };
+    git(&["init", "--quiet"]);
+    git(&[
+        "remote",
+        "add",
+        "origin",
+        "git@github.com:axatbhardwaj/Dvandva.git",
+    ]);
+    let created = command()
+        .args([
+            "role",
+            "start",
+            "--api",
+            "2",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--objective",
+            "Canonical objective",
+            "--objective-ref",
+            "ticket=https://tracker.test/DEF-123",
+            "--task-reference",
+            "DEF-123",
+            "--required-deliverable",
+            "implementation=Canonical implementation",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let created: serde_json::Value = serde_json::from_slice(&created.stdout).unwrap();
+    let run_id = created["run_id"].as_str().unwrap();
+
+    let joined = command()
+        .args([
+            "role",
+            "start",
+            "--api",
+            "2",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "reviewer",
+            "--session-id",
+            "reviewer",
+            "--current-harness",
+            "claude",
+            "--peer-harness",
+            "codex",
+            "--run-id",
+            run_id,
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        joined.status.success(),
+        "{}",
+        String::from_utf8_lossy(&joined.stderr)
+    );
+    let joined: serde_json::Value = serde_json::from_slice(&joined.stdout).unwrap();
+    assert_eq!(joined["objective"]["summary"], "Canonical objective");
+    assert_eq!(joined["objective"]["refs"][0]["kind"], "ticket");
+    assert_eq!(joined["task"]["reference"], "DEF-123");
+    assert_eq!(joined["scope_deliverables"][0]["id"], "implementation");
+
+    let canonical_revision = joined["revision"].as_u64().unwrap();
+    let mismatches = [
+        vec!["--objective", "Different objective", "--new-run"],
+        vec!["--objective-ref", "ticket=https://tracker.test/OTHER"],
+        vec!["--task-reference", "DEF-999"],
+        vec!["--required-deliverable", "implementation=Different output"],
+    ];
+    for (index, extra) in mismatches.into_iter().enumerate() {
+        let mut process = std::process::Command::new(env!("CARGO_BIN_EXE_dvandva-v4"));
+        process
+            .args([
+                "role",
+                "start",
+                "--api",
+                "2",
+                "--workspace",
+                workspace.to_str().unwrap(),
+                "--runs-dir",
+                runs.to_str().unwrap(),
+                "--credentials-root",
+                credentials.to_str().unwrap(),
+                "--role",
+                "reviewer",
+                "--session-id",
+                &format!("mismatch-{index}"),
+                "--current-harness",
+                "claude",
+                "--peer-harness",
+                "codex",
+                "--run-id",
+                run_id,
+            ])
+            .args(extra);
+        let output = process.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let mismatch: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(mismatch["outcome"], "scope_mismatch");
+        assert_eq!(
+            mismatch["candidates"][0]["objective"]["summary"],
+            "Canonical objective"
+        );
+        assert!(mismatch.get("requested_scope").is_some());
+    }
+    let baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(runs.join(run_id).join("baton.json")).unwrap())
+            .unwrap();
+    assert_eq!(baton["revision"], canonical_revision);
+    assert!(!credentials.join("mismatch-0").exists());
+}
+
+#[test]
+fn snapshot_exact_join_normalizes_explicit_deliverable_coordinates() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    let runs = root.path().join("state/runs");
+    let credentials = root.path().join("state/credentials");
+    std::fs::create_dir(&workspace).unwrap();
+    assert!(std::process::Command::new("git")
+        .arg("-C")
+        .arg(&workspace)
+        .args(["init", "--quiet"])
+        .status()
+        .unwrap()
+        .success());
+    assert!(std::process::Command::new("git")
+        .arg("-C")
+        .arg(&workspace)
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:axatbhardwaj/Dvandva.git"
+        ])
+        .status()
+        .unwrap()
+        .success());
+    let created = command()
+        .args([
+            "role",
+            "start",
+            "--api",
+            "2",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--objective",
+            "Canonical objective",
+            "--required-deliverable",
+            "implementation=Canonical implementation",
+        ])
+        .output()
+        .unwrap();
+    assert!(created.status.success());
+    let created: serde_json::Value = serde_json::from_slice(&created.stdout).unwrap();
+    let joined = command()
+        .args([
+            "role",
+            "start",
+            "--api",
+            "2",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "reviewer",
+            "--session-id",
+            "reviewer",
+            "--current-harness",
+            "claude",
+            "--peer-harness",
+            "codex",
+            "--run-id",
+            created["run_id"].as_str().unwrap(),
+            "--required-deliverable",
+            " implementation = Canonical implementation ",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        joined.status.success(),
+        "{}",
+        String::from_utf8_lossy(&joined.stderr)
+    );
+    let joined: serde_json::Value = serde_json::from_slice(&joined.stdout).unwrap();
+    assert_eq!(joined["outcome"], "started");
+}
+
+#[test]
+fn snapshot_near_expiry_actionable_wait_returns_before_heartbeat() {
+    let root = tempfile::tempdir().unwrap();
+    let run_dir = root.path().join("runs/run-a");
+    let credentials = root.path().join("credentials");
+    init_run(&run_dir);
+    command()
+        .args([
+            "role",
+            "claim",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker",
+            "--lease-seconds",
+            "1",
+            "--expected-revision",
+            "0",
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    std::thread::sleep(std::time::Duration::from_millis(650));
+    let started = std::time::Instant::now();
+    let output = command()
+        .args([
+            "role",
+            "wait",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker",
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--after-revision",
+            "1",
+            "--poll-interval-ms",
+            "25",
+            "--timeout-ms",
+            "1500",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(started.elapsed() < std::time::Duration::from_millis(300));
+    let snapshot: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(snapshot["revision"], 1);
+    assert_eq!(snapshot["next_actions"][0], "work");
+}
+
+#[test]
+fn snapshot_exact_missing_and_busy_ignore_discovery_wait() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    let runs = root.path().join("state/runs");
+    let credentials = root.path().join("state/credentials");
+    std::fs::create_dir(&workspace).unwrap();
+    assert!(std::process::Command::new("git")
+        .arg("-C")
+        .arg(&workspace)
+        .args(["init", "--quiet"])
+        .status()
+        .unwrap()
+        .success());
+    assert!(std::process::Command::new("git")
+        .arg("-C")
+        .arg(&workspace)
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:axatbhardwaj/Dvandva.git"
+        ])
+        .status()
+        .unwrap()
+        .success());
+    let base = [
+        "role",
+        "start",
+        "--api",
+        "2",
+        "--workspace",
+        workspace.to_str().unwrap(),
+        "--runs-dir",
+        runs.to_str().unwrap(),
+        "--credentials-root",
+        credentials.to_str().unwrap(),
+        "--role",
+        "worker",
+        "--current-harness",
+        "codex",
+        "--peer-harness",
+        "claude",
+    ];
+    let started = command()
+        .args(base)
+        .args([
+            "--session-id",
+            "owner",
+            "--objective",
+            "Canonical objective",
+            "--required-deliverable",
+            "implementation=Canonical output",
+        ])
+        .output()
+        .unwrap();
+    assert!(started.status.success());
+    let started: serde_json::Value = serde_json::from_slice(&started.stdout).unwrap();
+    for (run_id, expected) in [
+        (started["run_id"].as_str().unwrap(), "busy"),
+        ("missing-run", "run_missing"),
+    ] {
+        let before = std::time::Instant::now();
+        let output = command()
+            .args(base)
+            .args([
+                "--session-id",
+                "other",
+                "--run-id",
+                run_id,
+                "--wait",
+                "--timeout-ms",
+                "2000",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(before.elapsed() < std::time::Duration::from_millis(500));
+        let outcome: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(outcome["outcome"], expected);
+    }
+}
+
+#[test]
+fn snapshot_classifier_keeps_semantic_and_harness_duties_independent() {
+    use dvandva_v4::{claim::Role, model::*, next_action};
+
+    let normal = RunBaton::new(
+        "normal",
+        "Objective",
+        "codex",
+        "claude",
+        vec![DeliverableRequirement {
+            id: "output".into(),
+            description: "Output".into(),
+        }],
+    )
+    .unwrap();
+    let worker = next_action::classify(&normal, Role::Worker, "Codex");
+    assert_eq!(worker.advisory_actions, vec!["work"]);
+    assert_eq!(worker.legal_actions, vec!["publish_explainer"]);
+    assert_eq!(
+        worker.blocking_reason,
+        Some("submit_checkpoint awaits current explainer approval")
+    );
+    assert_eq!(
+        next_action::classify(&normal, Role::Reviewer, "Claude").next_actions,
+        vec!["wait"]
+    );
+
+    let reverse = RunBaton::new(
+        "reverse",
+        "Objective",
+        "claude",
+        "codex",
+        vec![DeliverableRequirement {
+            id: "output".into(),
+            description: "Output".into(),
+        }],
+    )
+    .unwrap();
+    assert_eq!(
+        next_action::classify(&reverse, Role::Worker, "Claude").next_actions,
+        vec!["work"]
+    );
+    assert_eq!(
+        next_action::classify(&reverse, Role::Reviewer, "Codex").next_actions,
+        vec!["publish_explainer"]
+    );
+
+    let mut stale = normal;
+    stale.status = Status::Reviewing;
+    stale.assignee = Assignee::Reviewer;
+    stale.checkpoint = Some(Checkpoint {
+        kind: "git".into(),
+        identity: "checkpoint-a".into(),
+        deliverables: vec![],
+        verification: vec!["test".into()],
+        scope_revision: 0,
+        manifest_digest: "a".repeat(64),
+    });
+    stale.pending_checkpoint_supersession = Some(CheckpointSupersession {
+        reason: "new complete checkpoint".into(),
+        checkpoint: stale.checkpoint.as_ref().unwrap().binding(),
+    });
+    let reviewer = next_action::classify(&stale, Role::Reviewer, "Claude");
+    assert!(reviewer
+        .next_actions
+        .contains(&"accept_checkpoint_supersession"));
+    assert!(!reviewer.next_actions.contains(&"record_review"));
 }
 
 #[test]

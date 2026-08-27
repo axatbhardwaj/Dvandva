@@ -245,6 +245,14 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
         }),
     );
     assert_eq!(reviewing_a["status"], "reviewing");
+    assert!(reviewing_a["next_actions"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("request_checkpoint_supersession")));
+    assert!(reviewing_a["next_actions"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("publish_explainer")));
 
     flow.approve_explainer(5, "deployment-2");
 
@@ -314,6 +322,7 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
         serde_json::json!({"type": "finalize"}),
     );
     assert_eq!(done["status"], "done");
+    assert_eq!(done["next_actions"], serde_json::json!(["stop"]));
     assert_eq!(done["revision"], 17);
     assert_eq!(done["checkpoint"]["identity"], checkpoint_b);
     assert_eq!(done["review"]["checkpoint_identity"], checkpoint_b);
@@ -322,7 +331,7 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
         ("worker", "worker-session"),
         ("reviewer", "reviewer-session"),
     ] {
-        command()
+        let output = command()
             .args([
                 "role",
                 "wait",
@@ -341,9 +350,12 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
                 "--timeout-ms",
                 "500",
             ])
-            .assert()
-            .success()
-            .stdout(predicate::str::contains(r#""status": "done""#));
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let waited: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(waited["status"], "done");
+        assert_eq!(waited["next_actions"], serde_json::json!(["stop"]));
     }
 
     let credential_text = std::fs::read_to_string(
@@ -502,7 +514,7 @@ fn explicit_run_id_resolves_an_ambiguous_role_start() {
         .stdout(predicate::str::contains(r#""outcome": "ambiguous""#));
 
     let first_run = first["run_id"].as_str().unwrap();
-    command()
+    let mismatch = command()
         .args([
             "role",
             "start",
@@ -531,10 +543,17 @@ fn explicit_run_id_resolves_an_ambiguous_role_start() {
             "--run-id",
             first_run,
         ])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""outcome": "started""#))
-        .stdout(predicate::str::contains(first_run));
+        .output()
+        .unwrap();
+    assert!(mismatch.status.success());
+    let mismatch: serde_json::Value = serde_json::from_slice(&mismatch.stdout).unwrap();
+    assert_eq!(mismatch["outcome"], "scope_mismatch");
+    assert_eq!(mismatch["candidates"][0]["run_id"], first_run);
+    assert_eq!(
+        mismatch["candidates"][0]["objective"]["summary"],
+        "Implement DEF-123"
+    );
+    assert_eq!(mismatch["candidates"][0]["scope_revision"], 0);
 }
 
 #[test]
