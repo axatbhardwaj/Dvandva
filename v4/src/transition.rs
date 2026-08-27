@@ -13,7 +13,7 @@ use crate::{
         TerminalProvenance, EXPLAINER_ACCESS, EXPLAINER_CHANNEL, EXPLAINER_PUBLISHER_HARNESS,
         EXPLAINER_REVIEWER_HARNESS,
     },
-    store::{require_current_schema, RunChannel, StoreError},
+    store::{RunChannel, StoreError},
 };
 
 #[derive(Debug, Error)]
@@ -70,28 +70,32 @@ pub fn apply(
     expected_revision: u64,
     action: Action,
 ) -> Result<RunBaton, TransitionError> {
-    let mut baton = channel.read()?;
-    require_current_schema(&baton)?;
-    if baton.revision != expected_revision {
-        return Err(StoreError::RevisionConflict {
-            expected: expected_revision,
-            actual: baton.revision,
+    channel.mutate_locked(expected_revision, |baton, now| {
+        if matches!(baton.status, Status::Done | Status::Abandoned) {
+            return Err(TransitionError::Terminal);
         }
-        .into());
-    }
-    if matches!(baton.status, Status::Done | Status::Abandoned) {
-        return Err(TransitionError::Terminal);
-    }
-    claim::verify(&baton, role, session_id, token)?;
+        claim::verify_at(baton, role, session_id, token, now)?;
+        apply_locked(channel, baton, role, expected_revision, action)?;
+        baton.revision += 1;
+        Ok(baton.clone())
+    })
+}
 
+fn apply_locked(
+    channel: &RunChannel,
+    baton: &mut RunBaton,
+    role: Role,
+    expected_revision: u64,
+    action: Action,
+) -> Result<(), TransitionError> {
     match action {
         Action::SubmitCheckpoint { checkpoint } => {
-            require_owner(&baton, role, Role::Worker, Assignee::Worker)?;
+            require_owner(baton, role, Role::Worker, Assignee::Worker)?;
             if !matches!(baton.status, Status::Working | Status::Revising) {
                 return Err(TransitionError::IllegalState);
             }
-            require_publication_gate(&baton, None)?;
-            let checkpoint = normalize_checkpoint(checkpoint, &baton)?;
+            require_publication_gate(baton, None)?;
+            let checkpoint = normalize_checkpoint(checkpoint, baton)?;
             if channel.checkpoint_identity_seen(&checkpoint.identity, expected_revision)?
                 || baton
                     .checkpoint_history
@@ -112,7 +116,7 @@ pub fn apply(
             baton.status = Status::Reviewing;
             baton.assignee = Assignee::Reviewer;
             replace_handoff_obligation(
-                &mut baton,
+                baton,
                 HandoffKind::WorkerToReviewer,
                 Some(checkpoint_binding),
             );
@@ -124,7 +128,7 @@ pub fn apply(
             scope_revision,
             findings,
         } => {
-            require_owner(&baton, role, Role::Reviewer, Assignee::Reviewer)?;
+            require_owner(baton, role, Role::Reviewer, Assignee::Reviewer)?;
             if baton.status != Status::Reviewing {
                 return Err(TransitionError::IllegalState);
             }
@@ -141,7 +145,7 @@ pub fn apply(
                 return Err(TransitionError::StaleReview);
             }
             require_publication_gate(
-                &baton,
+                baton,
                 Some((&HandoffKind::WorkerToReviewer, &submitted_binding)),
             )?;
             let findings = findings
@@ -180,13 +184,13 @@ pub fn apply(
                 findings,
             });
             replace_handoff_obligation(
-                &mut baton,
+                baton,
                 HandoffKind::ReviewerToWorker,
                 Some(submitted_binding),
             );
         }
         Action::Finalize => {
-            require_owner(&baton, role, Role::Worker, Assignee::Worker)?;
+            require_owner(baton, role, Role::Worker, Assignee::Worker)?;
             if baton.status != Status::Finalizing {
                 return Err(TransitionError::IllegalState);
             }
@@ -203,7 +207,7 @@ pub fn apply(
             }
             let checkpoint_binding = checkpoint.binding();
             require_publication_gate(
-                &baton,
+                baton,
                 Some((&HandoffKind::ReviewerToWorker, &checkpoint_binding)),
             )?;
             baton.status = Status::Done;
@@ -273,7 +277,7 @@ pub fn apply(
                 )
             };
             if let Some(amendment) = scope_amendment {
-                apply_scope_amendment(&mut baton, amendment)?;
+                apply_scope_amendment(baton, amendment)?;
             } else {
                 baton.status = resume_status;
                 baton.assignee = resume_assignee;
@@ -302,7 +306,7 @@ pub fn apply(
                 Some(CheckpointSupersession { reason, checkpoint });
         }
         Action::AcceptCheckpointSupersession => {
-            require_owner(&baton, role, Role::Reviewer, Assignee::Reviewer)?;
+            require_owner(baton, role, Role::Reviewer, Assignee::Reviewer)?;
             if baton.status != Status::Reviewing {
                 return Err(TransitionError::IllegalState);
             }
@@ -323,14 +327,10 @@ pub fn apply(
             baton.pending_checkpoint_supersession = None;
             baton.status = Status::Revising;
             baton.assignee = Assignee::Worker;
-            replace_handoff_obligation(
-                &mut baton,
-                HandoffKind::CheckpointSuperseded,
-                Some(checkpoint),
-            );
+            replace_handoff_obligation(baton, HandoffKind::CheckpointSuperseded, Some(checkpoint));
         }
         Action::WithdrawApproval { reason } => {
-            require_owner(&baton, role, Role::Worker, Assignee::Worker)?;
+            require_owner(baton, role, Role::Worker, Assignee::Worker)?;
             if baton.status != Status::Finalizing {
                 return Err(TransitionError::IllegalState);
             }
@@ -351,11 +351,7 @@ pub fn apply(
             baton.pending_checkpoint_supersession = None;
             baton.status = Status::Revising;
             baton.assignee = Assignee::Worker;
-            replace_handoff_obligation(
-                &mut baton,
-                HandoffKind::ApprovalWithdrawn,
-                Some(checkpoint),
-            );
+            replace_handoff_obligation(baton, HandoffKind::ApprovalWithdrawn, Some(checkpoint));
         }
         Action::RecordPublication {
             required: _,
@@ -374,7 +370,7 @@ pub fn apply(
             channel,
             access,
         } => {
-            if caller_harness(&baton, role) != EXPLAINER_PUBLISHER_HARNESS {
+            if caller_harness(baton, role) != EXPLAINER_PUBLISHER_HARNESS {
                 return Err(TransitionError::WrongPublisherHarness);
             }
             let binding = baton
@@ -422,7 +418,7 @@ pub fn apply(
             verdict,
             findings,
         } => {
-            if caller_harness(&baton, role) != EXPLAINER_REVIEWER_HARNESS {
+            if caller_harness(baton, role) != EXPLAINER_REVIEWER_HARNESS {
                 return Err(TransitionError::WrongReviewerHarness);
             }
             let binding = baton
@@ -483,9 +479,7 @@ pub fn apply(
             });
         }
     }
-    baton.revision += 1;
-    channel.compare_and_swap(expected_revision, &baton)?;
-    Ok(baton)
+    Ok(())
 }
 
 fn normalize_checkpoint(

@@ -54,13 +54,13 @@ pub fn claim(
     expected_revision: u64,
 ) -> Result<ClaimGrant, ClaimError> {
     validate_request(session_id, lease_seconds)?;
-    let now = OffsetDateTime::now_utc();
-    let mut baton = read_expected(channel, expected_revision)?;
-    reject_terminal(&baton)?;
-    if participant(&baton, role).claim.is_some() {
-        return Err(ClaimError::Active);
-    }
-    install_claim(channel, &mut baton, role, session_id, lease_seconds, 1, now)
+    channel.mutate_locked(expected_revision, |baton, now| {
+        reject_terminal(baton)?;
+        if participant(baton, role).claim.is_some() {
+            return Err(ClaimError::Active);
+        }
+        install_claim(baton, role, session_id, lease_seconds, 1, now)
+    })
 }
 
 pub fn reclaim(
@@ -71,29 +71,21 @@ pub fn reclaim(
     expected_revision: u64,
 ) -> Result<ClaimGrant, ClaimError> {
     validate_request(session_id, lease_seconds)?;
-    let now = OffsetDateTime::now_utc();
-    let mut baton = read_expected(channel, expected_revision)?;
-    reject_terminal(&baton)?;
-    let previous = participant(&baton, role)
-        .claim
-        .as_ref()
-        .ok_or(ClaimError::Missing)?;
-    if parse_timestamp(&previous.lease_expires_at)? > now {
-        return Err(ClaimError::NotExpired);
-    }
-    let epoch = previous
-        .epoch
-        .checked_add(1)
-        .ok_or(ClaimError::InvalidLease)?;
-    install_claim(
-        channel,
-        &mut baton,
-        role,
-        session_id,
-        lease_seconds,
-        epoch,
-        now,
-    )
+    channel.mutate_locked(expected_revision, |baton, now| {
+        reject_terminal(baton)?;
+        let previous = participant(baton, role)
+            .claim
+            .as_ref()
+            .ok_or(ClaimError::Missing)?;
+        if parse_timestamp(&previous.lease_expires_at)? > now {
+            return Err(ClaimError::NotExpired);
+        }
+        let epoch = previous
+            .epoch
+            .checked_add(1)
+            .ok_or(ClaimError::InvalidLease)?;
+        install_claim(baton, role, session_id, lease_seconds, epoch, now)
+    })
 }
 
 pub fn heartbeat(
@@ -105,28 +97,27 @@ pub fn heartbeat(
     expected_revision: u64,
 ) -> Result<u64, ClaimError> {
     validate_request(session_id, lease_seconds)?;
-    let now = OffsetDateTime::now_utc();
-    let mut baton = read_expected(channel, expected_revision)?;
-    if matches!(baton.status, Status::Done | Status::Abandoned) {
-        return Err(ClaimError::Terminal);
-    }
-    let claim = participant_mut(&mut baton, role)
-        .claim
-        .as_mut()
-        .ok_or(ClaimError::Missing)?;
-    if claim.session_id != session_id || claim.token_digest != digest(token) {
-        return Err(ClaimError::Fenced);
-    }
-    if parse_timestamp(&claim.lease_expires_at)? <= now {
-        return Err(ClaimError::Fenced);
-    }
-    let (started, expires) = lease_times(now, lease_seconds)?;
-    claim.lease_started_at = Some(started);
-    claim.lease_expires_at = expires;
-    claim.lease_seconds = lease_seconds;
-    baton.revision += 1;
-    channel.compare_and_swap_claim(expected_revision, &baton)?;
-    Ok(baton.revision)
+    channel.mutate_locked(expected_revision, |baton, now| {
+        if matches!(baton.status, Status::Done | Status::Abandoned) {
+            return Err(ClaimError::Terminal);
+        }
+        let claim = participant_mut(baton, role)
+            .claim
+            .as_mut()
+            .ok_or(ClaimError::Missing)?;
+        if claim.session_id != session_id || claim.token_digest != digest(token) {
+            return Err(ClaimError::Fenced);
+        }
+        if parse_timestamp(&claim.lease_expires_at)? <= now {
+            return Err(ClaimError::Fenced);
+        }
+        let (started, expires) = lease_times(now, lease_seconds)?;
+        claim.lease_started_at = Some(started);
+        claim.lease_expires_at = expires;
+        claim.lease_seconds = lease_seconds;
+        baton.revision += 1;
+        Ok(baton.revision)
+    })
 }
 
 pub fn verify(
@@ -135,6 +126,16 @@ pub fn verify(
     session_id: &str,
     token: &str,
 ) -> Result<(), ClaimError> {
+    verify_at(baton, role, session_id, token, OffsetDateTime::now_utc())
+}
+
+pub(crate) fn verify_at(
+    baton: &RunBaton,
+    role: Role,
+    session_id: &str,
+    token: &str,
+    now: OffsetDateTime,
+) -> Result<(), ClaimError> {
     require_current_schema(baton)?;
     let claim = participant(baton, role)
         .claim
@@ -142,7 +143,7 @@ pub fn verify(
         .ok_or(ClaimError::Missing)?;
     if claim.session_id != session_id
         || claim.token_digest != digest(token)
-        || parse_timestamp(&claim.lease_expires_at)? <= OffsetDateTime::now_utc()
+        || parse_timestamp(&claim.lease_expires_at)? <= now
     {
         return Err(ClaimError::Fenced);
     }
@@ -166,7 +167,6 @@ pub fn renewal_lease(baton: &RunBaton, role: Role) -> Result<Option<u64>, ClaimE
 }
 
 fn install_claim(
-    channel: &RunChannel,
     baton: &mut RunBaton,
     role: Role,
     session_id: &str,
@@ -174,7 +174,6 @@ fn install_claim(
     epoch: u64,
     now: OffsetDateTime,
 ) -> Result<ClaimGrant, ClaimError> {
-    let expected_revision = baton.revision;
     let token = Uuid::new_v4().to_string();
     let (started, expires) = lease_times(now, lease_seconds)?;
     participant_mut(baton, role).claim = Some(ParticipantClaim {
@@ -186,25 +185,11 @@ fn install_claim(
         lease_seconds,
     });
     baton.revision += 1;
-    channel.compare_and_swap_claim(expected_revision, baton)?;
     Ok(ClaimGrant {
         token,
         epoch,
         revision: baton.revision,
     })
-}
-
-fn read_expected(channel: &RunChannel, expected: u64) -> Result<RunBaton, ClaimError> {
-    let baton = channel.read()?;
-    require_current_schema(&baton)?;
-    if baton.revision != expected {
-        return Err(StoreError::RevisionConflict {
-            expected,
-            actual: baton.revision,
-        }
-        .into());
-    }
-    Ok(baton)
 }
 
 fn participant(baton: &RunBaton, role: Role) -> &Participant {

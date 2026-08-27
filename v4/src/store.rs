@@ -123,23 +123,6 @@ impl RunChannel {
         expected_revision: u64,
         next: &RunBaton,
     ) -> Result<RunBaton, StoreError> {
-        self.compare_and_swap_internal(expected_revision, next, false)
-    }
-
-    pub(crate) fn compare_and_swap_claim(
-        &self,
-        expected_revision: u64,
-        next: &RunBaton,
-    ) -> Result<RunBaton, StoreError> {
-        self.compare_and_swap_internal(expected_revision, next, true)
-    }
-
-    fn compare_and_swap_internal(
-        &self,
-        expected_revision: u64,
-        next: &RunBaton,
-        claim_mutation: bool,
-    ) -> Result<RunBaton, StoreError> {
         self.with_lock(|| {
             let current = self.read()?;
             if current.revision != expected_revision {
@@ -163,11 +146,7 @@ impl RunChannel {
             let claims_changed = current.participants.worker.claim
                 != next.participants.worker.claim
                 || current.participants.reviewer.claim != next.participants.reviewer.claim;
-            if claim_mutation {
-                if current.schema != SCHEMA || !valid_claim_edge(&current, next) {
-                    return Err(StoreError::InvalidHistory);
-                }
-            } else if claims_changed {
+            if claims_changed {
                 return Err(StoreError::InvalidHistory);
             }
             validate_baton(next)?;
@@ -175,6 +154,46 @@ impl RunChannel {
             self.write_history(next)?;
             self.install(next)?;
             Ok(next.clone())
+        })
+    }
+
+    pub(crate) fn mutate_locked<T, E>(
+        &self,
+        expected_revision: u64,
+        mutation: impl FnOnce(&mut RunBaton, OffsetDateTime) -> Result<T, E>,
+    ) -> Result<T, E>
+    where
+        E: From<StoreError>,
+    {
+        self.with_lock_error(|| {
+            let current = self.read().map_err(E::from)?;
+            if current.revision != expected_revision {
+                return Err(E::from(StoreError::RevisionConflict {
+                    expected: expected_revision,
+                    actual: current.revision,
+                }));
+            }
+            if self
+                .read_history_revision(expected_revision)
+                .map_err(E::from)?
+                != current
+            {
+                return Err(E::from(StoreError::InvalidHistory));
+            }
+            if current.schema != SCHEMA {
+                return Err(E::from(StoreError::MigrationRequired));
+            }
+
+            let mut next = current.clone();
+            let result = mutation(&mut next, OffsetDateTime::now_utc())?;
+            if next.revision != expected_revision + 1 {
+                return Err(E::from(StoreError::InvalidHistory));
+            }
+            validate_baton(&next).map_err(E::from)?;
+            validate_history_edge(&current, &next).map_err(E::from)?;
+            self.write_history(&next).map_err(E::from)?;
+            self.install(&next).map_err(E::from)?;
+            Ok(result)
         })
     }
 
@@ -296,15 +315,28 @@ impl RunChannel {
         &self,
         operation: impl FnOnce() -> Result<T, StoreError>,
     ) -> Result<T, StoreError> {
+        self.with_lock_error(operation)
+    }
+
+    fn with_lock_error<T, E>(&self, operation: impl FnOnce() -> Result<T, E>) -> Result<T, E>
+    where
+        E: From<StoreError>,
+    {
         let lock = OpenOptions::new()
             .create(true)
             .truncate(false)
             .read(true)
             .write(true)
-            .open(self.directory.join(".baton.lock"))?;
-        lock.lock_exclusive()?;
+            .open(self.directory.join(".baton.lock"))
+            .map_err(StoreError::from)
+            .map_err(E::from)?;
+        lock.lock_exclusive()
+            .map_err(StoreError::from)
+            .map_err(E::from)?;
         let result = operation();
-        FileExt::unlock(&lock)?;
+        FileExt::unlock(&lock)
+            .map_err(StoreError::from)
+            .map_err(E::from)?;
         result
     }
 

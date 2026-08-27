@@ -1,6 +1,10 @@
 use assert_cmd::Command;
+use dvandva_v4::action::Action;
+use dvandva_v4::claim::{self, ClaimError, Role};
 use dvandva_v4::model::{DeliverableRequirement, RunBaton};
 use dvandva_v4::store::{migrate_legacy_baton, RunChannel, StoreError};
+use dvandva_v4::transition::{self, TransitionError};
+use fs2::FileExt;
 use predicates::prelude::*;
 use sha2::{Digest, Sha256};
 
@@ -2864,7 +2868,7 @@ fn scope_checkpoint_identity_history_on_disk_remains_authoritative() {
         ),
     )
     .failure()
-    .stderr(predicate::str::contains(r#""error":"invalid_checkpoint""#));
+    .stderr(predicate::str::contains(r#""error":"invalid_history""#));
 }
 
 #[test]
@@ -4391,7 +4395,7 @@ fn claim_history_rejects_timestamp_duration_and_epoch_overflow() {
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains(r#""error":"invalid_input""#));
+        .stderr(predicate::str::contains(r#""error":"invalid_history""#));
 }
 
 #[test]
@@ -4611,6 +4615,139 @@ fn claim_history_kernel_does_not_resurrect_an_expired_heartbeat() {
         .failure()
         .stderr(predicate::str::contains(r#""error":"claim_fenced""#));
     assert_eq!(read_baton(dir.path())["revision"], 1);
+}
+
+#[test]
+fn claim_linearization_heartbeat_cannot_commit_after_expiring_behind_the_store_lock() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let channel = RunChannel::open(dir.path());
+    let grant = claim::claim(&channel, Role::Worker, "worker", 2, 0).unwrap();
+    let expires_at = read_baton(dir.path())["participants"]["worker"]["claim"]["lease_expires_at"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let lock_path = dir.path().join(".baton.lock");
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .unwrap();
+    lock.lock_exclusive().unwrap();
+
+    let heartbeat_dir = dir.path().to_owned();
+    let heartbeat = std::thread::spawn(move || {
+        claim::heartbeat(
+            &RunChannel::open(heartbeat_dir),
+            Role::Worker,
+            "worker",
+            &grant.token,
+            300,
+            1,
+        )
+    });
+
+    let lock_is_open_twice = || {
+        std::fs::read_dir("/proc/self/fd")
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter_map(|entry| std::fs::read_link(entry.path()).ok())
+            .filter(|target| target == &lock_path)
+            .count()
+            >= 2
+    };
+    let wait_deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while !lock_is_open_twice() && std::time::Instant::now() < wait_deadline {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert!(
+        lock_is_open_twice(),
+        "heartbeat never reached the locked store"
+    );
+
+    let expiry =
+        time::OffsetDateTime::parse(&expires_at, &time::format_description::well_known::Rfc3339)
+            .unwrap();
+    while time::OffsetDateTime::now_utc() < expiry {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    FileExt::unlock(&lock).unwrap();
+
+    assert!(matches!(heartbeat.join().unwrap(), Err(ClaimError::Fenced)));
+    assert_eq!(RunChannel::open(dir.path()).read().unwrap().revision, 1);
+}
+
+#[test]
+fn claim_linearization_expired_claimant_cannot_commit_a_semantic_action() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let channel = RunChannel::open(dir.path());
+    let grant = claim::claim(&channel, Role::Worker, "worker", 2, 0).unwrap();
+    let expires_at = read_baton(dir.path())["participants"]["worker"]["claim"]["lease_expires_at"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let lock_path = dir.path().join(".baton.lock");
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .unwrap();
+    lock.lock_exclusive().unwrap();
+
+    let action_dir = dir.path().to_owned();
+    let action = std::thread::spawn(move || {
+        transition::apply(
+            &RunChannel::open(action_dir),
+            Role::Worker,
+            "worker",
+            &grant.token,
+            1,
+            Action::Abandon {
+                reason: "linearization test".to_owned(),
+            },
+        )
+    });
+
+    let lock_is_open_twice = || {
+        std::fs::read_dir("/proc/self/fd")
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter_map(|entry| std::fs::read_link(entry.path()).ok())
+            .filter(|target| target == &lock_path)
+            .count()
+            >= 2
+    };
+    let wait_deadline = std::time::Instant::now() + std::time::Duration::from_secs(1);
+    while !lock_is_open_twice() && std::time::Instant::now() < wait_deadline {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert!(
+        lock_is_open_twice(),
+        "semantic action never reached the locked store"
+    );
+
+    let expiry =
+        time::OffsetDateTime::parse(&expires_at, &time::format_description::well_known::Rfc3339)
+            .unwrap();
+    while time::OffsetDateTime::now_utc() < expiry {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    FileExt::unlock(&lock).unwrap();
+
+    assert!(matches!(
+        action.join().unwrap(),
+        Err(TransitionError::Claim(ClaimError::Fenced))
+    ));
+    let current = RunChannel::open(dir.path()).read().unwrap();
+    assert_eq!(current.revision, 1);
+    assert_eq!(current.status, dvandva_v4::model::Status::Working);
 }
 
 #[test]
