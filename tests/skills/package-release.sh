@@ -637,7 +637,7 @@ assert definitions["Protocol Upgrade"] == (
 assert definitions["Handoff"] == (
     "A run milestone whose current Scope Revision and optional Checkpoint Binding are "
     "published and reviewed together. Handoffs cover role transfer, run start, Protocol "
-    "Upgrade, scope amendment, Checkpoint Supersession, and Approval Withdrawal."
+    "Upgrade, scope amendment, accepted Checkpoint Supersession, and Approval Withdrawal."
 )
 assert definitions["Publication Gate"] == (
     "The fixed requirement that the Codex harness publishes the Codex Sites explainer "
