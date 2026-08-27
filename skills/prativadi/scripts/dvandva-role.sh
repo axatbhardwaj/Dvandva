@@ -40,20 +40,29 @@ require_kernel() {
     --expected-schema "$schema" --expected-role-api "$role_api" 2>/dev/null)" || incompatible_kernel
   python3 -c '
 import json, sys
+def unique(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate key")
+        result[key] = value
+    return result
 try:
-    probe = json.load(sys.stdin)
-except (json.JSONDecodeError, UnicodeDecodeError):
+    probe = json.load(sys.stdin, object_pairs_hook=unique)
+except (json.JSONDecodeError, UnicodeDecodeError, ValueError, TypeError):
     raise SystemExit(1)
 capabilities = probe.get("capabilities") if type(probe) is dict else None
 valid = (
     type(probe) is dict
+    and set(probe) == {"package", "version", "publish", "write_schema", "read_schemas", "role_api", "capabilities", "compatible"}
     and probe.get("package") == "dvandva-v4"
     and probe.get("version") == sys.argv[1]
     and probe.get("publish") is False
     and probe.get("write_schema") == "dvandva.run.v2"
     and probe.get("read_schemas") == ["dvandva.run.v2", "dvandva.run.v1"]
     and type(probe.get("role_api")) is int and probe["role_api"] == 2
-    and type(capabilities) is dict and capabilities.get("upgrade_from_v1") is True
+    and type(capabilities) is dict and set(capabilities) == {"upgrade_from_v1"}
+    and capabilities.get("upgrade_from_v1") is True
     and probe.get("compatible") is True
 )
 raise SystemExit(0 if valid else 1)
