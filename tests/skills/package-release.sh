@@ -94,7 +94,18 @@ printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
   'if test "${1:-}" = "--version"; then' \
-  '  printf "dvandva-v4 0.2.0\\n"' \
+  '  if test -n "${VERSION_DIR_FILE:-}"; then dirname -- "$0" >"$VERSION_DIR_FILE"; fi' \
+  '  case "${FAKE_VERSION_MODE:-valid}" in' \
+  '    valid|one_lf) printf "dvandva-v4 0.2.0\\n" ;;' \
+  '    exact) printf "dvandva-v4 0.2.0" ;;' \
+  '    nul) printf "dvandva-v4 0.2.0\\0\\n" ;;' \
+  '    invalid_utf8) printf "dvandva-v4 0.2.0\\377\\n" ;;' \
+  '    oversized) printf "dvandva-v4 0.2.0"; head -c 20000 /dev/zero | tr "\\0" "\\n" ;;' \
+  '    extra_newline) printf "dvandva-v4 0.2.0\\n\\n" ;;' \
+  '    crlf) printf "dvandva-v4 0.2.0\\r\\n" ;;' \
+  '    nonzero) printf "dvandva-v4 0.2.0\\n"; exit 7 ;;' \
+  '    *) exit 2 ;;' \
+  '  esac' \
   '  exit 0' \
   'fi' \
   'test "${1:-}" = "probe" || exit 2' \
@@ -110,6 +121,80 @@ printf '%s\n' \
   'esac' \
   >"$test_root/adversarial-kernel"
 chmod 755 "$test_root/adversarial-kernel"
+
+expect_rejected_version() {
+  local label="$1"
+  local mode="$2"
+  local diagnostic="$3"
+  local rejected_output="$test_root/$label-output"
+  local rejected_log="$test_root/$label.out"
+  local version_dir_file="$test_root/$label.version-dir"
+
+  if PATH="$fake_bin:$PATH" FAKE_KERNEL="$test_root/adversarial-kernel" \
+    FAKE_VERSION_MODE="$mode" VERSION_DIR_FILE="$version_dir_file" \
+    CARGO_TARGET_DIR="$test_root/$label-target" \
+    bash "$packager" skills-v0.2.0 "$rejected_output" \
+    >"$rejected_log" 2>&1; then
+    fail "$label version unexpectedly packaged"
+  fi
+  require_text "$diagnostic" "$rejected_log"
+  reject_text 'package-skills-release: packaged' "$rejected_log"
+  if test -e "$rejected_output" || test -L "$rejected_output"; then
+    fail "$label version exposed a final output path"
+  fi
+  local version_staging
+  version_staging="$(cat "$version_dir_file")"
+  test "$(dirname -- "$version_staging")" = "$test_root" || \
+    fail "$label version did not run in sibling staging"
+  case "$(basename -- "$version_staging")" in
+    ".$label-output.tmp."*) ;;
+    *) fail "$label version staging did not use the hidden output prefix" ;;
+  esac
+  test ! -e "$version_staging" || fail "$label version staging was not cleaned"
+}
+
+expect_rejected_version nul-bearing-version nul binary_version_mismatch
+expect_rejected_version invalid-utf8-version invalid_utf8 binary_version_mismatch
+expect_rejected_version oversized-version oversized binary_version_too_large
+expect_rejected_version extra-newline-version extra_newline binary_version_mismatch
+expect_rejected_version crlf-version crlf binary_version_mismatch
+expect_rejected_version nonzero-version nonzero binary_version_mismatch
+require_text 'version_max_bytes=' "$packager"
+require_text '.version' "$packager"
+
+expect_accepted_version() {
+  local label="$1"
+  local mode="$2"
+  local accepted_output="$test_root/$label-output"
+  local version_dir_file="$test_root/$label.version-dir"
+
+  if ! PATH="$fake_bin:$PATH" FAKE_KERNEL="$test_root/adversarial-kernel" \
+    FAKE_VERSION_MODE="$mode" VERSION_DIR_FILE="$version_dir_file" \
+    CARGO_TARGET_DIR="$test_root/$label-target" \
+    bash "$packager" skills-v0.2.0 "$accepted_output" \
+    >"$test_root/$label.out" 2>&1; then
+    fail "$label version was unexpectedly rejected"
+    return
+  fi
+  require_text 'package-skills-release: packaged' "$test_root/$label.out"
+  test "$(find "$accepted_output" -mindepth 1 -maxdepth 1 -printf '%f\n' | \
+    sort | tr '\n' ' ')" = 'SHA256SUMS dvandva-kernel-linux-x86_64 ' || \
+    fail "$label version package did not contain exactly two release files"
+  (cd "$accepted_output" && sha256sum -c SHA256SUMS >/dev/null) || \
+    fail "$label version checksum did not verify"
+  local version_staging
+  version_staging="$(cat "$version_dir_file")"
+  test "$(dirname -- "$version_staging")" = "$test_root" || \
+    fail "$label version did not run in sibling staging"
+  case "$(basename -- "$version_staging")" in
+    ".$label-output.tmp."*) ;;
+    *) fail "$label version staging did not use the hidden output prefix" ;;
+  esac
+  test ! -e "$version_staging" || fail "$label version staging was not promoted"
+}
+
+expect_accepted_version exact-version exact
+expect_accepted_version one-lf-version one_lf
 
 expect_rejected_probe() {
   local label="$1"
@@ -292,11 +377,68 @@ test -f "$nonempty/foreign"
 
 workflow="$repo_root/.github/workflows/skills-release.yml"
 python3 - "$workflow" <<'PY'
+import shlex
 import sys
+from copy import deepcopy
+
 from ruamel.yaml import YAML
 
 with open(sys.argv[1], encoding="utf-8") as stream:
     workflow = YAML(typ="safe").load(stream)
+
+
+CHECKOUT = "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
+RELEASE_TOKENS = [
+    "gh", "release", "create", "$GITHUB_REF_NAME",
+    "artifacts/dvandva-kernel-linux-x86_64",
+    "artifacts/SHA256SUMS",
+    "--verify-tag",
+    "--title", "Dvandva skills $release_version",
+    "--notes",
+    (
+        "Skill-only Dvandva v4 kernel for setup-dvandva, vadi, and prativadi. "
+        "Kernel $release_version writes dvandva.run.v2 with role API 2; legacy "
+        "v1 runs require the explicit one-way upgrade. The crate remains "
+        "unpublished and the archived v3 plugin remains retired."
+    ),
+]
+
+
+def validate_release_boundaries(candidate):
+    verify = candidate["jobs"]["verify"]
+    assert set(verify) == {"runs-on", "steps"}
+    verify_checkout = next(
+        step for step in verify["steps"]
+        if step["name"] == "Check out the tested revision"
+    )
+    assert verify_checkout == {
+        "name": "Check out the tested revision",
+        "uses": CHECKOUT,
+        "with": {"fetch-depth": 0},
+    }
+
+    release_steps = candidate["jobs"]["release"]["steps"]
+    release_checkout = next(
+        step for step in release_steps if step["name"] == "Check out the release tag"
+    )
+    assert release_checkout == {
+        "name": "Check out the release tag",
+        "uses": CHECKOUT,
+        "with": {"fetch-depth": 0},
+    }
+    publish = next(step for step in release_steps if step["name"] == "Publish GitHub release")
+    publish_run = publish["run"]
+    release_command = publish_run[publish_run.index("gh release create"):]
+    assert shlex.split(release_command.replace("\\\n", " ")) == RELEASE_TOKENS
+
+
+def require_mutation_rejected(label, candidate):
+    try:
+        validate_release_boundaries(candidate)
+    except (AssertionError, KeyError, StopIteration, ValueError):
+        return
+    raise AssertionError(f"workflow mutation accepted: {label}")
+
 
 assert isinstance(workflow, dict)
 assert set(workflow) == {"name", "on", "permissions", "jobs"}
@@ -335,9 +477,6 @@ assert "bash tests/skills/setup-dvandva.sh" in runs
 assert "bash tests/skills/role-skills.sh" in runs
 assert "bash tests/skills/package-release.sh" in runs
 assert "bash tests/skills/two-role-canary.sh" in runs
-checkout = next(step for step in steps if step["name"] == "Check out the tested revision")
-assert checkout["uses"] == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
-assert checkout["with"]["fetch-depth"] == 0
 release_steps = workflow["jobs"]["release"]["steps"]
 assert [step["name"] for step in release_steps] == [
     "Check out the release tag",
@@ -345,9 +484,6 @@ assert [step["name"] for step in release_steps] == [
     "Package the private kernel",
     "Publish GitHub release",
 ]
-release_checkout = next(step for step in release_steps if step["name"] == "Check out the release tag")
-assert release_checkout["uses"] == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
-assert release_checkout["with"]["fetch-depth"] == 0
 package = next(step for step in release_steps if step["name"] == "Package the private kernel")
 assert package["run"] == 'bash scripts/package-skills-release.sh "$GITHUB_REF_NAME" artifacts'
 publish = next(step for step in release_steps if step["name"] == "Publish GitHub release")
@@ -355,12 +491,31 @@ assert publish["env"] == {"GH_TOKEN": "${{ github.token }}"}
 publish_run = publish["run"]
 assert 'release_version="${GITHUB_REF_NAME#skills-v}"' in publish_run
 assert 'gh release create "$GITHUB_REF_NAME"' in publish_run
-assert "artifacts/dvandva-kernel-linux-x86_64" in publish_run
-assert "artifacts/SHA256SUMS" in publish_run
-assert "artifacts/*" not in publish_run
-assert "--verify-tag" in publish_run
-assert 'Dvandva skills $release_version' in publish_run
-assert 'Kernel $release_version writes dvandva.run.v2' in publish_run
+validate_release_boundaries(workflow)
+
+mutated = deepcopy(workflow)
+next(step for step in mutated["jobs"]["verify"]["steps"]
+     if step["name"] == "Check out the tested revision")["with"]["ref"] = "main"
+require_mutation_rejected("verify ref main", mutated)
+
+mutated = deepcopy(workflow)
+next(step for step in mutated["jobs"]["release"]["steps"]
+     if step["name"] == "Check out the release tag")["with"]["ref"] = "main"
+require_mutation_rejected("release ref main", mutated)
+
+mutated = deepcopy(workflow)
+mutated["jobs"]["verify"]["permissions"] = {"contents": "write"}
+require_mutation_rejected("verify contents write", mutated)
+
+mutated = deepcopy(workflow)
+mutated_publish = next(
+    step for step in mutated["jobs"]["release"]["steps"]
+    if step["name"] == "Publish GitHub release"
+)
+mutated_publish["run"] = mutated_publish["run"].replace(
+    "  --verify-tag", "  artifacts/forbidden-third-asset \\\n  --verify-tag", 1
+)
+require_mutation_rejected("third release asset", mutated)
 PY
 require_text 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' "$workflow"
 require_text 'probe --expected-schema dvandva.run.v2 --expected-role-api 2' "$workflow"
@@ -441,11 +596,56 @@ test "$(sed -n '/^## Retired v3 archive/,$p' "$repo_root/README.md" | \
   fail 'README archive changed'
 
 context="$repo_root/CONTEXT.md"
-for term in 'Canonical Scope' 'Checkpoint Manifest' 'Checkpoint Binding' \
+for term in 'Canonical Scope' 'Scope Revision' 'Checkpoint Manifest' \
+  'Manifest Digest' 'Checkpoint Binding' \
   'Checkpoint Supersession' 'Approval Withdrawal' 'Protocol Upgrade' \
   'Publication Gate' 'Harness Goal'; do
   require_text "**$term**" "$context"
 done
+python3 - "$context" <<'PY' || fail 'CONTEXT glossary definitions are not exact'
+import re
+import sys
+from pathlib import Path
+
+
+source = Path(sys.argv[1]).read_text(encoding="utf-8")
+definitions = {
+    name: " ".join(body.split())
+    for name, body in re.findall(
+        r"^\*\*([^*]+)\*\*:\n(.*?)(?=\n\*\*|\Z)",
+        source,
+        flags=re.MULTILINE | re.DOTALL,
+    )
+}
+assert definitions["Scope Revision"] == (
+    "The identity of one declared Canonical Scope version. A human-approved "
+    "amendment makes every earlier scope-bound checkpoint, Handoff, and review stale."
+)
+assert definitions["Manifest Digest"] == (
+    "The immutable content identity of the checkpoint kind, checkpoint identity, "
+    "complete Checkpoint Manifest, and Scope Revision."
+)
+assert definitions["Checkpoint Binding"] == (
+    "The checkpoint identity, Manifest Digest, and Scope Revision that together name "
+    "the exact review object. Changing any coordinate makes the earlier binding stale."
+)
+assert definitions["Protocol Upgrade"] == (
+    "The dedicated one-way adoption of active v2 from a legacy v1 Baton, retaining "
+    "prior state and history as provenance in the same run. It is distinct from "
+    "ordinary role actions, recovery, or setup."
+)
+assert definitions["Handoff"] == (
+    "A run milestone whose current Scope Revision and optional Checkpoint Binding are "
+    "published and reviewed together. Handoffs cover role transfer, run start, Protocol "
+    "Upgrade, scope amendment, Checkpoint Supersession, and Approval Withdrawal."
+)
+assert definitions["Publication Gate"] == (
+    "The fixed requirement that the Codex harness publishes the Codex Sites explainer "
+    "and the Claude harness reviews that exact deployment for the same Handoff before "
+    "the run advances. These duties do not follow Worker or Reviewer casting."
+)
+assert "An assignee change" not in definitions["Handoff"]
+PY
 
 adr="$repo_root/docs/adr/0003-run-v2-security-epoch.md"
 require_text 'status: accepted' "$adr"
