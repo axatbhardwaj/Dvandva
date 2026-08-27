@@ -118,9 +118,9 @@ apply_action "$vadi" worker-a "$run_dir" 7 publication-synced \
   >/dev/null
 terminal="$(apply_action "$vadi" worker-a "$run_dir" 8 finalize '{"type":"finalize"}')"
 grep -Fq '"status": "done"' <<<"$terminal"
-bash "$vadi" wait worker-a "$run_dir" 8 500 | grep -Fq '"status": "done"'
+bash "$vadi" wait worker-a "$run_dir" 8 500 | grep -F '"status": "done"' >/dev/null
 bash "$prativadi" wait "$reviewer_session" "$run_dir" 8 500 |
-  grep -Fq '"status": "done"'
+  grep -F '"status": "done"' >/dev/null
 
 for credential in \
   "$XDG_STATE_HOME/dvandva/credentials/worker-a/$run_id/worker.json" \
@@ -152,7 +152,7 @@ apply_action "$vadi" worker-b "$reverse_run_dir" 5 reverse-publication \
   '{"type":"record_publication","required":true,"desired_revision":5,"published_revision":5,"refs":[{"kind":"explainer","value":"https://example.test/def-456"}]}' \
   >/dev/null
 apply_action "$vadi" worker-b "$reverse_run_dir" 6 reverse-finalize \
-  '{"type":"finalize"}' | grep -Fq '"status": "done"'
+  '{"type":"finalize"}' | grep -F '"status": "done"' >/dev/null
 
 test ! -e "$test_root/peer-launched"
 printf 'two-role skill canary: ok\n'
