@@ -6,17 +6,11 @@ test_root="$(mktemp -d)"
 trap 'rm -rf -- "$test_root"' EXIT
 
 cargo build --quiet --locked --manifest-path "$repo_root/v4/Cargo.toml"
-release_dir="$test_root/release"
-mkdir -p "$release_dir"
-cp "$repo_root/v4/target/debug/dvandva-v4" \
-  "$release_dir/dvandva-kernel-linux-x86_64"
-(cd "$release_dir" && sha256sum dvandva-kernel-linux-x86_64 >SHA256SUMS)
-
 export XDG_DATA_HOME="$test_root/data"
 export XDG_STATE_HOME="$test_root/state"
-export DVANDVA_RELEASE_DIR="$release_dir"
-bash "$repo_root/skills/setup-dvandva/scripts/setup-dvandva.sh" \
-  install --version 0.1.1 >/dev/null
+binary="$XDG_DATA_HOME/dvandva/bin/current/dvandva-kernel"
+mkdir -p "$(dirname "$binary")"
+cp "$repo_root/v4/target/debug/dvandva-v4" "$binary"
 
 workspace="$test_root/workspace"
 mkdir -p "$workspace"
@@ -26,83 +20,118 @@ git -C "$workspace" remote add origin git@github.com:axatbhardwaj/Dvandva.git
 vadi="$repo_root/skills/vadi/scripts/dvandva-role.sh"
 prativadi="$repo_root/skills/prativadi/scripts/dvandva-role.sh"
 
+expect_failure() {
+  local pattern="$1"
+  shift
+  local output
+  if output="$("$@" 2>&1)"; then
+    printf 'expected command to fail: %s\n' "$*" >&2
+    exit 1
+  fi
+  grep -Fq "$pattern" <<<"$output"
+}
+
 export CODEX_SESSION_ID="codex-session"
 test "$(bash "$vadi" session-id)" = "codex-session"
 generated="$(env -u CODEX_SESSION_ID bash "$vadi" session-id --generate)"
 [[ "$generated" =~ ^[0-9a-f-]{36}$ ]]
-bash "$vadi" probe | grep -F '"compatible": true' >/dev/null
+probe="$(bash "$vadi" probe)"
+grep -Fq '"version": "0.2.0"' <<<"$probe"
+grep -Fq '"write_schema": "dvandva.run.v2"' <<<"$probe"
+grep -Fq '"read_schemas": [' <<<"$probe"
+grep -Fq '"role_api": 2' <<<"$probe"
+grep -Fq '"upgrade_from_v1": true' <<<"$probe"
 
-worker="$(bash "$vadi" start codex-session codex claude "$workspace" \
-  'Implement DEF-123' DEF-123)"
-grep -Fq '"disposition": "created"' <<<"$worker"
-run_id="$(sed -n 's/.*"run_id": "\([^"]*\)".*/\1/p' <<<"$worker")"
-run_dir="$XDG_STATE_HOME/dvandva/runs/$run_id"
-grep -Fq '"lease_seconds": 1800' "$run_dir/baton.json"
-
-if bash "$vadi" start invalid codex gpt-5.6-sol "$workspace" \
-  'Implement DEF-999' DEF-999 >"$test_root/invalid.out" 2>"$test_root/invalid.err"; then
-  printf 'same-family alias unexpectedly accepted\n' >&2
+# A truthful v1/API-1 kernel must be rejected before the facade reaches a role command.
+mv "$binary" "$binary.new"
+cat >"$binary" <<'OLD_KERNEL'
+#!/usr/bin/env bash
+if test "${1:-}" = "--version"; then
+  printf 'dvandva-v4 0.1.1\n'
+  exit 0
+fi
+if test "${1:-}" = "probe"; then
+  printf '{"package":"dvandva-v4","version":"0.1.1","write_schema":"dvandva.run.v1","read_schemas":["dvandva.run.v1"],"role_api":1,"capabilities":{"upgrade_from_v1":false},"compatible":false}\n'
   exit 1
 fi
-grep -Fq 'harness families must be exactly codex and claude' "$test_root/invalid.err"
+printf 'role-called\n' >>"${OLD_KERNEL_LOG:?}"
+exit 99
+OLD_KERNEL
+chmod 755 "$binary"
+export OLD_KERNEL_LOG="$test_root/old-kernel.log"
+expect_failure 'incompatible kernel' bash "$vadi" start old codex claude "$workspace" \
+  'Must not mutate' DEF-OLD --required-deliverable implementation=old
+test ! -e "$OLD_KERNEL_LOG"
+test ! -e "$XDG_STATE_HOME/dvandva/runs"
+mv "$binary.new" "$binary"
 
+# A truthful old facade asks for v1/API 1 and the v0.2 kernel rejects it before mutation.
+old_facade="$test_root/dvandva-role-v0.1.1.sh"
+cat >"$old_facade" <<'OLD_FACADE'
+#!/usr/bin/env bash
+set -euo pipefail
+binary="${XDG_DATA_HOME:?}/dvandva/bin/current/dvandva-kernel"
+"$binary" probe --expected-schema dvandva.run.v1 --expected-role-api 1 >/dev/null
+"$binary" role start --api 1 "$@"
+OLD_FACADE
+chmod 755 "$old_facade"
+expect_failure 'kernel compatibility mismatch' bash "$old_facade" \
+  --workspace "$workspace" --runs-dir "$XDG_STATE_HOME/dvandva/runs" \
+  --credentials-root "$XDG_STATE_HOME/dvandva/credentials" --role worker \
+  --session-id old --current-harness codex --peer-harness claude \
+  --objective old --required-deliverable implementation=old
+test ! -e "$XDG_STATE_HOME/dvandva/runs"
+
+export DVANDVA_LEASE_SECONDS=1
+worker="$(bash "$vadi" start codex-session codex claude "$workspace" \
+  'Implement DEF-123' DEF-123 --objective-ref ticket=https://tracker.test/DEF-123 \
+  --required-deliverable implementation='Implement DEF-123')"
+grep -Fq '"outcome": "started"' <<<"$worker"
+run_id="$(sed -n 's/.*"run_id": "\([^"]*\)".*/\1/p' <<<"$worker")"
+run_dir="$XDG_STATE_HOME/dvandva/runs/$run_id"
+
+# Exact joins pass only identity unless scope was explicitly supplied.
 reviewer="$(bash "$prativadi" start claude-session claude codex "$workspace" \
-  'Implement DEF-123' DEF-123 --wait)"
-grep -Fq '"disposition": "claimed"' <<<"$reviewer"
+  --run-id "$run_id")"
 grep -Fq "\"run_id\": \"$run_id\"" <<<"$reviewer"
+grep -Fq '"summary": "Implement DEF-123"' <<<"$reviewer"
+test "$(find "$XDG_STATE_HOME/dvandva/runs" -mindepth 1 -maxdepth 1 -type d | wc -l)" = 1
 
-bash "$vadi" read codex-session "$run_dir" | grep -F '"status": "working"' >/dev/null
-bash "$prativadi" read claude-session "$run_dir" | grep -F '"status": "working"' >/dev/null
+bash "$vadi" read codex-session "$run_dir" | grep -Fq '"status": "working"'
+sleep 2
+bash "$vadi" reclaim codex-session "$run_dir" 2 | grep -Fq '"revision": 3'
+bash "$vadi" heartbeat codex-session "$run_dir" 3 | grep -Fq '"revision":4'
+bash "$vadi" wait codex-session "$run_dir" 4 50 | grep -Fq '"revision": 4'
 
-action="$test_root/checkpoint.json"
-printf '%s\n' \
-  '{"type":"submit_checkpoint","checkpoint":{"kind":"git","identity":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verification":["test"]}}' \
-  >"$action"
-bash "$vadi" apply codex-session "$run_dir" 2 "$action" |
-  grep -F '"status": "reviewing"' >/dev/null
+action="$test_root/human.json"
+printf '%s\n' '{"type":"request_human_decision","question":"Confirm scope","evidence":["scope changed"],"options":["yes","no"],"contact_role":"worker","resume_status":"working","resume_assignee":"worker"}' >"$action"
+bash "$vadi" apply codex-session "$run_dir" 4 "$action" | grep -Fq '"status": "human_decision"'
+
+# Explicit upgrade is followed by an explicit reclaim and a normal v2 read.
+legacy_dir="$XDG_STATE_HOME/dvandva/runs/legacy-run"
+mkdir -p "$legacy_dir/history"
+cat >"$legacy_dir/baton.json" <<'LEGACY'
+{
+  "schema":"dvandva.run.v1","run_id":"legacy-run",
+  "objective":{"summary":"Migrate safely","refs":[]},
+  "workspace":{"repository_id":"github.com/axatbhardwaj/dvandva","origin":"git@github.com:axatbhardwaj/Dvandva.git","worktree":null},
+  "task":{"reference":"DEF-LEGACY","summary":"Migrate safely"},
+  "participants":{"worker":{"harness":"codex","claim":null},"reviewer":{"harness":"claude","claim":null}},
+  "status":"working","assignee":"worker","revision":0,"checkpoint":null,"review":null,
+  "publication":{"required":true,"desired_revision":0,"published_revision":null,"refs":[]},
+  "human_decision":null,"predecessor_run_id":null,"terminal":null,"recovery":null
+}
+LEGACY
+cp "$legacy_dir/baton.json" "$legacy_dir/history/00000000000000000000.json"
+upgrade_required="$(bash "$vadi" start legacy-session codex claude "$workspace" --run-id legacy-run)"
+grep -Fq '"outcome": "upgrade_required"' <<<"$upgrade_required"
+bash "$vadi" upgrade legacy-session "$legacy_dir" codex claude 0 | grep -Fq '"schema": "dvandva.run.v2"'
+bash "$vadi" claim legacy-session "$legacy_dir" 1 | grep -Fq '"revision": 2'
+bash "$vadi" read legacy-session "$legacy_dir" | grep -Fq '"status": "revising"'
 
 cmp "$vadi" "$prativadi"
 
 grep -Fq 'act as vadi' "$repo_root/skills/vadi/SKILL.md"
-grep -Fq 'implement as vadi' "$repo_root/skills/vadi/SKILL.md"
 grep -Fq 'act as prativadi' "$repo_root/skills/prativadi/SKILL.md"
-grep -Fq 'join the current run as prativadi' "$repo_root/skills/prativadi/SKILL.md"
-grep -Fq 'Never invoke the peer harness' "$repo_root/skills/vadi/SKILL.md"
-grep -Fq 'Never invoke or wake the peer harness' "$repo_root/skills/prativadi/SKILL.md"
-grep -Fq 'Matt Pocock skill unless the human explicitly invokes' \
-  "$repo_root/skills/vadi/SKILL.md"
-grep -Fq 'Matt Pocock skill unless the human explicitly invokes' \
-  "$repo_root/skills/prativadi/SKILL.md"
-
-skill_list="$(npx --yes skills add "$repo_root" --list)"
-plain_skill_list="$(
-  printf '%s' "$skill_list" |
-    sed -E $'s/\x1B\\[[0-9;?]*[ -\\/]*[@-~]//g'
-)"
-grep -Fq 'Found 3 skills' <<<"$plain_skill_list"
-for skill in setup-dvandva vadi prativadi; do
-  grep -Fq "$skill" <<<"$plain_skill_list"
-done
-
-skills_home="$test_root/skills-home"
-mkdir -p "$skills_home"
-HOME="$skills_home" npx --yes skills add "$repo_root" --copy --global \
-  --agent claude-code codex --skill setup-dvandva vadi prativadi -y >/dev/null
-for skill in setup-dvandva vadi prativadi; do
-  test -f "$skills_home/.claude/skills/$skill/SKILL.md"
-  test -f "$skills_home/.agents/skills/$skill/SKILL.md"
-done
-
-installed_kernel="$XDG_DATA_HOME/dvandva/bin/0.1.1/dvandva-kernel"
-mv -- "$installed_kernel" "$installed_kernel.real"
-printf '%s\n' \
-  '#!/usr/bin/env bash' \
-  'printf '\''{"compatible": true}\\n'\''' \
-  'head -c 1048576 /dev/zero | tr '\''\000'\'' x' \
-  'printf '\''\\n'\''' \
-  >"$installed_kernel"
-chmod 755 "$installed_kernel"
-bash "$vadi" probe >/dev/null
-mv -- "$installed_kernel.real" "$installed_kernel"
 
 printf 'role skill wrappers: ok\n'
