@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::action::Action;
 use crate::claim::{self, ClaimError, Role};
-use crate::model::RunBaton;
+use crate::model::{RunBaton, TaskIdentity, WorkspaceIdentity};
 use crate::store::{RunChannel, StoreError};
 use crate::transition::{self, TransitionError};
 use crate::wait::{self, WaitError};
@@ -31,6 +31,14 @@ enum Command {
         worker: String,
         #[arg(long)]
         reviewer: String,
+        #[arg(long)]
+        repository_id: String,
+        #[arg(long)]
+        origin: Option<String>,
+        #[arg(long)]
+        worktree: Option<String>,
+        #[arg(long)]
+        task_reference: Option<String>,
     },
     Read {
         #[arg(long)]
@@ -142,9 +150,28 @@ pub fn run() -> Result<(), CliError> {
             objective,
             worker,
             reviewer,
+            repository_id,
+            origin,
+            worktree,
+            task_reference,
         } => {
-            validate_init(&run_id, &objective, &worker, &reviewer)?;
-            let baton = RunBaton::new(run_id, objective.trim(), worker, reviewer);
+            validate_init(&run_id, &objective, &worker, &reviewer, &repository_id)?;
+            validate_optional("origin", origin.as_deref())?;
+            validate_optional("worktree", worktree.as_deref())?;
+            validate_optional("task reference", task_reference.as_deref())?;
+            let objective = objective.trim();
+            let baton = RunBaton::new(run_id, objective, worker.trim(), reviewer.trim())
+                .with_discovery_identity(
+                    WorkspaceIdentity {
+                        repository_id: repository_id.trim().to_owned(),
+                        origin: trim_optional(origin),
+                        worktree: trim_optional(worktree),
+                    },
+                    TaskIdentity {
+                        reference: trim_optional(task_reference),
+                        summary: objective.to_owned(),
+                    },
+                );
             RunChannel::open(run_dir).create(&baton)?;
             Ok(())
         }
@@ -338,6 +365,7 @@ fn validate_init(
     objective: &str,
     worker: &str,
     reviewer: &str,
+    repository_id: &str,
 ) -> Result<(), CliError> {
     let safe_id = !run_id.is_empty()
         && run_id != "."
@@ -359,5 +387,21 @@ fn validate_init(
             "worker and reviewer must use different harness families".to_owned(),
         ));
     }
+    if repository_id.trim().is_empty() {
+        return Err(CliError::Invalid(
+            "repository id must not be blank".to_owned(),
+        ));
+    }
     Ok(())
+}
+
+fn validate_optional(name: &str, value: Option<&str>) -> Result<(), CliError> {
+    if value.is_some_and(|value| value.trim().is_empty()) {
+        return Err(CliError::Invalid(format!("{name} must not be blank")));
+    }
+    Ok(())
+}
+
+fn trim_optional(value: Option<String>) -> Option<String> {
+    value.map(|value| value.trim().to_owned())
 }
