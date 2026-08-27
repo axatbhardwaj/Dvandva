@@ -316,8 +316,7 @@ fn start_created_run(
         request.credentials_root,
         request.role,
         request.session_id,
-        grant.credential,
-        request.role == Role::Worker,
+        grant,
     )
 }
 
@@ -481,16 +480,16 @@ fn finish_created_start(
     credentials_root: &Path,
     role: Role,
     session_id: &str,
-    credential: PathBuf,
-    include_peer_prompt: bool,
+    grant: RoleClaimResult,
 ) -> Result<RoleStartResult, RoleSessionError> {
-    let snapshot = read(run_dir, credentials_root, role, session_id)?;
-    Ok(started_role(
+    finish_candidate_claim(
         "created",
-        snapshot,
-        credential,
-        include_peer_prompt,
-    ))
+        run_dir,
+        credentials_root,
+        role,
+        session_id,
+        grant,
+    )
 }
 
 fn read_snapshot_at_revision(
@@ -1105,20 +1104,62 @@ mod tests {
         let worker = claim(&run_dir, &credentials, Role::Worker, "worker", 300, 0).unwrap();
         claim(&run_dir, &credentials, Role::Reviewer, "reviewer", 300, 1).unwrap();
 
-        let result = finish_created_start(
-            &run_dir,
-            &credentials,
-            Role::Worker,
-            "worker",
-            worker.credential,
-            true,
-        )
-        .unwrap();
+        let result =
+            finish_created_start(&run_dir, &credentials, Role::Worker, "worker", worker).unwrap();
         let RoleStartResult::Started(started) = result else {
             panic!("created run did not return started");
         };
         assert_eq!(started.disposition, "created");
-        assert_eq!(started.snapshot.baton.revision, 2);
+        assert_eq!(started.snapshot.baton.revision, 1);
+        assert_eq!(std::fs::read_dir(&runs).unwrap().count(), 1);
+        let current = RunChannel::open(&run_dir).read().unwrap();
+        assert_eq!(current.revision, 2);
+        let worker = credential::load(&credentials, "worker", "run-a", Role::Worker).unwrap();
+        let reviewer = credential::load(&credentials, "reviewer", "run-a", Role::Reviewer).unwrap();
+        claim::verify(&current, Role::Worker, "worker", &worker.token).unwrap();
+        claim::verify(&current, Role::Reviewer, "reviewer", &reviewer.token).unwrap();
+    }
+
+    #[test]
+    fn created_start_keeps_the_worker_claim_scope_after_a_later_amendment() {
+        let root = tempfile::tempdir().unwrap();
+        let runs = root.path().join("runs");
+        let run_dir = runs.join("run-a");
+        let credentials = root.path().join("credentials");
+        let scope = fixture_scope();
+        let baton = RunBaton::new(
+            "run-a",
+            "Original objective",
+            "codex",
+            "claude",
+            scope.to_vec(),
+        )
+        .unwrap();
+        let channel = RunChannel::open(&run_dir);
+        channel.create(&baton).unwrap();
+        let worker = claim(&run_dir, &credentials, Role::Worker, "worker", 300, 0).unwrap();
+        let token = amend_scope(&channel, &credentials, "worker", 1);
+
+        let result =
+            finish_created_start(&run_dir, &credentials, Role::Worker, "worker", worker).unwrap();
+        let RoleStartResult::Started(started) = result else {
+            panic!("created run did not return started");
+        };
+        assert_eq!(started.disposition, "created");
+        assert_eq!(started.snapshot.baton.revision, 1);
+        assert_eq!(
+            started.snapshot.baton.objective.summary,
+            "Original objective"
+        );
+        assert_eq!(
+            started.peer_prompt.as_deref(),
+            Some("Act as prativadi and join Dvandva run run-a.")
+        );
+
+        let current = channel.read().unwrap();
+        assert_eq!(current.revision, 3);
+        assert_eq!(current.objective.summary, "Amended objective");
+        claim::verify(&current, Role::Worker, "worker", &token).unwrap();
         assert_eq!(std::fs::read_dir(&runs).unwrap().count(), 1);
     }
 
