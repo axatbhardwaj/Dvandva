@@ -72,7 +72,8 @@ fn assert_role_source_contract(role: &str) {
     let allowed_exception =
         "new human scope, ambiguity, or unavailable mandated publication/review capability";
     assert!(
-        skill.split_whitespace()
+        skill
+            .split_whitespace()
             .collect::<Vec<_>>()
             .join(" ")
             .contains(allowed_exception),
