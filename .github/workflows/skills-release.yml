@@ -1,0 +1,60 @@
+name: Skills v4
+
+on:
+  push:
+    branches:
+      - "**"
+    tags:
+      - "skills-v*"
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the tested revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Select stable Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Verify v4 kernel
+        run: |
+          cargo fmt --manifest-path v4/Cargo.toml -- --check
+          cargo clippy --manifest-path v4/Cargo.toml --all-targets -- -D warnings
+          cargo test --manifest-path v4/Cargo.toml --locked
+      - name: Verify archived v3 remains intact
+        run: cargo test --manifest-path rust/dvandva/Cargo.toml --locked
+      - name: Verify skill surfaces and packaging
+        run: |
+          bash tests/skills/setup-dvandva.sh
+          bash tests/skills/role-skills.sh
+          bash tests/skills/package-release.sh
+          bash tests/skills/two-role-canary.sh
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/skills-v')
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out the release tag
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Select stable Rust
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+      - name: Package the private kernel
+        run: bash scripts/package-skills-release.sh "$GITHUB_REF_NAME" artifacts
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" artifacts/* \
+            --verify-tag \
+            --title "Dvandva skills ${GITHUB_REF_NAME#skills-v}" \
+            --notes "Skill-only Dvandva v4 kernel for the setup-dvandva, vadi, and prativadi skills. The archived v3 plugin remains retired."
