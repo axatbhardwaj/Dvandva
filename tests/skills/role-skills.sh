@@ -197,6 +197,7 @@ done
 grep -Fq 'Exact joins pass only `--run-id`' <<<"$role_contract"
 grep -Fq 'Publication never substitutes for supersession or withdrawal.' <<<"$role_contract"
 grep -Fq 'foreground local wait' <<<"$role_contract"
+grep -Fq 'Prativadi never creates a run.' "$prativadi_contract"
 
 for forbidden in create_goal update_goal get_goal pause_goal complete_goal clear_goal; do
   ! grep -Fq "$forbidden" <<<"$role_contract"

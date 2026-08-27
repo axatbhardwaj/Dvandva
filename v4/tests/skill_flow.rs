@@ -74,6 +74,7 @@ fn active_role_skill_sources_define_the_complete_v2_contract() {
 
     assert!(both.contains("Exact joins pass only `--run-id`"));
     assert!(both.contains("Publication never substitutes for supersession or withdrawal."));
+    assert!(prativadi.contains("Prativadi never creates a run."));
     for forbidden in [
         "create_goal",
         "update_goal",

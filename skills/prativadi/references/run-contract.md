@@ -21,6 +21,9 @@ amends or overrides scope: surface `scope_mismatch` without claiming or
 working. Without an exact run, use `--wait`; surface multiple matches for human
 selection rather than choosing newest.
 
+Prativadi never creates a run. If requested scope belongs in a separate run,
+return that choice to the human so vadi/worker can create it.
+
 Surface `ambiguous`, `busy`, `run_missing`, and `upgrade_required` rather than
 guessing. Surface the start outcome and canonical snapshot before domain-tool
 work.
