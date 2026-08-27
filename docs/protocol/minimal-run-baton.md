@@ -9,7 +9,28 @@ reviewer session. The human starts the sessions separately in T3 Code. The
 kernel never invokes Claude from Codex or Codex from Claude. GitHub, Linear,
 Sites, and other systems may be recorded as opaque references; they do not
 coordinate or wake the pair. The v4 crate is non-publishable and independent
-of archived v3.5.1.
+of archived v3.5.1. Harness goals are user-owned context outside the Baton and
+remain unchanged.
+
+Fresh runs use `dvandva.run.v2` and role API 2. V1 is readable only for
+classification and a dedicated one-way upgrade. Ordinary v1 claim, wait, or
+mutation returns `migration_required`; history permits one v1-to-v2 edge and
+never a downgrade. Setup never migrates runs.
+
+## Canonical scope and checkpoint binding
+
+The Baton owns the objective, references, task identity, `scope_revision`, and
+a non-empty ordered set of required deliverables. Exact-run selection compares
+every supplied coordinate and returns `scope_mismatch` without claiming when
+one differs. Only a resumed Human Decision can amend scope; amendment
+increments `scope_revision` and clears stale checkpoint state.
+
+A checkpoint is complete only when its unique deliverable IDs cover canonical
+scope exactly and it has non-empty verification. The kernel trims inputs,
+orders the manifest deterministically, and derives `manifest_digest`. Semantic
+review binds three coordinates: immutable checkpoint identity,
+`manifest_digest`, and `scope_revision`. A branch name, mutable URL, or partial
+artifact list is not a checkpoint.
 
 ## State graph
 
@@ -24,10 +45,13 @@ any active state -> abandoned
 ```
 
 The worker submits a new immutable checkpoint from `working` or `revising`.
-The reviewer binds findings or approval to that exact identity. Finalization
-requires an unchanged approved identity and a synchronized publication
-revision. New v4 runs require publication from initialization; the requirement
-cannot be disabled. Terminal state cannot be reopened.
+The reviewer binds findings or approval to the exact checkpoint. If new work is
+found while the reviewer owns it, the worker uses
+`request_checkpoint_supersession`; the pending request blocks approval until
+the reviewer accepts and returns ownership. If approval already moved the run
+to `finalizing`, the worker uses `withdraw_approval`. The old immutable history
+remains evidence. Publication is never a side channel for replacing scope or a
+checkpoint.
 
 ## Storage and authority
 
@@ -40,51 +64,51 @@ cannot be disabled. Terminal state cannot be reopened.
 - `recover` validates a complete history prefix, creates a new revision, and
   clears both claims.
 
+The kernel derives a participant's harness from its authenticated claim. New
+and upgraded runs require exactly one normalized Codex participant and one
+normalized Claude participant. Credential replacement and protocol upgrade
+fence stale claims.
+
 ## Commands
 
-Build with `cargo build --manifest-path v4/Cargo.toml`. The binary supports
-`init`, `read`, `claim`, `heartbeat`, `reclaim`, `apply`, `wait`, and `recover`.
-`apply` consumes a tagged JSON action file and requires role, session ID,
-secret token, and expected revision. Run `dvandva-v4 <command> --help` for all
-flags. Errors are single-line JSON diagnostics on stderr.
+Build with `cargo build --manifest-path v4/Cargo.toml`. `probe` must confirm
+schema `dvandva.run.v2` and role API 2 before role I/O. The role facade returns
+one authoritative snapshot containing the full Baton, legal and advisory
+actions, a blocking reason when applicable, and the exact peer prompt.
 
 ## Starting the pair
 
-Worker session prompt:
+Vadi surfaces the run ID and canonical scope before domain work, followed by
+the exact returned prompt:
 
-> Join run `<RUN_DIR>` as the worker session. Claim `worker`, read the Baton,
-> perform only the current objective, submit immutable checkpoints with
-> verification, maintain publication references when requested, and use
-> `wait` whenever the reviewer owns the next action. Do not invoke or launch
-> Claude; coordinate only through this run directory.
+```text
+Act as prativadi and join Dvandva run <run-id>.
+```
 
-Reviewer session prompt:
+Both roles obey the snapshot's actions and foreground-wait when the peer owns
+the next mutation. Tokens remain private to each role facade.
 
-> Join run `<RUN_DIR>` as the reviewer session. Claim `reviewer`, adversarially
-> review only the current checkpoint identity, record actionable findings or
-> approval, and use `wait` whenever the worker owns the next action. Do not
-> invoke or launch Codex; coordinate only through this run directory.
+## Rolling explainer gate
 
-The human starts both sessions and passes each its own one-time claim token.
-Tokens must not be committed, pasted into the Baton, or published.
+Every run uses one stable owner-only Codex Site. At every semantic handoff the
+Codex-harness participant publishes the current explainer, and the
+Claude-harness participant reviews that exact deployment, independent of
+worker/reviewer casting. The explainer contains canonical scope, the complete
+manifest, findings and decisions, and a current plan/TODO.
 
-## External workflow
+Each deployment and review echoes the pending handoff kind and revision,
+`scope_revision`, optional three-coordinate checkpoint binding, source digest,
+stable Site ID, Site version, and URL. Republishing clears the earlier Claude
+review. A Claude Artifact, local file, mutable URL, public or generic host, or
+another channel cannot satisfy v0.2. Missing Sites or review capability routes
+to Human Decision and remains blocked; an alternative policy requires a future
+protocol epoch.
 
-Grilling, spec review, ticket decomposition, and explicit Matt Pocock skill
-invocations occur before the implementation Run Pair or through deliberate
-human turns. A plan may be projected as a published to-do list, but the Baton
-remains authoritative. Codex normally records the projection before and after
-handoffs; a stale required projection prevents `done` without changing who
-owns the semantic task.
+## Terminal checks
 
-Publication progress is deliberately non-semantic: the worker may record a
-new projection revision while the reviewer owns the checkpoint turn so the
-explainer stays current around each handoff. Once publication is marked
-required it cannot be made optional, and a reported published revision cannot
-return to an unreported state; these monotonic rules prevent bypassing the
-finalization gate.
-
-The current-harness canary is prepared by these prompts but remains pending
-until a human starts both real harness sessions. Automated tests prove two
-local processes and filesystem wake-up; they do not claim a cross-harness
-canary was run.
+`done` requires one current complete checkpoint whose identity,
+`manifest_digest`, and `scope_revision` match the semantic approval; no pending
+supersession or Human Decision; the current handoff's exact Codex Sites
+deployment; and the matching approved Claude explainer review. Finalization
+records that provenance. Terminal state is immutable, and both role loops stop
+only after observing the same terminal Baton identity.

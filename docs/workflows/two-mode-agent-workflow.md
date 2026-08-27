@@ -1,3 +1,8 @@
+> **Historical v3 archive guidance.** This document is preserved byte-for-byte
+> below this banner as evidence of the retired workflow. It does not govern
+> active v4 runs; use
+> [`docs/workflows/skill-only-run.md`](skill-only-run.md) instead.
+
 # Two-Mode Agent Workflow
 
 ## Goal
