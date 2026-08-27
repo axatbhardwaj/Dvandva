@@ -355,3 +355,117 @@ fn explicit_role_reversal_binds_claude_as_worker_and_codex_as_reviewer() {
     assert_eq!(baton["participants"]["worker"]["harness"], "claude");
     assert_eq!(baton["participants"]["reviewer"]["harness"], "codex");
 }
+
+#[test]
+fn explicit_run_id_resolves_an_ambiguous_role_start() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    let runs = root.path().join("state/runs");
+    let credentials = root.path().join("state/credentials");
+    std::fs::create_dir(&workspace).unwrap();
+    git(&workspace, &["init", "--quiet"]);
+    git(
+        &workspace,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:axatbhardwaj/Dvandva.git",
+        ],
+    );
+
+    let first = start_role(
+        &workspace,
+        &runs,
+        &credentials,
+        "worker",
+        "worker-a",
+        "codex",
+        "claude",
+    );
+    let second = command()
+        .args([
+            "role",
+            "start",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-b",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--objective",
+            "Implement DEF-123",
+            "--task-reference",
+            "DEF-123",
+            "--new-run",
+        ])
+        .output()
+        .unwrap();
+    assert!(second.status.success());
+
+    command()
+        .args([
+            "role",
+            "start",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "reviewer",
+            "--session-id",
+            "reviewer",
+            "--current-harness",
+            "claude",
+            "--peer-harness",
+            "codex",
+            "--objective",
+            "Implement DEF-123",
+            "--task-reference",
+            "DEF-123",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""outcome": "ambiguous""#));
+
+    let first_run = first["run_id"].as_str().unwrap();
+    command()
+        .args([
+            "role",
+            "start",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "reviewer",
+            "--session-id",
+            "reviewer",
+            "--current-harness",
+            "claude",
+            "--peer-harness",
+            "codex",
+            "--objective",
+            "Implement DEF-123",
+            "--task-reference",
+            "DEF-123",
+            "--run-id",
+            first_run,
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""outcome": "started""#))
+        .stdout(predicate::str::contains(first_run));
+}

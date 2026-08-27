@@ -69,6 +69,7 @@ pub struct RoleStartRequest<'a> {
     pub peer_harness: &'a str,
     pub objective: &'a str,
     pub task_reference: Option<&'a str>,
+    pub run_id: Option<&'a str>,
     pub lease_seconds: u64,
     pub wait: bool,
     pub poll_interval: Duration,
@@ -108,6 +109,7 @@ fn start_with_retries(
         role: request.role,
         participant_harness: request.current_harness,
         task_reference: request.task_reference,
+        run_id: request.run_id,
         session_id: Some(request.session_id),
     };
     let mut outcome = discovery::discover(request.runs_dir, query)?;

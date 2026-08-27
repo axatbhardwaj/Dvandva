@@ -43,6 +43,8 @@ enum Command {
         #[arg(long)]
         task_reference: Option<String>,
         #[arg(long)]
+        run_id: Option<String>,
+        #[arg(long)]
         session_id: Option<String>,
     },
     DiscoverWait {
@@ -190,6 +192,8 @@ enum RoleCommand {
         objective: String,
         #[arg(long)]
         task_reference: Option<String>,
+        #[arg(long)]
+        run_id: Option<String>,
         #[arg(long, default_value_t = 300)]
         lease_seconds: u64,
         #[arg(long)]
@@ -346,6 +350,7 @@ pub fn run() -> Result<(), CliError> {
             reviewer_harness,
             role,
             task_reference,
+            run_id,
             session_id,
         } => {
             let outcome = discovery::discover(
@@ -355,6 +360,7 @@ pub fn run() -> Result<(), CliError> {
                     role,
                     participant_harness: &reviewer_harness,
                     task_reference: task_reference.as_deref(),
+                    run_id: run_id.as_deref(),
                     session_id: session_id.as_deref(),
                 },
             )?;
@@ -379,6 +385,7 @@ pub fn run() -> Result<(), CliError> {
                     role,
                     participant_harness: &reviewer_harness,
                     task_reference: task_reference.as_deref(),
+                    run_id: None,
                     session_id: session_id.as_deref(),
                 },
                 std::time::Duration::from_millis(poll_interval_ms.max(1)),
@@ -399,6 +406,7 @@ pub fn run() -> Result<(), CliError> {
                 peer_harness,
                 objective,
                 task_reference,
+                run_id,
                 lease_seconds,
                 wait,
                 poll_interval_ms,
@@ -415,6 +423,7 @@ pub fn run() -> Result<(), CliError> {
                     peer_harness: &peer_harness,
                     objective: &objective,
                     task_reference: task_reference.as_deref(),
+                    run_id: run_id.as_deref(),
                     lease_seconds,
                     wait,
                     poll_interval: std::time::Duration::from_millis(poll_interval_ms.max(1)),
@@ -679,90 +688,27 @@ pub fn run() -> Result<(), CliError> {
 pub fn print_error(error: &CliError) {
     let code = match error {
         CliError::Invalid(_) => "invalid_input",
-        CliError::Identity(IdentityError::RepositoryMissing) => "repository_missing",
-        CliError::Identity(IdentityError::InvalidOrigin) => "invalid_origin",
-        CliError::Identity(IdentityError::InvalidUtf8) => "invalid_git_output",
+        CliError::Identity(error) | CliError::RoleSession(RoleSessionError::Identity(error)) => {
+            identity_error_code(error)
+        }
         CliError::Discovery(DiscoveryError::Io(_)) => "discovery_io",
-        CliError::RoleSession(RoleSessionError::Store(StoreError::RunExists)) => "run_exists",
-        CliError::RoleSession(RoleSessionError::Store(StoreError::RunMissing)) => "run_missing",
-        CliError::RoleSession(RoleSessionError::Store(StoreError::RevisionConflict { .. })) => {
-            "revision_conflict"
+        CliError::RoleSession(RoleSessionError::Discovery(DiscoveryError::Io(_))) => "discovery_io",
+        CliError::Store(error) | CliError::RoleSession(RoleSessionError::Store(error)) => {
+            store_error_code(error)
         }
-        CliError::RoleSession(RoleSessionError::Store(StoreError::Io(_))) => "io_error",
-        CliError::RoleSession(RoleSessionError::Store(StoreError::Json(_))) => "invalid_baton",
-        CliError::RoleSession(RoleSessionError::Store(StoreError::InvalidHistory)) => {
-            "invalid_history"
+        CliError::Claim(error) | CliError::RoleSession(RoleSessionError::Claim(error)) => {
+            claim_error_code(error)
         }
-        CliError::RoleSession(RoleSessionError::Store(StoreError::TerminalState)) => {
-            "terminal_state"
-        }
-        CliError::RoleSession(RoleSessionError::Claim(_)) => "claim_error",
         CliError::RoleSession(RoleSessionError::Credential(_)) => "credential_error",
-        CliError::RoleSession(RoleSessionError::Transition(_)) => "transition_error",
-        CliError::RoleSession(RoleSessionError::Wait(_)) => "wait_error",
-        CliError::RoleSession(RoleSessionError::Identity(_)) => "repository_error",
-        CliError::RoleSession(RoleSessionError::Discovery(_)) => "discovery_error",
+        CliError::Transition(error)
+        | CliError::RoleSession(RoleSessionError::Transition(error)) => {
+            transition_error_code(error)
+        }
+        CliError::Wait(error) | CliError::RoleSession(RoleSessionError::Wait(error)) => {
+            wait_error_code(error)
+        }
         CliError::RoleSession(RoleSessionError::Invalid(_)) => "invalid_input",
-        CliError::Store(StoreError::RunExists) => "run_exists",
-        CliError::Store(StoreError::RunMissing) => "run_missing",
-        CliError::Store(StoreError::RevisionConflict { .. }) => "revision_conflict",
-        CliError::Store(StoreError::Io(_)) => "io_error",
-        CliError::Store(StoreError::Json(_)) => "invalid_baton",
-        CliError::Store(StoreError::InvalidHistory) => "invalid_history",
-        CliError::Store(StoreError::TerminalState) => "terminal_state",
         CliError::Json(_) => "invalid_baton",
-        CliError::Claim(ClaimError::Store(StoreError::RevisionConflict { .. })) => {
-            "revision_conflict"
-        }
-        CliError::Claim(ClaimError::Store(StoreError::RunExists)) => "run_exists",
-        CliError::Claim(ClaimError::Store(StoreError::RunMissing)) => "run_missing",
-        CliError::Claim(ClaimError::Store(StoreError::Io(_))) => "io_error",
-        CliError::Claim(ClaimError::Store(StoreError::Json(_))) => "invalid_baton",
-        CliError::Claim(ClaimError::Store(StoreError::InvalidHistory)) => "invalid_history",
-        CliError::Claim(ClaimError::Store(StoreError::TerminalState)) => "terminal_state",
-        CliError::Claim(ClaimError::Active) => "claim_active",
-        CliError::Claim(ClaimError::NotExpired) => "claim_not_expired",
-        CliError::Claim(ClaimError::Missing) => "claim_missing",
-        CliError::Claim(ClaimError::Fenced) => "claim_fenced",
-        CliError::Claim(ClaimError::InvalidLease | ClaimError::InvalidSession) => "invalid_input",
-        CliError::Claim(ClaimError::Terminal) => "terminal_state",
-        CliError::Claim(ClaimError::InvalidTimestamp) => "invalid_baton",
-        CliError::Transition(TransitionError::Store(StoreError::RevisionConflict { .. })) => {
-            "revision_conflict"
-        }
-        CliError::Transition(TransitionError::Store(StoreError::RunExists)) => "run_exists",
-        CliError::Transition(TransitionError::Store(StoreError::RunMissing)) => "run_missing",
-        CliError::Transition(TransitionError::Store(StoreError::Io(_))) => "io_error",
-        CliError::Transition(TransitionError::Store(StoreError::Json(_))) => "invalid_baton",
-        CliError::Transition(TransitionError::Store(StoreError::InvalidHistory)) => {
-            "invalid_history"
-        }
-        CliError::Transition(TransitionError::Store(StoreError::TerminalState)) => "terminal_state",
-        CliError::Transition(TransitionError::Claim(_)) => "claim_fenced",
-        CliError::Transition(TransitionError::WrongOwner) => "wrong_owner",
-        CliError::Transition(TransitionError::IllegalState) => "invalid_transition",
-        CliError::Transition(TransitionError::InvalidCheckpoint) => "invalid_checkpoint",
-        CliError::Transition(TransitionError::MissingVerification) => "missing_verification",
-        CliError::Transition(TransitionError::StaleReview) => "stale_review",
-        CliError::Transition(TransitionError::MissingFindings) => "missing_findings",
-        CliError::Transition(TransitionError::BlockingFindings) => "blocking_findings",
-        CliError::Transition(TransitionError::PublicationStale) => "publication_stale",
-        CliError::Transition(TransitionError::Terminal) => "terminal_state",
-        CliError::Transition(TransitionError::InvalidHumanDecision) => "invalid_human_decision",
-        CliError::Transition(TransitionError::WrongContact) => "wrong_contact",
-        CliError::Transition(TransitionError::PublicationRegression) => "publication_regression",
-        CliError::Transition(TransitionError::MissingReason) => "missing_reason",
-        CliError::Wait(WaitError::Store(StoreError::RunMissing)) => "run_missing",
-        CliError::Wait(WaitError::Store(StoreError::Json(_))) => "invalid_baton",
-        CliError::Wait(WaitError::Store(StoreError::Io(_))) => "io_error",
-        CliError::Wait(WaitError::Store(StoreError::RunExists)) => "run_exists",
-        CliError::Wait(WaitError::Store(StoreError::RevisionConflict { .. })) => {
-            "revision_conflict"
-        }
-        CliError::Wait(WaitError::Store(StoreError::InvalidHistory)) => "invalid_history",
-        CliError::Wait(WaitError::Store(StoreError::TerminalState)) => "terminal_state",
-        CliError::Wait(WaitError::Claim(_)) => "claim_fenced",
-        CliError::Wait(WaitError::Timeout) => "timeout",
     };
     let diagnostic = Diagnostic {
         error: code,
@@ -772,6 +718,67 @@ pub fn print_error(error: &CliError) {
         "{}",
         serde_json::to_string(&diagnostic).expect("diagnostic is serializable")
     );
+}
+
+fn identity_error_code(error: &IdentityError) -> &'static str {
+    match error {
+        IdentityError::RepositoryMissing => "repository_missing",
+        IdentityError::InvalidOrigin => "invalid_origin",
+        IdentityError::InvalidUtf8 => "invalid_git_output",
+    }
+}
+
+fn store_error_code(error: &StoreError) -> &'static str {
+    match error {
+        StoreError::RunExists => "run_exists",
+        StoreError::RunMissing => "run_missing",
+        StoreError::RevisionConflict { .. } => "revision_conflict",
+        StoreError::Io(_) => "io_error",
+        StoreError::Json(_) => "invalid_baton",
+        StoreError::InvalidHistory => "invalid_history",
+        StoreError::TerminalState => "terminal_state",
+    }
+}
+
+fn claim_error_code(error: &ClaimError) -> &'static str {
+    match error {
+        ClaimError::Store(error) => store_error_code(error),
+        ClaimError::Active => "claim_active",
+        ClaimError::NotExpired => "claim_not_expired",
+        ClaimError::Missing => "claim_missing",
+        ClaimError::Fenced => "claim_fenced",
+        ClaimError::InvalidLease | ClaimError::InvalidSession => "invalid_input",
+        ClaimError::Terminal => "terminal_state",
+        ClaimError::InvalidTimestamp => "invalid_baton",
+    }
+}
+
+fn transition_error_code(error: &TransitionError) -> &'static str {
+    match error {
+        TransitionError::Store(error) => store_error_code(error),
+        TransitionError::Claim(_) => "claim_fenced",
+        TransitionError::WrongOwner => "wrong_owner",
+        TransitionError::IllegalState => "invalid_transition",
+        TransitionError::InvalidCheckpoint => "invalid_checkpoint",
+        TransitionError::MissingVerification => "missing_verification",
+        TransitionError::StaleReview => "stale_review",
+        TransitionError::MissingFindings => "missing_findings",
+        TransitionError::BlockingFindings => "blocking_findings",
+        TransitionError::PublicationStale => "publication_stale",
+        TransitionError::Terminal => "terminal_state",
+        TransitionError::InvalidHumanDecision => "invalid_human_decision",
+        TransitionError::WrongContact => "wrong_contact",
+        TransitionError::PublicationRegression => "publication_regression",
+        TransitionError::MissingReason => "missing_reason",
+    }
+}
+
+fn wait_error_code(error: &WaitError) -> &'static str {
+    match error {
+        WaitError::Store(error) => store_error_code(error),
+        WaitError::Claim(_) => "claim_fenced",
+        WaitError::Timeout => "timeout",
+    }
 }
 
 fn validate_init(

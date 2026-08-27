@@ -28,6 +28,7 @@ pub struct DiscoveryQuery<'a> {
     pub role: Role,
     pub participant_harness: &'a str,
     pub task_reference: Option<&'a str>,
+    pub run_id: Option<&'a str>,
     pub session_id: Option<&'a str>,
 }
 
@@ -176,7 +177,10 @@ fn candidate(
         Role::Worker => &baton.participants.worker,
         Role::Reviewer => &baton.participants.reviewer,
     };
-    if workspace.repository_id != query.repository_id
+    if query
+        .run_id
+        .is_some_and(|expected| baton.run_id != expected)
+        || workspace.repository_id != query.repository_id
         || !participant
             .harness
             .eq_ignore_ascii_case(query.participant_harness)
