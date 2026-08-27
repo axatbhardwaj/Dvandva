@@ -27,12 +27,22 @@ The authoritative evolving record of one Run Pair.
 The agreed objective, references, task identity, and required deliverables for
 one run.
 
+**Scope Revision**:
+The identity of one declared Canonical Scope version. A human-approved
+amendment makes every earlier scope-bound checkpoint, Handoff, and review stale.
+
 **Checkpoint Manifest**:
 The complete set of immutable deliverable references and verification evidence
 covering every required deliverable in Canonical Scope exactly once.
 
+**Manifest Digest**:
+The immutable content identity of the checkpoint kind, checkpoint identity,
+complete Checkpoint Manifest, and Scope Revision.
+
 **Checkpoint Binding**:
-The exact immutable checkpoint to which findings or approval apply.
+The checkpoint identity, Manifest Digest, and Scope Revision that together name
+the exact review object. Changing any coordinate makes the earlier binding
+stale.
 
 **Checkpoint Supersession**:
 A pending request to replace the current immutable checkpoint after new work is
@@ -43,16 +53,21 @@ Retraction of approval after new required work makes the approved checkpoint
 incomplete.
 
 **Protocol Upgrade**:
-One-way adoption of a newer run contract while retaining the prior run as
-provenance.
+The dedicated one-way adoption of active v2 from a legacy v1 Baton, retaining
+prior state and history as provenance in the same run. It is distinct from
+ordinary role actions, recovery, or setup.
 
 **Handoff**:
-An assignee change whose publication obligation binds the current scope and,
-when present, the current Checkpoint Binding.
+A run milestone whose current Scope Revision and optional Checkpoint Binding
+are published and reviewed together. Handoffs cover role transfer, run start,
+Protocol Upgrade, scope amendment, Checkpoint Supersession, and Approval
+Withdrawal.
 
 **Publication Gate**:
-The requirement that the current explainer deployment and its independent
-review describe the same Handoff before the run advances.
+The fixed requirement that the Codex harness publishes the Codex Sites
+explainer and the Claude harness reviews that exact deployment for the same
+Handoff before the run advances. These duties do not follow Worker or Reviewer
+casting.
 
 **External Reference**:
 A stable identity for a deliverable or deployment outside the Baton.
