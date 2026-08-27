@@ -31,7 +31,7 @@ jobs:
       - name: Verify setup skill
         run: bash tests/skills/setup-dvandva.sh
       - name: Verify role skills
-        run: bash -x tests/skills/role-skills.sh
+        run: bash tests/skills/role-skills.sh
       - name: Verify release packaging
         run: bash tests/skills/package-release.sh
       - name: Verify two-role canary

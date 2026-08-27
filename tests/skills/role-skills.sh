@@ -75,9 +75,13 @@ grep -Fq 'Matt Pocock skill unless the human explicitly invokes' \
   "$repo_root/skills/prativadi/SKILL.md"
 
 skill_list="$(npx --yes skills add "$repo_root" --list)"
-grep -Fq 'Found 3 skills' <<<"$skill_list"
+plain_skill_list="$(
+  printf '%s' "$skill_list" |
+    sed -E $'s/\x1B\\[[0-9;?]*[ -\\/]*[@-~]//g'
+)"
+grep -Fq 'Found 3 skills' <<<"$plain_skill_list"
 for skill in setup-dvandva vadi prativadi; do
-  grep -Fq "$skill" <<<"$skill_list"
+  grep -Fq "$skill" <<<"$plain_skill_list"
 done
 
 skills_home="$test_root/skills-home"
