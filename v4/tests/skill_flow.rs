@@ -11,7 +11,7 @@ fn version_and_probe_report_the_installation_contract() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("dvandva-v4 0.1.1"));
+        .stdout(predicate::str::contains("dvandva-v4 0.2.0"));
 
     let output = command()
         .args([
@@ -30,7 +30,7 @@ fn version_and_probe_report_the_installation_contract() {
     );
     let probe: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(probe["package"], "dvandva-v4");
-    assert_eq!(probe["version"], "0.1.1");
+    assert_eq!(probe["version"], "0.2.0");
     assert_eq!(probe["write_schema"], "dvandva.run.v2");
     assert_eq!(probe["role_api"], 2);
     assert_eq!(probe["compatible"], true);
