@@ -22,8 +22,12 @@ require_kernel() {
     printf 'dvandva-role: kernel missing; explicitly invoke $setup-dvandva first\n' >&2
     exit 1
   }
-  "$binary" probe --expected-schema "$schema" |
-    grep -Fq '"compatible": true' || {
+  local probe_output
+  probe_output="$("$binary" probe --expected-schema "$schema")" || {
+    printf 'dvandva-role: incompatible kernel; explicitly invoke $setup-dvandva doctor\n' >&2
+    exit 1
+  }
+  grep -Fq '"compatible": true' <<<"$probe_output" || {
       printf 'dvandva-role: incompatible kernel; explicitly invoke $setup-dvandva doctor\n' >&2
       exit 1
     }

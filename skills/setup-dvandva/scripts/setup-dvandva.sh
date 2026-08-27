@@ -145,11 +145,13 @@ install_release() {
     }
   else
     local staged="$bin_root/.$version.$$.tmp"
+    local probe_output
     mkdir "$staged"
     install -m 755 "$download_dir/$asset" "$staged/dvandva-kernel"
     printf '%s\n' "$owner" >"$staged/.owner"
     chmod 600 "$staged/.owner"
-    "$staged/dvandva-kernel" probe --expected-schema "$schema" | grep -Fq '"compatible": true'
+    probe_output="$("$staged/dvandva-kernel" probe --expected-schema "$schema")"
+    grep -Fq '"compatible": true' <<<"$probe_output"
     mv -- "$staged" "$version_dir"
   fi
 
@@ -168,7 +170,7 @@ doctor() {
     printf 'setup-dvandva: unhealthy reason=installation_manifest_missing\n' >&2
     exit 1
   }
-  local installed_version installed_digest installed_schema
+  local installed_version installed_digest installed_schema probe_output
   installed_version="$(manifest_value version)"
   installed_digest="$(manifest_value sha256)"
   installed_schema="$(manifest_value schema)"
@@ -192,7 +194,11 @@ doctor() {
     printf 'setup-dvandva: unhealthy reason=checksum_mismatch\n' >&2
     exit 1
   }
-  "$binary" probe --expected-schema "$schema" | grep -Fq '"compatible": true' || {
+  probe_output="$("$binary" probe --expected-schema "$schema")" || {
+    printf 'setup-dvandva: unhealthy reason=incompatible_probe\n' >&2
+    exit 1
+  }
+  grep -Fq '"compatible": true' <<<"$probe_output" || {
     printf 'setup-dvandva: unhealthy reason=incompatible_probe\n' >&2
     exit 1
   }

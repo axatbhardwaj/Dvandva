@@ -30,7 +30,7 @@ export CODEX_SESSION_ID="codex-session"
 test "$(bash "$vadi" session-id)" = "codex-session"
 generated="$(env -u CODEX_SESSION_ID bash "$vadi" session-id --generate)"
 [[ "$generated" =~ ^[0-9a-f-]{36}$ ]]
-bash "$vadi" probe | grep -Fq '"compatible": true'
+bash "$vadi" probe | grep -F '"compatible": true' >/dev/null
 
 worker="$(bash "$vadi" start codex-session codex claude "$workspace" \
   'Implement DEF-123' DEF-123)"
@@ -51,15 +51,15 @@ reviewer="$(bash "$prativadi" start claude-session claude codex "$workspace" \
 grep -Fq '"disposition": "claimed"' <<<"$reviewer"
 grep -Fq "\"run_id\": \"$run_id\"" <<<"$reviewer"
 
-bash "$vadi" read codex-session "$run_dir" | grep -Fq '"status": "working"'
-bash "$prativadi" read claude-session "$run_dir" | grep -Fq '"status": "working"'
+bash "$vadi" read codex-session "$run_dir" | grep -F '"status": "working"' >/dev/null
+bash "$prativadi" read claude-session "$run_dir" | grep -F '"status": "working"' >/dev/null
 
 action="$test_root/checkpoint.json"
 printf '%s\n' \
   '{"type":"submit_checkpoint","checkpoint":{"kind":"git","identity":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verification":["test"]}}' \
   >"$action"
 bash "$vadi" apply codex-session "$run_dir" 2 "$action" |
-  grep -Fq '"status": "reviewing"'
+  grep -F '"status": "reviewing"' >/dev/null
 
 cmp "$vadi" "$prativadi"
 
@@ -92,5 +92,17 @@ for skill in setup-dvandva vadi prativadi; do
   test -f "$skills_home/.claude/skills/$skill/SKILL.md"
   test -f "$skills_home/.agents/skills/$skill/SKILL.md"
 done
+
+installed_kernel="$XDG_DATA_HOME/dvandva/bin/0.1.0/dvandva-kernel"
+mv -- "$installed_kernel" "$installed_kernel.real"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'printf '\''{"compatible": true}\\n'\''' \
+  'head -c 1048576 /dev/zero | tr '\''\000'\'' x' \
+  'printf '\''\\n'\''' \
+  >"$installed_kernel"
+chmod 755 "$installed_kernel"
+bash "$vadi" probe >/dev/null
+mv -- "$installed_kernel.real" "$installed_kernel"
 
 printf 'role skill wrappers: ok\n'
