@@ -76,19 +76,66 @@ hard-coded `Kernel 0.2.0`, and the glossary omitted Approval Withdrawal and
 Protocol Upgrade. The workflow structural test also exited 1 before any
 workflow edit.
 
+### Review-fix wave 2 RED
+
+Baseline: `4c60b5bc93569c9f7280efb2540ffc1b11bf3d57`.
+
+The test-first package run proved that command substitution made the version
+gate lossy and ignored the candidate's status. Bash accepted the exact version
+followed by a NUL, 20,000 trailing newlines, or a second final newline; the
+`|| true` path also accepted exact output followed by exit 7:
+
+```text
+FAIL: nul-bearing-version version unexpectedly packaged
+FAIL: oversized-version version unexpectedly packaged
+FAIL: extra-newline-version version unexpectedly packaged
+FAIL: nonzero-version version unexpectedly packaged
+FAIL: scripts/package-skills-release.sh missing: version_max_bytes=
+FAIL: scripts/package-skills-release.sh missing: .version
+```
+
+Invalid UTF-8 and CRLF were already rejected and remain regression fixtures.
+Exact bytes with no final newline and with one final newline remain the only
+accepted forms.
+
+A read-only mutation probe showed that the earlier workflow assertions accepted
+all four unsafe edits while the strengthened structural assertions rejected
+them:
+
+```text
+verify ref main: old assertions accepted; hardened assertions rejected
+release ref main: old assertions accepted; hardened assertions rejected
+verify contents write: old assertions accepted; hardened assertions rejected
+third release asset: old assertions accepted; hardened assertions rejected
+```
+
+The same RED run reported that the glossary lacked Scope Revision and Manifest
+Digest and that its generic Checkpoint Binding, Protocol Upgrade, Handoff, and
+Publication Gate definitions did not meet the exact domain contracts.
+
+The post-implementation terminology review found that only acceptance of a
+pending Checkpoint Supersession creates a Handoff. Changing the exact glossary
+assertion first produced one focused failure against the premature wording;
+the definition now says `accepted Checkpoint Supersession`.
+
 ## GREEN evidence
 
 - Original Task 8 range: `b3c6a21..42ac162`.
-- Review-fix implementation, test, and documentation range:
-  `42ac162..f0e97bc`.
+- Review-fix wave 1 range: `42ac162..4c60b5b`.
+- Review-fix wave 2 implementation, test, and documentation range, excluding
+  this evidence-only report commit: `4c60b5b..cd2f67e`.
 
 The immutable endpoint for the overall evidence range includes this report
 commit and is recorded in the final handoff because a commit cannot contain its
 own object ID.
 
-- `bash tests/skills/package-release.sh`: pass. The wrong-version, v1/API1,
-  root-duplicate, nested-duplicate, NUL-bearing, oversized, invalid-UTF-8, and
-  malformed candidates were rejected without exposing a final output path.
+- `bash tests/skills/package-release.sh`: pass. Raw version output is captured
+  in hidden sibling staging with a 256-byte cap, strict UTF-8, preserved exit
+  status, and exact zero-or-one-final-newline semantics. Wrong-version,
+  NUL-bearing, oversized, invalid-UTF-8, CRLF, extra-newline, and nonzero
+  candidates were rejected. V1/API1, root-duplicate, nested-duplicate,
+  NUL-bearing, oversized, invalid-UTF-8, and malformed probe candidates were
+  also rejected without exposing a final output path.
   The packager rejected existing empty, non-empty, and symlink destinations,
   preserved a colliding foreign path, and cleaned a failed sibling staging
   directory. The real stripped candidate produced the exact v2/API2 probe; its
@@ -100,13 +147,19 @@ own object ID.
   failed.
 - `cargo test --manifest-path rust/Cargo.toml --workspace`: pass for the full
   archived v3 workspace.
+- `cargo test --manifest-path rust/dvandva/Cargo.toml --locked`: pass.
+- `cargo run --quiet --manifest-path v4/Cargo.toml -- probe
+  --expected-schema dvandva.run.v2 --expected-role-api 2`: pass with the exact
+  private v2/API2 contract.
 - `cargo fmt --manifest-path v4/Cargo.toml -- --check`: pass.
 - `cargo clippy --manifest-path v4/Cargo.toml --all-targets -- -D warnings`:
   pass.
 - Shell syntax passed for the packager, package test, both role facades, and
   setup installer.
 - `ruamel.yaml` 0.18.16 parsed the workflow and its structural assertions
-  passed. The workflow pins the same parser version for hosted package tests.
+  passed, including both checkout mappings, inherited read-only verification,
+  exact two-asset release arguments, and four mutation sentinels. The workflow
+  pins the same parser version for hosted package tests.
 - `git diff --check`: pass.
 
 `actionlint`, `yamllint`, `yq`, PyYAML, and `shellcheck` were unavailable on
