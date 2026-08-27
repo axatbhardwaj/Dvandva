@@ -215,10 +215,15 @@ checksum_bin="$test_root/checksum-bin"
 mkdir "$checksum_bin"
 ln -s "$fake_bin/cargo" "$checksum_bin/cargo"
 ln -s "$fake_bin/strip" "$checksum_bin/strip"
-printf '%s\n' '#!/usr/bin/env bash' 'exit 1' >"$checksum_bin/sha256sum"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'printf "%s\\n" "$PWD" >"$CHECKSUM_PWD_FILE"' \
+  'exit 1' \
+  >"$checksum_bin/sha256sum"
 chmod 755 "$checksum_bin/sha256sum"
 checksum_output="$test_root/checksum-output"
 if PATH="$checksum_bin:$PATH" FAKE_KERNEL="$output/dvandva-kernel-linux-x86_64" \
+  CHECKSUM_PWD_FILE="$test_root/checksum.pwd" \
   CARGO_TARGET_DIR="$test_root/checksum-target" \
   bash "$packager" skills-v0.2.0 "$checksum_output" \
   >"$test_root/checksum.out" 2>&1; then
@@ -228,6 +233,13 @@ reject_text 'package-skills-release: packaged' "$test_root/checksum.out"
 if test -e "$checksum_output" || test -L "$checksum_output"; then
   fail 'checksum failure exposed a partial output path'
 fi
+checksum_staging="$(cat "$test_root/checksum.pwd")"
+test "$(dirname -- "$checksum_staging")" = "$test_root" || \
+  fail 'checksum did not run in a sibling staging directory'
+case "$(basename -- "$checksum_staging")" in
+  .checksum-output.tmp.*) ;;
+  *) fail 'checksum staging directory did not use the hidden output prefix' ;;
+esac
 
 collision_bin="$test_root/collision-bin"
 mkdir "$collision_bin"
