@@ -43,6 +43,9 @@ jobs:
       - name: Verify two-role canary
         run: bash tests/skills/two-role-canary.sh
 
+  # Operational prerequisite: repository administrators protect skills-v* tags
+  # from deletion or force-updates. This workflow verifies tag identity twice;
+  # it does not configure repository tag-protection rules.
   release:
     if: startsWith(github.ref, 'refs/tags/skills-v')
     needs: verify
@@ -58,8 +61,12 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
+      - name: Verify release ref before packaging
+        run: bash scripts/verify-skills-release-ref.sh "$GITHUB_REF_NAME" origin
       - name: Package the private kernel
         run: bash scripts/package-skills-release.sh "$GITHUB_REF_NAME" artifacts
+      - name: Verify release ref before publication
+        run: bash scripts/verify-skills-release-ref.sh "$GITHUB_REF_NAME" origin
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

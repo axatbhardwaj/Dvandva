@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 test_root="$(mktemp -d)"
 trap 'rm -rf -- "$test_root"' EXIT
 packager="$repo_root/scripts/package-skills-release.sh"
+ref_verifier="$repo_root/scripts/verify-skills-release-ref.sh"
 failures=0
 
 fail() {
@@ -25,6 +26,117 @@ reject_text() {
     fail "$file unexpectedly contains: $needle"
   fi
 }
+
+ref_fake_bin="$test_root/ref-fake-bin"
+mkdir -p "$ref_fake_bin"
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -euo pipefail' \
+  'case "${1:-}" in' \
+  '  show-ref)' \
+  '    test "$#" -eq 4' \
+  '    test "$2" = "--verify"' \
+  '    test "$3" = "--hash"' \
+  '    test "$4" = "refs/tags/skills-v0.2.0"' \
+  '    test "${FAKE_LOCAL_OBJECT+x}" = x || exit 1' \
+  '    printf "%b" "$FAKE_LOCAL_OBJECT"' \
+  '    ;;' \
+  '  rev-parse)' \
+  '    test "$#" -eq 3' \
+  '    test "$2" = "--verify"' \
+  '    test "$3" = "refs/tags/skills-v0.2.0^{}"' \
+  '    test "${FAKE_LOCAL_PEELED+x}" = x || exit 1' \
+  '    printf "%b" "$FAKE_LOCAL_PEELED"' \
+  '    ;;' \
+  '  ls-remote)' \
+  '    test "$#" -eq 5' \
+  '    test "$2" = "--tags"' \
+  '    test "$3" = "origin"' \
+  '    test "$4" = "refs/tags/skills-v0.2.0"' \
+  '    test "$5" = "refs/tags/skills-v0.2.0^{}"' \
+  '    test "${FAKE_REMOTE_REFS+x}" = x || exit 1' \
+  '    printf "%b" "$FAKE_REMOTE_REFS"' \
+  '    ;;' \
+  '  *) exit 2 ;;' \
+  'esac' \
+  >"$ref_fake_bin/git"
+chmod 755 "$ref_fake_bin/git"
+
+release_commit=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+release_tag_object=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+moved_object=cccccccccccccccccccccccccccccccccccccccc
+
+expect_ref_accepted() {
+  local label="$1"
+  local local_object="$2"
+  local local_peeled="$3"
+  local remote_refs="$4"
+  if ! PATH="$ref_fake_bin:$PATH" \
+    FAKE_LOCAL_OBJECT="$local_object" FAKE_LOCAL_PEELED="$local_peeled" \
+    FAKE_REMOTE_REFS="$remote_refs" GITHUB_SHA="$release_commit" \
+    bash "$ref_verifier" skills-v0.2.0 origin \
+    >"$test_root/$label.out" 2>&1; then
+    fail "$label release ref was unexpectedly rejected"
+  fi
+}
+
+expect_ref_rejected() {
+  local label="$1"
+  local local_object="$2"
+  local local_peeled="$3"
+  local event_sha="$4"
+  local remote_refs="$5"
+  if PATH="$ref_fake_bin:$PATH" \
+    FAKE_LOCAL_OBJECT="$local_object" FAKE_LOCAL_PEELED="$local_peeled" \
+    FAKE_REMOTE_REFS="$remote_refs" GITHUB_SHA="$event_sha" \
+    bash "$ref_verifier" skills-v0.2.0 origin \
+    >"$test_root/$label.out" 2>&1; then
+    fail "$label release ref was unexpectedly accepted"
+  fi
+  require_text 'release_ref_invalid' "$test_root/$label.out"
+}
+
+expect_ref_accepted lightweight-tag \
+  "$release_commit\n" "$release_commit\n" \
+  "$release_commit\trefs/tags/skills-v0.2.0\n"
+expect_ref_accepted annotated-tag \
+  "$release_tag_object\n" "$release_commit\n" \
+  "$release_tag_object\trefs/tags/skills-v0.2.0\n$release_commit\trefs/tags/skills-v0.2.0^{}\n"
+expect_ref_rejected moved-local-object \
+  "$moved_object\n" "$release_commit\n" "$release_commit" \
+  "$release_tag_object\trefs/tags/skills-v0.2.0\n$release_commit\trefs/tags/skills-v0.2.0^{}\n"
+expect_ref_rejected moved-local-commit \
+  "$release_tag_object\n" "$moved_object\n" "$release_commit" \
+  "$release_tag_object\trefs/tags/skills-v0.2.0\n$release_commit\trefs/tags/skills-v0.2.0^{}\n"
+expect_ref_rejected moved-event \
+  "$release_tag_object\n" "$release_commit\n" "$moved_object" \
+  "$release_tag_object\trefs/tags/skills-v0.2.0\n$release_commit\trefs/tags/skills-v0.2.0^{}\n"
+expect_ref_rejected moved-remote-object \
+  "$release_tag_object\n" "$release_commit\n" "$release_commit" \
+  "$moved_object\trefs/tags/skills-v0.2.0\n$release_commit\trefs/tags/skills-v0.2.0^{}\n"
+expect_ref_rejected moved-remote-commit \
+  "$release_tag_object\n" "$release_commit\n" "$release_commit" \
+  "$release_tag_object\trefs/tags/skills-v0.2.0\n$moved_object\trefs/tags/skills-v0.2.0^{}\n"
+expect_ref_rejected missing-local-object \
+  '' "$release_commit\n" "$release_commit" \
+  "$release_commit\trefs/tags/skills-v0.2.0\n"
+expect_ref_rejected missing-event \
+  "$release_commit\n" "$release_commit\n" '' \
+  "$release_commit\trefs/tags/skills-v0.2.0\n"
+expect_ref_rejected missing-remote \
+  "$release_commit\n" "$release_commit\n" "$release_commit" ''
+expect_ref_rejected ambiguous-local \
+  "$release_commit\n$moved_object\n" "$release_commit\n" "$release_commit" \
+  "$release_commit\trefs/tags/skills-v0.2.0\n"
+expect_ref_rejected ambiguous-remote \
+  "$release_commit\n" "$release_commit\n" "$release_commit" \
+  "$release_commit\trefs/tags/skills-v0.2.0\n$moved_object\trefs/tags/skills-v0.2.0\n"
+expect_ref_rejected malformed-local \
+  'not-an-object\n' "$release_commit\n" "$release_commit" \
+  "$release_commit\trefs/tags/skills-v0.2.0\n"
+expect_ref_rejected malformed-remote \
+  "$release_commit\n" "$release_commit\n" "$release_commit" \
+  "not-an-object\trefs/tags/skills-v0.2.0\n"
 
 fake_bin="$test_root/fake-bin"
 fake_target="$test_root/fake-target"
@@ -402,6 +514,9 @@ RELEASE_TOKENS = [
         "unpublished and the archived v3 plugin remains retired."
     ),
 ]
+RELEASE_REF_COMMAND = (
+    'bash scripts/verify-skills-release-ref.sh "$GITHUB_REF_NAME" origin'
+)
 
 
 def validate_release_boundaries(candidate):
@@ -426,6 +541,23 @@ def validate_release_boundaries(candidate):
         "uses": CHECKOUT,
         "with": {"fetch-depth": 0},
     }
+    ref_checks = [
+        step for step in release_steps
+        if step["name"] in {
+            "Verify release ref before packaging",
+            "Verify release ref before publication",
+        }
+    ]
+    assert ref_checks == [
+        {
+            "name": "Verify release ref before packaging",
+            "run": RELEASE_REF_COMMAND,
+        },
+        {
+            "name": "Verify release ref before publication",
+            "run": RELEASE_REF_COMMAND,
+        },
+    ]
     publish = next(step for step in release_steps if step["name"] == "Publish GitHub release")
     publish_run = publish["run"]
     release_command = publish_run[publish_run.index("gh release create"):]
@@ -481,7 +613,9 @@ release_steps = workflow["jobs"]["release"]["steps"]
 assert [step["name"] for step in release_steps] == [
     "Check out the release tag",
     "Select stable Rust",
+    "Verify release ref before packaging",
     "Package the private kernel",
+    "Verify release ref before publication",
     "Publish GitHub release",
 ]
 package = next(step for step in release_steps if step["name"] == "Package the private kernel")
