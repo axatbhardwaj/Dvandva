@@ -362,6 +362,62 @@ fn write_legacy_run(
     bytes
 }
 
+fn setup_taskless_legacy_human_decision(dir: &std::path::Path) -> String {
+    write_legacy_run(dir, "working", "worker", serde_json::Value::Null);
+    for path in [
+        dir.join("baton.json"),
+        dir.join("history/00000000000000000000.json"),
+    ] {
+        let mut legacy: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        legacy["task"] = serde_json::Value::Null;
+        std::fs::write(path, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+    }
+
+    command()
+        .args([
+            "role",
+            "upgrade",
+            "--api",
+            "2",
+            "--run-dir",
+            dir.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-new",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--expected-revision",
+            "0",
+            "--credentials-root",
+            dir.join("credentials").to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert!(read_baton(dir)["task"].is_null());
+
+    let worker = claim_role(dir, "worker", "worker-new", 1);
+    apply_action(
+        dir,
+        "worker",
+        "worker-new",
+        &worker,
+        2,
+        "request-scope.json",
+        serde_json::json!({
+            "type": "request_human_decision",
+            "question": "Which ticket now defines the run?",
+            "evidence": ["The legacy run had no task identity"],
+            "options": ["Adopt DEF-456", "Keep the run taskless"]
+        }),
+    )
+    .success();
+    worker
+}
+
 fn forged_migration_candidate(source: &RunBaton) -> RunBaton {
     let mut eligible = source.clone();
     eligible.status = dvandva_v4::model::Status::Working;
@@ -609,6 +665,102 @@ fn migration_upgrade_is_one_way_and_clears_active_legacy_state() {
     );
     assert_eq!(baton["migration"]["legacy_state_digest"], expected_digest);
     assert_ne!(expected_digest, changed_digest);
+}
+
+#[test]
+fn scope_amendment_adds_human_approved_task_identity_after_taskless_legacy_upgrade() {
+    let dir = tempfile::tempdir().unwrap();
+    let worker = setup_taskless_legacy_human_decision(dir.path());
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-new",
+        &worker,
+        3,
+        "amend-scope.json",
+        serde_json::json!({
+            "type": "resume_human_decision",
+            "answer": "Adopt DEF-456",
+            "scope_amendment": {
+                "objective": " Implement the approved recovery ticket ",
+                "objective_refs": [{"kind": "issue", "value": "DEF-456"}],
+                "task_reference": " DEF-456 ",
+                "scope_deliverables": [{
+                    "id": "legacy_objective",
+                    "description": "Implement the approved recovery ticket"
+                }]
+            }
+        }),
+    )
+    .success();
+
+    let amended = read_baton(dir.path());
+    assert_eq!(amended["revision"], 4);
+    assert_eq!(amended["scope_revision"], 1);
+    assert_eq!(amended["task"]["reference"], "DEF-456");
+    assert_eq!(
+        amended["task"]["summary"],
+        "Implement the approved recovery ticket"
+    );
+    assert_eq!(amended["status"], "revising");
+    assert_eq!(amended["assignee"], "worker");
+    assert_eq!(
+        amended["publication_binding"]["obligation"],
+        serde_json::json!({
+            "handoff_revision": 4,
+            "kind": "scope_amended",
+            "scope_revision": 1
+        })
+    );
+
+    std::fs::remove_file(dir.path().join("baton.json")).unwrap();
+    command()
+        .args([
+            "recover",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--from-revision",
+            "4",
+        ])
+        .assert()
+        .success();
+    let reopened = RunChannel::open(dir.path()).read().unwrap();
+    assert_eq!(reopened.task.unwrap().reference.as_deref(), Some("DEF-456"));
+}
+
+#[test]
+fn scope_amendment_without_task_reference_keeps_upgraded_taskless_run_taskless() {
+    let dir = tempfile::tempdir().unwrap();
+    let worker = setup_taskless_legacy_human_decision(dir.path());
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-new",
+        &worker,
+        3,
+        "amend-scope.json",
+        serde_json::json!({
+            "type": "resume_human_decision",
+            "answer": "Keep the run taskless",
+            "scope_amendment": {
+                "objective": "Continue the taskless legacy objective",
+                "objective_refs": [],
+                "task_reference": null,
+                "scope_deliverables": [{
+                    "id": "legacy_objective",
+                    "description": "Continue the taskless legacy objective"
+                }]
+            }
+        }),
+    )
+    .success();
+
+    let amended = read_baton(dir.path());
+    assert_eq!(amended["revision"], 4);
+    assert_eq!(amended["scope_revision"], 1);
+    assert!(amended["task"].is_null());
+    assert_eq!(amended["status"], "revising");
+    assert_eq!(amended["assignee"], "worker");
 }
 
 #[test]
