@@ -1,7 +1,7 @@
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, DirBuilder, File, OpenOptions},
     io::Write,
-    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
 
@@ -146,24 +146,34 @@ pub fn load(
 
 fn ensure_private_dir(path: &Path) -> Result<(), CredentialError> {
     match fs::symlink_metadata(path) {
-        Ok(metadata) => {
-            if metadata.file_type().is_symlink() || !metadata.is_dir() {
-                return Err(CredentialError::UnsafeDirectory);
-            }
-            if metadata.permissions().mode() & 0o077 != 0 {
-                return Err(CredentialError::UnsafeDirectory);
-            }
-            ensure_current_owner(&metadata)?;
-        }
+        Ok(metadata) => validate_private_dir(&metadata),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            fs::create_dir(path)?;
-            fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
-            let parent = path.parent().ok_or(CredentialError::UnsafeDirectory)?;
-            File::open(parent)?.sync_all()?;
+            let mut builder = DirBuilder::new();
+            builder.mode(0o700);
+            match builder.create(path) {
+                Ok(()) => {
+                    let parent = path.parent().ok_or(CredentialError::UnsafeDirectory)?;
+                    File::open(parent)?.sync_all()?;
+                    Ok(())
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    validate_private_dir(&fs::symlink_metadata(path)?)
+                }
+                Err(error) => Err(error.into()),
+            }
         }
-        Err(error) => return Err(error.into()),
+        Err(error) => Err(error.into()),
     }
-    Ok(())
+}
+
+fn validate_private_dir(metadata: &fs::Metadata) -> Result<(), CredentialError> {
+    if metadata.file_type().is_symlink()
+        || !metadata.is_dir()
+        || metadata.permissions().mode() & 0o077 != 0
+    {
+        return Err(CredentialError::UnsafeDirectory);
+    }
+    ensure_current_owner(metadata)
 }
 
 fn ensure_current_owner(metadata: &fs::Metadata) -> Result<(), CredentialError> {
