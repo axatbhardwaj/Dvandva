@@ -22,6 +22,8 @@ pub struct ClaimGrant {
     pub token: String,
     pub epoch: u64,
     pub revision: u64,
+    #[serde(skip)]
+    pub(crate) committed_baton: RunBaton,
 }
 
 #[derive(Debug, Error)]
@@ -189,6 +191,7 @@ fn install_claim(
         token,
         epoch,
         revision: baton.revision,
+        committed_baton: baton.clone(),
     })
 }
 

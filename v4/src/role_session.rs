@@ -279,32 +279,66 @@ fn start_with_retries(
             .with_discovery_identity(workspace_identity, task);
             baton.objective.refs = request.objective_refs.to_vec();
             RunChannel::open(&run_dir).create(&baton)?;
-            let grant = claim(
-                &run_dir,
-                request.credentials_root,
-                request.role,
-                request.session_id,
-                request.lease_seconds,
-                0,
-            );
-            let grant = match grant {
-                Ok(grant) => grant,
-                Err(error) if is_revision_conflict(&error) && remaining_conflicts > 0 => {
-                    return start_with_retries(request, remaining_conflicts - 1)
-                }
-                Err(error) => return Err(error),
-            };
-            finish_created_start(
-                &run_dir,
-                request.credentials_root,
-                request.role,
-                request.session_id,
-                grant.credential,
-                request.role == Role::Worker,
-            )
+            start_created_run(&run_dir, &baton, request, remaining_conflicts)
         }
         _ => Ok(RoleStartResult::Discovery(outcome)),
     }
+}
+
+fn start_created_run(
+    run_dir: &Path,
+    created: &RunBaton,
+    request: RoleStartRequest<'_>,
+    mut remaining_conflicts: u8,
+) -> Result<RoleStartResult, RoleSessionError> {
+    let mut expected_revision = created.revision;
+    let grant = loop {
+        match claim(
+            run_dir,
+            request.credentials_root,
+            request.role,
+            request.session_id,
+            request.lease_seconds,
+            expected_revision,
+        ) {
+            Ok(grant) => break grant,
+            Err(error) if is_revision_conflict(&error) && remaining_conflicts > 0 => {
+                let current = RunChannel::open(run_dir).read()?;
+                validate_created_retry(created, &current)?;
+                expected_revision = current.revision;
+                remaining_conflicts -= 1;
+            }
+            Err(error) => return Err(error),
+        }
+    };
+    finish_created_start(
+        run_dir,
+        request.credentials_root,
+        request.role,
+        request.session_id,
+        grant.credential,
+        request.role == Role::Worker,
+    )
+}
+
+fn validate_created_retry(created: &RunBaton, current: &RunBaton) -> Result<(), RoleSessionError> {
+    if matches!(current.status, Status::Done | Status::Abandoned) {
+        return Err(ClaimError::Terminal.into());
+    }
+    let mut expected = created.clone();
+    let mut actual = current.clone();
+    actual.revision = expected.revision;
+    actual.participants.worker.claim = expected.participants.worker.claim.take();
+    actual.participants.reviewer.claim = expected.participants.reviewer.claim.take();
+    if actual != expected {
+        return Err(RoleSessionError::Invalid(
+            "newly created run changed before the worker claim completed".to_owned(),
+        ));
+    }
+    if current.participants.worker.claim.is_some() {
+        return Err(ClaimError::Active.into());
+    }
+    Ok(())
 }
 
 fn retry_start_conflict(
@@ -335,7 +369,7 @@ fn start_candidate(
     session_id: &str,
     lease_seconds: u64,
 ) -> Result<RoleStartResult, RoleSessionError> {
-    let (disposition, expected_revision, credential_path) = match candidate.claim_state {
+    match candidate.claim_state {
         ClaimState::Unclaimed => {
             let grant = claim(
                 &candidate.run_dir,
@@ -345,7 +379,14 @@ fn start_candidate(
                 lease_seconds,
                 candidate.revision,
             )?;
-            ("claimed", grant.revision, grant.credential)
+            finish_candidate_claim(
+                "claimed",
+                &candidate.run_dir,
+                credentials_root,
+                role,
+                session_id,
+                grant,
+            )
         }
         ClaimState::Expired => {
             let grant = reclaim(
@@ -356,29 +397,59 @@ fn start_candidate(
                 lease_seconds,
                 candidate.revision,
             )?;
-            ("reclaimed", grant.revision, grant.credential)
+            finish_candidate_claim(
+                "reclaimed",
+                &candidate.run_dir,
+                credentials_root,
+                role,
+                session_id,
+                grant,
+            )
         }
         ClaimState::Owned => {
-            let path = credential::path(credentials_root, session_id, &candidate.run_id, role)?;
-            ("resumed", candidate.revision, path)
+            let credential =
+                credential::path(credentials_root, session_id, &candidate.run_id, role)?;
+            let snapshot = read_snapshot_at_revision(
+                &candidate.run_dir,
+                credentials_root,
+                role,
+                session_id,
+                candidate.revision,
+            )?;
+            Ok(started_role(
+                "resumed",
+                snapshot,
+                credential,
+                role == Role::Worker,
+            ))
         }
-        ClaimState::Busy => {
-            return Err(RoleSessionError::Invalid(
-                "selected run is owned by another live session".to_owned(),
-            ));
-        }
-    };
-    let snapshot = read_snapshot_at_revision(
-        &candidate.run_dir,
+        ClaimState::Busy => Err(RoleSessionError::Invalid(
+            "selected run is owned by another live session".to_owned(),
+        )),
+    }
+}
+
+fn finish_candidate_claim(
+    disposition: &'static str,
+    run_dir: &Path,
+    credentials_root: &Path,
+    role: Role,
+    session_id: &str,
+    grant: RoleClaimResult,
+) -> Result<RoleStartResult, RoleSessionError> {
+    let private = load_for_run(
+        run_dir,
         credentials_root,
         role,
         session_id,
-        expected_revision,
+        &grant.committed_baton.run_id,
     )?;
+    claim::verify(&grant.committed_baton, role, session_id, &private.token)?;
+    let snapshot = snapshot(grant.committed_baton, run_dir, role);
     Ok(started_role(
         disposition,
         snapshot,
-        credential_path,
+        grant.credential,
         role == Role::Worker,
     ))
 }
@@ -645,6 +716,8 @@ pub struct RoleClaimResult {
     pub revision: u64,
     pub epoch: u64,
     pub credential: PathBuf,
+    #[serde(skip)]
+    committed_baton: RunBaton,
 }
 
 pub fn claim(
@@ -678,6 +751,7 @@ pub fn claim(
         revision: grant.revision,
         epoch: grant.epoch,
         credential,
+        committed_baton: grant.committed_baton,
     })
 }
 
@@ -712,6 +786,7 @@ pub fn reclaim(
         revision: grant.revision,
         epoch: grant.epoch,
         credential,
+        committed_baton: grant.committed_baton,
     })
 }
 
@@ -778,6 +853,236 @@ mod tests {
         action::ScopeAmendment,
         model::{Assignee, WorkspaceIdentity},
     };
+
+    fn fixture_workspace(root: &Path) -> (PathBuf, WorkspaceIdentity) {
+        let workspace = root.join("workspace");
+        std::fs::create_dir(&workspace).unwrap();
+        for args in [
+            &["init", "--quiet"][..],
+            &[
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:axatbhardwaj/Dvandva.git",
+            ],
+        ] {
+            assert!(std::process::Command::new("git")
+                .arg("-C")
+                .arg(&workspace)
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
+        }
+        let identity = identity::identify(&workspace).unwrap();
+        (workspace, identity)
+    }
+
+    fn fixture_scope() -> [DeliverableRequirement; 1] {
+        [DeliverableRequirement {
+            id: "implementation".to_owned(),
+            description: "Original implementation".to_owned(),
+        }]
+    }
+
+    fn fixture_baton(workspace: &WorkspaceIdentity, scope: &[DeliverableRequirement]) -> RunBaton {
+        RunBaton::new(
+            "run-a",
+            "Original objective",
+            "codex",
+            "claude",
+            scope.to_vec(),
+        )
+        .unwrap()
+        .with_discovery_identity(
+            workspace.clone(),
+            TaskIdentity {
+                reference: Some("DEF-123".to_owned()),
+                summary: "Original objective".to_owned(),
+            },
+        )
+    }
+
+    fn fixture_request<'a>(
+        workspace: &'a Path,
+        runs: &'a Path,
+        credentials: &'a Path,
+        scope: &'a [DeliverableRequirement],
+        run_id: Option<&'a str>,
+        new_run: bool,
+    ) -> RoleStartRequest<'a> {
+        RoleStartRequest {
+            workspace,
+            runs_dir: runs,
+            credentials_root: credentials,
+            role: Role::Worker,
+            session_id: "worker",
+            current_harness: "codex",
+            peer_harness: "claude",
+            objective: Some("Original objective"),
+            objective_refs: &[],
+            task_reference: Some("DEF-123"),
+            run_id,
+            lease_seconds: 300,
+            wait: false,
+            poll_interval: Duration::from_millis(1),
+            timeout: Duration::from_millis(1),
+            new_run,
+            required_deliverables: scope,
+        }
+    }
+
+    fn amend_scope(
+        channel: &RunChannel,
+        credentials: &Path,
+        session_id: &str,
+        expected_revision: u64,
+    ) -> String {
+        let private = credential::load(credentials, session_id, "run-a", Role::Worker).unwrap();
+        transition::apply(
+            channel,
+            Role::Worker,
+            session_id,
+            &private.token,
+            expected_revision,
+            Action::RequestHumanDecision {
+                question: "Use amended scope?".to_owned(),
+                evidence: vec!["new requirement".to_owned()],
+                options: vec!["yes".to_owned(), "no".to_owned()],
+                contact_role: Role::Worker,
+                resume_status: Status::Working,
+                resume_assignee: Assignee::Worker,
+            },
+        )
+        .unwrap();
+        transition::apply(
+            channel,
+            Role::Worker,
+            session_id,
+            &private.token,
+            expected_revision + 1,
+            Action::ResumeHumanDecision {
+                answer: "yes".to_owned(),
+                scope_amendment: Some(ScopeAmendment {
+                    objective: "Amended objective".to_owned(),
+                    objective_refs: Vec::new(),
+                    task_reference: Some("DEF-123".to_owned()),
+                    scope_deliverables: vec![DeliverableRequirement {
+                        id: "implementation".to_owned(),
+                        description: "Amended implementation".to_owned(),
+                    }],
+                }),
+            },
+        )
+        .unwrap();
+        private.token
+    }
+
+    #[test]
+    fn new_run_creation_conflict_retries_worker_claim_on_the_same_run() {
+        let root = tempfile::tempdir().unwrap();
+        let (workspace, workspace_identity) = fixture_workspace(root.path());
+        let runs = root.path().join("runs");
+        let run_dir = runs.join("run-a");
+        let credentials = root.path().join("credentials");
+        let scope = fixture_scope();
+        let baton = fixture_baton(&workspace_identity, &scope);
+        RunChannel::open(&run_dir).create(&baton).unwrap();
+        claim(&run_dir, &credentials, Role::Reviewer, "reviewer", 300, 0).unwrap();
+        let request = fixture_request(&workspace, &runs, &credentials, &scope, None, true);
+
+        let result = start_created_run(&run_dir, &baton, request, 8).unwrap();
+        let RoleStartResult::Started(started) = result else {
+            panic!("created run did not return started");
+        };
+        assert_eq!(started.disposition, "created");
+        assert_eq!(started.snapshot.baton.run_id, "run-a");
+        assert_eq!(started.snapshot.baton.revision, 2);
+        assert_eq!(std::fs::read_dir(&runs).unwrap().count(), 1);
+
+        let installed = RunChannel::open(&run_dir).read().unwrap();
+        let worker = credential::load(&credentials, "worker", "run-a", Role::Worker).unwrap();
+        let reviewer = credential::load(&credentials, "reviewer", "run-a", Role::Reviewer).unwrap();
+        claim::verify(&installed, Role::Worker, "worker", &worker.token).unwrap();
+        claim::verify(&installed, Role::Reviewer, "reviewer", &reviewer.token).unwrap();
+    }
+
+    #[test]
+    fn new_run_creation_retry_rejects_a_changed_canonical_scope() {
+        let root = tempfile::tempdir().unwrap();
+        let (workspace, workspace_identity) = fixture_workspace(root.path());
+        let runs = root.path().join("runs");
+        let run_dir = runs.join("run-a");
+        let credentials = root.path().join("credentials");
+        let scope = fixture_scope();
+        let baton = fixture_baton(&workspace_identity, &scope);
+        let channel = RunChannel::open(&run_dir);
+        channel.create(&baton).unwrap();
+        claim(&run_dir, &credentials, Role::Reviewer, "reviewer", 300, 0).unwrap();
+        let amender = claim(&run_dir, &credentials, Role::Worker, "amender", 300, 1).unwrap();
+        amend_scope(&channel, &credentials, "amender", 2);
+        channel.recover(4).unwrap();
+        let request = fixture_request(&workspace, &runs, &credentials, &scope, None, true);
+
+        let result = start_created_run(&run_dir, &baton, request, 8);
+        assert!(result.is_err(), "changed scope was silently adopted");
+        let current = channel.read().unwrap();
+        assert_eq!(current.revision, 5);
+        assert_eq!(current.objective.summary, "Amended objective");
+        assert!(current.participants.worker.claim.is_none());
+        assert!(!credentials.join("worker/run-a/worker.json").exists());
+        assert_eq!(std::fs::read_dir(&runs).unwrap().count(), 1);
+        assert_eq!(amender.revision, 2);
+    }
+
+    #[test]
+    fn claimed_and_reclaimed_completion_keep_the_committed_scope() {
+        for disposition in ["claimed", "reclaimed"] {
+            let root = tempfile::tempdir().unwrap();
+            let (workspace, workspace_identity) = fixture_workspace(root.path());
+            let runs = root.path().join("runs");
+            let run_dir = runs.join("run-a");
+            let credentials = root.path().join("credentials");
+            let scope = fixture_scope();
+            let baton = fixture_baton(&workspace_identity, &scope);
+            RunChannel::open(&run_dir).create(&baton).unwrap();
+            let grant = claim(&run_dir, &credentials, Role::Worker, "worker", 300, 0).unwrap();
+            let channel = RunChannel::open(&run_dir);
+            let token = amend_scope(&channel, &credentials, "worker", 1);
+            let request = fixture_request(
+                &workspace,
+                &runs,
+                &credentials,
+                &scope,
+                Some("run-a"),
+                false,
+            );
+
+            let first = finish_candidate_claim(
+                disposition,
+                &run_dir,
+                &credentials,
+                Role::Worker,
+                "worker",
+                grant,
+            );
+            let result = retry_start_conflict(first, request, 2).unwrap();
+            let RoleStartResult::Started(started) = result else {
+                panic!("{disposition} completion was reclassified after its committed claim");
+            };
+            assert_eq!(started.disposition, disposition);
+            assert_eq!(started.snapshot.baton.revision, 1);
+            assert_eq!(
+                started.snapshot.baton.objective.summary,
+                "Original objective"
+            );
+
+            let current = channel.read().unwrap();
+            assert_eq!(current.revision, 3);
+            assert_eq!(current.objective.summary, "Amended objective");
+            claim::verify(&current, Role::Worker, "worker", &token).unwrap();
+        }
+    }
 
     #[test]
     fn created_start_accepts_an_immediate_peer_claim_without_recreating() {
