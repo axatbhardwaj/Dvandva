@@ -50,6 +50,9 @@ casting, but one run must use different harness families.
 
 Vadi discovers or creates exactly one repository/task-matched run, implements
 only its objective, verifies an immutable checkpoint, and hands it off.
+If another live vadi already owns that repository/task run, discovery reports
+it as busy instead of silently creating a duplicate; only an explicit request
+may create a separate run.
 Prativadi can start first: its local watcher waits until exactly one valid
 candidate exists, then claims and independently reviews that exact checkpoint.
 Several matches are surfaced; neither role secretly chooses the newest.
