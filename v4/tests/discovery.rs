@@ -1,14 +1,187 @@
 use assert_cmd::Command;
 use dvandva_v4::{
+    action::Action,
     claim::{self, Role},
-    model::{ParticipantClaim, RunBaton, Status, TaskIdentity, WorkspaceIdentity},
+    model::{DeliverableRequirement, RunBaton, TaskIdentity, WorkspaceIdentity},
     store::RunChannel,
+    transition,
 };
 
 const REPOSITORY_ID: &str = "github.com/axatbhardwaj/dvandva";
 
 fn command() -> Command {
     Command::new(env!("CARGO_BIN_EXE_dvandva-v4"))
+}
+
+fn write_legacy_run(runs: &std::path::Path, run_id: &str) -> std::path::PathBuf {
+    let run_dir = runs.join(run_id);
+    std::fs::create_dir_all(run_dir.join("history")).unwrap();
+    let baton = serde_json::json!({
+        "schema": "dvandva.run.v1", "run_id": run_id,
+        "objective": {"summary": "Upgrade the ticket", "refs": []},
+        "workspace": {"repository_id": REPOSITORY_ID, "origin": null, "worktree": null},
+        "task": {"reference": "DEF-123", "summary": "Upgrade the ticket"},
+        "participants": {
+            "worker": {"harness": "codex", "claim": null},
+            "reviewer": {"harness": "claude", "claim": null}
+        },
+        "status": "working", "assignee": "worker", "revision": 0,
+        "checkpoint": null, "review": null,
+        "publication": {"required": true, "desired_revision": 0, "published_revision": null, "refs": []},
+        "human_decision": null, "predecessor_run_id": null, "terminal": null, "recovery": null
+    });
+    let bytes = serde_json::to_vec_pretty(&baton).unwrap();
+    std::fs::write(run_dir.join("history/00000000000000000000.json"), &bytes).unwrap();
+    std::fs::write(run_dir.join("baton.json"), &bytes).unwrap();
+    run_dir
+}
+
+#[test]
+fn public_discover_normalizes_query_harness_for_v1_and_v2_candidates() {
+    for schema in ["v1", "v2"] {
+        let root = tempfile::tempdir().unwrap();
+        let run_id = format!("normalized-{schema}");
+        if schema == "v1" {
+            write_legacy_run(root.path(), &run_id);
+        } else {
+            create_run(
+                root.path(),
+                &run_id,
+                REPOSITORY_ID,
+                Some("DEF-123"),
+                "claude",
+            );
+        }
+
+        let output = command()
+            .args([
+                "discover",
+                "--runs-dir",
+                root.path().to_str().unwrap(),
+                "--repository-id",
+                REPOSITORY_ID,
+                "--reviewer-harness",
+                " CoDeX ",
+                "--role",
+                "worker",
+                "--run-id",
+                &run_id,
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            result["outcome"],
+            if schema == "v1" {
+                "upgrade_required"
+            } else {
+                "match"
+            }
+        );
+        assert_eq!(result["candidates"][0]["run_id"], run_id);
+    }
+}
+
+#[test]
+fn public_discover_wait_normalizes_query_harness_for_v1_and_v2_candidates() {
+    for schema in ["v1", "v2"] {
+        let root = tempfile::tempdir().unwrap();
+        let run_id = format!("normalized-wait-{schema}");
+        if schema == "v1" {
+            write_legacy_run(root.path(), &run_id);
+        } else {
+            create_run(
+                root.path(),
+                &run_id,
+                REPOSITORY_ID,
+                Some("DEF-123"),
+                "claude",
+            );
+        }
+
+        let output = command()
+            .args([
+                "discover-wait",
+                "--runs-dir",
+                root.path().to_str().unwrap(),
+                "--repository-id",
+                REPOSITORY_ID,
+                "--reviewer-harness",
+                " CoDeX ",
+                "--role",
+                "worker",
+                "--poll-only",
+                "--poll-interval-ms",
+                "1",
+                "--timeout-ms",
+                "5",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            result["outcome"],
+            if schema == "v1" {
+                "upgrade_required"
+            } else {
+                "match"
+            }
+        );
+        assert_eq!(result["candidates"][0]["run_id"], run_id);
+    }
+}
+
+#[test]
+fn upgrade_classifies_v1_as_upgrade_required_instead_of_corrupt_or_matchable() {
+    let root = tempfile::tempdir().unwrap();
+    let run_dir = write_legacy_run(root.path(), "legacy-run");
+
+    let output = command()
+        .args([
+            "discover",
+            "--runs-dir",
+            root.path().to_str().unwrap(),
+            "--repository-id",
+            REPOSITORY_ID,
+            "--reviewer-harness",
+            "codex",
+            "--role",
+            "worker",
+            "--run-id",
+            "legacy-run",
+            "--session-id",
+            "worker-new",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let outcome: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(outcome["outcome"], "upgrade_required");
+    assert_eq!(outcome["candidates"][0]["run_id"], "legacy-run");
+    assert_eq!(
+        outcome["candidates"][0]["run_dir"],
+        run_dir.to_str().unwrap()
+    );
+    assert_eq!(outcome["candidates"][0]["revision"], 0);
+    assert_eq!(
+        outcome["candidates"][0]["migration"]["from_schema"],
+        "dvandva.run.v1"
+    );
+    assert_eq!(outcome["corrupt"], serde_json::json!([]));
 }
 
 fn create_run(
@@ -19,18 +192,28 @@ fn create_run(
     reviewer: &str,
 ) -> std::path::PathBuf {
     let run_dir = runs.join(run_id);
-    let baton = RunBaton::new(run_id, "Implement the ticket", "codex", reviewer)
-        .with_discovery_identity(
-            WorkspaceIdentity {
-                repository_id: repository_id.to_owned(),
-                origin: Some("git@github.com:axatbhardwaj/Dvandva.git".to_owned()),
-                worktree: Some("/tmp/worker".to_owned()),
-            },
-            TaskIdentity {
-                reference: task_reference.map(str::to_owned),
-                summary: "Implement the ticket".to_owned(),
-            },
-        );
+    let baton = RunBaton::new(
+        run_id,
+        "Implement the ticket",
+        "codex",
+        reviewer,
+        vec![DeliverableRequirement {
+            id: "implementation".to_owned(),
+            description: "Implement the ticket".to_owned(),
+        }],
+    )
+    .unwrap()
+    .with_discovery_identity(
+        WorkspaceIdentity {
+            repository_id: repository_id.to_owned(),
+            origin: Some("git@github.com:axatbhardwaj/Dvandva.git".to_owned()),
+            worktree: Some("/tmp/worker".to_owned()),
+        },
+        TaskIdentity {
+            reference: task_reference.map(str::to_owned),
+            summary: "Implement the ticket".to_owned(),
+        },
+    );
     RunChannel::open(&run_dir).create(&baton).unwrap();
     run_dir
 }
@@ -83,6 +266,295 @@ fn one_matching_active_run_is_returned() {
 }
 
 #[test]
+fn exact_missing_run_is_typed_immediately() {
+    let root = tempfile::tempdir().unwrap();
+    let output = command()
+        .args([
+            "discover",
+            "--runs-dir",
+            root.path().to_str().unwrap(),
+            "--repository-id",
+            REPOSITORY_ID,
+            "--reviewer-harness",
+            "claude",
+            "--run-id",
+            "missing-run",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let outcome: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(outcome["outcome"], "run_missing");
+    assert_eq!(outcome["candidates"], serde_json::json!([]));
+}
+
+#[test]
+fn exact_busy_reviewer_run_carries_canonical_candidate() {
+    let root = tempfile::tempdir().unwrap();
+    let run_dir = create_run(
+        root.path(),
+        "exact-busy",
+        REPOSITORY_ID,
+        Some("DEF-123"),
+        "claude",
+    );
+    claim::claim(
+        &RunChannel::open(&run_dir),
+        Role::Reviewer,
+        "existing-reviewer",
+        300,
+        0,
+    )
+    .unwrap();
+    let output = command()
+        .args([
+            "discover",
+            "--runs-dir",
+            root.path().to_str().unwrap(),
+            "--repository-id",
+            REPOSITORY_ID,
+            "--reviewer-harness",
+            "claude",
+            "--run-id",
+            "exact-busy",
+            "--session-id",
+            "other-reviewer",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let outcome: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(outcome["outcome"], "busy");
+    assert_eq!(
+        outcome["candidates"][0]["objective"]["summary"],
+        "Implement the ticket"
+    );
+    assert_eq!(outcome["candidates"][0]["scope_revision"], 0);
+    assert_eq!(outcome["candidates"][0]["assignee"], "worker");
+}
+
+#[test]
+fn exact_discovery_ignores_unrelated_corrupt_siblings() {
+    let root = tempfile::tempdir().unwrap();
+    create_run(
+        root.path(),
+        "exact-good",
+        REPOSITORY_ID,
+        Some("DEF-123"),
+        "claude",
+    );
+    let corrupt = root.path().join("unrelated-corrupt");
+    std::fs::create_dir_all(&corrupt).unwrap();
+    std::fs::write(corrupt.join("baton.json"), b"not json").unwrap();
+
+    for (run_id, expected) in [("exact-good", "match"), ("missing-run", "run_missing")] {
+        let output = command()
+            .args([
+                "discover",
+                "--runs-dir",
+                root.path().to_str().unwrap(),
+                "--repository-id",
+                REPOSITORY_ID,
+                "--reviewer-harness",
+                "claude",
+                "--run-id",
+                run_id,
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let outcome: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(outcome["outcome"], expected);
+        assert_eq!(outcome["corrupt"], serde_json::json!([]));
+    }
+
+    claim::claim(
+        &RunChannel::open(root.path().join("exact-good")),
+        Role::Reviewer,
+        "existing-reviewer",
+        300,
+        0,
+    )
+    .unwrap();
+    let output = command()
+        .args([
+            "discover",
+            "--runs-dir",
+            root.path().to_str().unwrap(),
+            "--repository-id",
+            REPOSITORY_ID,
+            "--reviewer-harness",
+            "claude",
+            "--run-id",
+            "exact-good",
+            "--session-id",
+            "other-reviewer",
+        ])
+        .output()
+        .unwrap();
+    let outcome: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(outcome["outcome"], "busy");
+    assert_eq!(outcome["corrupt"], serde_json::json!([]));
+}
+
+#[test]
+fn exact_discovery_fails_closed_when_the_named_run_is_corrupt() {
+    let root = tempfile::tempdir().unwrap();
+    let corrupt = root.path().join("named-corrupt");
+    std::fs::create_dir_all(&corrupt).unwrap();
+    std::fs::write(corrupt.join("baton.json"), b"not json").unwrap();
+    create_run(
+        root.path(),
+        "unrelated-good",
+        REPOSITORY_ID,
+        Some("DEF-123"),
+        "claude",
+    );
+
+    let output = command()
+        .args([
+            "discover",
+            "--runs-dir",
+            root.path().to_str().unwrap(),
+            "--repository-id",
+            REPOSITORY_ID,
+            "--reviewer-harness",
+            "claude",
+            "--run-id",
+            "named-corrupt",
+        ])
+        .output()
+        .unwrap();
+    let outcome: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(outcome["outcome"], "corrupt");
+    assert_eq!(outcome["corrupt"].as_array().unwrap().len(), 1);
+    assert_eq!(outcome["corrupt"][0]["run_dir"], corrupt.to_str().unwrap());
+}
+
+#[test]
+fn exact_discovery_treats_named_run_identity_mismatch_as_corrupt() {
+    let root = tempfile::tempdir().unwrap();
+    let original = create_run(
+        root.path(),
+        "stored-other-id",
+        REPOSITORY_ID,
+        Some("DEF-123"),
+        "claude",
+    );
+    std::fs::rename(&original, root.path().join("named-run")).unwrap();
+
+    let output = command()
+        .args([
+            "discover",
+            "--runs-dir",
+            root.path().to_str().unwrap(),
+            "--repository-id",
+            REPOSITORY_ID,
+            "--reviewer-harness",
+            "claude",
+            "--run-id",
+            "named-run",
+        ])
+        .output()
+        .unwrap();
+    let outcome: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(outcome["outcome"], "corrupt");
+    assert_eq!(outcome["corrupt"].as_array().unwrap().len(), 1);
+}
+
+#[test]
+fn broad_discovery_is_ambiguous_for_multiple_or_mixed_upgrade_candidates() {
+    for mixed in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        write_legacy_run(root.path(), "legacy-a");
+        if mixed {
+            create_run(
+                root.path(),
+                "current-b",
+                REPOSITORY_ID,
+                Some("DEF-123"),
+                "claude",
+            );
+        } else {
+            write_legacy_run(root.path(), "legacy-b");
+        }
+
+        let output = command()
+            .args([
+                "discover",
+                "--runs-dir",
+                root.path().to_str().unwrap(),
+                "--repository-id",
+                REPOSITORY_ID,
+                "--reviewer-harness",
+                "codex",
+                "--role",
+                "worker",
+                "--task-reference",
+                "DEF-123",
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let outcome: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(outcome["outcome"], "ambiguous");
+        assert_eq!(outcome["candidates"].as_array().unwrap().len(), 2);
+    }
+}
+
+#[test]
+fn exact_named_non_directory_missing_head_and_terminal_identity_mismatch_are_corrupt() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("named-file"), b"not a run").unwrap();
+    std::fs::create_dir(root.path().join("missing-head")).unwrap();
+
+    let terminal = create_run(
+        root.path(),
+        "stored-terminal",
+        REPOSITORY_ID,
+        Some("DEF-123"),
+        "claude",
+    );
+    let channel = RunChannel::open(&terminal);
+    let grant = claim::claim(&channel, Role::Worker, "worker", 300, 0).unwrap();
+    transition::apply(
+        &channel,
+        Role::Worker,
+        "worker",
+        &grant.token,
+        1,
+        Action::Abandon {
+            reason: "terminal fixture".to_owned(),
+        },
+    )
+    .unwrap();
+    std::fs::rename(&terminal, root.path().join("named-terminal")).unwrap();
+
+    for run_id in ["named-file", "missing-head", "named-terminal"] {
+        let output = command()
+            .args([
+                "discover",
+                "--runs-dir",
+                root.path().to_str().unwrap(),
+                "--repository-id",
+                REPOSITORY_ID,
+                "--reviewer-harness",
+                "codex",
+                "--role",
+                "worker",
+                "--run-id",
+                run_id,
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let outcome: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(outcome["outcome"], "corrupt", "{run_id}");
+        assert_eq!(outcome["corrupt"].as_array().unwrap().len(), 1);
+    }
+}
+
+#[test]
 fn a_live_reviewer_claim_is_not_joinable() {
     let root = tempfile::tempdir().unwrap();
     let run_dir = create_run(
@@ -111,26 +583,32 @@ fn a_live_reviewer_claim_is_not_joinable() {
 fn an_expired_reviewer_claim_is_reclaimable() {
     let root = tempfile::tempdir().unwrap();
     let run_dir = root.path().join("def-123-expired");
-    let mut baton = RunBaton::new("def-123-expired", "Implement", "codex", "claude")
-        .with_discovery_identity(
-            WorkspaceIdentity {
-                repository_id: REPOSITORY_ID.to_owned(),
-                origin: None,
-                worktree: Some("/tmp/worker".to_owned()),
-            },
-            TaskIdentity {
-                reference: Some("DEF-123".to_owned()),
-                summary: "Implement".to_owned(),
-            },
-        );
-    baton.participants.reviewer.claim = Some(ParticipantClaim {
-        session_id: "gone-reviewer".to_owned(),
-        epoch: 3,
-        token_digest: "old-digest".to_owned(),
-        lease_expires_at: "2000-01-01T00:00:00Z".to_owned(),
-        lease_seconds: 300,
-    });
-    RunChannel::open(run_dir).create(&baton).unwrap();
+    let baton = RunBaton::new(
+        "def-123-expired",
+        "Implement",
+        "codex",
+        "claude",
+        vec![DeliverableRequirement {
+            id: "implementation".to_owned(),
+            description: "Implement".to_owned(),
+        }],
+    )
+    .unwrap()
+    .with_discovery_identity(
+        WorkspaceIdentity {
+            repository_id: REPOSITORY_ID.to_owned(),
+            origin: None,
+            worktree: Some("/tmp/worker".to_owned()),
+        },
+        TaskIdentity {
+            reference: Some("DEF-123".to_owned()),
+            summary: "Implement".to_owned(),
+        },
+    );
+    let channel = RunChannel::open(run_dir);
+    channel.create(&baton).unwrap();
+    claim::claim(&channel, Role::Reviewer, "gone-reviewer", 1, 0).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1_100));
 
     let outcome = discover(root.path(), Some("DEF-123"));
     assert_eq!(outcome["outcome"], "match");
@@ -271,7 +749,7 @@ fn a_live_worker_claim_on_another_task_is_not_actionable() {
 }
 
 #[test]
-fn wrong_repository_reviewer_and_terminal_runs_are_ignored() {
+fn wrong_repository_and_terminal_runs_are_ignored() {
     let root = tempfile::tempdir().unwrap();
     create_run(
         root.path(),
@@ -279,13 +757,6 @@ fn wrong_repository_reviewer_and_terminal_runs_are_ignored() {
         "github.com/example/other",
         Some("DEF-123"),
         "claude",
-    );
-    create_run(
-        root.path(),
-        "wrong-reviewer",
-        REPOSITORY_ID,
-        Some("DEF-123"),
-        "codex",
     );
     let terminal_dir = create_run(
         root.path(),
@@ -295,10 +766,18 @@ fn wrong_repository_reviewer_and_terminal_runs_are_ignored() {
         "claude",
     );
     let channel = RunChannel::open(&terminal_dir);
-    let mut terminal = channel.read().unwrap();
-    terminal.status = Status::Done;
-    terminal.revision = 1;
-    channel.compare_and_swap(0, &terminal).unwrap();
+    let grant = claim::claim(&channel, Role::Worker, "terminal-worker", 300, 0).unwrap();
+    transition::apply(
+        &channel,
+        Role::Worker,
+        "terminal-worker",
+        &grant.token,
+        1,
+        Action::Abandon {
+            reason: "terminal fixture".to_owned(),
+        },
+    )
+    .unwrap();
 
     let outcome = discover(root.path(), Some("DEF-123"));
     assert_eq!(outcome["outcome"], "none");

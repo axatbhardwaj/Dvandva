@@ -1,50 +1,92 @@
 # Dvandva Coordination
 
-Dvandva v4 is a minimal coordination kernel for one autonomous run shared by
-exactly two independently started harness sessions. The v3.5.1 product and its
-distribution remain a retired archive.
+Dvandva coordinates one autonomous run shared by two independently started
+harness sessions. The v3 product and its distribution are a retired archive.
 
-## Runtime vocabulary
+## Language
 
-**Run Pair**: one worker Role Session and one reviewer Role Session. The
-default casting is Codex worker and Claude reviewer, but the protocol names
-roles rather than products.
+**Run Pair**:
+One worker Role Session and one reviewer Role Session from different harness
+families. Semantic roles do not determine harness-specific publication duty.
 
-**Role Session**: one independently started harness session holding a fenced,
-time-bounded participant claim. Neither session launches or invokes the other.
+**Role Session**:
+One independently started harness session participating as worker or reviewer.
+Neither session launches or invokes the other.
 
-**Walkaway Run**: a Run Pair that waits locally and alternates until completion,
-abandonment, or a Human Decision.
+**Run Channel**:
+The isolated coordination context belonging to one Run Pair.
 
-**Run Channel**: one run-local directory containing the authoritative Baton,
-immutable history, and a lock. Two runs never share a channel or global lock.
+**Coordination Kernel**:
+The authority that determines which role actions and state changes are valid.
+It is distinct from a harness launcher, model router, or goal manager.
 
-**Coordination Kernel**: schema validation, claims, legal transitions,
-compare-and-swap persistence, recovery, and local wake-up. It is not a model
-router, tracker scheduler, or harness launcher.
+**Baton**:
+The authoritative evolving record of one Run Pair.
 
-**Baton**: the single `dvandva.run.v1` JSON state for one run.
+**Canonical Scope**:
+The agreed objective, references, task identity, and required deliverables for
+one run.
 
-**Handoff**: an assignee change accepted through the Baton.
+**Scope Revision**:
+The identity of one declared Canonical Scope version. A human-approved
+amendment makes every earlier scope-bound checkpoint, Handoff, and review stale.
 
-**Handoff Checkpoint**: an immutable Git or artifact identity with verification
-evidence. Reviews bind that exact identity.
+**Checkpoint Manifest**:
+The complete set of immutable deliverable references and verification evidence
+covering every required deliverable in Canonical Scope exactly once.
 
-**Adversarial Review**: evaluation by the harness family that did not author
-the checkpoint.
+**Manifest Digest**:
+The immutable content identity of the checkpoint kind, checkpoint identity,
+complete Checkpoint Manifest, and Scope Revision.
 
-**Human Decision**: an explicit pause containing the unresolved question,
-evidence, options, designated contact, and exact resume target.
+**Checkpoint Binding**:
+The checkpoint identity, Manifest Digest, and Scope Revision that together name
+the exact review object. Changing any coordinate makes the earlier binding
+stale.
 
-**Participant claim**: a role/session binding protected by an expiring lease,
-epoch, and secret-token digest. Replacement fences the earlier token.
+**Checkpoint Supersession**:
+A pending request to replace the current immutable checkpoint after new work is
+found during review.
 
-**Worker**: authors checkpoints, applies revisions, maintains optional
-publication projections, and finalizes an approved identity.
+**Approval Withdrawal**:
+Retraction of approval after new required work makes the approved checkpoint
+incomplete.
 
-**Reviewer**: reviews the current checkpoint and either requests actionable
-changes or approves it.
+**Protocol Upgrade**:
+The dedicated one-way adoption of active v2 from a legacy v1 Baton, retaining
+prior state and history as provenance in the same run. It is distinct from
+ordinary role actions, recovery, or setup.
 
-Planning, grilling, specification, ticket creation, and explicit-only Matt
-Pocock skills happen outside the runtime protocol. Trackers and published
-explainers are optional projections; neither assigns work nor wakes a session.
+**Handoff**:
+A run milestone whose current Scope Revision and optional Checkpoint Binding
+are published and reviewed together. Handoffs cover role transfer, run start,
+Protocol Upgrade, scope amendment, accepted Checkpoint Supersession, and
+Approval Withdrawal.
+
+**Publication Gate**:
+The fixed requirement that the Codex harness publishes the Codex Sites
+explainer and the Claude harness reviews that exact deployment for the same
+Handoff before the run advances. These duties do not follow Worker or Reviewer
+casting.
+
+**External Reference**:
+A stable identity for a deliverable or deployment outside the Baton.
+
+**Human Decision**:
+An explicit pause containing one unresolved question, evidence, options,
+designated contact, and exact resume target.
+
+**Participant Claim**:
+A Role Session's exclusive authority to act for one semantic role.
+
+**Harness Goal**:
+User-owned prompt context outside Dvandva state. A role neither creates nor
+changes it while joining or completing a run.
+
+**Worker**:
+The semantic role that produces complete checkpoints and finalizes an approved
+Checkpoint Binding.
+
+**Reviewer**:
+The semantic role that adversarially reviews the exact Checkpoint Binding and
+records findings or approval.

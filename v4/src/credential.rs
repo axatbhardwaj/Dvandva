@@ -5,11 +5,14 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use uuid::Uuid;
 
-use crate::claim::Role;
+use crate::{claim::Role, model::RunBaton};
 
 #[derive(Debug, Error)]
 pub enum CredentialError {
@@ -41,6 +44,57 @@ pub struct Credential {
     pub session_id: String,
     pub epoch: u64,
     pub token: String,
+}
+
+pub struct ClaimCredentialLock {
+    _lock: File,
+    root: PathBuf,
+    session_id: String,
+    role: Role,
+}
+
+impl ClaimCredentialLock {
+    pub fn prepare(&self, baton: &RunBaton) -> Result<PathBuf, CredentialError> {
+        prepare_for_claim(&self.root, &self.session_id, baton, self.role)
+    }
+
+    pub fn store(&self, credential: &Credential) -> Result<PathBuf, CredentialError> {
+        store(&self.root, credential)
+    }
+}
+
+pub fn lock_for_claim(
+    root: &Path,
+    session_id: &str,
+    run_id: &str,
+    role: Role,
+) -> Result<ClaimCredentialLock, CredentialError> {
+    let target = path(root, session_id, run_id, role)?;
+    ensure_private_dir(root)?;
+    ensure_private_dir(&root.join(session_id))?;
+    let directory = root.join(session_id).join(run_id);
+    ensure_private_dir(&directory)?;
+    let lock_path = target.with_file_name(format!(".{}.claim.lock", role_name(role)));
+    let lock = OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(lock_path)?;
+    let metadata = lock.metadata()?;
+    if !metadata.is_file() || metadata.permissions().mode() & 0o077 != 0 {
+        return Err(CredentialError::UnsafeFile);
+    }
+    ensure_current_owner(&metadata)?;
+    lock.lock_exclusive()?;
+    Ok(ClaimCredentialLock {
+        _lock: lock,
+        root: root.to_owned(),
+        session_id: session_id.to_owned(),
+        role,
+    })
 }
 
 pub fn path(
@@ -110,6 +164,35 @@ pub fn prepare(
         return Err(CredentialError::Exists);
     }
     Ok(target)
+}
+
+pub fn prepare_for_claim(
+    root: &Path,
+    session_id: &str,
+    baton: &RunBaton,
+    role: Role,
+) -> Result<PathBuf, CredentialError> {
+    let target = path(root, session_id, &baton.run_id, role)?;
+    if target.exists() {
+        let stored = load(root, session_id, &baton.run_id, role)?;
+        let claim = match role {
+            Role::Worker => baton.participants.worker.claim.as_ref(),
+            Role::Reviewer => baton.participants.reviewer.claim.as_ref(),
+        };
+        let matches_active = claim.is_some_and(|claim| {
+            let live = OffsetDateTime::parse(&claim.lease_expires_at, &Rfc3339)
+                .is_ok_and(|expiry| expiry > OffsetDateTime::now_utc());
+            live && claim.session_id == stored.session_id
+                && claim.epoch == stored.epoch
+                && claim.token_digest == digest(&stored.token)
+        });
+        if matches_active {
+            return Err(CredentialError::Exists);
+        }
+        fs::remove_file(&target)?;
+        File::open(target.parent().ok_or(CredentialError::UnsafeDirectory)?)?.sync_all()?;
+    }
+    prepare(root, session_id, &baton.run_id, role)
 }
 
 pub fn load(
@@ -200,4 +283,11 @@ pub fn role_name(role: Role) -> &'static str {
         Role::Worker => "worker",
         Role::Reviewer => "reviewer",
     }
+}
+
+fn digest(token: &str) -> String {
+    Sha256::digest(token.as_bytes())
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }

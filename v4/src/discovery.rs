@@ -1,4 +1,5 @@
 use std::{
+    ffi::OsStr,
     fs,
     path::{Path, PathBuf},
     sync::mpsc,
@@ -12,7 +13,7 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use crate::{
     claim::Role,
-    model::{RunBaton, Status, SCHEMA},
+    model::{Assignee, DeliverableRequirement, Objective, RunBaton, Status, LEGACY_SCHEMA, SCHEMA},
     store::RunChannel,
 };
 
@@ -36,7 +37,10 @@ pub struct DiscoveryQuery<'a> {
 #[serde(rename_all = "snake_case")]
 pub enum DiscoveryKind {
     Match,
+    UpgradeRequired,
     Busy,
+    RunMissing,
+    ScopeMismatch,
     None,
     Ambiguous,
     TaskMismatch,
@@ -49,9 +53,21 @@ pub struct RunCandidate {
     pub run_dir: PathBuf,
     pub task_reference: Option<String>,
     pub task_summary: String,
+    pub objective: Objective,
+    pub scope_revision: u64,
+    pub scope_deliverables: Vec<DeliverableRequirement>,
     pub status: Status,
+    pub assignee: Assignee,
     pub revision: u64,
     pub claim_state: ClaimState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub migration: Option<MigrationMetadata>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MigrationMetadata {
+    pub from_schema: String,
+    pub next_action: &'static str,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -74,6 +90,22 @@ pub struct DiscoveryOutcome {
     pub outcome: DiscoveryKind,
     pub candidates: Vec<RunCandidate>,
     pub corrupt: Vec<CorruptCandidate>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub requested_scope: Option<RequestedScope>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_action: Option<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct RequestedScope {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub objective_summary: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub objective_refs: Option<Vec<crate::model::ExternalRef>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub task_reference: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub required_deliverables: Option<Vec<DeliverableRequirement>>,
 }
 
 pub fn discover(
@@ -81,16 +113,33 @@ pub fn discover(
     query: DiscoveryQuery<'_>,
 ) -> Result<DiscoveryOutcome, DiscoveryError> {
     if !runs_dir.exists() {
-        return Ok(outcome(Vec::new(), Vec::new(), Vec::new()));
+        let mut result = outcome(Vec::new(), Vec::new(), Vec::new(), Vec::new());
+        if query.run_id.is_some() {
+            result.outcome = DiscoveryKind::RunMissing;
+        }
+        return Ok(result);
     }
 
     let mut candidates = Vec::new();
     let mut task_mismatches = Vec::new();
+    let mut upgrades = Vec::new();
     let mut corrupt = Vec::new();
     for entry in fs::read_dir(runs_dir)? {
         let entry = entry?;
+        if query
+            .run_id
+            .is_some_and(|run_id| entry.file_name() != OsStr::new(run_id))
+        {
+            continue;
+        }
         let run_dir = entry.path();
         if !entry.file_type()?.is_dir() {
+            if query.run_id.is_some() {
+                corrupt.push(CorruptCandidate {
+                    run_dir,
+                    error: "named run entry is not a directory".to_owned(),
+                });
+            }
             continue;
         }
         match RunChannel::open(&run_dir).read() {
@@ -99,10 +148,18 @@ pub fn discover(
                 Ok(Some(CandidateMatch::TaskMismatch(candidate))) => {
                     task_mismatches.push(candidate)
                 }
+                Ok(Some(CandidateMatch::Upgrade(candidate))) => upgrades.push(candidate),
                 Ok(None) => {}
                 Err(error) => corrupt.push(CorruptCandidate { run_dir, error }),
             },
-            Err(crate::store::StoreError::RunMissing) => {}
+            Err(crate::store::StoreError::RunMissing) => {
+                if query.run_id.is_some() {
+                    corrupt.push(CorruptCandidate {
+                        run_dir,
+                        error: "named run directory has no Baton head".to_owned(),
+                    });
+                }
+            }
             Err(error) => corrupt.push(CorruptCandidate {
                 run_dir,
                 error: error.to_string(),
@@ -111,8 +168,15 @@ pub fn discover(
     }
     candidates.sort_by(|left, right| left.run_id.cmp(&right.run_id));
     task_mismatches.sort_by(|left, right| left.run_id.cmp(&right.run_id));
+    upgrades.sort_by(|left, right| left.run_id.cmp(&right.run_id));
     corrupt.sort_by(|left, right| left.run_dir.cmp(&right.run_dir));
-    Ok(outcome(candidates, task_mismatches, corrupt))
+    let mut result = outcome(candidates, task_mismatches, upgrades, corrupt);
+    if query.run_id.is_some() && result.outcome == DiscoveryKind::None {
+        result.outcome = DiscoveryKind::RunMissing;
+    } else if query.run_id.is_some() && result.outcome == DiscoveryKind::Busy {
+        result.next_action = Some("wait");
+    }
+    Ok(result)
 }
 
 pub fn wait_for_match(
@@ -167,68 +231,98 @@ fn candidate(
     baton: RunBaton,
     query: &DiscoveryQuery<'_>,
 ) -> Result<Option<CandidateMatch>, String> {
-    if baton.schema != SCHEMA {
+    if !matches!(baton.schema.as_str(), SCHEMA | LEGACY_SCHEMA) {
         return Err("unsupported baton schema".to_owned());
     }
-    if matches!(baton.status, Status::Done | Status::Abandoned) {
+    if query
+        .run_id
+        .is_some_and(|expected| baton.run_id != expected)
+    {
+        return Err("baton run id does not match its named directory".to_owned());
+    }
+    let terminal =
+        baton.schema == SCHEMA && matches!(baton.status, Status::Done | Status::Abandoned);
+    if terminal && query.run_id.is_none() {
         return Ok(None);
     }
     let workspace = baton
         .workspace
         .as_ref()
         .ok_or_else(|| "baton has no workspace identity".to_owned())?;
-    let task = baton
-        .task
-        .as_ref()
-        .ok_or_else(|| "baton has no task identity".to_owned())?;
+    let task = baton.task.as_ref();
     let participant = match query.role {
         Role::Worker => &baton.participants.worker,
         Role::Reviewer => &baton.participants.reviewer,
     };
-    if query
-        .run_id
-        .is_some_and(|expected| baton.run_id != expected)
-        || workspace.repository_id != query.repository_id
+    if workspace.repository_id != query.repository_id
         || !participant
             .harness
-            .eq_ignore_ascii_case(query.participant_harness)
+            .trim()
+            .eq_ignore_ascii_case(query.participant_harness.trim())
     {
         return Ok(None);
     }
-    let claim_state = match participant.claim.as_ref() {
-        None => ClaimState::Unclaimed,
-        Some(claim) => {
-            let expiry = OffsetDateTime::parse(&claim.lease_expires_at, &Rfc3339)
-                .map_err(|_| "participant claim has an invalid expiry".to_owned())?;
-            if expiry <= OffsetDateTime::now_utc() {
-                ClaimState::Expired
-            } else if query
-                .session_id
-                .is_some_and(|session_id| claim.session_id == session_id)
-            {
-                ClaimState::Owned
-            } else if query.role == Role::Worker {
-                ClaimState::Busy
-            } else {
-                return Ok(None);
+    let claim_state = if terminal {
+        ClaimState::Unclaimed
+    } else {
+        match participant.claim.as_ref() {
+            None => ClaimState::Unclaimed,
+            Some(claim) => {
+                let expiry = OffsetDateTime::parse(&claim.lease_expires_at, &Rfc3339)
+                    .map_err(|_| "participant claim has an invalid expiry".to_owned())?;
+                if expiry <= OffsetDateTime::now_utc() {
+                    ClaimState::Expired
+                } else if query
+                    .session_id
+                    .is_some_and(|session_id| claim.session_id == session_id)
+                {
+                    ClaimState::Owned
+                } else if query.role == Role::Worker || query.run_id.is_some() {
+                    ClaimState::Busy
+                } else {
+                    return Ok(None);
+                }
             }
         }
+    };
+    let legacy = baton.schema == LEGACY_SCHEMA;
+    let task_reference = task.and_then(|identity| identity.reference.clone());
+    let task_summary = task
+        .map(|identity| identity.summary.clone())
+        .unwrap_or_else(|| baton.objective.summary.clone());
+    let objective = baton.objective;
+    let scope_deliverables = if legacy {
+        vec![DeliverableRequirement {
+            id: "legacy_objective".to_owned(),
+            description: objective.summary.trim().to_owned(),
+        }]
+    } else {
+        baton.scope_deliverables
     };
     let candidate = RunCandidate {
         run_id: baton.run_id,
         run_dir: run_dir.to_owned(),
-        task_reference: task.reference.clone(),
-        task_summary: task.summary.clone(),
+        task_reference,
+        task_summary,
+        objective,
+        scope_revision: baton.scope_revision,
+        scope_deliverables,
         status: baton.status,
+        assignee: baton.assignee,
         revision: baton.revision,
         claim_state,
+        migration: legacy.then(|| MigrationMetadata {
+            from_schema: LEGACY_SCHEMA.to_owned(),
+            next_action: "upgrade_protocol",
+        }),
     };
     let task_matches = query.task_reference.is_none_or(|expected| {
-        task.reference
-            .as_deref()
+        task.and_then(|identity| identity.reference.as_deref())
             .is_some_and(|actual| actual == expected.trim())
     });
-    if query.run_id.is_none() && !task_matches {
+    if baton.schema == LEGACY_SCHEMA && (query.run_id.is_some() || task_matches) {
+        Ok(Some(CandidateMatch::Upgrade(candidate)))
+    } else if query.run_id.is_none() && !task_matches {
         if candidate.claim_state == ClaimState::Busy {
             Ok(None)
         } else {
@@ -242,15 +336,26 @@ fn candidate(
 enum CandidateMatch {
     Exact(RunCandidate),
     TaskMismatch(RunCandidate),
+    Upgrade(RunCandidate),
 }
 
 fn outcome(
     candidates: Vec<RunCandidate>,
     task_mismatches: Vec<RunCandidate>,
+    upgrades: Vec<RunCandidate>,
     corrupt: Vec<CorruptCandidate>,
 ) -> DiscoveryOutcome {
     let (outcome, candidates) = if !corrupt.is_empty() {
         (DiscoveryKind::Corrupt, candidates)
+    } else if !upgrades.is_empty() {
+        let mut plausible = candidates;
+        plausible.extend(upgrades);
+        plausible.sort_by(|left, right| left.run_id.cmp(&right.run_id));
+        if plausible.len() == 1 {
+            (DiscoveryKind::UpgradeRequired, plausible)
+        } else {
+            (DiscoveryKind::Ambiguous, plausible)
+        }
     } else if candidates.is_empty() && !task_mismatches.is_empty() {
         (DiscoveryKind::TaskMismatch, task_mismatches)
     } else {
@@ -265,5 +370,7 @@ fn outcome(
         outcome,
         candidates,
         corrupt,
+        requested_scope: None,
+        next_action: None,
     }
 }

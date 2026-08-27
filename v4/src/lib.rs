@@ -7,6 +7,7 @@ pub mod credential;
 pub mod discovery;
 pub mod identity;
 pub mod model;
+pub mod next_action;
 pub mod role_session;
 pub mod store;
 pub mod transition;

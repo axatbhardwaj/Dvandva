@@ -1,10 +1,17 @@
-# Dvandva v4 kernel
+# Dvandva v4 kernel 0.2.0
 
 This directory contains the non-publishable implementation of the active
-skill-only Run Baton protocol. It is packaged only as a private, checksummed
-`skills-v*` release asset used by the root `setup-dvandva`, `vadi`, and
-`prativadi` skills. It is not installed on `PATH` and does not invoke or manage
-Claude Code, Codex, T3 Code, issue trackers, or publication providers.
+skill-only `dvandva.run.v2` Run Baton protocol and role API 2. The crate has
+`publish = false`: it is not published on crates.io. The intended distribution
+is a checksummed `skills-v0.2.0` GitHub release asset used only by the root
+`setup-dvandva`, `vadi`, and `prativadi` skills. It is not installed on `PATH`
+and does not invoke or manage Claude Code, Codex, T3 Code, issue trackers,
+goals, or publication providers.
+
+The kernel can identify `dvandva.run.v1` only for a dedicated upgrade that is
+one-way.
+Ordinary v1 role operations fail with `migration_required`; setup installs or
+updates the kernel but never migrates runs.
 
 ```bash
 cargo build --manifest-path v4/Cargo.toml
@@ -19,7 +26,9 @@ v4/target/debug/dvandva-v4 init \
   --run-id example \
   --objective "Produce and review one artifact" \
   --worker codex \
-  --reviewer claude
+  --reviewer claude \
+  --repository-id github.com/example/project \
+  --required-deliverable implementation="Reviewed implementation"
 ```
 
 End users do not run these commands. Each independently started session uses

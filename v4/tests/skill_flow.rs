@@ -1,8 +1,498 @@
 use assert_cmd::Command;
+use dvandva_v4::action::Action;
 use predicates::prelude::*;
+use std::collections::BTreeSet;
 
 fn command() -> Command {
     Command::new(env!("CARGO_BIN_EXE_dvandva-v4"))
+}
+
+fn repository_file(path: &str) -> String {
+    let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
+    std::fs::read_to_string(repository.join(path)).unwrap()
+}
+
+fn role_sources(role: &str) -> (String, String) {
+    (
+        repository_file(&format!("skills/{role}/SKILL.md")),
+        repository_file(&format!("skills/{role}/references/run-contract.md")),
+    )
+}
+
+fn assert_role_source_contract(role: &str) {
+    let (skill, contract) = role_sources(role);
+    let source = format!("{skill}\n{contract}");
+    for required in [
+        "fresh facade snapshot",
+        "next_actions",
+        "advisory_actions",
+        "legal_actions",
+        "never an ordinary wake or action",
+        "scope_mismatch",
+        "complete deliverable manifest",
+        "canonical deliverable IDs exactly once",
+        "request_checkpoint_supersession",
+        "accept_checkpoint_supersession",
+        "withdraw_approval",
+        "Codex harness publishes",
+        "Claude harness reviews",
+        "regardless of semantic casting",
+        "canonical scope, complete manifest, findings and decisions, and a current plan/TODO",
+        "stable Site ID",
+        "new Site version",
+        "owner-only",
+        "Claude Artifact",
+        "generic publisher",
+        "public access",
+        "silent fallback",
+        "user-created harness goals remain unchanged",
+        "human starts the peer session",
+        "explicitly invokes them in this session",
+        "What changed",
+        "What was verified",
+        "What is blocked",
+        "Who owns the next action",
+        "Exact command or prompt",
+        "foreground local wait",
+        "upgrade_required",
+        "upgrade SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION",
+        "claim SESSION RUN_DIR EXPECTED_REVISION",
+        "reclaim SESSION RUN_DIR EXPECTED_REVISION",
+        "exact `start --run-id` automatically reclaims",
+        "ACTION_FILE",
+    ] {
+        assert!(
+            source.contains(required),
+            "{role} contract omitted {required:?}"
+        );
+    }
+
+    assert!(source.contains("Exact joins pass only `--run-id`"));
+    assert!(source.contains("mode 0600"));
+    assert!(source.contains("private temporary file"));
+    assert!(source.contains("deletes it after"));
+    assert!(!source.contains("ACTION_JSON"));
+    assert!(source.contains("Publication never substitutes for supersession or withdrawal."));
+    let allowed_exception =
+        "new human scope, ambiguity, or unavailable mandated publication/review capability";
+    assert!(
+        skill
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .contains(allowed_exception),
+        "{role} skill omits the complete Human Decision exception"
+    );
+    assert!(
+        contract
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .contains(allowed_exception),
+        "{role} reference omits the complete Human Decision exception"
+    );
+    assert!(skill.contains(
+        "Dvandva never creates, replaces, pauses, completes, or clears any harness goal."
+    ));
+    assert!(skill.contains("Goals the user sets in a launch prompt remain outside the protocol."));
+    for forbidden in [
+        "create_goal",
+        "update_goal",
+        "get_goal",
+        "pause_goal",
+        "complete_goal",
+        "clear_goal",
+    ] {
+        assert!(
+            !source.contains(forbidden),
+            "{role} skill names goal tool {forbidden}"
+        );
+    }
+
+    assert!(
+        !contract.contains(r#""scope_revision":1"#),
+        "{role} hardcodes a facade-derived scope revision"
+    );
+    assert!(
+        !contract.contains(r#""handoff_revision":12"#),
+        "{role} hardcodes a facade-derived handoff revision"
+    );
+    assert!(
+        !contract.contains(r#""identity":"<checkpoint.identity>""#),
+        "{role} uses identity where CheckpointBinding requires checkpoint_identity"
+    );
+    assert!(contract.contains("copy `publication_binding.obligation` unchanged"));
+    for contradictory in [
+        "only for new human scope or ambiguity",
+        "solely for new human scope or ambiguity",
+    ] {
+        assert!(
+            !skill.contains(contradictory) && !contract.contains(contradictory),
+            "{role} retains contradictory Human Decision restriction {contradictory:?}"
+        );
+    }
+}
+
+#[test]
+fn vadi_skill_sources_define_the_complete_v2_contract() {
+    assert_role_source_contract("vadi");
+    let (skill, contract) = role_sources("vadi");
+    let source = format!("{skill}\n{contract}");
+    for required in [
+        "first user-visible protocol output",
+        "canonical objective and scope",
+        "status and assignee",
+        "peer_prompt",
+    ] {
+        assert!(source.contains(required), "vadi omitted {required:?}");
+    }
+}
+
+#[test]
+fn prativadi_skill_sources_define_the_complete_v2_contract() {
+    assert_role_source_contract("prativadi");
+    let (_, contract) = role_sources("prativadi");
+    assert!(contract.contains("Prativadi never creates a run."));
+    assert!(contract.contains("copy the exact current `checkpoint` coordinates"));
+    assert!(contract.contains("manifest_digest"));
+    assert!(contract.contains("scope_revision"));
+    let synopsis = contract.split("```").nth(1).unwrap();
+    assert!(!synopsis.contains("--new-run"));
+}
+
+fn documented_json_blocks(markdown: &str) -> Vec<String> {
+    let mut blocks = Vec::new();
+    let mut current = None::<String>;
+    for line in markdown.lines() {
+        if line == "```json" {
+            current = Some(String::new());
+        } else if line == "```" {
+            if let Some(block) = current.take() {
+                blocks.push(block);
+            }
+        } else if let Some(block) = current.as_mut() {
+            block.push_str(line);
+            block.push('\n');
+        }
+    }
+    blocks
+}
+
+fn normalize_documented_action(template: &str) -> serde_json::Value {
+    let obligation = serde_json::json!({
+        "handoff_revision": 5,
+        "kind": "worker_to_reviewer",
+        "scope_revision": 0,
+        "checkpoint": {
+            "checkpoint_identity": "checkpoint-a",
+            "manifest_digest": "b".repeat(64),
+            "scope_revision": 0
+        }
+    });
+    let normalized = template
+        .replace(
+            r#""<snapshot.publication_binding.obligation>""#,
+            &serde_json::to_string(&obligation).unwrap(),
+        )
+        .replace("<snapshot.checkpoint.identity>", "checkpoint-a")
+        .replace("<snapshot.checkpoint.manifest_digest>", &"b".repeat(64))
+        .replace("<snapshot.checkpoint.scope_revision>", "0")
+        .replace(
+            "<snapshot.publication_binding.deployment.source_digest>",
+            &"a".repeat(64),
+        )
+        .replace(
+            "<snapshot.publication_binding.deployment.site_id>",
+            "site-run",
+        )
+        .replace(
+            "<snapshot.publication_binding.deployment.site_version>",
+            "site-version",
+        )
+        .replace(
+            "<snapshot.publication_binding.deployment.url>",
+            "https://sites.openai.test/site-run/site-version",
+        )
+        .replace("<human-approved answer>", "Include report")
+        .replace("<human-approved objective>", "Ship approved scope")
+        .replace("<human-approved ref kind>", "issue")
+        .replace("<human-approved ref value>", "DEF-456")
+        .replace("<human-approved task reference>", "DEF-456")
+        .replace("<human-approved deliverable ID>", "report")
+        .replace(
+            "<human-approved deliverable description>",
+            "Approved report",
+        );
+    serde_json::from_str(&normalized).unwrap_or_else(|error| {
+        panic!("documented action is not normalizable JSON: {error}\n{template}")
+    })
+}
+
+fn documented_actions(role: &str) -> Vec<serde_json::Value> {
+    let (_, contract) = role_sources(role);
+    documented_json_blocks(&contract)
+        .iter()
+        .flat_map(|block| block.lines())
+        .filter(|template| !template.trim().is_empty())
+        .map(normalize_documented_action)
+        .collect()
+}
+
+fn documented_action(role: &str, action_type: &str) -> serde_json::Value {
+    documented_actions(role)
+        .into_iter()
+        .find(|action| action["type"] == action_type)
+        .unwrap_or_else(|| panic!("{role} omitted documented {action_type} payload"))
+}
+
+#[test]
+fn every_documented_role_action_deserializes_against_the_v2_schema() {
+    let expected = [
+        (
+            "vadi",
+            BTreeSet::from([
+                "finalize",
+                "record_explainer_publication",
+                "record_explainer_review",
+                "request_checkpoint_supersession",
+                "request_human_decision",
+                "resume_human_decision",
+                "submit_checkpoint",
+                "withdraw_approval",
+            ]),
+        ),
+        (
+            "prativadi",
+            BTreeSet::from([
+                "accept_checkpoint_supersession",
+                "record_explainer_publication",
+                "record_explainer_review",
+                "record_review",
+                "request_human_decision",
+                "resume_human_decision",
+            ]),
+        ),
+    ];
+    for (role, expected) in expected {
+        let actions = documented_actions(role);
+        let actual = actions
+            .iter()
+            .map(|action| action["type"].as_str().unwrap())
+            .collect::<BTreeSet<_>>();
+        assert_eq!(actual, expected, "{role} action map is not role-specific");
+        for action in actions {
+            serde_json::from_value::<Action>(action.clone()).unwrap_or_else(|error| {
+                panic!("{role} documented invalid action {action}: {error}")
+            });
+        }
+    }
+}
+
+fn documented_scope_amendment(role: &str) -> serde_json::Value {
+    documented_actions(role)
+        .into_iter()
+        .find(|action| !action["scope_amendment"].is_null())
+        .unwrap_or_else(|| panic!("{role} omitted documented scope-amending resume payload"))
+}
+
+#[test]
+fn documented_human_decision_payload_transitions_for_each_role() {
+    for role in ["vadi", "prativadi"] {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        let runs = root.path().join("state/runs");
+        let credentials = root.path().join("state/credentials");
+        std::fs::create_dir(&workspace).unwrap();
+        git(&workspace, &["init", "--quiet"]);
+        git(
+            &workspace,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:axatbhardwaj/Dvandva.git",
+            ],
+        );
+        let worker = start_role(
+            &workspace,
+            &runs,
+            &credentials,
+            "worker",
+            "worker-session",
+            "codex",
+            "claude",
+        );
+        let reviewer = start_role(
+            &workspace,
+            &runs,
+            &credentials,
+            "reviewer",
+            "reviewer-session",
+            "claude",
+            "codex",
+        );
+        let run_dir = runs.join(worker["run_id"].as_str().unwrap());
+        let flow = Flow {
+            root: root.path(),
+            run_dir: &run_dir,
+            credentials: &credentials,
+        };
+        let (kernel_role, session) = if role == "vadi" {
+            ("worker", "worker-session")
+        } else {
+            ("reviewer", "reviewer-session")
+        };
+        let action = documented_action(role, "request_human_decision");
+        assert!(action["options"].as_array().unwrap().len() >= 2);
+        let human = flow.apply(kernel_role, session, 2, "human.json", action);
+        assert_eq!(human["status"], "human_decision");
+        assert_eq!(
+            human["human_decision"]["options"].as_array().unwrap().len(),
+            2
+        );
+        assert_eq!(reviewer["run_id"], worker["run_id"]);
+    }
+}
+
+#[test]
+fn documented_scope_amendment_transitions_for_each_role() {
+    for role in ["vadi", "prativadi"] {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        let runs = root.path().join("state/runs");
+        let credentials = root.path().join("state/credentials");
+        std::fs::create_dir(&workspace).unwrap();
+        git(&workspace, &["init", "--quiet"]);
+        git(
+            &workspace,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:axatbhardwaj/Dvandva.git",
+            ],
+        );
+        let worker = start_role(
+            &workspace,
+            &runs,
+            &credentials,
+            "worker",
+            "worker-session",
+            "codex",
+            "claude",
+        );
+        let reviewer = start_role(
+            &workspace,
+            &runs,
+            &credentials,
+            "reviewer",
+            "reviewer-session",
+            "claude",
+            "codex",
+        );
+        let run_dir = runs.join(worker["run_id"].as_str().unwrap());
+        let flow = Flow {
+            root: root.path(),
+            run_dir: &run_dir,
+            credentials: &credentials,
+        };
+        let (kernel_role, session) = if role == "vadi" {
+            ("worker", "worker-session")
+        } else {
+            ("reviewer", "reviewer-session")
+        };
+        let human = flow.apply(
+            kernel_role,
+            session,
+            2,
+            "request-scope.json",
+            documented_action(role, "request_human_decision"),
+        );
+        assert_eq!(human["status"], "human_decision");
+
+        let amended = flow.apply(
+            kernel_role,
+            session,
+            3,
+            "amend-scope.json",
+            documented_scope_amendment(role),
+        );
+        assert_eq!(amended["scope_revision"], 1);
+        assert_eq!(amended["objective"]["summary"], "Ship approved scope");
+        assert_eq!(
+            amended["objective"]["refs"],
+            serde_json::json!([{"kind":"issue","value":"DEF-456"}])
+        );
+        assert_eq!(amended["task"]["reference"], "DEF-456");
+        assert_eq!(
+            amended["scope_deliverables"],
+            serde_json::json!([{"id":"report","description":"Approved report"}])
+        );
+        assert_eq!(amended["status"], "revising");
+        assert_eq!(amended["assignee"], "worker");
+        assert_eq!(
+            amended["publication_binding"]["obligation"]["kind"],
+            "scope_amended"
+        );
+        assert_eq!(
+            amended["publication_binding"]["obligation"]["scope_revision"],
+            1
+        );
+        assert_eq!(
+            amended["publication_binding"]["obligation"]["handoff_revision"],
+            4
+        );
+        assert_eq!(reviewer["run_id"], worker["run_id"]);
+    }
+}
+
+#[test]
+fn setup_skill_sources_pin_v2_without_implicit_run_migration() {
+    let setup = format!(
+        "{}\n{}",
+        repository_file("skills/setup-dvandva/SKILL.md"),
+        repository_file("skills/setup-dvandva/references/installation.md")
+    );
+    for required in [
+        "0.2.0",
+        "skills-v0.2.0",
+        "source and planned release target",
+        "installation is available only after",
+        "tag and release asset exist",
+        "dvandva.run.v2",
+        "facade API 2",
+        "v1 read support is only for explicit migration",
+        "setup never migrates runs",
+    ] {
+        assert!(
+            setup.contains(required),
+            "setup contract omitted {required:?}"
+        );
+    }
+}
+
+#[test]
+fn role_entry_prompts_remain_concise_pointers_not_duplicate_contracts() {
+    for path in [
+        "skills/vadi/agents/openai.yaml",
+        "skills/prativadi/agents/openai.yaml",
+    ] {
+        let prompt = repository_file(path);
+        assert!(prompt.lines().count() <= 7, "{path} is no longer concise");
+        for duplicate in [
+            "next_actions",
+            "legal_actions",
+            "submit_checkpoint",
+            "record_review",
+        ] {
+            assert!(
+                !prompt.contains(duplicate),
+                "{path} duplicates contract term {duplicate}"
+            );
+        }
+    }
 }
 
 #[test]
@@ -11,10 +501,16 @@ fn version_and_probe_report_the_installation_contract() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("dvandva-v4 0.1.1"));
+        .stdout(predicate::str::contains("dvandva-v4 0.2.0"));
 
     let output = command()
-        .args(["probe", "--expected-schema", "dvandva.run.v1"])
+        .args([
+            "probe",
+            "--expected-schema",
+            "dvandva.run.v2",
+            "--expected-role-api",
+            "2",
+        ])
         .output()
         .unwrap();
     assert!(
@@ -24,8 +520,10 @@ fn version_and_probe_report_the_installation_contract() {
     );
     let probe: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(probe["package"], "dvandva-v4");
-    assert_eq!(probe["version"], "0.1.1");
-    assert_eq!(probe["schema"], "dvandva.run.v1");
+    assert_eq!(probe["version"], "0.2.0");
+    assert_eq!(probe["write_schema"], "dvandva.run.v2");
+    assert_eq!(probe["role_api"], 2);
+    assert_eq!(probe["publish"], false);
     assert_eq!(probe["compatible"], true);
 }
 
@@ -56,6 +554,8 @@ fn start_role(
         .args([
             "role",
             "start",
+            "--api",
+            "2",
             "--workspace",
             workspace.to_str().unwrap(),
             "--runs-dir",
@@ -74,6 +574,8 @@ fn start_role(
             "Implement DEF-123",
             "--task-reference",
             "DEF-123",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
         ])
         .output()
         .unwrap();
@@ -106,6 +608,8 @@ impl Flow<'_> {
             .args([
                 "role",
                 "apply",
+                "--api",
+                "2",
                 "--run-dir",
                 self.run_dir.to_str().unwrap(),
                 "--role",
@@ -128,6 +632,66 @@ impl Flow<'_> {
         );
         serde_json::from_slice(&output.stdout).unwrap()
     }
+
+    fn approve_explainer(&self, revision: u64, site_version: &str) -> serde_json::Value {
+        let baton: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(self.run_dir.join("baton.json")).unwrap())
+                .unwrap();
+        let obligation = baton["publication_binding"]["obligation"].clone();
+        let mut publication = documented_action("vadi", "record_explainer_publication");
+        publication["obligation"] = obligation.clone();
+        publication["source_digest"] = serde_json::json!("a".repeat(64));
+        publication["site_id"] = serde_json::json!("site-run");
+        publication["site_version"] = serde_json::json!(site_version);
+        publication["url"] =
+            serde_json::json!(format!("https://sites.openai.test/site-run/{site_version}"));
+        let published = self.apply(
+            "worker",
+            "worker-session",
+            revision,
+            &format!("publish-{site_version}.json"),
+            publication,
+        );
+        let deployment = published["publication_binding"]["deployment"].clone();
+        let mut review = documented_action("prativadi", "record_explainer_review");
+        review["obligation"] = obligation;
+        review["source_digest"] = deployment["source_digest"].clone();
+        review["site_id"] = deployment["site_id"].clone();
+        review["site_version"] = deployment["site_version"].clone();
+        review["url"] = deployment["url"].clone();
+        self.apply(
+            "reviewer",
+            "reviewer-session",
+            revision + 1,
+            &format!("review-{site_version}.json"),
+            review,
+        )
+    }
+}
+
+fn documented_checkpoint(identity: &str, verification: Vec<&str>) -> serde_json::Value {
+    let mut action = documented_action("vadi", "submit_checkpoint");
+    action["checkpoint"]["identity"] = serde_json::json!(identity);
+    action["checkpoint"]["deliverables"] = serde_json::json!([{
+        "id": "implementation",
+        "artifacts": [{"kind": "commit", "value": identity}]
+    }]);
+    action["checkpoint"]["verification"] = serde_json::json!(verification);
+    action
+}
+
+fn documented_review(
+    verdict: &str,
+    checkpoint: &serde_json::Value,
+    findings: Vec<&str>,
+) -> serde_json::Value {
+    let mut action = documented_action("prativadi", "record_review");
+    action["verdict"] = serde_json::json!(verdict);
+    action["checkpoint_identity"] = checkpoint["identity"].clone();
+    action["manifest_digest"] = checkpoint["manifest_digest"].clone();
+    action["scope_revision"] = checkpoint["scope_revision"].clone();
+    action["findings"] = serde_json::json!(findings);
+    action
 }
 
 #[test]
@@ -178,90 +742,73 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
 
     let checkpoint_a = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let checkpoint_b = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+    flow.approve_explainer(2, "deployment-1");
     let reviewing_a = flow.apply(
         "worker",
         "worker-session",
-        2,
+        4,
         "checkpoint-a.json",
-        serde_json::json!({
-            "type": "submit_checkpoint",
-            "checkpoint": {
-                "kind": "git",
-                "identity": checkpoint_a,
-                "verification": ["cargo test"]
-            }
-        }),
+        documented_checkpoint(checkpoint_a, vec!["cargo test"]),
     );
     assert_eq!(reviewing_a["status"], "reviewing");
+    assert!(reviewing_a["next_actions"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("request_checkpoint_supersession")));
+    assert!(reviewing_a["next_actions"]
+        .as_array()
+        .unwrap()
+        .contains(&serde_json::json!("publish_explainer")));
+
+    flow.approve_explainer(5, "deployment-2");
 
     let revising = flow.apply(
         "reviewer",
         "reviewer-session",
-        3,
+        7,
         "request-changes.json",
-        serde_json::json!({
-            "type": "record_review",
-            "verdict": "changes_requested",
-            "checkpoint_identity": checkpoint_a,
-            "findings": ["Add the missing contention test"]
-        }),
+        documented_review(
+            "changes_requested",
+            &reviewing_a["checkpoint"],
+            vec!["Add the missing contention test"],
+        ),
     );
     assert_eq!(revising["status"], "revising");
+
+    flow.approve_explainer(8, "deployment-3");
 
     let reviewing_b = flow.apply(
         "worker",
         "worker-session",
-        4,
+        10,
         "checkpoint-b.json",
-        serde_json::json!({
-            "type": "submit_checkpoint",
-            "checkpoint": {
-                "kind": "git",
-                "identity": checkpoint_b,
-                "verification": ["cargo test", "contention test"]
-            }
-        }),
+        documented_checkpoint(checkpoint_b, vec!["cargo test", "contention test"]),
     );
     assert_eq!(reviewing_b["checkpoint"]["identity"], checkpoint_b);
+
+    flow.approve_explainer(11, "deployment-4");
 
     let approved = flow.apply(
         "reviewer",
         "reviewer-session",
-        5,
+        13,
         "approve.json",
-        serde_json::json!({
-            "type": "record_review",
-            "verdict": "approved",
-            "checkpoint_identity": checkpoint_b,
-            "findings": []
-        }),
+        documented_review("approved", &reviewing_b["checkpoint"], vec![]),
     );
     assert_eq!(approved["status"], "finalizing");
 
-    let published = flow.apply(
-        "worker",
-        "worker-session",
-        6,
-        "publication.json",
-        serde_json::json!({
-            "type": "record_publication",
-            "required": true,
-            "desired_revision": 6,
-            "published_revision": 6,
-            "refs": [{"kind": "explainer", "value": "https://example.test/run"}]
-        }),
-    );
-    assert_eq!(published["publication"]["published_revision"], 6);
+    flow.approve_explainer(14, "deployment-5");
 
     let done = flow.apply(
         "worker",
         "worker-session",
-        7,
+        16,
         "finalize.json",
-        serde_json::json!({"type": "finalize"}),
+        documented_action("vadi", "finalize"),
     );
     assert_eq!(done["status"], "done");
-    assert_eq!(done["revision"], 8);
+    assert_eq!(done["next_actions"], serde_json::json!(["stop"]));
+    assert_eq!(done["revision"], 17);
     assert_eq!(done["checkpoint"]["identity"], checkpoint_b);
     assert_eq!(done["review"]["checkpoint_identity"], checkpoint_b);
 
@@ -269,10 +816,12 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
         ("worker", "worker-session"),
         ("reviewer", "reviewer-session"),
     ] {
-        command()
+        let output = command()
             .args([
                 "role",
                 "wait",
+                "--api",
+                "2",
                 "--run-dir",
                 run_dir.to_str().unwrap(),
                 "--role",
@@ -282,13 +831,16 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
                 "--credentials-root",
                 credentials.to_str().unwrap(),
                 "--after-revision",
-                "7",
+                "16",
                 "--timeout-ms",
                 "500",
             ])
-            .assert()
-            .success()
-            .stdout(predicate::str::contains(r#""status": "done""#));
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let waited: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(waited["status"], "done");
+        assert_eq!(waited["next_actions"], serde_json::json!(["stop"]));
     }
 
     let credential_text = std::fs::read_to_string(
@@ -352,8 +904,8 @@ fn explicit_role_reversal_binds_claude_as_worker_and_codex_as_reviewer() {
     let run_dir = runs.join(worker["run_id"].as_str().unwrap());
     let baton: serde_json::Value =
         serde_json::from_slice(&std::fs::read(run_dir.join("baton.json")).unwrap()).unwrap();
-    assert_eq!(baton["participants"]["worker"]["harness"], "claude");
-    assert_eq!(baton["participants"]["reviewer"]["harness"], "codex");
+    assert_eq!(baton["participants"]["worker"]["harness"], "Claude");
+    assert_eq!(baton["participants"]["reviewer"]["harness"], "Codex");
 }
 
 #[test]
@@ -387,6 +939,8 @@ fn explicit_run_id_resolves_an_ambiguous_role_start() {
         .args([
             "role",
             "start",
+            "--api",
+            "2",
             "--workspace",
             workspace.to_str().unwrap(),
             "--runs-dir",
@@ -405,6 +959,8 @@ fn explicit_run_id_resolves_an_ambiguous_role_start() {
             "Implement DEF-123",
             "--task-reference",
             "DEF-123",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
             "--new-run",
         ])
         .output()
@@ -415,6 +971,8 @@ fn explicit_run_id_resolves_an_ambiguous_role_start() {
         .args([
             "role",
             "start",
+            "--api",
+            "2",
             "--workspace",
             workspace.to_str().unwrap(),
             "--runs-dir",
@@ -433,16 +991,20 @@ fn explicit_run_id_resolves_an_ambiguous_role_start() {
             "Implement DEF-123",
             "--task-reference",
             "DEF-123",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
         ])
         .assert()
         .success()
         .stdout(predicate::str::contains(r#""outcome": "ambiguous""#));
 
     let first_run = first["run_id"].as_str().unwrap();
-    command()
+    let mismatch = command()
         .args([
             "role",
             "start",
+            "--api",
+            "2",
             "--workspace",
             workspace.to_str().unwrap(),
             "--runs-dir",
@@ -461,13 +1023,22 @@ fn explicit_run_id_resolves_an_ambiguous_role_start() {
             "Review the mobile app tech spec",
             "--task-reference",
             "https://app.notion.com/p/Mobile-App-Tech-Spec",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
             "--run-id",
             first_run,
         ])
-        .assert()
-        .success()
-        .stdout(predicate::str::contains(r#""outcome": "started""#))
-        .stdout(predicate::str::contains(first_run));
+        .output()
+        .unwrap();
+    assert!(mismatch.status.success());
+    let mismatch: serde_json::Value = serde_json::from_slice(&mismatch.stdout).unwrap();
+    assert_eq!(mismatch["outcome"], "scope_mismatch");
+    assert_eq!(mismatch["candidates"][0]["run_id"], first_run);
+    assert_eq!(
+        mismatch["candidates"][0]["objective"]["summary"],
+        "Implement DEF-123"
+    );
+    assert_eq!(mismatch["candidates"][0]["scope_revision"], 0);
 }
 
 #[test]
@@ -501,6 +1072,8 @@ fn a_live_worker_run_blocks_silent_duplicate_creation() {
         .args([
             "role",
             "start",
+            "--api",
+            "2",
             "--workspace",
             workspace.to_str().unwrap(),
             "--runs-dir",
@@ -519,6 +1092,8 @@ fn a_live_worker_run_blocks_silent_duplicate_creation() {
             "Implement DEF-123",
             "--task-reference",
             "DEF-123",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
         ])
         .output()
         .unwrap();

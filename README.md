@@ -1,13 +1,14 @@
 # Dvandva
 
-> **Dvandva v4 is an active skill-only successor.** The `3.5.1` crate and
-> `1.7.0` plugin remain retired historical artifacts and must not be installed
-> or reactivated. V4 uses three ordinary agent skills plus a private local
-> kernel; it does not publish a plugin or put a `dvandva` command on `PATH`.
+> **Dvandva v4 is the active skill-only interface.** The intended
+> `skills-v0.2.0` GitHub release pairs the private, non-publishable kernel
+> `0.2.0` with schema `dvandva.run.v2` and role API 2. Source checkout and tests
+> are development-only; setup install remains unavailable until that tag and
+> asset exist. The retired crate and plugin are not an installation path.
 
 ## Active v4 skill-only interface
 
-Install exactly the three skills for Claude Code and Codex:
+Install the three source skills for Claude Code and Codex:
 
 ```bash
 npx --yes skills add axatbhardwaj/Dvandva --global \
@@ -15,22 +16,34 @@ npx --yes skills add axatbhardwaj/Dvandva --global \
   --skill setup-dvandva vadi prativadi
 ```
 
-Then explicitly invoke `$setup-dvandva` with an install request once. The
-setup skill downloads and verifies the private `skills-v0.1.1` Linux kernel.
-It remains under XDG data and outside `PATH`.
+After `skills-v0.2.0` is published, explicitly invoke `$setup-dvandva` with an
+install request. Setup verifies the GitHub asset's checksum and complete
+v2/API2 probe before installing it under XDG data and outside `PATH`. The
+kernel remains `publish = false`; no crate, plugin, or marketplace package is
+part of v4 distribution.
 
 Start two independent T3 Code sessions for one ticket:
 
 ```text
-Codex: Act as vadi and implement DEF-123.
-Claude: Join DEF-123 as prativadi.
+Codex: Act as vadi and implement DEF-123 with deliverable implementation.
 ```
 
-The vadi implements and maintains one published explainer/TODO site for the
-run; the prativadi independently reviews immutable checkpoints. The sessions
-coordinate only through the local Run Baton. Neither harness invokes the
-other, there is no daemon, and Matt Pocock skills run only when the human
-explicitly invokes them in that joined session. See
+Vadi immediately returns the canonical run ID and this exact peer prompt:
+
+```text
+Act as prativadi and join Dvandva run <run-id>.
+```
+
+The vadi submits one complete immutable checkpoint for canonical scope. At
+every handoff, the Codex-harness participant updates one owner-only Codex Sites
+explainer and the Claude-harness participant reviews that exact deployment,
+independent of which harness is vadi. The explainer plan is the live TODO list;
+the Baton remains authoritative.
+
+The sessions coordinate only through the local run. Neither harness invokes
+the other, there is no daemon, and user-owned harness goals remain untouched.
+Matt Pocock skills run only when the human explicitly invokes them in that
+joined session. See
 [`docs/workflows/skill-only-run.md`](docs/workflows/skill-only-run.md).
 
 ## Retired v3 archive

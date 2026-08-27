@@ -17,15 +17,21 @@ jobs:
     steps:
       - name: Check out the tested revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - name: Select stable Rust
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
+      - name: Install release-test tooling
+        run: python3 -m pip install --disable-pip-version-check 'ruamel.yaml==0.18.16'
       - name: Verify v4 kernel
         run: |
           cargo fmt --manifest-path v4/Cargo.toml -- --check
           cargo clippy --manifest-path v4/Cargo.toml --all-targets -- -D warnings
-          cargo test --manifest-path v4/Cargo.toml --locked
+          cargo test --manifest-path v4/Cargo.toml --all-targets --locked
+          cargo run --quiet --manifest-path v4/Cargo.toml --locked -- \
+            probe --expected-schema dvandva.run.v2 --expected-role-api 2
       - name: Verify archived v3 remains intact
         run: cargo test --manifest-path rust/dvandva/Cargo.toml --locked
       - name: Verify setup skill
@@ -37,6 +43,9 @@ jobs:
       - name: Verify two-role canary
         run: bash tests/skills/two-role-canary.sh
 
+  # Operational prerequisite: repository administrators protect skills-v* tags
+  # from deletion or force-updates. This workflow verifies tag identity twice;
+  # it does not configure repository tag-protection rules.
   release:
     if: startsWith(github.ref, 'refs/tags/skills-v')
     needs: verify
@@ -46,17 +55,26 @@ jobs:
     steps:
       - name: Check out the release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - name: Select stable Rust
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
+      - name: Verify release ref before packaging
+        run: bash scripts/verify-skills-release-ref.sh "$GITHUB_REF_NAME" origin
       - name: Package the private kernel
         run: bash scripts/package-skills-release.sh "$GITHUB_REF_NAME" artifacts
+      - name: Verify release ref before publication
+        run: bash scripts/verify-skills-release-ref.sh "$GITHUB_REF_NAME" origin
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" artifacts/* \
+          release_version="${GITHUB_REF_NAME#skills-v}"
+          gh release create "$GITHUB_REF_NAME" \
+            artifacts/dvandva-kernel-linux-x86_64 \
+            artifacts/SHA256SUMS \
             --verify-tag \
-            --title "Dvandva skills ${GITHUB_REF_NAME#skills-v}" \
-            --notes "Skill-only Dvandva v4 kernel for the setup-dvandva, vadi, and prativadi skills. The archived v3 plugin remains retired."
+            --title "Dvandva skills $release_version" \
+            --notes "Skill-only Dvandva v4 kernel for setup-dvandva, vadi, and prativadi. Kernel $release_version writes dvandva.run.v2 with role API 2; legacy v1 runs require the explicit one-way upgrade. The crate remains unpublished and the archived v3 plugin remains retired."

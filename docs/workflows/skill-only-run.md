@@ -25,63 +25,96 @@ Then explicitly ask one session:
 $setup-dvandva install Dvandva.
 ```
 
-Setup downloads `dvandva-kernel-linux-x86_64` and `SHA256SUMS` from the
-`skills-v0.1.1` GitHub release, verifies the exact digest and schema probe, and
-installs the helper under `${XDG_DATA_HOME:-$HOME/.local/share}/dvandva/`.
-It creates private run and credential roots under
-`${XDG_STATE_HOME:-$HOME/.local/state}/dvandva/`. It never puts the helper on
-`PATH`.
+The intended `skills-v0.2.0` GitHub release provides
+`dvandva-kernel-linux-x86_64` and `SHA256SUMS`. Setup becomes usable only after
+that tag and asset exist. It verifies the digest and the complete kernel 0.2.0,
+`dvandva.run.v2`, role API 2 probe before installing under
+`${XDG_DATA_HOME:-$HOME/.local/share}/dvandva/`, outside `PATH`. The crate is
+non-publishable and no plugin or marketplace package is involved.
 
 Updates are explicit: update the three skills, then invoke
 `$setup-dvandva update`. Uninstall removes only manifest-owned binary data and
-preserves run history unless the user separately confirms a purge.
+preserves run history unless the user separately confirms a purge. Install,
+update, and uninstall never migrate run state.
 
 ## Run one ticket
 
 The default implementation casting is Codex vadi and Claude prativadi:
 
 ```text
-Codex session A: Act as vadi and implement DEF-123.
-Claude session B: Join DEF-123 as prativadi.
+Codex session A: Act as vadi and implement DEF-123 with deliverable implementation.
 ```
 
 Either harness may host either role when the user explicitly reverses the
 casting, but one run must use different harness families.
 
-Vadi discovers or creates exactly one repository/task-matched run, implements
-only its objective, verifies an immutable checkpoint, and hands it off.
-An explicit ticket ID or URL is copied verbatim as the task identity in both
-sessions. If discovery finds compatible runs under a different identity, it
-returns `task_mismatch` immediately instead of waiting; a human-selected exact
-`--run-id` is authoritative while all repository, harness, terminal,
-corruption, and live-claim guards remain enforced.
+Before domain work, vadi surfaces the returned run ID, canonical objective and
+scope, status/assignee, actions, and this exact prompt:
+
+```text
+Act as prativadi and join Dvandva run <run-id>.
+```
+
+The human pastes it into session B. Neither role invokes or wakes the other
+harness. If prativadi starts first, local discovery waits for exactly one valid
+candidate. Several matches are surfaced rather than guessed.
+
+An exact `--run-id` selects state, not scope. Any explicitly supplied objective,
+reference, task, or deliverable coordinate is compared with the Baton;
+`scope_mismatch` returns the canonical and supplied coordinates without claim,
+wait, or work. `run_missing` and a live foreign claim also return immediately.
 If another live vadi already owns that repository/task run, discovery reports
 it as busy instead of silently creating a duplicate; only an explicit request
 may create a separate run.
-Prativadi can start first: its local watcher waits until exactly one valid
-candidate exists, then claims and independently reviews that exact checkpoint.
-Several matches are surfaced; neither role secretly chooses the newest.
 
-After every handoff, the assigned-away role foreground-waits. Findings cause a
-new checkpoint and a new review. Approval remains bound to one immutable
-identity. Both sessions stay attached until `done`, `abandoned`, an explicit
-human stop, or a surfaced Human Decision.
+V1 selection returns `upgrade_required` without a claim. The designated role
+uses the facade's explicit migration action, then both sessions claim the new
+v2 epoch. Ordinary actions never upgrade, history never downgrades, and setup
+does not touch runs.
+
+## Complete checkpoint loop
+
+Vadi works only when `advisory_actions` authorizes `work`. It submits one
+checkpoint whose manifest covers every canonical deliverable ID exactly once,
+uses immutable external references, and includes verification. The kernel
+derives its manifest digest and scope revision. Prativadi first reconciles the
+declared scope with the human objective, then binds its verdict to checkpoint
+identity, manifest digest, and scope revision.
+
+New required work has two stale-work paths:
+
+- During `reviewing`, vadi applies `request_checkpoint_supersession`; approval
+  is blocked until prativadi accepts and returns ownership.
+- During `finalizing`, vadi applies `withdraw_approval` and produces a new
+  complete checkpoint.
+
+New human scope, ambiguity, or a missing mandated capability uses Human
+Decision. Only its designated contact resumes it, and only a human-approved
+scope amendment can change canonical scope.
 
 ## Published explainer
 
-Every run has one newly published explainer. Vadi updates it before handoff and
-after waking; its plan is the shared, directly viewable TODO list. The Baton
-records its URL and projection revision. A stale or failed required publication
-keeps the run in `finalizing`; it cannot be made optional to bypass the gate.
+Every run has one stable owner-only Site in Codex Sites. At each handoff the
+Codex-harness participant publishes the exact pending binding, and the
+Claude-harness participant reviews that exact Site version, regardless of
+vadi/prativadi casting. The explainer carries canonical scope, complete
+manifest, findings and decisions, and a current plan/TODO list.
 
-The publisher is a host capability, not a coordination transport. Codex may use
-Sites and Claude may use an available artifact publisher, but neither polls the
-published page to wake the other.
+A later deployment invalidates the earlier Claude review. Claude Artifact,
+local HTML, mutable URL, generic hosting, or public access cannot satisfy the
+gate. Sites or review unavailability becomes a Human Decision; it does not
+silently change policy. The page never coordinates wake-up.
+
+After every handoff the assigned-away role foreground-waits and both roles
+refresh the facade snapshot after waking. A role stops only for explicit human
+stop, `abandoned`, or after observing `done` with the current scope, complete
+checkpoint, exact semantic approval, exact Sites deployment, and exact Claude
+review all bound together. A Human Decision pauses the pair rather than
+completing it.
 
 ## Explicit-only companion skills
 
 Matt Pocock workflow skills can operate inside either joined role session only
 when the human explicitly invokes the specific skill there. Dvandva never
-selects one implicitly. Fable may adjudicate a genuine unresolved Claude-side
-disagreement, but it is not a third Baton participant; unclear authority becomes
-Human Decision.
+selects one implicitly. User-created harness goals remain untouched throughout
+the run.

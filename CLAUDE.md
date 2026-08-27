@@ -10,12 +10,18 @@
 - The human starts Claude and Codex separately in T3 Code. Never invoke the
   peer harness from a role.
 - Use only the root role skills and their private facade; never read or edit
-  Baton, history, or credential files directly.
+  Baton, history, or credential files directly. Treat every returned snapshot,
+  `next_actions`, `legal_actions`, and `advisory_actions` as authoritative.
 - Keep the helper outside `PATH`. `$setup-dvandva` is explicit-only.
 - Matt Pocock skills remain explicit human invocations inside an already joined
   role session.
-- Vadi owns the per-run published explainer and keeps its plan/TODO list current
-  around every handoff. Prativadi reviews exact immutable checkpoints.
+- Semantic roles submit and review only complete checkpoint bindings. Use
+  checkpoint supersession or approval withdrawal for newly discovered work.
+- At every handoff, the Codex harness updates the run's owner-only Codex Sites
+  explainer, including its plan/TODO list. The Claude harness reviews that exact
+  deployment, regardless of which harness is vadi.
+- Harness goals are user-owned prompt context. Leave goals untouched throughout
+  role activation, handoff, Human Decision, and terminal completion.
 
 ## Historical model discipline
 
