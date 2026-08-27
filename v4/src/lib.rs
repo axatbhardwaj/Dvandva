@@ -3,6 +3,7 @@
 pub mod action;
 pub mod claim;
 pub mod cli;
+pub mod discovery;
 pub mod identity;
 pub mod model;
 pub mod store;

@@ -6,6 +6,7 @@ use thiserror::Error;
 
 use crate::action::Action;
 use crate::claim::{self, ClaimError, Role};
+use crate::discovery::{self, DiscoveryError, DiscoveryQuery};
 use crate::identity::{self, IdentityError};
 use crate::model::{RunBaton, TaskIdentity, WorkspaceIdentity};
 use crate::store::{RunChannel, StoreError};
@@ -24,6 +25,32 @@ enum Command {
     Identify {
         #[arg(long)]
         workspace: PathBuf,
+    },
+    Discover {
+        #[arg(long)]
+        runs_dir: PathBuf,
+        #[arg(long)]
+        repository_id: String,
+        #[arg(long)]
+        reviewer_harness: String,
+        #[arg(long)]
+        task_reference: Option<String>,
+    },
+    DiscoverWait {
+        #[arg(long)]
+        runs_dir: PathBuf,
+        #[arg(long)]
+        repository_id: String,
+        #[arg(long)]
+        reviewer_harness: String,
+        #[arg(long)]
+        task_reference: Option<String>,
+        #[arg(long, default_value_t = 1000)]
+        poll_interval_ms: u64,
+        #[arg(long, default_value_t = 300_000)]
+        timeout_ms: u64,
+        #[arg(long)]
+        poll_only: bool,
     },
     Init {
         #[arg(long)]
@@ -141,6 +168,8 @@ pub enum CliError {
     Wait(#[from] WaitError),
     #[error(transparent)]
     Identity(#[from] IdentityError),
+    #[error(transparent)]
+    Discovery(#[from] DiscoveryError),
 }
 
 #[derive(Serialize)]
@@ -156,6 +185,46 @@ pub fn run() -> Result<(), CliError> {
                 "{}",
                 serde_json::to_string_pretty(&identity::identify(&workspace)?)?
             );
+            Ok(())
+        }
+        Command::Discover {
+            runs_dir,
+            repository_id,
+            reviewer_harness,
+            task_reference,
+        } => {
+            let outcome = discovery::discover(
+                &runs_dir,
+                DiscoveryQuery {
+                    repository_id: &repository_id,
+                    reviewer_harness: &reviewer_harness,
+                    task_reference: task_reference.as_deref(),
+                },
+            )?;
+            println!("{}", serde_json::to_string_pretty(&outcome)?);
+            Ok(())
+        }
+        Command::DiscoverWait {
+            runs_dir,
+            repository_id,
+            reviewer_harness,
+            task_reference,
+            poll_interval_ms,
+            timeout_ms,
+            poll_only,
+        } => {
+            let outcome = discovery::wait_for_match(
+                &runs_dir,
+                DiscoveryQuery {
+                    repository_id: &repository_id,
+                    reviewer_harness: &reviewer_harness,
+                    task_reference: task_reference.as_deref(),
+                },
+                std::time::Duration::from_millis(poll_interval_ms.max(1)),
+                std::time::Duration::from_millis(timeout_ms),
+                !poll_only,
+            )?;
+            println!("{}", serde_json::to_string_pretty(&outcome)?);
             Ok(())
         }
         Command::Init {
@@ -306,6 +375,7 @@ pub fn print_error(error: &CliError) {
         CliError::Identity(IdentityError::RepositoryMissing) => "repository_missing",
         CliError::Identity(IdentityError::InvalidOrigin) => "invalid_origin",
         CliError::Identity(IdentityError::InvalidUtf8) => "invalid_git_output",
+        CliError::Discovery(DiscoveryError::Io(_)) => "discovery_io",
         CliError::Store(StoreError::RunExists) => "run_exists",
         CliError::Store(StoreError::RunMissing) => "run_missing",
         CliError::Store(StoreError::RevisionConflict { .. }) => "revision_conflict",
