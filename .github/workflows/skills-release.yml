@@ -29,7 +29,7 @@ jobs:
         run: |
           cargo fmt --manifest-path v4/Cargo.toml -- --check
           cargo clippy --manifest-path v4/Cargo.toml --all-targets -- -D warnings
-          cargo test --manifest-path v4/Cargo.toml --locked
+          cargo test --manifest-path v4/Cargo.toml --all-targets --locked
           cargo run --quiet --manifest-path v4/Cargo.toml --locked -- \
             probe --expected-schema dvandva.run.v2 --expected-role-api 2
       - name: Verify archived v3 remains intact
@@ -64,7 +64,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" artifacts/* \
+          release_version="${GITHUB_REF_NAME#skills-v}"
+          gh release create "$GITHUB_REF_NAME" \
+            artifacts/dvandva-kernel-linux-x86_64 \
+            artifacts/SHA256SUMS \
             --verify-tag \
-            --title "Dvandva skills ${GITHUB_REF_NAME#skills-v}" \
-            --notes "Skill-only Dvandva v4 kernel for setup-dvandva, vadi, and prativadi. Kernel 0.2.0 writes dvandva.run.v2 with role API 2; legacy v1 runs require the explicit one-way upgrade. The crate remains unpublished and the archived v3 plugin remains retired."
+            --title "Dvandva skills $release_version" \
+            --notes "Skill-only Dvandva v4 kernel for setup-dvandva, vadi, and prativadi. Kernel $release_version writes dvandva.run.v2 with role API 2; legacy v1 runs require the explicit one-way upgrade. The crate remains unpublished and the archived v3 plugin remains retired."
