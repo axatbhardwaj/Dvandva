@@ -33,6 +33,7 @@ source_binary="$target_root/release/dvandva-v4"
 asset="dvandva-kernel-linux-x86_64"
 output_parent="$(dirname -- "$output")"
 output_name="$(basename -- "$output")"
+version_max_bytes=256
 probe_max_bytes=16384
 
 mkdir -p "$output_parent"
@@ -57,13 +58,46 @@ if command -v strip >/dev/null 2>&1; then
   strip "$staging/$asset"
 fi
 
-reported_version="$("$staging/$asset" --version 2>/dev/null || true)"
-if test "$reported_version" != "dvandva-v4 $version"; then
-  printf 'package-skills-release: binary_version_mismatch expected=%s reported=%s\n' \
-    "dvandva-v4 $version" "$reported_version" >&2
+version_file="$staging/.version"
+set +e
+"$staging/$asset" --version 2>/dev/null | \
+  head -c "$((version_max_bytes + 1))" >"$version_file"
+version_statuses=("${PIPESTATUS[@]}")
+set -e
+
+version_size="$(wc -c <"$version_file")"
+if test "$version_size" -gt "$version_max_bytes"; then
+  printf 'package-skills-release: binary_version_too_large max_bytes=%s\n' \
+    "$version_max_bytes" >&2
+  exit 1
+fi
+if test "${version_statuses[0]}" -ne 0 || test "${version_statuses[1]}" -ne 0; then
+  printf 'package-skills-release: binary_version_mismatch expected=%s\n' \
+    "dvandva-v4 $version" >&2
   exit 1
 fi
 
+python3 - "$version" "$version_file" "$version_max_bytes" <<'PY' || {
+import sys
+from pathlib import Path
+
+
+raw = Path(sys.argv[2]).read_bytes()
+if len(raw) > int(sys.argv[3]) or b"\0" in raw:
+    raise SystemExit(1)
+try:
+    reported = raw.decode("utf-8", errors="strict")
+except UnicodeDecodeError:
+    raise SystemExit(1)
+expected = f"dvandva-v4 {sys.argv[1]}"
+raise SystemExit(0 if reported in (expected, expected + "\n") else 1)
+PY
+  printf 'package-skills-release: binary_version_mismatch expected=%s\n' \
+    "dvandva-v4 $version" >&2
+  exit 1
+}
+
+rm -f -- "$version_file"
 probe_file="$staging/.probe.json"
 set +e
 "$staging/$asset" probe \
