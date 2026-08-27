@@ -33,9 +33,11 @@ never an ordinary wake or action.
 ## Boundaries
 
 Exact run identity selects state, not scope. Surface `scope_mismatch` without
-claiming or working. All user-created harness goals remain unchanged. Third-party
-and explicit-only skills, including Matt Pocock's skills, run only when the
-human explicitly invokes them in this session.
+claiming or working. All user-created harness goals remain unchanged.
+Dvandva never creates, replaces, pauses, completes, or clears any harness goal.
+Goals the user sets in a launch prompt remain outside the protocol. Third-party and
+explicit-only skills, including Matt Pocock's skills, run only when the human
+explicitly invokes them in this session.
 
 Use only the facade. Never read or edit Baton, history, or credential files;
 expose credentials; infer ownership from prose; or substitute publication for

@@ -10,12 +10,15 @@ read  SESSION RUN_DIR
 apply SESSION RUN_DIR EXPECTED_REVISION ACTION_JSON
 wait  SESSION RUN_DIR AFTER_REVISION [TIMEOUT_MS]
 heartbeat SESSION RUN_DIR EXPECTED_REVISION
+upgrade SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION
+claim SESSION RUN_DIR EXPECTED_REVISION
+reclaim SESSION RUN_DIR EXPECTED_REVISION
 ```
 
 ## Start and snapshot contract
 
-Exact joins pass only `--run-id` unless the human explicitly supplied
-objective, reference, task, or deliverable coordinates to compare. Never
+Exact joins pass only `--run-id` unless the human explicitly supplied objective,
+reference, task, or deliverable coordinates to compare. Never
 invent an objective for an exact join. Exact run ID selects state but never
 amends or overrides scope: surface `scope_mismatch` without claiming or
 working. Without an exact run, use `--wait`; surface multiple matches for human
@@ -27,6 +30,12 @@ return that choice to the human so vadi/worker can create it.
 Surface `ambiguous`, `busy`, `run_missing`, and `upgrade_required` rather than
 guessing. Surface the start outcome and canonical snapshot before domain-tool
 work.
+
+For `upgrade_required`, run `upgrade` with the exact returned run directory,
+harnesses, and revision. Upgrade clears claims: use its returned revision with
+`claim`, then read a fresh v2 snapshot. Use `reclaim` only when a later facade
+snapshot reports this role's claim expired. Never route migration through an
+ordinary action payload.
 
 After every facade operation, use the fresh facade snapshot. `next_actions`
 combines `advisory_actions` and ordinary `legal_actions`; semantic work happens
@@ -46,11 +55,12 @@ vadi's mutable worktree. A submission has this v2 shape:
 {"type":"submit_checkpoint","checkpoint":{"kind":"git","identity":"<immutable SHA>","deliverables":[{"id":"<canonical ID>","artifacts":[{"kind":"commit","value":"<immutable SHA>"}]}],"verification":["<exact command and result>"]}}
 ```
 
-Bind every verdict to checkpoint identity, `manifest_digest`, and
-`scope_revision`; reread before applying and discard a stale verdict:
+Before a verdict, read or claim a fresh snapshot, then copy the exact current `checkpoint` coordinates.
+Never type, increment, or reuse them from an older snapshot. Bind every verdict
+to all three and discard a stale verdict:
 
 ```json
-{"type":"record_review","verdict":"changes_requested","checkpoint_identity":"<checkpoint.identity>","manifest_digest":"<checkpoint.manifest_digest>","scope_revision":1,"findings":["<actionable finding>"]}
+{"type":"record_review","verdict":"changes_requested","checkpoint_identity":"<snapshot.checkpoint.identity>","manifest_digest":"<snapshot.checkpoint.manifest_digest>","scope_revision":"<snapshot.checkpoint.scope_revision>","findings":["<actionable finding>"]}
 ```
 
 In `reviewing`, newly discovered work uses
@@ -71,8 +81,13 @@ Publication never substitutes for supersession or withdrawal.
 Use only the minimal request. The kernel derives contact and resume routing:
 
 ```json
-{"type":"request_human_decision","question":"<one decision>","evidence":["<verified fact>"],"options":["<concrete option>"]}
+{"type":"request_human_decision","question":"<one decision>","evidence":["<verified fact>"],"options":["<concrete option A>","<concrete option B>"]}
+{"type":"resume_human_decision","answer":"<human answer>"}
 ```
+
+`answer_human` maps to `resume_human_decision`; copy the human's answer. If the
+human changes scope, include the exact human-approved `scope_amendment` shape
+returned by that decision instead of silently changing scope.
 
 ## Explainer obligation
 
@@ -83,21 +98,32 @@ canonical scope, complete manifest, findings and decisions, and a current plan/T
 Reuse one stable Site ID for the run and record a new Site version for each
 obligation.
 
-The Codex participant copies the exact current obligation and records:
+For `publish_explainer`, copy `publication_binding.obligation` unchanged from
+the fresh snapshot. Preserve `publication_binding.site_id` when non-null; on
+the first deployment, create the run's stable Site ID. Compute the deployed
+source digest and record the new Site version and exact resulting URL:
 
 ```json
-{"type":"record_explainer_publication","obligation":{"handoff_revision":12,"kind":"worker_to_reviewer","scope_revision":1,"checkpoint":{"identity":"<checkpoint.identity>","manifest_digest":"<checkpoint.manifest_digest>","scope_revision":1}},"source_digest":"<64 lowercase hex>","site_id":"<stable run Site ID>","site_version":"<new version>","url":"<exact deployment URL>","channel":"codex_sites","access":"owner_only"}
+{"type":"record_explainer_publication","obligation":"<snapshot.publication_binding.obligation>","source_digest":"<64 lowercase hex>","site_id":"<stable run Site ID>","site_version":"<new version>","url":"<exact deployment URL>","channel":"codex_sites","access":"owner_only"}
 ```
 
-The Claude participant binds review to that obligation and deployment:
+For `review_explainer`, copy the same obligation unchanged and copy every
+deployment coordinate from `publication_binding.deployment` in the fresh
+snapshot:
 
 ```json
-{"type":"record_explainer_review","obligation":{"handoff_revision":12,"kind":"worker_to_reviewer","scope_revision":1,"checkpoint":{"identity":"<checkpoint.identity>","manifest_digest":"<checkpoint.manifest_digest>","scope_revision":1}},"source_digest":"<deployment.source_digest>","site_id":"<deployment.site_id>","site_version":"<deployment.site_version>","url":"<deployment.url>","verdict":"approved","findings":[]}
+{"type":"record_explainer_review","obligation":"<snapshot.publication_binding.obligation>","source_digest":"<snapshot.publication_binding.deployment.source_digest>","site_id":"<snapshot.publication_binding.deployment.site_id>","site_version":"<snapshot.publication_binding.deployment.site_version>","url":"<snapshot.publication_binding.deployment.url>","verdict":"approved","findings":[]}
 ```
 
 A Claude Artifact, generic publisher, public access, or silent fallback cannot
 satisfy the gate. Missing Sites or exact review capability routes to Human
 Decision and leaves the run blocked.
+
+`finalize` maps directly to:
+
+```json
+{"type":"finalize"}
+```
 
 ## Run boundaries and handoff
 

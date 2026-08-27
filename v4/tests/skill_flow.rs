@@ -481,34 +481,60 @@ impl Flow<'_> {
             serde_json::from_slice(&std::fs::read(self.run_dir.join("baton.json")).unwrap())
                 .unwrap();
         let obligation = baton["publication_binding"]["obligation"].clone();
+        let mut publication = documented_action("vadi", "record_explainer_publication");
+        publication["obligation"] = obligation.clone();
+        publication["source_digest"] = serde_json::json!("a".repeat(64));
+        publication["site_id"] = serde_json::json!("site-run");
+        publication["site_version"] = serde_json::json!(site_version);
+        publication["url"] =
+            serde_json::json!(format!("https://sites.openai.test/site-run/{site_version}"));
         let published = self.apply(
             "worker",
             "worker-session",
             revision,
             &format!("publish-{site_version}.json"),
-            serde_json::json!({
-                "type": "record_explainer_publication", "obligation": obligation,
-                "source_digest": "a".repeat(64), "site_id": "site-run",
-                "site_version": site_version,
-                "url": format!("https://sites.openai.test/site-run/{site_version}"),
-                "channel": "codex_sites", "access": "owner_only"
-            }),
+            publication,
         );
         let deployment = published["publication_binding"]["deployment"].clone();
+        let mut review = documented_action("prativadi", "record_explainer_review");
+        review["obligation"] = obligation;
+        review["source_digest"] = deployment["source_digest"].clone();
+        review["site_id"] = deployment["site_id"].clone();
+        review["site_version"] = deployment["site_version"].clone();
+        review["url"] = deployment["url"].clone();
         self.apply(
             "reviewer",
             "reviewer-session",
             revision + 1,
             &format!("review-{site_version}.json"),
-            serde_json::json!({
-                "type": "record_explainer_review", "obligation": obligation,
-                "source_digest": deployment["source_digest"],
-                "site_id": deployment["site_id"],
-                "site_version": deployment["site_version"], "url": deployment["url"],
-                "verdict": "approved", "findings": []
-            }),
+            review,
         )
     }
+}
+
+fn documented_checkpoint(identity: &str, verification: Vec<&str>) -> serde_json::Value {
+    let mut action = documented_action("vadi", "submit_checkpoint");
+    action["checkpoint"]["identity"] = serde_json::json!(identity);
+    action["checkpoint"]["deliverables"] = serde_json::json!([{
+        "id": "implementation",
+        "artifacts": [{"kind": "commit", "value": identity}]
+    }]);
+    action["checkpoint"]["verification"] = serde_json::json!(verification);
+    action
+}
+
+fn documented_review(
+    verdict: &str,
+    checkpoint: &serde_json::Value,
+    findings: Vec<&str>,
+) -> serde_json::Value {
+    let mut action = documented_action("prativadi", "record_review");
+    action["verdict"] = serde_json::json!(verdict);
+    action["checkpoint_identity"] = checkpoint["identity"].clone();
+    action["manifest_digest"] = checkpoint["manifest_digest"].clone();
+    action["scope_revision"] = checkpoint["scope_revision"].clone();
+    action["findings"] = serde_json::json!(findings);
+    action
 }
 
 #[test]
@@ -565,18 +591,7 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
         "worker-session",
         4,
         "checkpoint-a.json",
-        serde_json::json!({
-            "type": "submit_checkpoint",
-            "checkpoint": {
-                "kind": "git",
-                "identity": checkpoint_a,
-                "deliverables": [{
-                    "id": "implementation",
-                    "artifacts": [{"kind": "commit", "value": checkpoint_a}]
-                }],
-                "verification": ["cargo test"]
-            }
-        }),
+        documented_checkpoint(checkpoint_a, vec!["cargo test"]),
     );
     assert_eq!(reviewing_a["status"], "reviewing");
     assert!(reviewing_a["next_actions"]
@@ -595,14 +610,11 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
         "reviewer-session",
         7,
         "request-changes.json",
-        serde_json::json!({
-            "type": "record_review",
-            "verdict": "changes_requested",
-            "checkpoint_identity": checkpoint_a,
-            "manifest_digest": reviewing_a["checkpoint"]["manifest_digest"],
-            "scope_revision": reviewing_a["checkpoint"]["scope_revision"],
-            "findings": ["Add the missing contention test"]
-        }),
+        documented_review(
+            "changes_requested",
+            &reviewing_a["checkpoint"],
+            vec!["Add the missing contention test"],
+        ),
     );
     assert_eq!(revising["status"], "revising");
 
@@ -613,18 +625,7 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
         "worker-session",
         10,
         "checkpoint-b.json",
-        serde_json::json!({
-            "type": "submit_checkpoint",
-            "checkpoint": {
-                "kind": "git",
-                "identity": checkpoint_b,
-                "deliverables": [{
-                    "id": "implementation",
-                    "artifacts": [{"kind": "commit", "value": checkpoint_b}]
-                }],
-                "verification": ["cargo test", "contention test"]
-            }
-        }),
+        documented_checkpoint(checkpoint_b, vec!["cargo test", "contention test"]),
     );
     assert_eq!(reviewing_b["checkpoint"]["identity"], checkpoint_b);
 
@@ -635,14 +636,7 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
         "reviewer-session",
         13,
         "approve.json",
-        serde_json::json!({
-            "type": "record_review",
-            "verdict": "approved",
-            "checkpoint_identity": checkpoint_b,
-            "manifest_digest": reviewing_b["checkpoint"]["manifest_digest"],
-            "scope_revision": reviewing_b["checkpoint"]["scope_revision"],
-            "findings": []
-        }),
+        documented_review("approved", &reviewing_b["checkpoint"], vec![]),
     );
     assert_eq!(approved["status"], "finalizing");
 
@@ -653,7 +647,7 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
         "worker-session",
         16,
         "finalize.json",
-        serde_json::json!({"type": "finalize"}),
+        documented_action("vadi", "finalize"),
     );
     assert_eq!(done["status"], "done");
     assert_eq!(done["next_actions"], serde_json::json!(["stop"]));
