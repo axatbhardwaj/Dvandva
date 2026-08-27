@@ -1180,10 +1180,16 @@ fn valid_scope_amended(current: &RunBaton, next: &RunBaton, binding: &Publicatio
     };
     let mut expected_decision = current_decision.clone();
     expected_decision.answer = next_decision.answer.clone();
+    let valid_task_presence = match (&current.task, &next.task) {
+        (None, None) | (Some(_), Some(_)) => true,
+        (None, Some(task)) => task.reference.is_some(),
+        (Some(_), None) => false,
+    };
     let valid_scope = valid_exact_reference(&next.objective.summary)
         && next.objective.refs.iter().all(|reference| {
             valid_exact_reference(&reference.kind) && valid_exact_reference(&reference.value)
         })
+        && valid_task_presence
         && next.task.as_ref().is_none_or(|task| {
             task.summary == next.objective.summary
                 && task
@@ -1204,7 +1210,6 @@ fn valid_scope_amended(current: &RunBaton, next: &RunBaton, binding: &Publicatio
         || next.status != Status::Revising
         || next.assignee != Assignee::Worker
         || binding.obligation.checkpoint.is_some()
-        || current.task.is_none() != next.task.is_none()
     {
         return false;
     }

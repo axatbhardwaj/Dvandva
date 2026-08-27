@@ -9,7 +9,7 @@ use crate::{
         checkpoint_manifest_digest, create_bound_handoff_obligation, normalize_deliverables,
         valid_exact_reference, valid_sha256, Assignee, Checkpoint, CheckpointBinding,
         CheckpointSubmission, CheckpointSupersession, HandoffKind, HumanDecision,
-        PublicationDeployment, PublicationReview, ReviewReceipt, RunBaton, Status,
+        PublicationDeployment, PublicationReview, ReviewReceipt, RunBaton, Status, TaskIdentity,
         TerminalProvenance, EXPLAINER_ACCESS, EXPLAINER_CHANNEL, EXPLAINER_PUBLISHER_HARNESS,
         EXPLAINER_REVIEWER_HARNESS,
     },
@@ -567,6 +567,11 @@ fn apply_scope_amendment(
     if let Some(task) = &mut baton.task {
         task.reference = task_reference;
         task.summary = objective;
+    } else if let Some(reference) = task_reference {
+        baton.task = Some(TaskIdentity {
+            reference: Some(reference),
+            summary: objective,
+        });
     }
     baton.scope_revision = baton
         .scope_revision
