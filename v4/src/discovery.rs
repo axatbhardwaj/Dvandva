@@ -12,7 +12,7 @@ use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use crate::{
     claim::Role,
-    model::{RunBaton, Status, SCHEMA},
+    model::{RunBaton, Status, LEGACY_SCHEMA, SCHEMA},
     store::RunChannel,
 };
 
@@ -36,6 +36,7 @@ pub struct DiscoveryQuery<'a> {
 #[serde(rename_all = "snake_case")]
 pub enum DiscoveryKind {
     Match,
+    UpgradeRequired,
     Busy,
     None,
     Ambiguous,
@@ -52,6 +53,14 @@ pub struct RunCandidate {
     pub status: Status,
     pub revision: u64,
     pub claim_state: ClaimState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub migration: Option<MigrationMetadata>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct MigrationMetadata {
+    pub from_schema: String,
+    pub next_action: &'static str,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -81,11 +90,12 @@ pub fn discover(
     query: DiscoveryQuery<'_>,
 ) -> Result<DiscoveryOutcome, DiscoveryError> {
     if !runs_dir.exists() {
-        return Ok(outcome(Vec::new(), Vec::new(), Vec::new()));
+        return Ok(outcome(Vec::new(), Vec::new(), Vec::new(), Vec::new()));
     }
 
     let mut candidates = Vec::new();
     let mut task_mismatches = Vec::new();
+    let mut upgrades = Vec::new();
     let mut corrupt = Vec::new();
     for entry in fs::read_dir(runs_dir)? {
         let entry = entry?;
@@ -99,6 +109,7 @@ pub fn discover(
                 Ok(Some(CandidateMatch::TaskMismatch(candidate))) => {
                     task_mismatches.push(candidate)
                 }
+                Ok(Some(CandidateMatch::Upgrade(candidate))) => upgrades.push(candidate),
                 Ok(None) => {}
                 Err(error) => corrupt.push(CorruptCandidate { run_dir, error }),
             },
@@ -111,8 +122,9 @@ pub fn discover(
     }
     candidates.sort_by(|left, right| left.run_id.cmp(&right.run_id));
     task_mismatches.sort_by(|left, right| left.run_id.cmp(&right.run_id));
+    upgrades.sort_by(|left, right| left.run_id.cmp(&right.run_id));
     corrupt.sort_by(|left, right| left.run_dir.cmp(&right.run_dir));
-    Ok(outcome(candidates, task_mismatches, corrupt))
+    Ok(outcome(candidates, task_mismatches, upgrades, corrupt))
 }
 
 pub fn wait_for_match(
@@ -167,10 +179,10 @@ fn candidate(
     baton: RunBaton,
     query: &DiscoveryQuery<'_>,
 ) -> Result<Option<CandidateMatch>, String> {
-    if baton.schema != SCHEMA {
+    if !matches!(baton.schema.as_str(), SCHEMA | LEGACY_SCHEMA) {
         return Err("unsupported baton schema".to_owned());
     }
-    if matches!(baton.status, Status::Done | Status::Abandoned) {
+    if baton.schema == SCHEMA && matches!(baton.status, Status::Done | Status::Abandoned) {
         return Ok(None);
     }
     let workspace = baton
@@ -222,13 +234,19 @@ fn candidate(
         status: baton.status,
         revision: baton.revision,
         claim_state,
+        migration: (baton.schema == LEGACY_SCHEMA).then(|| MigrationMetadata {
+            from_schema: LEGACY_SCHEMA.to_owned(),
+            next_action: "upgrade_protocol",
+        }),
     };
     let task_matches = query.task_reference.is_none_or(|expected| {
         task.reference
             .as_deref()
             .is_some_and(|actual| actual == expected.trim())
     });
-    if query.run_id.is_none() && !task_matches {
+    if baton.schema == LEGACY_SCHEMA && (query.run_id.is_some() || task_matches) {
+        Ok(Some(CandidateMatch::Upgrade(candidate)))
+    } else if query.run_id.is_none() && !task_matches {
         if candidate.claim_state == ClaimState::Busy {
             Ok(None)
         } else {
@@ -242,15 +260,19 @@ fn candidate(
 enum CandidateMatch {
     Exact(RunCandidate),
     TaskMismatch(RunCandidate),
+    Upgrade(RunCandidate),
 }
 
 fn outcome(
     candidates: Vec<RunCandidate>,
     task_mismatches: Vec<RunCandidate>,
+    upgrades: Vec<RunCandidate>,
     corrupt: Vec<CorruptCandidate>,
 ) -> DiscoveryOutcome {
     let (outcome, candidates) = if !corrupt.is_empty() {
         (DiscoveryKind::Corrupt, candidates)
+    } else if !upgrades.is_empty() {
+        (DiscoveryKind::UpgradeRequired, upgrades)
     } else if candidates.is_empty() && !task_mismatches.is_empty() {
         (DiscoveryKind::TaskMismatch, task_mismatches)
     } else {

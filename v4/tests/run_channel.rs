@@ -1,5 +1,5 @@
 use assert_cmd::Command;
-use dvandva_v4::model::RunBaton;
+use dvandva_v4::model::{DeliverableRequirement, RunBaton};
 use predicates::prelude::*;
 
 fn command() -> Command {
@@ -28,9 +28,511 @@ fn init_pair(dir: &std::path::Path) {
             "claude",
             "--repository-id",
             "github.com/axatbhardwaj/dvandva",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
         ])
         .assert()
         .success();
+}
+
+fn write_legacy_run(
+    dir: &std::path::Path,
+    status: &str,
+    assignee: &str,
+    worker_claim: serde_json::Value,
+) -> Vec<u8> {
+    std::fs::create_dir_all(dir.join("history")).unwrap();
+    let baton = serde_json::json!({
+        "schema": "dvandva.run.v1",
+        "run_id": "legacy-run",
+        "objective": {"summary": "Preserved objective", "refs": [{"kind": "issue", "value": "DEF-123"}]},
+        "workspace": {"repository_id": "github.com/axatbhardwaj/dvandva", "origin": null, "worktree": null},
+        "task": {"reference": "DEF-123", "summary": "Preserved objective"},
+        "participants": {
+            "worker": {"harness": " codex ", "claim": worker_claim},
+            "reviewer": {"harness": "CLAUDE", "claim": {
+                "session_id": "reviewer-old", "epoch": 2, "token_digest": "reviewer-digest",
+                "lease_expires_at": "2000-01-01T00:00:00Z", "lease_seconds": 300
+            }}
+        },
+        "status": status,
+        "assignee": assignee,
+        "revision": 0,
+        "checkpoint": {"kind": "artifact", "identity": "sha256:legacy", "verification": ["legacy tests"]},
+        "review": {"verdict": "approved", "checkpoint_identity": "sha256:legacy", "findings": []},
+        "publication": {"required": true, "desired_revision": 7, "published_revision": 7,
+            "refs": [{"kind": "explainer", "value": "https://legacy.invalid"}]},
+        "human_decision": {"question": "Legacy?", "requested_by": "worker", "evidence": ["old"],
+            "options": ["yes", "no"], "contact_role": "worker", "resume_status": "working",
+            "resume_assignee": "worker", "answer": "yes"},
+        "predecessor_run_id": null,
+        "terminal": if status == "done" { serde_json::json!({"outcome": "done", "reason": null}) } else { serde_json::Value::Null },
+        "recovery": null
+    });
+    let mut bytes = serde_json::to_vec_pretty(&baton).unwrap();
+    bytes.push(b'\n');
+    std::fs::write(dir.join("history/00000000000000000000.json"), &bytes).unwrap();
+    std::fs::write(dir.join("baton.json"), &bytes).unwrap();
+    bytes
+}
+
+#[test]
+fn migration_init_writes_v2_scope_and_run_started_obligation() {
+    let dir = tempfile::tempdir().unwrap();
+    command()
+        .args([
+            "init",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--run-id",
+            "run-v2",
+            "--objective",
+            " Ship the protocol ",
+            "--worker",
+            " CoDeX ",
+            "--reviewer",
+            " claude ",
+            "--repository-id",
+            "github.com/axatbhardwaj/dvandva",
+            "--required-deliverable",
+            " kernel = Harden the kernel ",
+        ])
+        .assert()
+        .success();
+
+    let baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
+    assert_eq!(baton["schema"], "dvandva.run.v2");
+    assert_eq!(baton["participants"]["worker"]["harness"], "Codex");
+    assert_eq!(baton["participants"]["reviewer"]["harness"], "Claude");
+    assert_eq!(baton["scope_revision"], 0);
+    assert_eq!(
+        baton["scope_deliverables"],
+        serde_json::json!([
+            {"id": "kernel", "description": "Harden the kernel"}
+        ])
+    );
+    assert_eq!(
+        baton["publication_policy"],
+        serde_json::json!({
+            "publisher_harness": "Codex", "channel": "codex_sites",
+            "access": "owner_only", "reviewer_harness": "Claude"
+        })
+    );
+    assert_eq!(
+        baton["publication_binding"]["obligation"]["kind"],
+        "run_started"
+    );
+    assert_eq!(
+        baton["publication_binding"]["obligation"]["handoff_revision"],
+        0
+    );
+    assert!(baton["publication_binding"]["deployment"].is_null());
+    assert!(baton["publication_binding"]["review"].is_null());
+}
+
+#[test]
+fn migration_init_rejects_invalid_scope_and_participant_topology() {
+    let cases = [
+        (vec![], "required deliverable"),
+        (
+            vec!["--required-deliverable", " = blank"],
+            "required deliverable",
+        ),
+        (
+            vec![
+                "--required-deliverable",
+                "same=one",
+                "--required-deliverable",
+                "same=two",
+            ],
+            "duplicate required deliverable",
+        ),
+        (vec!["--required-deliverable", "one=One"], ""),
+    ];
+    for (extra, expected) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        let mut args = vec![
+            "init",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--run-id",
+            "run-v2",
+            "--objective",
+            "Ship",
+            "--worker",
+            "codex",
+            "--reviewer",
+            "claude",
+            "--repository-id",
+            "github.com/axatbhardwaj/dvandva",
+        ];
+        if expected.is_empty() {
+            args[8] = "cursor";
+        }
+        args.extend(extra);
+        let expected = if expected.is_empty() {
+            "exactly one Codex"
+        } else {
+            expected
+        };
+        command()
+            .args(args)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(expected));
+        assert!(!dir.path().join("baton.json").exists());
+    }
+}
+
+#[test]
+fn migration_probe_reports_epoch_and_rejects_mismatched_expectations() {
+    let output = command()
+        .args([
+            "probe",
+            "--expected-schema",
+            "dvandva.run.v2",
+            "--expected-role-api",
+            "2",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let probe: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(probe["write_schema"], "dvandva.run.v2");
+    assert_eq!(
+        probe["read_schemas"],
+        serde_json::json!(["dvandva.run.v2", "dvandva.run.v1"])
+    );
+    assert_eq!(probe["role_api"], 2);
+    assert_eq!(probe["version"], env!("CARGO_PKG_VERSION"));
+    assert_eq!(probe["capabilities"]["upgrade_from_v1"], true);
+
+    for args in [
+        [
+            "probe",
+            "--expected-schema",
+            "dvandva.run.v1",
+            "--expected-role-api",
+            "2",
+        ],
+        [
+            "probe",
+            "--expected-schema",
+            "dvandva.run.v2",
+            "--expected-role-api",
+            "1",
+        ],
+    ] {
+        command().args(args).assert().failure();
+    }
+}
+
+#[test]
+fn migration_upgrade_is_one_way_and_clears_active_legacy_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let original = write_legacy_run(dir.path(), "reviewing", "reviewer", serde_json::Value::Null);
+
+    command()
+        .args([
+            "role",
+            "upgrade",
+            "--api",
+            "2",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-new",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--expected-revision",
+            "0",
+        ])
+        .assert()
+        .success();
+
+    assert_eq!(
+        std::fs::read(dir.path().join("history/00000000000000000000.json")).unwrap(),
+        original
+    );
+    let baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
+    assert_eq!(baton["schema"], "dvandva.run.v2");
+    assert_eq!(baton["revision"], 1);
+    assert_eq!(baton["status"], "revising");
+    assert_eq!(baton["assignee"], "worker");
+    assert_eq!(
+        baton["scope_deliverables"],
+        serde_json::json!([
+            {"id": "legacy_objective", "description": "Preserved objective"}
+        ])
+    );
+    for pointer in [
+        "/checkpoint",
+        "/review",
+        "/human_decision",
+        "/participants/worker/claim",
+        "/participants/reviewer/claim",
+    ] {
+        assert!(baton.pointer(pointer).unwrap().is_null(), "{pointer}");
+    }
+    assert_eq!(
+        baton["publication"]["published_revision"],
+        serde_json::Value::Null
+    );
+    assert_eq!(baton["publication"]["refs"], serde_json::json!([]));
+    assert_eq!(
+        baton["publication_binding"]["obligation"]["kind"],
+        "protocol_upgraded"
+    );
+    assert_eq!(baton["migration"]["from_schema"], "dvandva.run.v1");
+    assert_eq!(baton["migration"]["from_revision"], 0);
+    assert_eq!(
+        baton["migration"]["legacy_checkpoint"]["identity"],
+        "sha256:legacy"
+    );
+    assert_eq!(
+        baton["migration"]["legacy_state_digest"]
+            .as_str()
+            .unwrap()
+            .len(),
+        64
+    );
+}
+
+#[test]
+fn migration_upgrade_rejects_terminal_busy_and_invalid_topology() {
+    let terminal = tempfile::tempdir().unwrap();
+    write_legacy_run(terminal.path(), "done", "none", serde_json::Value::Null);
+    command()
+        .args([
+            "role",
+            "upgrade",
+            "--api",
+            "2",
+            "--run-dir",
+            terminal.path().to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "new",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--expected-revision",
+            "0",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("terminal_state"));
+
+    let busy = tempfile::tempdir().unwrap();
+    write_legacy_run(
+        busy.path(),
+        "working",
+        "worker",
+        serde_json::json!({
+            "session_id": "other", "epoch": 4, "token_digest": "digest",
+            "lease_expires_at": "2999-01-01T00:00:00Z", "lease_seconds": 300
+        }),
+    );
+    command()
+        .args([
+            "role",
+            "upgrade",
+            "--api",
+            "2",
+            "--run-dir",
+            busy.path().to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "new",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--expected-revision",
+            "0",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("busy"));
+
+    let invalid = tempfile::tempdir().unwrap();
+    write_legacy_run(invalid.path(), "working", "worker", serde_json::Value::Null);
+    command()
+        .args([
+            "role",
+            "upgrade",
+            "--api",
+            "2",
+            "--run-dir",
+            invalid.path().to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "new",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "cursor",
+            "--expected-revision",
+            "0",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid_participants"));
+}
+
+#[test]
+fn migration_recovery_uses_only_the_exact_validated_v2_history_head() {
+    let dir = tempfile::tempdir().unwrap();
+    write_legacy_run(dir.path(), "working", "worker", serde_json::Value::Null);
+    command()
+        .args([
+            "recover",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--from-revision",
+            "0",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("migration_required"));
+
+    command()
+        .args([
+            "role",
+            "upgrade",
+            "--api",
+            "2",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-new",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--expected-revision",
+            "0",
+        ])
+        .assert()
+        .success();
+    std::fs::write(dir.path().join("baton.json"), b"corrupt").unwrap();
+
+    command()
+        .args([
+            "recover",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--from-revision",
+            "0",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid_history"));
+    command()
+        .args([
+            "recover",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--from-revision",
+            "1",
+        ])
+        .assert()
+        .success();
+
+    let recovered: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
+    assert_eq!(recovered["schema"], "dvandva.run.v2");
+    assert_eq!(recovered["revision"], 2);
+    assert_eq!(recovered["recovery"]["from_revision"], 1);
+    assert!(recovered["participants"]["worker"]["claim"].is_null());
+    assert!(recovered["participants"]["reviewer"]["claim"].is_null());
+
+    command()
+        .args([
+            "recover",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--from-revision",
+            "1",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid_history"));
+    command()
+        .args([
+            "recover",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--from-revision",
+            "2",
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn migration_history_rejects_v2_downgrades_and_multiple_crossings() {
+    let dir = tempfile::tempdir().unwrap();
+    write_legacy_run(dir.path(), "working", "worker", serde_json::Value::Null);
+    command()
+        .args([
+            "role",
+            "upgrade",
+            "--api",
+            "2",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-new",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--expected-revision",
+            "0",
+        ])
+        .assert()
+        .success();
+
+    let mut downgrade: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(dir.path().join("history/00000000000000000000.json")).unwrap(),
+    )
+    .unwrap();
+    downgrade["revision"] = serde_json::json!(2);
+    std::fs::write(
+        dir.path().join("history/00000000000000000002.json"),
+        serde_json::to_vec_pretty(&downgrade).unwrap(),
+    )
+    .unwrap();
+    command()
+        .args([
+            "recover",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--from-revision",
+            "2",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid_history"));
 }
 
 fn claim_role(dir: &std::path::Path, role: &str, session: &str, revision: u64) -> String {
@@ -108,23 +610,35 @@ fn init_creates_a_run_centric_baton() {
             "claude",
             "--repository-id",
             "github.com/axatbhardwaj/dvandva",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
         ])
         .assert()
         .success();
 
     let baton: serde_json::Value =
         serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
-    assert_eq!(baton["schema"], "dvandva.run.v1");
+    assert_eq!(baton["schema"], "dvandva.run.v2");
     assert_eq!(baton["run_id"], "run-a");
     assert_eq!(baton["status"], "working");
     assert_eq!(baton["assignee"], "worker");
-    assert_eq!(baton["participants"]["worker"]["harness"], "codex");
-    assert_eq!(baton["participants"]["reviewer"]["harness"], "claude");
+    assert_eq!(baton["participants"]["worker"]["harness"], "Codex");
+    assert_eq!(baton["participants"]["reviewer"]["harness"], "Claude");
 }
 
 #[test]
 fn new_runs_require_a_synchronized_publication() {
-    let baton = RunBaton::new("run-publication", "Implement DEF-123", "codex", "claude");
+    let baton = RunBaton::new(
+        "run-publication",
+        "Implement DEF-123",
+        "codex",
+        "claude",
+        vec![DeliverableRequirement {
+            id: "implementation".to_owned(),
+            description: "Implement DEF-123".to_owned(),
+        }],
+    )
+    .unwrap();
     assert!(baton.publication.required);
     assert_eq!(baton.publication.published_revision, None);
 }
@@ -153,6 +667,8 @@ fn init_persists_workspace_and_task_identity() {
             "  /tmp/dvandva-a  ",
             "--task-reference",
             "  DEF-123  ",
+            "--required-deliverable",
+            " implementation = Implement DEF-123 ",
         ])
         .assert()
         .success();
@@ -174,8 +690,8 @@ fn init_persists_workspace_and_task_identity() {
             "summary": "Implement DEF-123"
         })
     );
-    assert_eq!(baton["participants"]["worker"]["harness"], "codex");
-    assert_eq!(baton["participants"]["reviewer"]["harness"], "claude");
+    assert_eq!(baton["participants"]["worker"]["harness"], "Codex");
+    assert_eq!(baton["participants"]["reviewer"]["harness"], "Claude");
 }
 
 #[test]
@@ -220,6 +736,8 @@ fn init_rejects_a_supplied_blank_task_reference() {
             "claude",
             "--repository-id",
             "github.com/axatbhardwaj/dvandva",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
             "--task-reference",
             "   ",
         ])
@@ -247,6 +765,8 @@ fn init_rejects_supplied_blank_workspace_metadata() {
                 "claude",
                 "--repository-id",
                 "github.com/axatbhardwaj/dvandva",
+                "--required-deliverable",
+                "implementation=Implement DEF-123",
                 flag,
                 "   ",
             ])
@@ -258,8 +778,17 @@ fn init_rejects_supplied_blank_workspace_metadata() {
 
 #[test]
 fn pre_discovery_batons_remain_deserializable() {
-    let legacy =
-        dvandva_v4::model::RunBaton::new("legacy-run", "Preserved objective", "codex", "claude");
+    let legacy = dvandva_v4::model::RunBaton::new(
+        "legacy-run",
+        "Preserved objective",
+        "codex",
+        "claude",
+        vec![DeliverableRequirement {
+            id: "implementation".to_owned(),
+            description: "Preserved objective".to_owned(),
+        }],
+    )
+    .unwrap();
     let encoded = serde_json::to_value(legacy).unwrap();
     assert!(encoded.get("workspace").is_none());
     assert!(encoded.get("task").is_none());
@@ -288,6 +817,8 @@ fn init_rejects_unsafe_run_ids() {
             "claude",
             "--repository-id",
             "github.com/axatbhardwaj/dvandva",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
         ])
         .assert()
         .failure()
@@ -312,6 +843,8 @@ fn init_rejects_blank_objectives() {
             "claude",
             "--repository-id",
             "github.com/axatbhardwaj/dvandva",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
         ])
         .assert()
         .failure()
@@ -336,10 +869,12 @@ fn init_rejects_same_harness_family() {
             "codex",
             "--repository-id",
             "github.com/axatbhardwaj/dvandva",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("different harness families"));
+        .stderr(predicate::str::contains("exactly one Codex and one Claude"));
 }
 
 #[test]
@@ -359,6 +894,8 @@ fn init_rejects_duplicate_initialization() {
         "claude",
         "--repository-id",
         "github.com/axatbhardwaj/dvandva",
+        "--required-deliverable",
+        "implementation=Implement DEF-123",
     ];
     command().args(args).assert().success();
     command()
@@ -386,6 +923,8 @@ fn read_emits_canonical_baton_json() {
             "claude",
             "--repository-id",
             "github.com/axatbhardwaj/dvandva",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
         ])
         .assert()
         .success();
@@ -420,6 +959,8 @@ fn concurrent_initialization_has_one_winner() {
                 "claude",
                 "--repository-id",
                 "github.com/axatbhardwaj/dvandva",
+                "--required-deliverable",
+                "implementation=Implement DEF-123",
             ])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped())
@@ -490,6 +1031,8 @@ fn initialization_history_is_immutable() {
             "claude",
             "--repository-id",
             "github.com/axatbhardwaj/dvandva",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
         ])
         .assert()
         .success();
@@ -511,6 +1054,8 @@ fn initialization_history_is_immutable() {
             "claude",
             "--repository-id",
             "github.com/axatbhardwaj/dvandva",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
         ])
         .assert()
         .failure();
@@ -536,6 +1081,8 @@ fn separate_run_directories_are_independent() {
                 "claude",
                 "--repository-id",
                 "github.com/axatbhardwaj/dvandva",
+                "--required-deliverable",
+                "implementation=Implement DEF-123",
             ])
             .assert()
             .success();
@@ -567,6 +1114,8 @@ fn expired_claim_replacement_fences_the_old_session() {
             "claude",
             "--repository-id",
             "github.com/axatbhardwaj/dvandva",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
         ])
         .assert()
         .success();
@@ -691,6 +1240,8 @@ fn worker_and_reviewer_claims_are_independent_and_tokens_are_secret() {
             "claude",
             "--repository-id",
             "github.com/axatbhardwaj/dvandva",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
         ])
         .assert()
         .success();
@@ -791,6 +1342,8 @@ fn complete_review_fix_loop_reaches_done() {
             "claude",
             "--repository-id",
             "github.com/axatbhardwaj/dvandva",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
         ])
         .assert()
         .success();
@@ -1230,7 +1783,7 @@ fn recovery_refuses_to_reopen_a_terminal_run() {
             "--run-dir",
             dir.path().to_str().unwrap(),
             "--from-revision",
-            "1",
+            "2",
         ])
         .assert()
         .failure()
@@ -1243,7 +1796,7 @@ fn recovery_refuses_to_reopen_a_terminal_run() {
             "--run-dir",
             dir.path().to_str().unwrap(),
             "--from-revision",
-            "1",
+            "2",
         ])
         .assert()
         .failure()

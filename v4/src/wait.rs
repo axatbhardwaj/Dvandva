@@ -6,7 +6,7 @@ use thiserror::Error;
 use crate::{
     claim::{self, ClaimError, Role},
     model::{Assignee, RunBaton, Status},
-    store::{RunChannel, StoreError},
+    store::{require_current_schema, RunChannel, StoreError},
 };
 
 #[derive(Debug, Error)]
@@ -48,6 +48,7 @@ pub fn wait(
     let mut seen_revision = after_revision;
     loop {
         let baton = channel.read()?;
+        require_current_schema(&baton)?;
         if matches!(baton.status, Status::Done | Status::Abandoned) {
             return Ok(baton);
         }

@@ -1,7 +1,9 @@
 use assert_cmd::Command;
 use dvandva_v4::{
     claim::{self, Role},
-    model::{ParticipantClaim, RunBaton, Status, TaskIdentity, WorkspaceIdentity},
+    model::{
+        DeliverableRequirement, ParticipantClaim, RunBaton, Status, TaskIdentity, WorkspaceIdentity,
+    },
     store::RunChannel,
 };
 
@@ -9,6 +11,72 @@ const REPOSITORY_ID: &str = "github.com/axatbhardwaj/dvandva";
 
 fn command() -> Command {
     Command::new(env!("CARGO_BIN_EXE_dvandva-v4"))
+}
+
+fn write_legacy_run(runs: &std::path::Path, run_id: &str) -> std::path::PathBuf {
+    let run_dir = runs.join(run_id);
+    std::fs::create_dir_all(run_dir.join("history")).unwrap();
+    let baton = serde_json::json!({
+        "schema": "dvandva.run.v1", "run_id": run_id,
+        "objective": {"summary": "Upgrade the ticket", "refs": []},
+        "workspace": {"repository_id": REPOSITORY_ID, "origin": null, "worktree": null},
+        "task": {"reference": "DEF-123", "summary": "Upgrade the ticket"},
+        "participants": {
+            "worker": {"harness": "codex", "claim": null},
+            "reviewer": {"harness": "claude", "claim": null}
+        },
+        "status": "working", "assignee": "worker", "revision": 0,
+        "checkpoint": null, "review": null,
+        "publication": {"required": true, "desired_revision": 0, "published_revision": null, "refs": []},
+        "human_decision": null, "predecessor_run_id": null, "terminal": null, "recovery": null
+    });
+    let bytes = serde_json::to_vec_pretty(&baton).unwrap();
+    std::fs::write(run_dir.join("history/00000000000000000000.json"), &bytes).unwrap();
+    std::fs::write(run_dir.join("baton.json"), &bytes).unwrap();
+    run_dir
+}
+
+#[test]
+fn upgrade_classifies_v1_as_upgrade_required_instead_of_corrupt_or_matchable() {
+    let root = tempfile::tempdir().unwrap();
+    let run_dir = write_legacy_run(root.path(), "legacy-run");
+
+    let output = command()
+        .args([
+            "discover",
+            "--runs-dir",
+            root.path().to_str().unwrap(),
+            "--repository-id",
+            REPOSITORY_ID,
+            "--reviewer-harness",
+            "codex",
+            "--role",
+            "worker",
+            "--run-id",
+            "legacy-run",
+            "--session-id",
+            "worker-new",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let outcome: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(outcome["outcome"], "upgrade_required");
+    assert_eq!(outcome["candidates"][0]["run_id"], "legacy-run");
+    assert_eq!(
+        outcome["candidates"][0]["run_dir"],
+        run_dir.to_str().unwrap()
+    );
+    assert_eq!(outcome["candidates"][0]["revision"], 0);
+    assert_eq!(
+        outcome["candidates"][0]["migration"]["from_schema"],
+        "dvandva.run.v1"
+    );
+    assert_eq!(outcome["corrupt"], serde_json::json!([]));
 }
 
 fn create_run(
@@ -19,18 +87,28 @@ fn create_run(
     reviewer: &str,
 ) -> std::path::PathBuf {
     let run_dir = runs.join(run_id);
-    let baton = RunBaton::new(run_id, "Implement the ticket", "codex", reviewer)
-        .with_discovery_identity(
-            WorkspaceIdentity {
-                repository_id: repository_id.to_owned(),
-                origin: Some("git@github.com:axatbhardwaj/Dvandva.git".to_owned()),
-                worktree: Some("/tmp/worker".to_owned()),
-            },
-            TaskIdentity {
-                reference: task_reference.map(str::to_owned),
-                summary: "Implement the ticket".to_owned(),
-            },
-        );
+    let baton = RunBaton::new(
+        run_id,
+        "Implement the ticket",
+        "codex",
+        reviewer,
+        vec![DeliverableRequirement {
+            id: "implementation".to_owned(),
+            description: "Implement the ticket".to_owned(),
+        }],
+    )
+    .unwrap()
+    .with_discovery_identity(
+        WorkspaceIdentity {
+            repository_id: repository_id.to_owned(),
+            origin: Some("git@github.com:axatbhardwaj/Dvandva.git".to_owned()),
+            worktree: Some("/tmp/worker".to_owned()),
+        },
+        TaskIdentity {
+            reference: task_reference.map(str::to_owned),
+            summary: "Implement the ticket".to_owned(),
+        },
+    );
     RunChannel::open(&run_dir).create(&baton).unwrap();
     run_dir
 }
@@ -111,18 +189,28 @@ fn a_live_reviewer_claim_is_not_joinable() {
 fn an_expired_reviewer_claim_is_reclaimable() {
     let root = tempfile::tempdir().unwrap();
     let run_dir = root.path().join("def-123-expired");
-    let mut baton = RunBaton::new("def-123-expired", "Implement", "codex", "claude")
-        .with_discovery_identity(
-            WorkspaceIdentity {
-                repository_id: REPOSITORY_ID.to_owned(),
-                origin: None,
-                worktree: Some("/tmp/worker".to_owned()),
-            },
-            TaskIdentity {
-                reference: Some("DEF-123".to_owned()),
-                summary: "Implement".to_owned(),
-            },
-        );
+    let mut baton = RunBaton::new(
+        "def-123-expired",
+        "Implement",
+        "codex",
+        "claude",
+        vec![DeliverableRequirement {
+            id: "implementation".to_owned(),
+            description: "Implement".to_owned(),
+        }],
+    )
+    .unwrap()
+    .with_discovery_identity(
+        WorkspaceIdentity {
+            repository_id: REPOSITORY_ID.to_owned(),
+            origin: None,
+            worktree: Some("/tmp/worker".to_owned()),
+        },
+        TaskIdentity {
+            reference: Some("DEF-123".to_owned()),
+            summary: "Implement".to_owned(),
+        },
+    );
     baton.participants.reviewer.claim = Some(ParticipantClaim {
         session_id: "gone-reviewer".to_owned(),
         epoch: 3,
@@ -271,7 +359,7 @@ fn a_live_worker_claim_on_another_task_is_not_actionable() {
 }
 
 #[test]
-fn wrong_repository_reviewer_and_terminal_runs_are_ignored() {
+fn wrong_repository_and_terminal_runs_are_ignored() {
     let root = tempfile::tempdir().unwrap();
     create_run(
         root.path(),
@@ -279,13 +367,6 @@ fn wrong_repository_reviewer_and_terminal_runs_are_ignored() {
         "github.com/example/other",
         Some("DEF-123"),
         "claude",
-    );
-    create_run(
-        root.path(),
-        "wrong-reviewer",
-        REPOSITORY_ID,
-        Some("DEF-123"),
-        "codex",
     );
     let terminal_dir = create_run(
         root.path(),

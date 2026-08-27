@@ -4,7 +4,7 @@ use crate::{
     action::{Action, ReviewVerdict},
     claim::{self, ClaimError, Role},
     model::{Assignee, HumanDecision, ReviewReceipt, RunBaton, Status, TerminalProvenance},
-    store::{RunChannel, StoreError},
+    store::{require_current_schema, RunChannel, StoreError},
 };
 
 #[derive(Debug, Error)]
@@ -50,6 +50,7 @@ pub fn apply(
     action: Action,
 ) -> Result<RunBaton, TransitionError> {
     let mut baton = channel.read()?;
+    require_current_schema(&baton)?;
     if baton.revision != expected_revision {
         return Err(StoreError::RevisionConflict {
             expected: expected_revision,

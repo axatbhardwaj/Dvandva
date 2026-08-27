@@ -14,7 +14,13 @@ fn version_and_probe_report_the_installation_contract() {
         .stdout(predicate::str::contains("dvandva-v4 0.1.1"));
 
     let output = command()
-        .args(["probe", "--expected-schema", "dvandva.run.v1"])
+        .args([
+            "probe",
+            "--expected-schema",
+            "dvandva.run.v2",
+            "--expected-role-api",
+            "2",
+        ])
         .output()
         .unwrap();
     assert!(
@@ -25,7 +31,8 @@ fn version_and_probe_report_the_installation_contract() {
     let probe: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(probe["package"], "dvandva-v4");
     assert_eq!(probe["version"], "0.1.1");
-    assert_eq!(probe["schema"], "dvandva.run.v1");
+    assert_eq!(probe["write_schema"], "dvandva.run.v2");
+    assert_eq!(probe["role_api"], 2);
     assert_eq!(probe["compatible"], true);
 }
 
@@ -56,6 +63,8 @@ fn start_role(
         .args([
             "role",
             "start",
+            "--api",
+            "2",
             "--workspace",
             workspace.to_str().unwrap(),
             "--runs-dir",
@@ -74,6 +83,8 @@ fn start_role(
             "Implement DEF-123",
             "--task-reference",
             "DEF-123",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
         ])
         .output()
         .unwrap();
@@ -106,6 +117,8 @@ impl Flow<'_> {
             .args([
                 "role",
                 "apply",
+                "--api",
+                "2",
                 "--run-dir",
                 self.run_dir.to_str().unwrap(),
                 "--role",
@@ -273,6 +286,8 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
             .args([
                 "role",
                 "wait",
+                "--api",
+                "2",
                 "--run-dir",
                 run_dir.to_str().unwrap(),
                 "--role",
@@ -352,8 +367,8 @@ fn explicit_role_reversal_binds_claude_as_worker_and_codex_as_reviewer() {
     let run_dir = runs.join(worker["run_id"].as_str().unwrap());
     let baton: serde_json::Value =
         serde_json::from_slice(&std::fs::read(run_dir.join("baton.json")).unwrap()).unwrap();
-    assert_eq!(baton["participants"]["worker"]["harness"], "claude");
-    assert_eq!(baton["participants"]["reviewer"]["harness"], "codex");
+    assert_eq!(baton["participants"]["worker"]["harness"], "Claude");
+    assert_eq!(baton["participants"]["reviewer"]["harness"], "Codex");
 }
 
 #[test]
@@ -387,6 +402,8 @@ fn explicit_run_id_resolves_an_ambiguous_role_start() {
         .args([
             "role",
             "start",
+            "--api",
+            "2",
             "--workspace",
             workspace.to_str().unwrap(),
             "--runs-dir",
@@ -405,6 +422,8 @@ fn explicit_run_id_resolves_an_ambiguous_role_start() {
             "Implement DEF-123",
             "--task-reference",
             "DEF-123",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
             "--new-run",
         ])
         .output()
@@ -415,6 +434,8 @@ fn explicit_run_id_resolves_an_ambiguous_role_start() {
         .args([
             "role",
             "start",
+            "--api",
+            "2",
             "--workspace",
             workspace.to_str().unwrap(),
             "--runs-dir",
@@ -433,6 +454,8 @@ fn explicit_run_id_resolves_an_ambiguous_role_start() {
             "Implement DEF-123",
             "--task-reference",
             "DEF-123",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
         ])
         .assert()
         .success()
@@ -443,6 +466,8 @@ fn explicit_run_id_resolves_an_ambiguous_role_start() {
         .args([
             "role",
             "start",
+            "--api",
+            "2",
             "--workspace",
             workspace.to_str().unwrap(),
             "--runs-dir",
@@ -461,6 +486,8 @@ fn explicit_run_id_resolves_an_ambiguous_role_start() {
             "Review the mobile app tech spec",
             "--task-reference",
             "https://app.notion.com/p/Mobile-App-Tech-Spec",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
             "--run-id",
             first_run,
         ])
@@ -501,6 +528,8 @@ fn a_live_worker_run_blocks_silent_duplicate_creation() {
         .args([
             "role",
             "start",
+            "--api",
+            "2",
             "--workspace",
             workspace.to_str().unwrap(),
             "--runs-dir",
@@ -519,6 +548,8 @@ fn a_live_worker_run_blocks_silent_duplicate_creation() {
             "Implement DEF-123",
             "--task-reference",
             "DEF-123",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
         ])
         .output()
         .unwrap();

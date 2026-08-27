@@ -6,6 +6,206 @@ fn command() -> Command {
     Command::new(env!("CARGO_BIN_EXE_dvandva-v4"))
 }
 
+fn write_legacy_run(run_dir: &std::path::Path) {
+    std::fs::create_dir_all(run_dir.join("history")).unwrap();
+    let baton = serde_json::json!({
+        "schema": "dvandva.run.v1", "run_id": "legacy-run",
+        "objective": {"summary": "Migrate safely", "refs": []},
+        "workspace": {"repository_id": "example.com/team/project", "origin": "https://example.com/team/project.git", "worktree": null},
+        "task": {"reference": "DEF-123", "summary": "Migrate safely"},
+        "participants": {
+            "worker": {"harness": "codex", "claim": null},
+            "reviewer": {"harness": "claude", "claim": null}
+        },
+        "status": "working", "assignee": "worker", "revision": 0,
+        "checkpoint": null, "review": null,
+        "publication": {"required": true, "desired_revision": 0, "published_revision": null, "refs": []},
+        "human_decision": null, "predecessor_run_id": null, "terminal": null, "recovery": null
+    });
+    let bytes = serde_json::to_vec_pretty(&baton).unwrap();
+    std::fs::write(run_dir.join("history/00000000000000000000.json"), &bytes).unwrap();
+    std::fs::write(run_dir.join("baton.json"), &bytes).unwrap();
+}
+
+#[test]
+fn migration_fences_every_ordinary_v1_role_mutation() {
+    let root = tempfile::tempdir().unwrap();
+    let run_dir = root.path().join("legacy-run");
+    write_legacy_run(&run_dir);
+    let action = root.path().join("action.json");
+    std::fs::write(&action, br#"{"type":"abandon","reason":"no"}"#).unwrap();
+
+    let cases = [
+        vec![
+            "claim",
+            "--role",
+            "worker",
+            "--session-id",
+            "s",
+            "--lease-seconds",
+            "300",
+            "--expected-revision",
+            "0",
+        ],
+        vec![
+            "reclaim",
+            "--role",
+            "worker",
+            "--session-id",
+            "s",
+            "--lease-seconds",
+            "300",
+            "--expected-revision",
+            "0",
+        ],
+        vec![
+            "heartbeat",
+            "--role",
+            "worker",
+            "--session-id",
+            "s",
+            "--token",
+            "stale",
+            "--lease-seconds",
+            "300",
+            "--expected-revision",
+            "0",
+        ],
+        vec![
+            "apply",
+            "--role",
+            "worker",
+            "--session-id",
+            "s",
+            "--token",
+            "stale",
+            "--expected-revision",
+            "0",
+            "--action",
+            action.to_str().unwrap(),
+        ],
+        vec![
+            "wait",
+            "--role",
+            "worker",
+            "--session-id",
+            "s",
+            "--token",
+            "stale",
+            "--after-revision",
+            "0",
+            "--poll-interval-ms",
+            "1",
+            "--timeout-ms",
+            "1",
+        ],
+    ];
+    for case in cases {
+        let mut args = case;
+        args.extend(["--run-dir", run_dir.to_str().unwrap()]);
+        command()
+            .args(args)
+            .assert()
+            .failure()
+            .stderr(predicates::str::contains("migration_required"));
+    }
+    let baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(run_dir.join("baton.json")).unwrap()).unwrap();
+    assert_eq!(baton["revision"], 0);
+}
+
+#[test]
+fn migration_role_api_is_checked_before_any_run_io() {
+    let root = tempfile::tempdir().unwrap();
+    command()
+        .args([
+            "role",
+            "read",
+            "--api",
+            "1",
+            "--run-dir",
+            root.path().join("missing").to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "session",
+            "--credentials-root",
+            root.path().join("credentials").to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("role_api_mismatch"));
+    assert!(!root.path().join("credentials").exists());
+}
+
+#[test]
+fn migration_exact_v1_start_returns_upgrade_metadata_without_a_credential() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    let git = |args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .args(args)
+            .current_dir(&workspace)
+            .status()
+            .unwrap();
+        assert!(status.success());
+    };
+    git(&["init", "--quiet"]);
+    git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://example.com/team/project.git",
+    ]);
+    let runs = root.path().join("runs");
+    let run_dir = runs.join("legacy-run");
+    write_legacy_run(&run_dir);
+    let credentials = root.path().join("credentials");
+
+    let output = command()
+        .args([
+            "role",
+            "start",
+            "--api",
+            "2",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-new",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--objective",
+            "Migrate safely",
+            "--task-reference",
+            "DEF-123",
+            "--run-id",
+            "legacy-run",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["outcome"], "upgrade_required");
+    assert_eq!(result["run_id"], "legacy-run");
+    assert_eq!(result["from_schema"], "dvandva.run.v1");
+    assert_eq!(result["next_action"], "upgrade_protocol");
+    assert!(result.get("credential").is_none());
+    assert!(!credentials.exists());
+}
+
 fn init_run(run_dir: &std::path::Path) {
     command()
         .args([
@@ -24,6 +224,8 @@ fn init_run(run_dir: &std::path::Path) {
             "github.com/axatbhardwaj/dvandva",
             "--task-reference",
             "DEF-123",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
         ])
         .assert()
         .success();
@@ -44,6 +246,8 @@ fn role_claim_keeps_the_raw_token_in_a_private_credential() {
         .args([
             "role",
             "claim",
+            "--api",
+            "2",
             "--run-dir",
             run_dir.to_str().unwrap(),
             "--role",
@@ -110,6 +314,8 @@ fn role_apply_loads_the_private_token_without_a_cli_argument() {
         .args([
             "role",
             "claim",
+            "--api",
+            "2",
             "--run-dir",
             run_dir.to_str().unwrap(),
             "--role",
@@ -144,6 +350,8 @@ fn role_apply_loads_the_private_token_without_a_cli_argument() {
         .args([
             "role",
             "apply",
+            "--api",
+            "2",
             "--run-dir",
             run_dir.to_str().unwrap(),
             "--role",
@@ -188,6 +396,8 @@ fn role_read_verifies_the_private_credential_against_the_baton() {
         .args([
             "role",
             "claim",
+            "--api",
+            "2",
             "--run-dir",
             run_dir.to_str().unwrap(),
             "--role",
@@ -208,6 +418,8 @@ fn role_read_verifies_the_private_credential_against_the_baton() {
         .args([
             "role",
             "read",
+            "--api",
+            "2",
             "--run-dir",
             run_dir.to_str().unwrap(),
             "--role",
@@ -242,6 +454,8 @@ fn role_heartbeat_renews_without_exposing_the_token() {
         .args([
             "role",
             "claim",
+            "--api",
+            "2",
             "--run-dir",
             run_dir.to_str().unwrap(),
             "--role",
@@ -266,6 +480,8 @@ fn role_heartbeat_renews_without_exposing_the_token() {
         .args([
             "role",
             "heartbeat",
+            "--api",
+            "2",
             "--run-dir",
             run_dir.to_str().unwrap(),
             "--role",
@@ -304,6 +520,8 @@ fn role_wait_blocks_in_the_foreground_until_the_role_is_actionable() {
         .args([
             "role",
             "claim",
+            "--api",
+            "2",
             "--run-dir",
             run_dir.to_str().unwrap(),
             "--role",
@@ -324,6 +542,8 @@ fn role_wait_blocks_in_the_foreground_until_the_role_is_actionable() {
         .args([
             "role",
             "wait",
+            "--api",
+            "2",
             "--run-dir",
             run_dir.to_str().unwrap(),
             "--role",
@@ -366,8 +586,17 @@ fn role_reclaim_fences_an_expired_session_with_a_new_private_credential() {
     let root = tempfile::tempdir().unwrap();
     let run_dir = root.path().join("runs/run-a");
     let credentials = root.path().join("credentials");
-    let mut baton =
-        dvandva_v4::model::RunBaton::new("run-a", "Implement DEF-123", "codex", "claude");
+    let mut baton = dvandva_v4::model::RunBaton::new(
+        "run-a",
+        "Implement DEF-123",
+        "codex",
+        "claude",
+        vec![dvandva_v4::model::DeliverableRequirement {
+            id: "implementation".to_owned(),
+            description: "Implement DEF-123".to_owned(),
+        }],
+    )
+    .unwrap();
     baton.participants.worker.claim = Some(dvandva_v4::model::ParticipantClaim {
         session_id: "expired-session".to_owned(),
         epoch: 7,
@@ -383,6 +612,8 @@ fn role_reclaim_fences_an_expired_session_with_a_new_private_credential() {
         .args([
             "role",
             "reclaim",
+            "--api",
+            "2",
             "--run-dir",
             run_dir.to_str().unwrap(),
             "--role",
@@ -436,6 +667,8 @@ fn unsafe_credential_roots_are_rejected_before_claim_mutation() {
         .args([
             "role",
             "claim",
+            "--api",
+            "2",
             "--run-dir",
             run_dir.to_str().unwrap(),
             "--role",
@@ -473,6 +706,8 @@ fn racing_role_claims_create_exactly_one_reviewer_credential() {
             .args([
                 "role",
                 "claim",
+                "--api",
+                "2",
                 "--run-dir",
                 run_dir.to_str().unwrap(),
                 "--role",
@@ -536,6 +771,8 @@ fn recovery_clears_claims_and_fences_the_preserved_credential() {
         .args([
             "role",
             "claim",
+            "--api",
+            "2",
             "--run-dir",
             run_dir.to_str().unwrap(),
             "--role",
@@ -560,7 +797,7 @@ fn recovery_clears_claims_and_fences_the_preserved_credential() {
             "--run-dir",
             run_dir.to_str().unwrap(),
             "--from-revision",
-            "0",
+            "1",
         ])
         .assert()
         .success();
@@ -569,6 +806,8 @@ fn recovery_clears_claims_and_fences_the_preserved_credential() {
         .args([
             "role",
             "read",
+            "--api",
+            "2",
             "--run-dir",
             run_dir.to_str().unwrap(),
             "--role",
@@ -606,6 +845,8 @@ fn relative_run_paths_are_canonicalized_in_credentials() {
         .args([
             "role",
             "claim",
+            "--api",
+            "2",
             "--run-dir",
             run_dir.to_str().unwrap(),
             "--role",
@@ -662,6 +903,8 @@ fn worker_start_creates_claims_and_idempotently_resumes_one_run() {
             .args([
                 "role",
                 "start",
+                "--api",
+                "2",
                 "--workspace",
                 workspace.to_str().unwrap(),
                 "--runs-dir",
@@ -680,6 +923,8 @@ fn worker_start_creates_claims_and_idempotently_resumes_one_run() {
                 "Implement DEF-123",
                 "--task-reference",
                 "DEF-123",
+                "--required-deliverable",
+                "implementation=Implement DEF-123",
                 "--lease-seconds",
                 "300",
             ])
@@ -720,8 +965,8 @@ fn worker_start_creates_claims_and_idempotently_resumes_one_run() {
         "github.com/axatbhardwaj/dvandva"
     );
     assert_eq!(baton["task"]["reference"], "DEF-123");
-    assert_eq!(baton["participants"]["worker"]["harness"], "codex");
-    assert_eq!(baton["participants"]["reviewer"]["harness"], "claude");
+    assert_eq!(baton["participants"]["worker"]["harness"], "Codex");
+    assert_eq!(baton["participants"]["reviewer"]["harness"], "Claude");
     assert_eq!(
         baton["participants"]["worker"]["claim"]["session_id"],
         "worker-session"
@@ -731,6 +976,8 @@ fn worker_start_creates_claims_and_idempotently_resumes_one_run() {
         .args([
             "role",
             "start",
+            "--api",
+            "2",
             "--workspace",
             workspace.to_str().unwrap(),
             "--runs-dir",
@@ -749,6 +996,8 @@ fn worker_start_creates_claims_and_idempotently_resumes_one_run() {
             "Implement DEF-123",
             "--task-reference",
             "DEF-123",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
             "--new-run",
         ])
         .output()
@@ -792,6 +1041,8 @@ fn reviewer_start_waits_without_model_polling_and_joins_the_created_run() {
         .args([
             "role",
             "start",
+            "--api",
+            "2",
             "--workspace",
             workspace.to_str().unwrap(),
             "--runs-dir",
@@ -826,6 +1077,8 @@ fn reviewer_start_waits_without_model_polling_and_joins_the_created_run() {
         .args([
             "role",
             "start",
+            "--api",
+            "2",
             "--workspace",
             workspace.to_str().unwrap(),
             "--runs-dir",
@@ -844,6 +1097,8 @@ fn reviewer_start_waits_without_model_polling_and_joins_the_created_run() {
             "Implement DEF-123",
             "--task-reference",
             "DEF-123",
+            "--required-deliverable",
+            "implementation=Implement DEF-123",
         ])
         .output()
         .unwrap();
@@ -911,6 +1166,8 @@ fn worker_start_rejects_unsafe_session_ids_before_creating_a_run() {
         .args([
             "role",
             "start",
+            "--api",
+            "2",
             "--workspace",
             workspace.to_str().unwrap(),
             "--runs-dir",
@@ -938,6 +1195,8 @@ fn worker_start_rejects_unsafe_session_ids_before_creating_a_run() {
         .args([
             "role",
             "start",
+            "--api",
+            "2",
             "--workspace",
             workspace.to_str().unwrap(),
             "--runs-dir",

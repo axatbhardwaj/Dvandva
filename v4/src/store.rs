@@ -8,7 +8,7 @@ use fs2::FileExt;
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::model::{RecoveryProvenance, RunBaton, Status, SCHEMA};
+use crate::model::{RecoveryProvenance, RunBaton, Status, LEGACY_SCHEMA, SCHEMA};
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -26,6 +26,12 @@ pub enum StoreError {
     InvalidHistory,
     #[error("terminal state cannot be recovered into an active state")]
     TerminalState,
+    #[error("unsupported baton schema: {0}")]
+    UnsupportedSchema(String),
+    #[error("v1 runs require a dedicated protocol upgrade")]
+    MigrationRequired,
+    #[error("schema transition is not monotonic")]
+    InvalidSchemaTransition,
 }
 
 #[derive(Debug, Clone)]
@@ -41,6 +47,9 @@ impl RunChannel {
     }
 
     pub fn create(&self, initial: &RunBaton) -> Result<RunBaton, StoreError> {
+        if initial.schema != SCHEMA {
+            return Err(StoreError::InvalidSchemaTransition);
+        }
         fs::create_dir_all(&self.directory)?;
         self.with_lock(|| {
             if self.baton_path().exists() {
@@ -57,7 +66,9 @@ impl RunChannel {
         if !path.exists() {
             return Err(StoreError::RunMissing);
         }
-        Ok(serde_json::from_slice(&fs::read(path)?)?)
+        let baton: RunBaton = serde_json::from_slice(&fs::read(path)?)?;
+        validate_supported_schema(&baton.schema)?;
+        Ok(baton)
     }
 
     pub fn directory(&self) -> &Path {
@@ -83,6 +94,11 @@ impl RunChannel {
                     actual: next.revision,
                 });
             }
+            let valid_schema_edge = current.schema == next.schema
+                || (current.schema == LEGACY_SCHEMA && next.schema == SCHEMA);
+            if !valid_schema_edge {
+                return Err(StoreError::InvalidSchemaTransition);
+            }
             self.write_history(next)?;
             self.install(next)?;
             Ok(next.clone())
@@ -104,19 +120,34 @@ impl RunChannel {
                 .collect::<Vec<_>>();
             revisions.sort_unstable();
             let high = *revisions.last().ok_or(StoreError::InvalidHistory)?;
-            if revisions != (0..=high).collect::<Vec<_>>() || from_revision > high {
+            if revisions != (0..=high).collect::<Vec<_>>() || from_revision != high {
                 return Err(StoreError::InvalidHistory);
             }
 
             let mut run_id = None;
             let mut selected = None;
             let mut terminal_head = false;
+            let mut previous_schema: Option<String> = None;
+            let mut crossed = false;
             for revision in 0..=high {
                 let path = history_dir.join(format!("{revision:020}.json"));
                 let baton: RunBaton = serde_json::from_slice(&fs::read(path)?)?;
-                if baton.schema != SCHEMA || baton.revision != revision {
+                validate_supported_schema(&baton.schema).map_err(|_| StoreError::InvalidHistory)?;
+                if baton.revision != revision {
                     return Err(StoreError::InvalidHistory);
                 }
+                if let Some(previous) = previous_schema.as_deref() {
+                    match (previous, baton.schema.as_str()) {
+                        (SCHEMA, LEGACY_SCHEMA) => return Err(StoreError::InvalidHistory),
+                        (LEGACY_SCHEMA, SCHEMA) if crossed => {
+                            return Err(StoreError::InvalidHistory)
+                        }
+                        (LEGACY_SCHEMA, SCHEMA) => crossed = true,
+                        (left, right) if left != right => return Err(StoreError::InvalidHistory),
+                        _ => {}
+                    }
+                }
+                previous_schema = Some(baton.schema.clone());
                 match &run_id {
                     Some(expected) if expected != &baton.run_id => {
                         return Err(StoreError::InvalidHistory)
@@ -135,6 +166,9 @@ impl RunChannel {
                 return Err(StoreError::TerminalState);
             }
             let mut recovered = selected.ok_or(StoreError::InvalidHistory)?;
+            if recovered.schema != SCHEMA {
+                return Err(StoreError::MigrationRequired);
+            }
             recovered.revision = high + 1;
             recovered.participants.worker.claim = None;
             recovered.participants.reviewer.claim = None;
@@ -195,6 +229,22 @@ impl RunChannel {
         file.sync_all()?;
         sync_directory(&directory)?;
         Ok(())
+    }
+}
+
+pub fn require_current_schema(baton: &RunBaton) -> Result<(), StoreError> {
+    match baton.schema.as_str() {
+        SCHEMA => Ok(()),
+        LEGACY_SCHEMA => Err(StoreError::MigrationRequired),
+        other => Err(StoreError::UnsupportedSchema(other.to_owned())),
+    }
+}
+
+fn validate_supported_schema(schema: &str) -> Result<(), StoreError> {
+    if matches!(schema, SCHEMA | LEGACY_SCHEMA) {
+        Ok(())
+    } else {
+        Err(StoreError::UnsupportedSchema(schema.to_owned()))
     }
 }
 

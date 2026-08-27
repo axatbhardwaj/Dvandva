@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use crate::{
     model::{Participant, ParticipantClaim, RunBaton, Status},
-    store::{RunChannel, StoreError},
+    store::{require_current_schema, RunChannel, StoreError},
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum, Serialize, Deserialize)]
@@ -132,6 +132,7 @@ pub fn verify(
     session_id: &str,
     token: &str,
 ) -> Result<(), ClaimError> {
+    require_current_schema(baton)?;
     let claim = participant(baton, role)
         .claim
         .as_ref()
@@ -146,6 +147,7 @@ pub fn verify(
 }
 
 pub fn renewal_lease(baton: &RunBaton, role: Role) -> Result<Option<u64>, ClaimError> {
+    require_current_schema(baton)?;
     let claim = participant(baton, role)
         .claim
         .as_ref()
@@ -188,6 +190,7 @@ fn install_claim(
 
 fn read_expected(channel: &RunChannel, expected: u64) -> Result<RunBaton, ClaimError> {
     let baton = channel.read()?;
+    require_current_schema(&baton)?;
     if baton.revision != expected {
         return Err(StoreError::RevisionConflict {
             expected,

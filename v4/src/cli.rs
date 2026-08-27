@@ -8,8 +8,11 @@ use crate::action::Action;
 use crate::claim::{self, ClaimError, Role};
 use crate::discovery::{self, DiscoveryError, DiscoveryQuery};
 use crate::identity::{self, IdentityError};
-use crate::model::{RunBaton, TaskIdentity, WorkspaceIdentity, SCHEMA};
-use crate::role_session::{self, RoleSessionError, RoleStartRequest};
+use crate::model::{
+    normalize_participants, DeliverableRequirement, ModelError, RunBaton, TaskIdentity,
+    WorkspaceIdentity, LEGACY_SCHEMA, ROLE_API, SCHEMA,
+};
+use crate::role_session::{self, RoleSessionError, RoleStartRequest, UpgradeError};
 use crate::store::{RunChannel, StoreError};
 use crate::transition::{self, TransitionError};
 use crate::wait::{self, WaitError};
@@ -26,6 +29,8 @@ enum Command {
     Probe {
         #[arg(long)]
         expected_schema: String,
+        #[arg(long)]
+        expected_role_api: u32,
     },
     Identify {
         #[arg(long)]
@@ -90,6 +95,8 @@ enum Command {
         worktree: Option<String>,
         #[arg(long)]
         task_reference: Option<String>,
+        #[arg(long = "required-deliverable")]
+        required_deliverables: Vec<String>,
     },
     Read {
         #[arg(long)]
@@ -175,6 +182,8 @@ enum Command {
 enum RoleCommand {
     Start {
         #[arg(long)]
+        api: u32,
+        #[arg(long)]
         workspace: PathBuf,
         #[arg(long)]
         runs_dir: PathBuf,
@@ -204,8 +213,12 @@ enum RoleCommand {
         timeout_ms: u64,
         #[arg(long)]
         new_run: bool,
+        #[arg(long = "required-deliverable")]
+        required_deliverables: Vec<String>,
     },
     Claim {
+        #[arg(long)]
+        api: u32,
         #[arg(long)]
         run_dir: PathBuf,
         #[arg(long)]
@@ -221,6 +234,8 @@ enum RoleCommand {
     },
     Reclaim {
         #[arg(long)]
+        api: u32,
+        #[arg(long)]
         run_dir: PathBuf,
         #[arg(long)]
         role: Role,
@@ -234,6 +249,8 @@ enum RoleCommand {
         credentials_root: PathBuf,
     },
     Apply {
+        #[arg(long)]
+        api: u32,
         #[arg(long)]
         run_dir: PathBuf,
         #[arg(long)]
@@ -249,6 +266,8 @@ enum RoleCommand {
     },
     Read {
         #[arg(long)]
+        api: u32,
+        #[arg(long)]
         run_dir: PathBuf,
         #[arg(long)]
         role: Role,
@@ -258,6 +277,8 @@ enum RoleCommand {
         credentials_root: PathBuf,
     },
     Heartbeat {
+        #[arg(long)]
+        api: u32,
         #[arg(long)]
         run_dir: PathBuf,
         #[arg(long)]
@@ -273,6 +294,8 @@ enum RoleCommand {
     },
     Wait {
         #[arg(long)]
+        api: u32,
+        #[arg(long)]
         run_dir: PathBuf,
         #[arg(long)]
         role: Role,
@@ -286,6 +309,22 @@ enum RoleCommand {
         poll_interval_ms: u64,
         #[arg(long, default_value_t = 300_000)]
         timeout_ms: u64,
+    },
+    Upgrade {
+        #[arg(long)]
+        api: u32,
+        #[arg(long)]
+        run_dir: PathBuf,
+        #[arg(long)]
+        role: Role,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        current_harness: String,
+        #[arg(long)]
+        peer_harness: String,
+        #[arg(long)]
+        expected_revision: u64,
     },
 }
 
@@ -309,6 +348,10 @@ pub enum CliError {
     Discovery(#[from] DiscoveryError),
     #[error(transparent)]
     RoleSession(#[from] RoleSessionError),
+    #[error(transparent)]
+    Model(#[from] ModelError),
+    #[error(transparent)]
+    Upgrade(#[from] UpgradeError),
 }
 
 #[derive(Serialize)]
@@ -321,21 +364,44 @@ struct Diagnostic<'a> {
 struct Probe<'a> {
     package: &'a str,
     version: &'a str,
-    schema: &'a str,
+    write_schema: &'a str,
+    read_schemas: [&'a str; 2],
+    role_api: u32,
+    capabilities: ProbeCapabilities,
     compatible: bool,
+}
+
+#[derive(Serialize)]
+struct ProbeCapabilities {
+    upgrade_from_v1: bool,
 }
 
 pub fn run() -> Result<(), CliError> {
     match Cli::parse().command {
-        Command::Probe { expected_schema } => {
+        Command::Probe {
+            expected_schema,
+            expected_role_api,
+        } => {
+            let compatible = expected_schema == SCHEMA && expected_role_api == ROLE_API;
             let probe = Probe {
                 package: env!("CARGO_PKG_NAME"),
                 version: env!("CARGO_PKG_VERSION"),
-                schema: SCHEMA,
-                compatible: expected_schema == SCHEMA,
+                write_schema: SCHEMA,
+                read_schemas: [SCHEMA, LEGACY_SCHEMA],
+                role_api: ROLE_API,
+                capabilities: ProbeCapabilities {
+                    upgrade_from_v1: true,
+                },
+                compatible,
             };
             println!("{}", serde_json::to_string_pretty(&probe)?);
-            Ok(())
+            if compatible {
+                Ok(())
+            } else {
+                Err(CliError::Invalid(
+                    "kernel compatibility mismatch".to_owned(),
+                ))
+            }
         }
         Command::Identify { workspace } => {
             println!(
@@ -397,6 +463,7 @@ pub fn run() -> Result<(), CliError> {
         }
         Command::Role { command } => match command {
             RoleCommand::Start {
+                api,
                 workspace,
                 runs_dir,
                 credentials_root,
@@ -412,7 +479,10 @@ pub fn run() -> Result<(), CliError> {
                 poll_interval_ms,
                 timeout_ms,
                 new_run,
+                required_deliverables,
             } => {
+                require_role_api(api)?;
+                let required_deliverables = parse_deliverables(required_deliverables)?;
                 let result = role_session::start(RoleStartRequest {
                     workspace: &workspace,
                     runs_dir: &runs_dir,
@@ -429,11 +499,13 @@ pub fn run() -> Result<(), CliError> {
                     poll_interval: std::time::Duration::from_millis(poll_interval_ms.max(1)),
                     timeout: std::time::Duration::from_millis(timeout_ms),
                     new_run,
+                    required_deliverables: &required_deliverables,
                 })?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
                 Ok(())
             }
             RoleCommand::Claim {
+                api,
                 run_dir,
                 role,
                 session_id,
@@ -441,6 +513,7 @@ pub fn run() -> Result<(), CliError> {
                 expected_revision,
                 credentials_root,
             } => {
+                require_role_api(api)?;
                 let result = role_session::claim(
                     &run_dir,
                     &credentials_root,
@@ -453,6 +526,7 @@ pub fn run() -> Result<(), CliError> {
                 Ok(())
             }
             RoleCommand::Reclaim {
+                api,
                 run_dir,
                 role,
                 session_id,
@@ -460,6 +534,7 @@ pub fn run() -> Result<(), CliError> {
                 expected_revision,
                 credentials_root,
             } => {
+                require_role_api(api)?;
                 let result = role_session::reclaim(
                     &run_dir,
                     &credentials_root,
@@ -472,6 +547,7 @@ pub fn run() -> Result<(), CliError> {
                 Ok(())
             }
             RoleCommand::Apply {
+                api,
                 run_dir,
                 role,
                 session_id,
@@ -479,6 +555,7 @@ pub fn run() -> Result<(), CliError> {
                 credentials_root,
                 action,
             } => {
+                require_role_api(api)?;
                 let action: Action =
                     serde_json::from_slice(&std::fs::read(action).map_err(StoreError::Io)?)?;
                 let baton = role_session::apply(
@@ -493,16 +570,19 @@ pub fn run() -> Result<(), CliError> {
                 Ok(())
             }
             RoleCommand::Read {
+                api,
                 run_dir,
                 role,
                 session_id,
                 credentials_root,
             } => {
+                require_role_api(api)?;
                 let baton = role_session::read(&run_dir, &credentials_root, role, &session_id)?;
                 println!("{}", serde_json::to_string_pretty(&baton)?);
                 Ok(())
             }
             RoleCommand::Heartbeat {
+                api,
                 run_dir,
                 role,
                 session_id,
@@ -510,6 +590,7 @@ pub fn run() -> Result<(), CliError> {
                 expected_revision,
                 credentials_root,
             } => {
+                require_role_api(api)?;
                 let revision = role_session::heartbeat(
                     &run_dir,
                     &credentials_root,
@@ -522,6 +603,7 @@ pub fn run() -> Result<(), CliError> {
                 Ok(())
             }
             RoleCommand::Wait {
+                api,
                 run_dir,
                 role,
                 session_id,
@@ -530,6 +612,7 @@ pub fn run() -> Result<(), CliError> {
                 poll_interval_ms,
                 timeout_ms,
             } => {
+                require_role_api(api)?;
                 let baton = role_session::wait(
                     &run_dir,
                     &credentials_root,
@@ -538,6 +621,27 @@ pub fn run() -> Result<(), CliError> {
                     after_revision,
                     std::time::Duration::from_millis(poll_interval_ms.max(1)),
                     std::time::Duration::from_millis(timeout_ms),
+                )?;
+                println!("{}", serde_json::to_string_pretty(&baton)?);
+                Ok(())
+            }
+            RoleCommand::Upgrade {
+                api,
+                run_dir,
+                role,
+                session_id,
+                current_harness,
+                peer_harness,
+                expected_revision,
+            } => {
+                require_role_api(api)?;
+                let baton = role_session::upgrade(
+                    &run_dir,
+                    role,
+                    &session_id,
+                    &current_harness,
+                    &peer_harness,
+                    expected_revision,
                 )?;
                 println!("{}", serde_json::to_string_pretty(&baton)?);
                 Ok(())
@@ -553,24 +657,32 @@ pub fn run() -> Result<(), CliError> {
             origin,
             worktree,
             task_reference,
+            required_deliverables,
         } => {
             validate_init(&run_id, &objective, &worker, &reviewer, &repository_id)?;
             validate_optional("origin", origin.as_deref())?;
             validate_optional("worktree", worktree.as_deref())?;
             validate_optional("task reference", task_reference.as_deref())?;
             let objective = objective.trim();
-            let baton = RunBaton::new(run_id, objective, worker.trim(), reviewer.trim())
-                .with_discovery_identity(
-                    WorkspaceIdentity {
-                        repository_id: repository_id.trim().to_owned(),
-                        origin: trim_optional(origin),
-                        worktree: trim_optional(worktree),
-                    },
-                    TaskIdentity {
-                        reference: trim_optional(task_reference),
-                        summary: objective.to_owned(),
-                    },
-                );
+            let required_deliverables = parse_deliverables(required_deliverables)?;
+            let baton = RunBaton::new(
+                run_id,
+                objective,
+                worker.trim(),
+                reviewer.trim(),
+                required_deliverables,
+            )?
+            .with_discovery_identity(
+                WorkspaceIdentity {
+                    repository_id: repository_id.trim().to_owned(),
+                    origin: trim_optional(origin),
+                    worktree: trim_optional(worktree),
+                },
+                TaskIdentity {
+                    reference: trim_optional(task_reference),
+                    summary: objective.to_owned(),
+                },
+            );
             RunChannel::open(run_dir).create(&baton)?;
             Ok(())
         }
@@ -700,6 +812,10 @@ pub fn print_error(error: &CliError) {
             claim_error_code(error)
         }
         CliError::RoleSession(RoleSessionError::Credential(_)) => "credential_error",
+        CliError::Model(_) | CliError::RoleSession(RoleSessionError::Model(_)) => "invalid_input",
+        CliError::Upgrade(error) | CliError::RoleSession(RoleSessionError::Upgrade(error)) => {
+            upgrade_error_code(error)
+        }
         CliError::Transition(error)
         | CliError::RoleSession(RoleSessionError::Transition(error)) => {
             transition_error_code(error)
@@ -737,6 +853,20 @@ fn store_error_code(error: &StoreError) -> &'static str {
         StoreError::Json(_) => "invalid_baton",
         StoreError::InvalidHistory => "invalid_history",
         StoreError::TerminalState => "terminal_state",
+        StoreError::UnsupportedSchema(_) => "unsupported_schema",
+        StoreError::MigrationRequired => "migration_required",
+        StoreError::InvalidSchemaTransition => "invalid_schema_transition",
+    }
+}
+
+fn upgrade_error_code(error: &UpgradeError) -> &'static str {
+    match error {
+        UpgradeError::Store(error) => store_error_code(error),
+        UpgradeError::Terminal => "terminal_state",
+        UpgradeError::Busy => "busy",
+        UpgradeError::InvalidCaller => "invalid_participants",
+        UpgradeError::InvalidSchema => "invalid_schema_transition",
+        UpgradeError::InvalidTimestamp => "invalid_baton",
     }
 }
 
@@ -800,14 +930,7 @@ fn validate_init(
     if objective.trim().is_empty() {
         return Err(CliError::Invalid("objective must not be blank".to_owned()));
     }
-    if worker.trim().is_empty() || reviewer.trim().is_empty() {
-        return Err(CliError::Invalid("harness must not be blank".to_owned()));
-    }
-    if worker.trim().eq_ignore_ascii_case(reviewer.trim()) {
-        return Err(CliError::Invalid(
-            "worker and reviewer must use different harness families".to_owned(),
-        ));
-    }
+    normalize_participants(worker.to_owned(), reviewer.to_owned())?;
     if repository_id.trim().is_empty() {
         return Err(CliError::Invalid(
             "repository id must not be blank".to_owned(),
@@ -825,4 +948,29 @@ fn validate_optional(name: &str, value: Option<&str>) -> Result<(), CliError> {
 
 fn trim_optional(value: Option<String>) -> Option<String> {
     value.map(|value| value.trim().to_owned())
+}
+
+fn require_role_api(api: u32) -> Result<(), CliError> {
+    if api == ROLE_API {
+        Ok(())
+    } else {
+        Err(CliError::Invalid(format!(
+            "role_api_mismatch: expected {ROLE_API}, found {api}"
+        )))
+    }
+}
+
+fn parse_deliverables(declarations: Vec<String>) -> Result<Vec<DeliverableRequirement>, CliError> {
+    declarations
+        .into_iter()
+        .map(|declaration| {
+            let (id, description) = declaration.split_once('=').ok_or_else(|| {
+                CliError::Invalid("required deliverable must use id=description syntax".to_owned())
+            })?;
+            Ok(DeliverableRequirement {
+                id: id.to_owned(),
+                description: description.to_owned(),
+            })
+        })
+        .collect()
 }
