@@ -3,9 +3,11 @@
 pub mod action;
 pub mod claim;
 pub mod cli;
+pub mod credential;
 pub mod discovery;
 pub mod identity;
 pub mod model;
+pub mod role_session;
 pub mod store;
 pub mod transition;
 pub mod wait;

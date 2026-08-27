@@ -9,6 +9,7 @@ use crate::claim::{self, ClaimError, Role};
 use crate::discovery::{self, DiscoveryError, DiscoveryQuery};
 use crate::identity::{self, IdentityError};
 use crate::model::{RunBaton, TaskIdentity, WorkspaceIdentity};
+use crate::role_session::{self, RoleSessionError};
 use crate::store::{RunChannel, StoreError};
 use crate::transition::{self, TransitionError};
 use crate::wait::{self, WaitError};
@@ -51,6 +52,10 @@ enum Command {
         timeout_ms: u64,
         #[arg(long)]
         poll_only: bool,
+    },
+    Role {
+        #[command(subcommand)]
+        command: RoleCommand,
     },
     Init {
         #[arg(long)]
@@ -152,6 +157,92 @@ enum Command {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum RoleCommand {
+    Claim {
+        #[arg(long)]
+        run_dir: PathBuf,
+        #[arg(long)]
+        role: Role,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        lease_seconds: u64,
+        #[arg(long)]
+        expected_revision: u64,
+        #[arg(long)]
+        credentials_root: PathBuf,
+    },
+    Reclaim {
+        #[arg(long)]
+        run_dir: PathBuf,
+        #[arg(long)]
+        role: Role,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        lease_seconds: u64,
+        #[arg(long)]
+        expected_revision: u64,
+        #[arg(long)]
+        credentials_root: PathBuf,
+    },
+    Apply {
+        #[arg(long)]
+        run_dir: PathBuf,
+        #[arg(long)]
+        role: Role,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        expected_revision: u64,
+        #[arg(long)]
+        credentials_root: PathBuf,
+        #[arg(long)]
+        action: PathBuf,
+    },
+    Read {
+        #[arg(long)]
+        run_dir: PathBuf,
+        #[arg(long)]
+        role: Role,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        credentials_root: PathBuf,
+    },
+    Heartbeat {
+        #[arg(long)]
+        run_dir: PathBuf,
+        #[arg(long)]
+        role: Role,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        lease_seconds: u64,
+        #[arg(long)]
+        expected_revision: u64,
+        #[arg(long)]
+        credentials_root: PathBuf,
+    },
+    Wait {
+        #[arg(long)]
+        run_dir: PathBuf,
+        #[arg(long)]
+        role: Role,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        credentials_root: PathBuf,
+        #[arg(long)]
+        after_revision: u64,
+        #[arg(long, default_value_t = 1000)]
+        poll_interval_ms: u64,
+        #[arg(long, default_value_t = 300_000)]
+        timeout_ms: u64,
+    },
+}
+
 #[derive(Debug, Error)]
 pub enum CliError {
     #[error("{0}")]
@@ -170,6 +261,8 @@ pub enum CliError {
     Identity(#[from] IdentityError),
     #[error(transparent)]
     Discovery(#[from] DiscoveryError),
+    #[error(transparent)]
+    RoleSession(#[from] RoleSessionError),
 }
 
 #[derive(Serialize)]
@@ -227,6 +320,117 @@ pub fn run() -> Result<(), CliError> {
             println!("{}", serde_json::to_string_pretty(&outcome)?);
             Ok(())
         }
+        Command::Role { command } => match command {
+            RoleCommand::Claim {
+                run_dir,
+                role,
+                session_id,
+                lease_seconds,
+                expected_revision,
+                credentials_root,
+            } => {
+                let result = role_session::claim(
+                    &run_dir,
+                    &credentials_root,
+                    role,
+                    &session_id,
+                    lease_seconds,
+                    expected_revision,
+                )?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+                Ok(())
+            }
+            RoleCommand::Reclaim {
+                run_dir,
+                role,
+                session_id,
+                lease_seconds,
+                expected_revision,
+                credentials_root,
+            } => {
+                let result = role_session::reclaim(
+                    &run_dir,
+                    &credentials_root,
+                    role,
+                    &session_id,
+                    lease_seconds,
+                    expected_revision,
+                )?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+                Ok(())
+            }
+            RoleCommand::Apply {
+                run_dir,
+                role,
+                session_id,
+                expected_revision,
+                credentials_root,
+                action,
+            } => {
+                let action: Action =
+                    serde_json::from_slice(&std::fs::read(action).map_err(StoreError::Io)?)?;
+                let baton = role_session::apply(
+                    &run_dir,
+                    &credentials_root,
+                    role,
+                    &session_id,
+                    expected_revision,
+                    action,
+                )?;
+                println!("{}", serde_json::to_string_pretty(&baton)?);
+                Ok(())
+            }
+            RoleCommand::Read {
+                run_dir,
+                role,
+                session_id,
+                credentials_root,
+            } => {
+                let baton = role_session::read(&run_dir, &credentials_root, role, &session_id)?;
+                println!("{}", serde_json::to_string_pretty(&baton)?);
+                Ok(())
+            }
+            RoleCommand::Heartbeat {
+                run_dir,
+                role,
+                session_id,
+                lease_seconds,
+                expected_revision,
+                credentials_root,
+            } => {
+                let revision = role_session::heartbeat(
+                    &run_dir,
+                    &credentials_root,
+                    role,
+                    &session_id,
+                    lease_seconds,
+                    expected_revision,
+                )?;
+                println!(r#"{{"revision":{revision}}}"#);
+                Ok(())
+            }
+            RoleCommand::Wait {
+                run_dir,
+                role,
+                session_id,
+                credentials_root,
+                after_revision,
+                poll_interval_ms,
+                timeout_ms,
+            } => {
+                let baton = role_session::wait(
+                    &run_dir,
+                    &credentials_root,
+                    role,
+                    &session_id,
+                    after_revision,
+                    std::time::Duration::from_millis(poll_interval_ms.max(1)),
+                    std::time::Duration::from_millis(timeout_ms),
+                )?;
+                println!("{}", serde_json::to_string_pretty(&baton)?);
+                Ok(())
+            }
+        },
         Command::Init {
             run_dir,
             run_id,
@@ -376,6 +580,23 @@ pub fn print_error(error: &CliError) {
         CliError::Identity(IdentityError::InvalidOrigin) => "invalid_origin",
         CliError::Identity(IdentityError::InvalidUtf8) => "invalid_git_output",
         CliError::Discovery(DiscoveryError::Io(_)) => "discovery_io",
+        CliError::RoleSession(RoleSessionError::Store(StoreError::RunExists)) => "run_exists",
+        CliError::RoleSession(RoleSessionError::Store(StoreError::RunMissing)) => "run_missing",
+        CliError::RoleSession(RoleSessionError::Store(StoreError::RevisionConflict { .. })) => {
+            "revision_conflict"
+        }
+        CliError::RoleSession(RoleSessionError::Store(StoreError::Io(_))) => "io_error",
+        CliError::RoleSession(RoleSessionError::Store(StoreError::Json(_))) => "invalid_baton",
+        CliError::RoleSession(RoleSessionError::Store(StoreError::InvalidHistory)) => {
+            "invalid_history"
+        }
+        CliError::RoleSession(RoleSessionError::Store(StoreError::TerminalState)) => {
+            "terminal_state"
+        }
+        CliError::RoleSession(RoleSessionError::Claim(_)) => "claim_error",
+        CliError::RoleSession(RoleSessionError::Credential(_)) => "credential_error",
+        CliError::RoleSession(RoleSessionError::Transition(_)) => "transition_error",
+        CliError::RoleSession(RoleSessionError::Wait(_)) => "wait_error",
         CliError::Store(StoreError::RunExists) => "run_exists",
         CliError::Store(StoreError::RunMissing) => "run_missing",
         CliError::Store(StoreError::RevisionConflict { .. }) => "revision_conflict",
