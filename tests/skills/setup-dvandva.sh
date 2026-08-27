@@ -33,7 +33,7 @@ make_release "$new_release" "$new_binary"
 export XDG_DATA_HOME="$test_root/data"
 export XDG_STATE_HOME="$test_root/state"
 old_installer="$test_root/old/skills/setup-dvandva/scripts/setup-dvandva.sh"
-installer="$repo_root/skills/setup-dvandva/scripts/setup-dvandva.sh"
+installer="${INSTALLER_UNDER_TEST:-$repo_root/skills/setup-dvandva/scripts/setup-dvandva.sh}"
 
 expect_failure() {
   local pattern="$1"
@@ -45,6 +45,8 @@ expect_failure() {
   fi
   grep -Fq "$pattern" <<<"$output"
 }
+
+test -n "$(git -C "$repo_root" rev-parse --verify refs/tags/skills-v0.1.1)"
 
 DVANDVA_RELEASE_DIR="$old_release" bash "$old_installer" install --version 0.1.1 >/dev/null
 current="$XDG_DATA_HOME/dvandva/bin/current"
@@ -83,6 +85,54 @@ expect_failure 'probe_mismatch' env DVANDVA_RELEASE_DIR="$wrong_probe_release" \
 test "$(readlink "$current")" = '0.1.1'
 test "$before_runs" = "$(find "$runs" -printf '%P %y %m %s %T@\n' | sort)"
 
+# Correct strings hidden in a nested decoy cannot satisfy the top-level contract.
+decoy_release="$test_root/decoy-probe"
+mkdir -p "$decoy_release"
+cat >"$decoy_release/$asset" <<'DECOY_PROBE'
+#!/usr/bin/env bash
+if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.2.0\n'; exit 0; fi
+if test "${1:-}" = "probe"; then
+  printf '%s\n' '{' \
+    '  "package": 7, "version": false, "publish": true, "write_schema": [],' \
+    '  "read_schemas": "wrong", "role_api": "2",' \
+    '  "capabilities": {"upgrade_from_v1": "true"}, "compatible": "true",' \
+    '  "decoy": {' \
+    '    "package": "dvandva-v4", "version": "0.2.0", "publish": false,' \
+    '    "write_schema": "dvandva.run.v2",' \
+    '    "read_schemas": ["dvandva.run.v2", "dvandva.run.v1"],' \
+    '    "role_api": 2, "capabilities": {"upgrade_from_v1": true},' \
+    '    "compatible": true' \
+    '  }' '}'
+  exit 0
+fi
+exit 99
+DECOY_PROBE
+chmod 755 "$decoy_release/$asset"
+(cd "$decoy_release" && sha256sum "$asset" >SHA256SUMS)
+expect_failure 'probe_mismatch' env DVANDVA_RELEASE_DIR="$decoy_release" \
+  bash "$installer" update --version 0.2.0
+test "$(readlink "$current")" = '0.1.1'
+test ! -e "$XDG_DATA_HOME/dvandva/bin/0.2.0"
+
+# An exit-zero candidate that claims publish=true is not a private kernel.
+wrong_publish_release="$test_root/wrong-publish"
+mkdir -p "$wrong_publish_release"
+cat >"$wrong_publish_release/$asset" <<'WRONG_PUBLISH'
+#!/usr/bin/env bash
+if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.2.0\n'; exit 0; fi
+if test "${1:-}" = "probe"; then
+  printf '%s\n' '{"package": "dvandva-v4", "version": "0.2.0", "publish": true, "write_schema": "dvandva.run.v2", "read_schemas": ["dvandva.run.v2", "dvandva.run.v1"], "role_api": 2, "capabilities": {"upgrade_from_v1": true}, "compatible": true}'
+  exit 0
+fi
+exit 99
+WRONG_PUBLISH
+chmod 755 "$wrong_publish_release/$asset"
+(cd "$wrong_publish_release" && sha256sum "$asset" >SHA256SUMS)
+expect_failure 'probe_mismatch' env DVANDVA_RELEASE_DIR="$wrong_publish_release" \
+  bash "$installer" update --version 0.2.0
+test "$(readlink "$current")" = '0.1.1'
+test ! -e "$XDG_DATA_HOME/dvandva/bin/0.2.0"
+
 # Validation also runs for a pre-existing version directory.
 mkdir -p "$XDG_DATA_HOME/dvandva/bin/0.2.0"
 cp "$wrong_probe_release/$asset" "$XDG_DATA_HOME/dvandva/bin/0.2.0/dvandva-kernel"
@@ -91,6 +141,62 @@ expect_failure 'probe_mismatch' env DVANDVA_RELEASE_DIR="$wrong_probe_release" \
   bash "$installer" update --version 0.2.0
 test "$(readlink "$current")" = '0.1.1'
 rm -rf -- "$XDG_DATA_HOME/dvandva/bin/0.2.0"
+
+path_safety_case() (
+  local kind="$1" case_root="$test_root/path-$1"
+  export XDG_DATA_HOME="$case_root/data"
+  export XDG_STATE_HOME="$case_root/state"
+  DVANDVA_RELEASE_DIR="$old_release" bash "$old_installer" \
+    install --version 0.1.1 >/dev/null
+  local case_bin="$XDG_DATA_HOME/dvandva/bin"
+  local candidate="$case_bin/0.2.0"
+  case "$kind" in
+    unowned)
+      mkdir "$candidate"
+      cp "$new_binary" "$candidate/dvandva-kernel"
+      ;;
+    directory-symlink)
+      mkdir "$case_bin/candidate-target"
+      cp "$new_binary" "$case_bin/candidate-target/dvandva-kernel"
+      printf 'dvandva-skill-v1\n' >"$case_bin/candidate-target/.owner"
+      ln -s candidate-target "$candidate"
+      ;;
+    binary-symlink)
+      mkdir "$candidate"
+      printf 'dvandva-skill-v1\n' >"$candidate/.owner"
+      ln -s "$new_binary" "$candidate/dvandva-kernel"
+      ;;
+  esac
+  expect_failure 'unsafe existing version' env DVANDVA_RELEASE_DIR="$new_release" \
+    bash "$installer" update --version 0.2.0
+  test "$(readlink "$case_bin/current")" = '0.1.1'
+)
+
+path_safety_case unowned
+path_safety_case directory-symlink
+path_safety_case binary-symlink
+
+# A manifest-preparation failure cannot promote a candidate or split current/manifest.
+(
+  export XDG_DATA_HOME="$test_root/manifest-failure/data"
+  export XDG_STATE_HOME="$test_root/manifest-failure/state"
+  DVANDVA_RELEASE_DIR="$old_release" bash "$old_installer" \
+    install --version 0.1.1 >/dev/null
+  case_data="$XDG_DATA_HOME/dvandva"
+  old_manifest_digest="$(sha256sum "$case_data/installation.json" | cut -d' ' -f1)"
+  chmod 500 "$case_data"
+  if env DVANDVA_RELEASE_DIR="$new_release" bash "$installer" \
+    update --version 0.2.0 >"$test_root/manifest-failure.out" 2>&1; then
+    printf 'manifest write failure unexpectedly installed the update\n' >&2
+    exit 1
+  fi
+  chmod 700 "$case_data"
+  test "$(readlink "$case_data/bin/current")" = '0.1.1'
+  test "$old_manifest_digest" = \
+    "$(sha256sum "$case_data/installation.json" | cut -d' ' -f1)"
+  test ! -e "$case_data/bin/0.2.0"
+  test -z "$(find "$case_data" -name '*.tmp' -print)"
+)
 
 installed="$(env DVANDVA_RELEASE_DIR="$new_release" bash "$installer" update --version 0.2.0)"
 test "$(readlink "$current")" = '0.2.0'
@@ -102,12 +208,108 @@ grep -Fq 'upgrade_from_v1=true' <<<"$installed"
 grep -Fq 'publish=false' <<<"$installed"
 test "$before_runs" = "$(find "$runs" -printf '%P %y %m %s %T@\n' | sort)"
 
+# Ownership is an exact top-level manifest field, not a nested matching string.
+cp "$XDG_DATA_HOME/dvandva/installation.json" "$test_root/manifest.good"
+cat >"$XDG_DATA_HOME/dvandva/installation.json" <<'MANIFEST_DECOY'
+{
+  "owner": "foreign-owner",
+  "version": "0.2.0",
+  "write_schema": "dvandva.run.v2",
+  "read_schemas": "dvandva.run.v2,dvandva.run.v1",
+  "role_api": 2,
+  "upgrade_from_v1": true,
+  "publish": false,
+  "asset": "dvandva-kernel-linux-x86_64",
+  "sha256": "unused",
+  "decoy": {"owner": "dvandva-skill-v1"}
+}
+MANIFEST_DECOY
+expect_failure 'installation_manifest_missing' bash "$installer" doctor --version 0.2.0
+cp "$test_root/manifest.good" "$XDG_DATA_HOME/dvandva/installation.json"
+
 healthy="$(bash "$installer" doctor --version 0.2.0)"
 grep -Fq 'healthy version=0.2.0' <<<"$healthy"
 grep -Fq 'write_schema=dvandva.run.v2' <<<"$healthy"
 grep -Fq 'role_api=2' <<<"$healthy"
 grep -Fq 'read_schemas=dvandva.run.v2,dvandva.run.v1' <<<"$healthy"
 grep -Fq 'upgrade_from_v1=true' <<<"$healthy"
+
+# Failure after manifest replacement rolls back both files and only fresh promotion.
+rollback_bin="$test_root/rollback-bin"
+mkdir -p "$rollback_bin"
+cat >"$rollback_bin/mv" <<'FAIL_CURRENT_MV'
+#!/usr/bin/env bash
+set -euo pipefail
+last="${!#}"
+if [[ "$last" == */bin/current ]] && test ! -e "${MV_FAIL_MARKER:?}"; then
+  touch "$MV_FAIL_MARKER"
+  printf 'injected current commit failure\n' >&2
+  exit 1
+fi
+exec /usr/bin/mv "$@"
+FAIL_CURRENT_MV
+chmod 755 "$rollback_bin/mv"
+
+rollback_case() (
+  local kind="$1" case_root="$test_root/rollback-$1"
+  export XDG_DATA_HOME="$case_root/data"
+  export XDG_STATE_HOME="$case_root/state"
+  DVANDVA_RELEASE_DIR="$old_release" bash "$old_installer" \
+    install --version 0.1.1 >/dev/null
+  local case_data="$XDG_DATA_HOME/dvandva" before_manifest="$case_root/manifest.before"
+  cp "$case_data/installation.json" "$before_manifest"
+  if test "$kind" = preexisting; then
+    mkdir "$case_data/bin/0.2.0"
+    cp "$new_binary" "$case_data/bin/0.2.0/dvandva-kernel"
+    printf 'dvandva-skill-v1\n' >"$case_data/bin/0.2.0/.owner"
+  fi
+  expect_failure 'injected current commit failure' env \
+    PATH="$rollback_bin:$PATH" MV_FAIL_MARKER="$case_root/mv.failed" \
+    DVANDVA_RELEASE_DIR="$new_release" bash "$installer" update --version 0.2.0
+  test "$(readlink "$case_data/bin/current")" = '0.1.1'
+  cmp "$before_manifest" "$case_data/installation.json"
+  if test "$kind" = fresh; then
+    test ! -e "$case_data/bin/0.2.0"
+  else
+    test -x "$case_data/bin/0.2.0/dvandva-kernel"
+  fi
+  test -z "$(find "$case_data" \( -name '*.tmp' -o -name '.install-txn.*' \) -print)"
+)
+
+rollback_case fresh
+rollback_case preexisting
+
+# Concurrent installers serialize: both succeed and no staging directory nests.
+concurrent_release="$test_root/concurrent-release"
+mkdir -p "$concurrent_release"
+cat >"$concurrent_release/$asset" <<'SLOW_KERNEL'
+#!/usr/bin/env bash
+if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.2.0\n'; exit 0; fi
+if test "${1:-}" = "probe"; then
+  sleep 1
+  printf '%s\n' '{"package":"dvandva-v4","version":"0.2.0","publish":false,"write_schema":"dvandva.run.v2","read_schemas":["dvandva.run.v2","dvandva.run.v1"],"role_api":2,"capabilities":{"upgrade_from_v1":true},"compatible":true}'
+  exit 0
+fi
+exit 99
+SLOW_KERNEL
+chmod 755 "$concurrent_release/$asset"
+(cd "$concurrent_release" && sha256sum "$asset" >SHA256SUMS)
+concurrent_data="$test_root/concurrent/data"
+concurrent_state="$test_root/concurrent/state"
+env XDG_DATA_HOME="$concurrent_data" XDG_STATE_HOME="$concurrent_state" \
+  DVANDVA_RELEASE_DIR="$concurrent_release" bash "$installer" install --version 0.2.0 \
+  >"$test_root/concurrent-a.out" 2>&1 &
+first_pid=$!
+env XDG_DATA_HOME="$concurrent_data" XDG_STATE_HOME="$concurrent_state" \
+  DVANDVA_RELEASE_DIR="$concurrent_release" bash "$installer" install --version 0.2.0 \
+  >"$test_root/concurrent-b.out" 2>&1 &
+second_pid=$!
+wait "$first_pid"
+wait "$second_pid"
+test "$(readlink "$concurrent_data/dvandva/bin/current")" = '0.2.0'
+test "$(find "$concurrent_data/dvandva/bin/0.2.0" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" = \
+  '.owner dvandva-kernel '
+test -z "$(find "$concurrent_data/dvandva" -name '*.tmp' -print)"
 
 # Checksum failure is fail-closed too.
 cp "$new_release/SHA256SUMS" "$test_root/sums.good"
