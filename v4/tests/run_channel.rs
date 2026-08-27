@@ -3810,6 +3810,144 @@ fn publication_history_edge_rejects_unjustified_obligation_and_dual_receipt_writ
 }
 
 #[test]
+fn publication_history_edge_rejects_every_unclassified_unchanged_binding_mutation() {
+    for attack in [
+        "scope_without_amendment",
+        "participant_harnesses",
+        "both_claims",
+        "terminal_shortcut",
+        "recovery_provenance",
+        "checkpoint_history",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        init_pair(dir.path());
+        let worker = claim_role(dir.path(), "worker", "worker-1", 0);
+        let reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+        approve_current_explainer(
+            dir.path(),
+            ("worker", "worker-1", &worker),
+            ("reviewer", "reviewer-1", &reviewer),
+            "unchanged-binding",
+        );
+        let channel = RunChannel::open(dir.path());
+        let current = channel.read().unwrap();
+        let mut next = serde_json::to_value(current.clone()).unwrap();
+        next["revision"] = serde_json::json!(5);
+        match attack {
+            "scope_without_amendment" => {
+                next["objective"]["summary"] = serde_json::json!("Forged objective");
+                next["task"]["summary"] = serde_json::json!("Forged objective");
+                next["scope_deliverables"][0]["description"] =
+                    serde_json::json!("Forged deliverable");
+            }
+            "participant_harnesses" => {
+                next["participants"]["worker"]["harness"] = serde_json::json!("Claude");
+                next["participants"]["reviewer"]["harness"] = serde_json::json!("Codex");
+            }
+            "both_claims" => {
+                next["participants"]["worker"]["claim"]["session_id"] =
+                    serde_json::json!("forged-worker");
+                next["participants"]["reviewer"]["claim"]["session_id"] =
+                    serde_json::json!("forged-reviewer");
+            }
+            "terminal_shortcut" => {
+                next["status"] = serde_json::json!("done");
+                next["assignee"] = serde_json::json!("none");
+                next["terminal"] = serde_json::json!({"outcome": "done", "reason": null});
+            }
+            "recovery_provenance" => {
+                next["recovery"] = serde_json::json!({
+                    "from_revision": 99, "previous_high_revision": 99
+                });
+            }
+            "checkpoint_history" => {
+                next["checkpoint_history"] = serde_json::json!([{
+                    "checkpoint_identity": "forged-checkpoint",
+                    "manifest_digest": "0".repeat(64),
+                    "scope_revision": 0
+                }]);
+            }
+            _ => unreachable!(),
+        }
+        let next: RunBaton = serde_json::from_value(next).unwrap();
+        assert!(
+            matches!(
+                channel.compare_and_swap(current.revision, &next),
+                Err(StoreError::InvalidHistory | StoreError::InvalidBaton(_))
+            ),
+            "unchanged-binding attack {attack} was accepted"
+        );
+        assert_eq!(channel.read().unwrap(), current);
+        assert!(!dir
+            .path()
+            .join("history/00000000000000000005.json")
+            .exists());
+    }
+}
+
+#[test]
+fn publication_v2_creation_root_rejects_non_initial_state() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut forged = RunBaton::new(
+        "forged-root",
+        "Forged root",
+        "Codex",
+        "Claude",
+        vec![DeliverableRequirement {
+            id: "implementation".to_owned(),
+            description: "Implement it".to_owned(),
+        }],
+    )
+    .unwrap();
+    forged.status = dvandva_v4::model::Status::Reviewing;
+    forged.assignee = dvandva_v4::model::Assignee::Reviewer;
+
+    assert!(matches!(
+        RunChannel::open(dir.path()).create(&forged),
+        Err(StoreError::InvalidSchemaTransition | StoreError::InvalidBaton(_))
+    ));
+    assert!(!dir.path().join("baton.json").exists());
+    assert!(!dir
+        .path()
+        .join("history/00000000000000000000.json")
+        .exists());
+}
+
+#[test]
+fn publication_recovery_rejects_a_forged_approved_v2_creation_root() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let mut forged = read_baton(dir.path());
+    forged["publication_binding"] = approved_publication_binding(
+        forged["publication_binding"]["obligation"].clone(),
+        "site-forged-root",
+        "deployment-forged-root",
+    );
+    std::fs::write(
+        dir.path().join("history/00000000000000000000.json"),
+        serde_json::to_vec_pretty(&forged).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("baton.json"), b"corrupt\n").unwrap();
+
+    command()
+        .args([
+            "recover",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--from-revision",
+            "0",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(r#""error":"invalid_history""#));
+    assert!(!dir
+        .path()
+        .join("history/00000000000000000001.json")
+        .exists());
+}
+
+#[test]
 fn publication_recovery_rejects_an_illegal_v2_successor_edge() {
     let dir = tempfile::tempdir().unwrap();
     init_pair(dir.path());
@@ -3985,6 +4123,27 @@ fn publication_schema_decode_preserves_v1_default_and_rejects_v2_numeric_key() {
     assert_eq!(decoded["publication"]["desired_revision"], 0);
     assert!(decoded["publication"]["published_revision"].is_null());
 
+    let legacy_null = tempfile::tempdir().unwrap();
+    write_legacy_run(
+        legacy_null.path(),
+        "working",
+        "worker",
+        serde_json::Value::Null,
+    );
+    let legacy_null_path = legacy_null.path().join("baton.json");
+    let mut null_baton = read_baton(legacy_null.path());
+    null_baton["publication"] = serde_json::Value::Null;
+    std::fs::write(
+        &legacy_null_path,
+        serde_json::to_vec_pretty(&null_baton).unwrap(),
+    )
+    .unwrap();
+    command()
+        .args(["read", "--run-dir", legacy_null.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(r#""error":"invalid_baton""#));
+
     let v2 = tempfile::tempdir().unwrap();
     init_pair(v2.path());
     let baton_path = v2.path().join("baton.json");
@@ -3993,6 +4152,14 @@ fn publication_schema_decode_preserves_v1_default_and_rejects_v2_numeric_key() {
         "required": false, "desired_revision": 0,
         "published_revision": null, "refs": []
     });
+    std::fs::write(&baton_path, serde_json::to_vec_pretty(&baton).unwrap()).unwrap();
+    command()
+        .args(["read", "--run-dir", v2.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(r#""error":"invalid_baton""#));
+
+    baton["publication"] = serde_json::Value::Null;
     std::fs::write(&baton_path, serde_json::to_vec_pretty(&baton).unwrap()).unwrap();
     command()
         .args(["read", "--run-dir", v2.path().to_str().unwrap()])

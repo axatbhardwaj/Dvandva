@@ -1,10 +1,10 @@
 use assert_cmd::Command;
 use dvandva_v4::{
+    action::Action,
     claim::{self, Role},
-    model::{
-        DeliverableRequirement, ParticipantClaim, RunBaton, Status, TaskIdentity, WorkspaceIdentity,
-    },
+    model::{DeliverableRequirement, ParticipantClaim, RunBaton, TaskIdentity, WorkspaceIdentity},
     store::RunChannel,
+    transition,
 };
 
 const REPOSITORY_ID: &str = "github.com/axatbhardwaj/dvandva";
@@ -320,8 +320,8 @@ fn an_expired_reviewer_claim_is_reclaimable() {
     channel.create(&baton).unwrap();
     baton.participants.reviewer.claim = Some(ParticipantClaim {
         session_id: "gone-reviewer".to_owned(),
-        epoch: 3,
-        token_digest: "old-digest".to_owned(),
+        epoch: 1,
+        token_digest: "0".repeat(64),
         lease_expires_at: "2000-01-01T00:00:00Z".to_owned(),
         lease_seconds: 300,
     });
@@ -484,10 +484,18 @@ fn wrong_repository_and_terminal_runs_are_ignored() {
         "claude",
     );
     let channel = RunChannel::open(&terminal_dir);
-    let mut terminal = channel.read().unwrap();
-    terminal.status = Status::Done;
-    terminal.revision = 1;
-    channel.compare_and_swap(0, &terminal).unwrap();
+    let grant = claim::claim(&channel, Role::Worker, "terminal-worker", 300, 0).unwrap();
+    transition::apply(
+        &channel,
+        Role::Worker,
+        "terminal-worker",
+        &grant.token,
+        1,
+        Action::Abandon {
+            reason: "terminal fixture".to_owned(),
+        },
+    )
+    .unwrap();
 
     let outcome = discover(root.path(), Some("DEF-123"));
     assert_eq!(outcome["outcome"], "none");

@@ -843,10 +843,27 @@ fn role_wait_blocks_in_the_foreground_until_the_role_is_actionable() {
         .unwrap();
 
     std::thread::sleep(std::time::Duration::from_millis(100));
-    let channel = dvandva_v4::store::RunChannel::open(&run_dir);
-    let mut baton = channel.read().unwrap();
-    baton.revision = 2;
-    channel.compare_and_swap(1, &baton).unwrap();
+    command()
+        .args([
+            "role",
+            "heartbeat",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-session",
+            "--lease-seconds",
+            "300",
+            "--expected-revision",
+            "1",
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
 
     let output = waiter.wait_with_output().unwrap();
     assert!(
@@ -879,8 +896,8 @@ fn role_reclaim_fences_an_expired_session_with_a_new_private_credential() {
     channel.create(&baton).unwrap();
     baton.participants.worker.claim = Some(dvandva_v4::model::ParticipantClaim {
         session_id: "expired-session".to_owned(),
-        epoch: 7,
-        token_digest: "expired-digest".to_owned(),
+        epoch: 1,
+        token_digest: "0".repeat(64),
         lease_expires_at: "2000-01-01T00:00:00Z".to_owned(),
         lease_seconds: 300,
     });
@@ -915,7 +932,7 @@ fn role_reclaim_fences_an_expired_session_with_a_new_private_credential() {
     );
     let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(result["revision"], 2);
-    assert_eq!(result["epoch"], 8);
+    assert_eq!(result["epoch"], 2);
     let credential = credentials.join("replacement-session/run-a/worker.json");
     assert_eq!(result["credential"], credential.to_str().unwrap());
     assert_eq!(mode(&credential), 0o600);
@@ -930,7 +947,7 @@ fn role_reclaim_fences_an_expired_session_with_a_new_private_credential() {
         current["participants"]["worker"]["claim"]["session_id"],
         "replacement-session"
     );
-    assert_eq!(current["participants"]["worker"]["claim"]["epoch"], 8);
+    assert_eq!(current["participants"]["worker"]["claim"]["epoch"], 2);
 }
 
 #[test]

@@ -8,15 +8,16 @@ use fs2::FileExt;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
+use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use uuid::Uuid;
 
 use crate::model::{
     checkpoint_manifest_digest, create_handoff_obligation, normalize_deliverables,
     normalize_participants, valid_exact_reference, valid_sha256, Assignee, Checkpoint,
-    DeliverableRequirement, HandoffKind, LegacyPublication, MigrationProvenance,
-    PublicationBinding, PublicationPolicy, RecoveryProvenance, RunBaton, Status, EXPLAINER_ACCESS,
-    EXPLAINER_CHANNEL, EXPLAINER_PUBLISHER_HARNESS, EXPLAINER_REVIEWER_HARNESS, LEGACY_SCHEMA,
-    SCHEMA,
+    DeliverableRequirement, HandoffKind, LegacyPublication, MigrationProvenance, ParticipantClaim,
+    PublicationBinding, PublicationPolicy, RecoveryProvenance, RunBaton, Status,
+    TerminalProvenance, EXPLAINER_ACCESS, EXPLAINER_CHANNEL, EXPLAINER_PUBLISHER_HARNESS,
+    EXPLAINER_REVIEWER_HARNESS, LEGACY_SCHEMA, SCHEMA,
 };
 
 #[derive(Debug, Error)]
@@ -64,14 +65,7 @@ impl RunChannel {
 
     pub fn create(&self, initial: &RunBaton) -> Result<RunBaton, StoreError> {
         validate_baton(initial)?;
-        if initial.schema != SCHEMA
-            || initial.revision != 0
-            || initial.migration.is_some()
-            || initial.participants.worker.claim.is_some()
-            || initial.participants.reviewer.claim.is_some()
-            || initial.publication_binding
-                != Some(create_handoff_obligation(HandoffKind::RunStarted, 0, 0))
-        {
+        if !valid_v2_creation_root(initial) {
             return Err(StoreError::InvalidSchemaTransition);
         }
         fs::create_dir_all(&self.directory)?;
@@ -175,6 +169,9 @@ impl RunChannel {
             let mut previous: Option<RunBaton> = None;
             for revision in 0..=high {
                 let baton = self.read_history_revision(revision)?;
+                if revision == 0 && baton.schema == SCHEMA && !valid_v2_creation_root(&baton) {
+                    return Err(StoreError::InvalidHistory);
+                }
                 if let Some(previous_baton) = previous.as_ref() {
                     validate_history_edge(previous_baton, &baton)
                         .map_err(|_| StoreError::InvalidHistory)?;
@@ -432,6 +429,28 @@ fn validate_baton(baton: &RunBaton) -> Result<(), StoreError> {
     Ok(())
 }
 
+fn valid_v2_creation_root(baton: &RunBaton) -> bool {
+    baton.schema == SCHEMA
+        && baton.revision == 0
+        && baton.status == Status::Working
+        && baton.assignee == Assignee::Worker
+        && baton.participants.worker.claim.is_none()
+        && baton.participants.reviewer.claim.is_none()
+        && baton.scope_revision == 0
+        && baton.checkpoint.is_none()
+        && baton.checkpoint_history.is_empty()
+        && baton.review.is_none()
+        && baton.pending_checkpoint_supersession.is_none()
+        && baton.publication.is_none()
+        && baton.publication_policy.as_ref() == Some(&PublicationPolicy::fixed())
+        && baton.publication_binding
+            == Some(create_handoff_obligation(HandoffKind::RunStarted, 0, 0))
+        && baton.human_decision.is_none()
+        && baton.terminal.is_none()
+        && baton.recovery.is_none()
+        && baton.migration.is_none()
+}
+
 fn valid_checkpoint_state(baton: &RunBaton) -> bool {
     let mut identities = std::collections::HashSet::new();
     if baton.checkpoint_history.iter().any(|binding| {
@@ -596,10 +615,10 @@ fn valid_v2_history_edge(current: &RunBaton, next: &RunBaton) -> bool {
         && next
             .checkpoint_history
             .starts_with(&current.checkpoint_history)
-        && valid_publication_edge(current, next)
+        && valid_v2_edge_kind(current, next)
 }
 
-fn valid_publication_edge(current: &RunBaton, next: &RunBaton) -> bool {
+fn valid_v2_edge_kind(current: &RunBaton, next: &RunBaton) -> bool {
     let (Some(current_binding), Some(next_binding)) = (
         current.publication_binding.as_ref(),
         next.publication_binding.as_ref(),
@@ -619,10 +638,29 @@ fn valid_publication_edge(current: &RunBaton, next: &RunBaton) -> bool {
             && next_binding.review.is_none()
             && valid_new_obligation(current, next, next_binding);
     }
-    if current_binding == next_binding {
-        return true;
+    if current_binding != next_binding {
+        return valid_publication_receipt_edge(current, next, current_binding, next_binding);
     }
-    if !only_publication_changed(current, next) {
+    valid_claim_edge(current, next)
+        || valid_human_decision_request_edge(current, next)
+        || valid_plain_human_decision_resume_edge(current, next)
+        || valid_checkpoint_supersession_request_edge(current, next)
+        || valid_finalize_edge(current, next, current_binding)
+        || valid_abandon_edge(current, next)
+        || valid_recovery_successor_edge(current, next)
+}
+
+fn valid_publication_receipt_edge(
+    current: &RunBaton,
+    next: &RunBaton,
+    current_binding: &PublicationBinding,
+    next_binding: &PublicationBinding,
+) -> bool {
+    if is_terminal(current)
+        || !only_fields_changed(current, next, |expected| {
+            expected.publication_binding = next.publication_binding.clone();
+        })
+    {
         return false;
     }
     if current_binding.deployment != next_binding.deployment {
@@ -633,11 +671,246 @@ fn valid_publication_edge(current: &RunBaton, next: &RunBaton) -> bool {
         && next_binding.review.is_some()
 }
 
-fn only_publication_changed(current: &RunBaton, next: &RunBaton) -> bool {
-    let mut normalized = next.clone();
-    normalized.revision = current.revision;
-    normalized.publication_binding = current.publication_binding.clone();
-    normalized == *current
+fn valid_claim_edge(current: &RunBaton, next: &RunBaton) -> bool {
+    if is_terminal(current) {
+        return false;
+    }
+    let worker_changed = current.participants.worker.claim != next.participants.worker.claim;
+    let reviewer_changed = current.participants.reviewer.claim != next.participants.reviewer.claim;
+    if worker_changed == reviewer_changed {
+        return false;
+    }
+    if worker_changed {
+        valid_claim_mutation(
+            current.participants.worker.claim.as_ref(),
+            next.participants.worker.claim.as_ref(),
+        ) && only_fields_changed(current, next, |expected| {
+            expected.participants.worker.claim = next.participants.worker.claim.clone();
+        })
+    } else {
+        valid_claim_mutation(
+            current.participants.reviewer.claim.as_ref(),
+            next.participants.reviewer.claim.as_ref(),
+        ) && only_fields_changed(current, next, |expected| {
+            expected.participants.reviewer.claim = next.participants.reviewer.claim.clone();
+        })
+    }
+}
+
+fn valid_claim_mutation(
+    current: Option<&ParticipantClaim>,
+    next: Option<&ParticipantClaim>,
+) -> bool {
+    let Some(next) = next.filter(|claim| valid_participant_claim(claim)) else {
+        return false;
+    };
+    match current {
+        None => next.epoch == 1,
+        Some(current)
+            if next.session_id == current.session_id
+                && next.epoch == current.epoch
+                && next.token_digest == current.token_digest =>
+        {
+            true
+        }
+        Some(current) => {
+            current.epoch.checked_add(1) == Some(next.epoch)
+                && next.token_digest != current.token_digest
+        }
+    }
+}
+
+fn valid_participant_claim(claim: &ParticipantClaim) -> bool {
+    !claim.session_id.trim().is_empty()
+        && valid_sha256(&claim.token_digest)
+        && claim.lease_seconds > 0
+        && claim.lease_seconds <= i64::MAX as u64
+        && OffsetDateTime::parse(&claim.lease_expires_at, &Rfc3339).is_ok()
+}
+
+fn valid_human_decision_request_edge(current: &RunBaton, next: &RunBaton) -> bool {
+    let Some(decision) = next.human_decision.as_ref() else {
+        return false;
+    };
+    if is_terminal(current)
+        || current
+            .human_decision
+            .as_ref()
+            .is_some_and(|decision| decision.answer.is_none())
+        || decision.question.trim().is_empty()
+        || decision.evidence.is_empty()
+        || decision
+            .evidence
+            .iter()
+            .any(|evidence| evidence.trim().is_empty())
+        || decision.options.len() < 2
+        || decision
+            .options
+            .iter()
+            .any(|option| option.trim().is_empty())
+        || !valid_role_name(&decision.requested_by)
+        || !valid_role_name(&decision.contact_role)
+        || decision.answer.is_some()
+        || !valid_resume_target(&decision.resume_status, &decision.resume_assignee)
+        || next.status != Status::HumanDecision
+        || next.assignee != Assignee::Human
+    {
+        return false;
+    }
+    only_fields_changed(current, next, |expected| {
+        expected.human_decision = next.human_decision.clone();
+        expected.status = Status::HumanDecision;
+        expected.assignee = Assignee::Human;
+    })
+}
+
+fn valid_plain_human_decision_resume_edge(current: &RunBaton, next: &RunBaton) -> bool {
+    let (Some(current_decision), Some(next_decision)) = (
+        current.human_decision.as_ref(),
+        next.human_decision.as_ref(),
+    ) else {
+        return false;
+    };
+    let mut expected_decision = current_decision.clone();
+    expected_decision.answer = next_decision.answer.clone();
+    if current.status != Status::HumanDecision
+        || current.assignee != Assignee::Human
+        || current_decision.answer.is_some()
+        || !valid_role_name(&current_decision.contact_role)
+        || !next_decision
+            .answer
+            .as_ref()
+            .is_some_and(|answer| valid_exact_reference(answer))
+        || expected_decision != *next_decision
+        || !valid_resume_target(
+            &current_decision.resume_status,
+            &current_decision.resume_assignee,
+        )
+        || next.status != current_decision.resume_status
+        || next.assignee != current_decision.resume_assignee
+    {
+        return false;
+    }
+    only_fields_changed(current, next, |expected| {
+        expected.human_decision = next.human_decision.clone();
+        expected.status = next.status.clone();
+        expected.assignee = next.assignee.clone();
+    })
+}
+
+fn valid_checkpoint_supersession_request_edge(current: &RunBaton, next: &RunBaton) -> bool {
+    let (Some(checkpoint), Some(pending)) = (
+        current.checkpoint.as_ref(),
+        next.pending_checkpoint_supersession.as_ref(),
+    ) else {
+        return false;
+    };
+    if current.status != Status::Reviewing
+        || current.assignee != Assignee::Reviewer
+        || current.pending_checkpoint_supersession.is_some()
+        || !valid_exact_reference(&pending.reason)
+        || pending.checkpoint != checkpoint.binding()
+    {
+        return false;
+    }
+    only_fields_changed(current, next, |expected| {
+        expected.pending_checkpoint_supersession = next.pending_checkpoint_supersession.clone();
+    })
+}
+
+fn valid_finalize_edge(current: &RunBaton, next: &RunBaton, binding: &PublicationBinding) -> bool {
+    let (Some(checkpoint), Some(review)) = (current.checkpoint.as_ref(), current.review.as_ref())
+    else {
+        return false;
+    };
+    let checkpoint = checkpoint.binding();
+    if current.status != Status::Finalizing
+        || current.assignee != Assignee::Worker
+        || current.pending_checkpoint_supersession.is_some()
+        || review.verdict != "approved"
+        || review.binding() != checkpoint
+        || !approved_publication_gate(binding, Some((&HandoffKind::ReviewerToWorker, &checkpoint)))
+        || next.status != Status::Done
+        || next.assignee != Assignee::None
+        || next.terminal
+            != Some(TerminalProvenance {
+                outcome: "done".to_owned(),
+                reason: None,
+            })
+    {
+        return false;
+    }
+    only_fields_changed(current, next, |expected| {
+        expected.status = Status::Done;
+        expected.assignee = Assignee::None;
+        expected.terminal = next.terminal.clone();
+    })
+}
+
+fn valid_abandon_edge(current: &RunBaton, next: &RunBaton) -> bool {
+    let Some(terminal) = next.terminal.as_ref() else {
+        return false;
+    };
+    if is_terminal(current)
+        || next.status != Status::Abandoned
+        || next.assignee != Assignee::None
+        || terminal.outcome != "abandoned"
+        || !terminal
+            .reason
+            .as_ref()
+            .is_some_and(|reason| !reason.trim().is_empty())
+    {
+        return false;
+    }
+    only_fields_changed(current, next, |expected| {
+        expected.status = Status::Abandoned;
+        expected.assignee = Assignee::None;
+        expected.terminal = next.terminal.clone();
+    })
+}
+
+fn valid_recovery_successor_edge(current: &RunBaton, next: &RunBaton) -> bool {
+    let expected_recovery = RecoveryProvenance {
+        from_revision: current.revision,
+        previous_high_revision: current.revision,
+    };
+    if is_terminal(current) || next.recovery.as_ref() != Some(&expected_recovery) {
+        return false;
+    }
+    only_fields_changed(current, next, |expected| {
+        expected.participants.worker.claim = None;
+        expected.participants.reviewer.claim = None;
+        expected.recovery = Some(expected_recovery);
+    })
+}
+
+fn only_fields_changed(
+    current: &RunBaton,
+    next: &RunBaton,
+    update_expected: impl FnOnce(&mut RunBaton),
+) -> bool {
+    let mut expected = current.clone();
+    expected.revision = next.revision;
+    update_expected(&mut expected);
+    expected == *next
+}
+
+fn valid_role_name(value: &str) -> bool {
+    matches!(value, "worker" | "reviewer")
+}
+
+fn valid_resume_target(status: &Status, assignee: &Assignee) -> bool {
+    matches!(
+        (status, assignee),
+        (
+            Status::Working | Status::Revising | Status::Finalizing,
+            Assignee::Worker
+        ) | (Status::Reviewing, Assignee::Reviewer)
+    )
+}
+
+fn is_terminal(baton: &RunBaton) -> bool {
+    matches!(baton.status, Status::Done | Status::Abandoned)
 }
 
 fn valid_new_obligation(current: &RunBaton, next: &RunBaton, binding: &PublicationBinding) -> bool {
