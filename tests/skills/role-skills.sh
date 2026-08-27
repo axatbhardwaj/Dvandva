@@ -157,6 +157,9 @@ for role_skill in "$vadi_skill" "$prativadi_skill"; do
     "$role_skill"
   grep -Fq 'Goals the user sets in a launch prompt remain outside the protocol.' \
     "$role_skill"
+  grep -Fq 'new human scope, ambiguity, or unavailable mandated publication/review capability' \
+    "$role_skill"
+  ! grep -Fq 'only for new human scope or ambiguity' "$role_skill"
 done
 
 for role_source in \
@@ -183,7 +186,7 @@ do
     'claim SESSION RUN_DIR EXPECTED_REVISION' \
     'reclaim SESSION RUN_DIR EXPECTED_REVISION' \
     '"type":"resume_human_decision"' \
-    '"type":"finalize"'
+    '"scope_amendment"'
   do
     grep -Fq "$required" <<<"$role_source"
   done
@@ -235,6 +238,25 @@ grep -Fq 'Exact joins pass only `--run-id`' <<<"$role_contract"
 grep -Fq 'Publication never substitutes for supersession or withdrawal.' <<<"$role_contract"
 grep -Fq 'foreground local wait' <<<"$role_contract"
 grep -Fq 'Prativadi never creates a run.' "$prativadi_contract"
+! sed -n '/^```text$/,/^```$/p' "$prativadi_contract" | grep -Fq -- '--new-run'
+
+for required in \
+  '"type":"submit_checkpoint"' \
+  '"type":"request_checkpoint_supersession"' \
+  '"type":"withdraw_approval"' \
+  '"type":"finalize"'
+do
+  grep -Fq "$required" "$vadi_contract"
+  ! grep -Fq "$required" "$prativadi_contract"
+done
+
+for required in \
+  '"type":"record_review"' \
+  '"type":"accept_checkpoint_supersession"'
+do
+  grep -Fq "$required" "$prativadi_contract"
+  ! grep -Fq "$required" "$vadi_contract"
+done
 
 for forbidden in create_goal update_goal get_goal pause_goal complete_goal clear_goal; do
   ! grep -Fq "$forbidden" <<<"$role_contract"

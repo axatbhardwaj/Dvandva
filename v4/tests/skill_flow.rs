@@ -29,7 +29,7 @@ fn assert_role_source_contract(role: &str) {
         "next_actions",
         "advisory_actions",
         "legal_actions",
-        "new human scope or ambiguity",
+        "new human scope, ambiguity, or unavailable mandated publication/review capability",
         "never an ordinary wake or action",
         "scope_mismatch",
         "complete deliverable manifest",
@@ -104,6 +104,15 @@ fn assert_role_source_contract(role: &str) {
     );
     assert!(contract.contains("copy the exact current `checkpoint` coordinates"));
     assert!(contract.contains("copy `publication_binding.obligation` unchanged"));
+    for contradictory in [
+        "only for new human scope or ambiguity",
+        "solely for new human scope or ambiguity",
+    ] {
+        assert!(
+            !skill.contains(contradictory) && !contract.contains(contradictory),
+            "{role} retains contradictory Human Decision restriction {contradictory:?}"
+        );
+    }
 }
 
 #[test]
@@ -126,6 +135,8 @@ fn prativadi_skill_sources_define_the_complete_v2_contract() {
     assert_role_source_contract("prativadi");
     let (_, contract) = role_sources("prativadi");
     assert!(contract.contains("Prativadi never creates a run."));
+    let synopsis = contract.split("```").nth(1).unwrap();
+    assert!(!synopsis.contains("--new-run"));
 }
 
 fn documented_json_blocks(markdown: &str) -> Vec<String> {
@@ -205,31 +216,52 @@ fn documented_action(role: &str, action_type: &str) -> serde_json::Value {
 
 #[test]
 fn every_documented_role_action_deserializes_against_the_v2_schema() {
-    let expected = BTreeSet::from([
-        "accept_checkpoint_supersession",
-        "finalize",
-        "record_explainer_publication",
-        "record_explainer_review",
-        "record_review",
-        "request_checkpoint_supersession",
-        "request_human_decision",
-        "resume_human_decision",
-        "submit_checkpoint",
-        "withdraw_approval",
-    ]);
-    for role in ["vadi", "prativadi"] {
+    let expected = [
+        (
+            "vadi",
+            BTreeSet::from([
+                "finalize",
+                "record_explainer_publication",
+                "record_explainer_review",
+                "request_checkpoint_supersession",
+                "request_human_decision",
+                "resume_human_decision",
+                "submit_checkpoint",
+                "withdraw_approval",
+            ]),
+        ),
+        (
+            "prativadi",
+            BTreeSet::from([
+                "accept_checkpoint_supersession",
+                "record_explainer_publication",
+                "record_explainer_review",
+                "record_review",
+                "request_human_decision",
+                "resume_human_decision",
+            ]),
+        ),
+    ];
+    for (role, expected) in expected {
         let actions = documented_actions(role);
         let actual = actions
             .iter()
             .map(|action| action["type"].as_str().unwrap())
             .collect::<BTreeSet<_>>();
-        assert_eq!(actual, expected, "{role} action map is incomplete");
+        assert_eq!(actual, expected, "{role} action map is not role-specific");
         for action in actions {
             serde_json::from_value::<Action>(action.clone()).unwrap_or_else(|error| {
                 panic!("{role} documented invalid action {action}: {error}")
             });
         }
     }
+}
+
+fn documented_scope_amendment(role: &str) -> serde_json::Value {
+    documented_actions(role)
+        .into_iter()
+        .find(|action| !action["scope_amendment"].is_null())
+        .unwrap_or_else(|| panic!("{role} omitted documented scope-amending resume payload"))
 }
 
 #[test]
@@ -286,6 +318,98 @@ fn documented_human_decision_payload_transitions_for_each_role() {
         assert_eq!(
             human["human_decision"]["options"].as_array().unwrap().len(),
             2
+        );
+        assert_eq!(reviewer["run_id"], worker["run_id"]);
+    }
+}
+
+#[test]
+fn documented_scope_amendment_transitions_for_each_role() {
+    for role in ["vadi", "prativadi"] {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        let runs = root.path().join("state/runs");
+        let credentials = root.path().join("state/credentials");
+        std::fs::create_dir(&workspace).unwrap();
+        git(&workspace, &["init", "--quiet"]);
+        git(
+            &workspace,
+            &[
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:axatbhardwaj/Dvandva.git",
+            ],
+        );
+        let worker = start_role(
+            &workspace,
+            &runs,
+            &credentials,
+            "worker",
+            "worker-session",
+            "codex",
+            "claude",
+        );
+        let reviewer = start_role(
+            &workspace,
+            &runs,
+            &credentials,
+            "reviewer",
+            "reviewer-session",
+            "claude",
+            "codex",
+        );
+        let run_dir = runs.join(worker["run_id"].as_str().unwrap());
+        let flow = Flow {
+            root: root.path(),
+            run_dir: &run_dir,
+            credentials: &credentials,
+        };
+        let (kernel_role, session) = if role == "vadi" {
+            ("worker", "worker-session")
+        } else {
+            ("reviewer", "reviewer-session")
+        };
+        let human = flow.apply(
+            kernel_role,
+            session,
+            2,
+            "request-scope.json",
+            documented_action(role, "request_human_decision"),
+        );
+        assert_eq!(human["status"], "human_decision");
+
+        let amended = flow.apply(
+            kernel_role,
+            session,
+            3,
+            "amend-scope.json",
+            documented_scope_amendment(role),
+        );
+        assert_eq!(amended["scope_revision"], 1);
+        assert_eq!(amended["objective"]["summary"], "Ship approved scope");
+        assert_eq!(
+            amended["objective"]["refs"],
+            serde_json::json!([{"kind":"issue","value":"DEF-456"}])
+        );
+        assert_eq!(amended["task_reference"], "DEF-456");
+        assert_eq!(
+            amended["scope_deliverables"],
+            serde_json::json!([{"id":"report","description":"Approved report"}])
+        );
+        assert_eq!(amended["status"], "revising");
+        assert_eq!(amended["assignee"], "worker");
+        assert_eq!(
+            amended["publication_binding"]["obligation"]["kind"],
+            "scope_amended"
+        );
+        assert_eq!(
+            amended["publication_binding"]["obligation"]["scope_revision"],
+            1
+        );
+        assert_eq!(
+            amended["publication_binding"]["obligation"]["handoff_revision"],
+            4
         );
         assert_eq!(reviewer["run_id"], worker["run_id"]);
     }
