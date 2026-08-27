@@ -96,11 +96,13 @@ responses are ignored under `private-artifacts/pressure-tests/`:
    correctly refused claim/review, but its requested-B path said verbatim,
    "Start without `--run-id` ... and `--new-run`," leaving the acting
    prativadi's authority ambiguous.
-3. Reverse casting/publication:
-   `task-7b-scenario-3-prompt.md` and
-   `task-7b-scenario-3-response.md` — PASS. Codex remained publisher, Claude
-   remained exact-deployment reviewer, the Claude Artifact was rejected, and
-   semantic approval stayed blocked on the exact Site review.
+3. Reverse casting/publication: the original result is **RETRACTED**, not a
+   PASS. `task-7b-scenario-3-prompt.md` fabricated an impossible checkpoint
+   binding with `identity` where `CheckpointBinding` requires
+   `checkpoint_identity`; `task-7b-scenario-3-response.md` therefore is not
+   valid pressure evidence. Both ignored files remain preserved as historical
+   evidence of the invalid exercise. A corrected fresh rerun is recorded
+   below.
 4. Existing user-created goals:
    `task-7b-scenario-4-prompt.md` and
    `task-7b-scenario-4-response.md` — PASS. Both goals remained unchanged,
@@ -125,7 +127,111 @@ Requested B: prativadi does not create the run. The human must start a
 separate vadi/worker harness session ...
 ```
 
-No further rationalization appeared, so scenarios 1, 3, and 4 were not rerun.
+No further rationalization appeared in the scenario 2 fix, so scenarios 1 and
+4 were not rerun. Scenario 3 was rerun later for the independent invalid-field
+finding recorded below.
+
+## Review fix round 1 — executable role contracts
+
+The review correctly found that source-member grep had accepted incomplete and
+invalid payload examples. Before changing role/setup prose, focused per-role
+and executable tests produced these RED results.
+
+Both per-role source contracts lacked required executable detail:
+
+```text
+vadi contract omitted "canonical deliverable IDs exactly once"
+prativadi contract omitted "upgrade SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION"
+test result: FAILED. 0 passed; 2 failed
+```
+
+The action-map test proved both references omitted `resume_human_decision` and
+`finalize` payloads:
+
+```text
+assertion `left == right` failed: vadi action map is incomplete
+left: {"accept_checkpoint_supersession", "record_explainer_publication",
+"record_explainer_review", "record_review", "request_checkpoint_supersession",
+"request_human_decision", "submit_checkpoint", "withdraw_approval"}
+right: {"accept_checkpoint_supersession", "finalize",
+"record_explainer_publication", "record_explainer_review", "record_review",
+"request_checkpoint_supersession", "request_human_decision",
+"resume_human_decision", "submit_checkpoint", "withdraw_approval"}
+```
+
+The per-role kernel-transition test rejected the documented one-option Human
+Decision payload before mutation:
+
+```text
+assertion failed: action["options"].as_array().unwrap().len() >= 2
+test documented_human_decision_payload_transitions_for_each_role ... FAILED
+```
+
+The setup source test also failed because the docs presented an unpublished
+target as an available release:
+
+```text
+setup contract omitted "source and planned release target"
+test setup_skill_sources_pin_v2_without_implicit_run_migration ... FAILED
+```
+
+Finally, the shell source contract stopped independently on vadi's missing
+goal boundary:
+
+```text
+grep -Fq 'Dvandva never creates, replaces, pauses, completes, or clears any harness goal.' skills/vadi/SKILL.md
+STATUS=1
+```
+
+The smallest source changes then made every advertised route executable:
+
+- each role copies current checkpoint, obligation, and deployment coordinates
+  from the facade rather than hardcoding an identity, kind, revision, or scope;
+- both Human Decision examples provide two options and map `answer_human` to
+  `resume_human_decision`;
+- `finalize`, explainer publication, and explainer review map to their exact v2
+  actions;
+- `upgrade_required` documents the facade upgrade invocation, fresh claim, and
+  later expired-claim recovery route; and
+- each role independently forbids creating, replacing, pausing, completing, or
+  clearing harness goals. Goals supplied by the user at launch remain outside
+  the protocol.
+
+The executable tests deserialize normalized forms of every documented action,
+transition both roles' Human Decision examples, and materialize the documented
+checkpoint, publication, explainer-review, semantic-review, and finalize
+templates through the kernel flow. This catches schema member errors such as
+`identity` in a `CheckpointBinding`, which text grep alone did not catch.
+
+### Review-fix GREEN evidence
+
+- `cargo test --manifest-path v4/Cargo.toml --test skill_flow` — 11 passed.
+- `bash tests/skills/role-skills.sh` — `role skill wrappers: ok`.
+- `cargo test --manifest-path v4/Cargo.toml --all-targets` — 168 passed,
+  0 failed.
+- `cargo fmt --manifest-path v4/Cargo.toml -- --check` — passed.
+- `cargo clippy --manifest-path v4/Cargo.toml --all-targets -- -D warnings`
+  — passed.
+- `bash -n skills/vadi/scripts/dvandva-role.sh \
+  skills/prativadi/scripts/dvandva-role.sh \
+  skills/setup-dvandva/scripts/setup-dvandva.sh` — passed.
+- `git diff --check` — passed.
+
+Setup now states durable release-boundary truth: `0.2.0` is this source's
+release target. At invocation, the installer resolves the requested tag and
+asset and fails closed until both exist; the docs do not claim that the
+unpublished release is currently available.
+
+### Corrected scenario 3 pressure evidence
+
+A fresh `fork_turns: none`, read-only agent received only the amended
+prativadi skill/reference and
+`task-7b-scenario-3-corrected-prompt.md`. Its verbatim response is
+`task-7b-scenario-3-corrected-response.md` — PASS. The corrected snapshot used
+`checkpoint_identity` in its exact receipt. The agent kept Codex as publisher,
+Claude as exact-deployment reviewer, rejected a Claude Artifact, copied the
+revision 27/scope 4 obligation exactly, and blocked semantic approval until a
+fresh legal action follows Claude's recorded deployment review.
 
 ## Commits
 
@@ -133,12 +239,20 @@ No further rationalization appeared, so scenarios 1, 3, and 4 were not rerun.
 - `48422d6 docs(v4): harden role run contracts`
 - `7f78bbb docs(setup): pin v0.2 skill release`
 - `57eab12 fix(v4): keep run creation worker-owned`
+- `6da048b docs(sdd): record task 7b evidence`
+- `f997ded test(v4): execute documented role actions`
+- `709b51a fix(v4): make role action contracts executable`
+- `ffd4331 docs(setup): mark v0.2 as release target`
+- `docs(sdd): record task 7b review fixes` (this report commit)
 
 ## Boundary and next action
 
 No kernel, facade, installer implementation, workflow documentation, package
-automation, v3 archive, or harness goal changed. No blocker remains. The
-reviewer owns the next action. Run:
+automation, v3 archive, or harness goal changed. No push, tag, or release was
+performed. The JSON examples intentionally retain facade-copy placeholders;
+tests normalize those placeholders before deserialization and transition.
+No live Codex Sites deployment was performed or claimed. No blocker remains.
+The reviewer owns the next action. Run:
 
 ```bash
 git diff 0e5b695..HEAD -- \
