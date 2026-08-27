@@ -67,7 +67,7 @@
 - `cargo fmt --manifest-path v4/Cargo.toml -- --check` — passed.
 - `cargo clippy --manifest-path v4/Cargo.toml --all-targets -- -D warnings` —
   passed.
-- `bash -n` over all six changed shell files — passed.
+- `bash -n` over all seven changed shell files — passed.
 - `cmp` over the two source facade files — passed.
 - `git diff --check` — passed.
 
@@ -171,3 +171,45 @@ in Cargo metadata.
   `setup-dvandva`, `two-role-canary`, `package-release`); focused `skill_flow`
   passed 5/5; all-targets passed 156/156; fmt and clippy with denied warnings
   passed. Shell syntax, facade byte equality, and diff checks also passed.
+
+## Review fix round 2
+
+### Additional RED evidence
+
+1. A controlled `mv` shim sent `TERM` to setup immediately after the real
+   staging-directory promotion. Against `b9274e3`, rollback restored both the
+   old current link and byte-identical manifest, then failed at the orphan
+   assertion:
+
+   ```text
+   + test '!' -e .../bin/0.2.0
+   RED exit=1
+   ```
+
+2. A controlled current-commit failure followed by a controlled promoted-dir
+   `rm` failure restored the old pair and left the candidate, but setup deleted
+   its transaction directory and emitted no uncertainty diagnostic. The test
+   failed at:
+
+   ```text
+   + grep -Fq 'rollback_uncertain evidence=' .../rollback-cleanup.out
+   RED exit=1
+   ```
+
+### Fixes and GREEN evidence
+
+- Setup records the staged directory's device and inode before promotion and
+  records its destination before `mv -T`. Cleanup therefore covers a signal at
+  every promotion boundary while removing only the directory promoted by that
+  invocation; an absent or identity-mismatched destination is never blindly
+  deleted.
+- Rollback marks transaction evidence for preservation before attempting the
+  fallible promoted-directory removal. Failure now retains the transaction and
+  emits `rollback_uncertain evidence=...`; verified cleanup clears the marker.
+- Focused GREEN: `bash tests/skills/setup-dvandva.sh` passed, including both new
+  deterministic regressions.
+- Fresh final GREEN: four shell suites passed (`role-skills`, `setup-dvandva`,
+  `two-role-canary`, `package-release`); `skill_flow` passed 5/5; all-targets
+  passed 156/156; fmt and clippy with denied warnings passed; `bash -n` passed
+  for all seven changed shell files; facade byte equality and diff checks
+  passed. `shellcheck` remains unavailable.
