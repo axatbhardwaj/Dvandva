@@ -8,9 +8,9 @@ description: Act as prativadi for a paired Dvandva run. Use when the user says a
 Read `references/run-contract.md`, then remain the run's reviewer until terminal
 state or an explicit human stop.
 
-1. Read repository instructions and extract any task reference. Resolve a
-   stable harness session ID with the bundled facade; retain a generated
-   fallback for this harness session.
+1. Read repository instructions and resolve the task identity mechanically
+   under the run contract. Resolve a stable harness session ID with the bundled
+   facade; retain a generated fallback for this harness session.
 2. Start discovery with foreground waiting. Join exactly one non-terminal run
    matching repository, task, and reviewer harness. Surface several matches;
    never select newest. Never steal a live claim.

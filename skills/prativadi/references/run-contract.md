@@ -12,12 +12,19 @@ wait  SESSION RUN_DIR AFTER_REVISION [TIMEOUT_MS]
 heartbeat SESSION RUN_DIR EXPECTED_REVISION
 ```
 
+`TASK` is a copied identity field. When the human supplies an explicit ticket
+ID or URL, trim its surrounding whitespace and pass the remaining string
+verbatim. When neither appears, omit `TASK`. Keep the same copied identity on
+later starts; a human-selected `--run-id` is authoritative if a supplied task
+identity differs from that run.
+
 `start --wait` watches for a matching run without consuming model turns.
 Exactly one valid candidate is claimed. None continues waiting; several are
 returned for human selection, after which `start --wait` is repeated with the
-selected exact `--run-id`. Corrupt, terminal, wrong-repository,
-wrong-family, and live-claimed candidates are never silently selected. A lost
-claim race returns to discovery.
+selected exact `--run-id`. `task_mismatch` returns compatible candidates
+immediately; surface them instead of starting another discovery window.
+Corrupt, terminal, wrong-repository, wrong-family, and live-claimed candidates
+are never silently selected. A lost claim race returns to discovery.
 
 Drive these states:
 

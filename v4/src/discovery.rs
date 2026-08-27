@@ -39,6 +39,7 @@ pub enum DiscoveryKind {
     Busy,
     None,
     Ambiguous,
+    TaskMismatch,
     Corrupt,
 }
 
@@ -80,10 +81,11 @@ pub fn discover(
     query: DiscoveryQuery<'_>,
 ) -> Result<DiscoveryOutcome, DiscoveryError> {
     if !runs_dir.exists() {
-        return Ok(outcome(Vec::new(), Vec::new()));
+        return Ok(outcome(Vec::new(), Vec::new(), Vec::new()));
     }
 
     let mut candidates = Vec::new();
+    let mut task_mismatches = Vec::new();
     let mut corrupt = Vec::new();
     for entry in fs::read_dir(runs_dir)? {
         let entry = entry?;
@@ -93,7 +95,10 @@ pub fn discover(
         }
         match RunChannel::open(&run_dir).read() {
             Ok(baton) => match candidate(&run_dir, baton, &query) {
-                Ok(Some(candidate)) => candidates.push(candidate),
+                Ok(Some(CandidateMatch::Exact(candidate))) => candidates.push(candidate),
+                Ok(Some(CandidateMatch::TaskMismatch(candidate))) => {
+                    task_mismatches.push(candidate)
+                }
                 Ok(None) => {}
                 Err(error) => corrupt.push(CorruptCandidate { run_dir, error }),
             },
@@ -105,8 +110,9 @@ pub fn discover(
         }
     }
     candidates.sort_by(|left, right| left.run_id.cmp(&right.run_id));
+    task_mismatches.sort_by(|left, right| left.run_id.cmp(&right.run_id));
     corrupt.sort_by(|left, right| left.run_dir.cmp(&right.run_dir));
-    Ok(outcome(candidates, corrupt))
+    Ok(outcome(candidates, task_mismatches, corrupt))
 }
 
 pub fn wait_for_match(
@@ -160,7 +166,7 @@ fn candidate(
     run_dir: &Path,
     baton: RunBaton,
     query: &DiscoveryQuery<'_>,
-) -> Result<Option<RunCandidate>, String> {
+) -> Result<Option<CandidateMatch>, String> {
     if baton.schema != SCHEMA {
         return Err("unsupported baton schema".to_owned());
     }
@@ -186,12 +192,6 @@ fn candidate(
         || !participant
             .harness
             .eq_ignore_ascii_case(query.participant_harness)
-        || query.task_reference.is_some_and(|expected| {
-            !task
-                .reference
-                .as_deref()
-                .is_some_and(|actual| actual.eq_ignore_ascii_case(expected))
-        })
     {
         return Ok(None);
     }
@@ -214,7 +214,7 @@ fn candidate(
             }
         }
     };
-    Ok(Some(RunCandidate {
+    let candidate = RunCandidate {
         run_id: baton.run_id,
         run_dir: run_dir.to_owned(),
         task_reference: task.reference.clone(),
@@ -222,18 +222,43 @@ fn candidate(
         status: baton.status,
         revision: baton.revision,
         claim_state,
-    }))
+    };
+    let task_matches = query.task_reference.is_none_or(|expected| {
+        task.reference
+            .as_deref()
+            .is_some_and(|actual| actual == expected.trim())
+    });
+    if query.run_id.is_none() && !task_matches {
+        if candidate.claim_state == ClaimState::Busy {
+            Ok(None)
+        } else {
+            Ok(Some(CandidateMatch::TaskMismatch(candidate)))
+        }
+    } else {
+        Ok(Some(CandidateMatch::Exact(candidate)))
+    }
 }
 
-fn outcome(candidates: Vec<RunCandidate>, corrupt: Vec<CorruptCandidate>) -> DiscoveryOutcome {
-    let outcome = if !corrupt.is_empty() {
-        DiscoveryKind::Corrupt
+enum CandidateMatch {
+    Exact(RunCandidate),
+    TaskMismatch(RunCandidate),
+}
+
+fn outcome(
+    candidates: Vec<RunCandidate>,
+    task_mismatches: Vec<RunCandidate>,
+    corrupt: Vec<CorruptCandidate>,
+) -> DiscoveryOutcome {
+    let (outcome, candidates) = if !corrupt.is_empty() {
+        (DiscoveryKind::Corrupt, candidates)
+    } else if candidates.is_empty() && !task_mismatches.is_empty() {
+        (DiscoveryKind::TaskMismatch, task_mismatches)
     } else {
         match candidates.len() {
-            0 => DiscoveryKind::None,
-            1 if candidates[0].claim_state == ClaimState::Busy => DiscoveryKind::Busy,
-            1 => DiscoveryKind::Match,
-            _ => DiscoveryKind::Ambiguous,
+            0 => (DiscoveryKind::None, candidates),
+            1 if candidates[0].claim_state == ClaimState::Busy => (DiscoveryKind::Busy, candidates),
+            1 => (DiscoveryKind::Match, candidates),
+            _ => (DiscoveryKind::Ambiguous, candidates),
         }
     };
     DiscoveryOutcome {

@@ -3,10 +3,10 @@
 The setup script supports:
 
 ```bash
-bash scripts/setup-dvandva.sh install --version 0.1.0
-bash scripts/setup-dvandva.sh update --version 0.1.0
-bash scripts/setup-dvandva.sh doctor --version 0.1.0
-bash scripts/setup-dvandva.sh uninstall --version 0.1.0
+bash scripts/setup-dvandva.sh install --version 0.1.1
+bash scripts/setup-dvandva.sh update --version 0.1.1
+bash scripts/setup-dvandva.sh doctor --version 0.1.1
+bash scripts/setup-dvandva.sh uninstall --version 0.1.1
 ```
 
 It installs the checksummed Linux release asset under
@@ -22,6 +22,6 @@ schema compatibility probe. `uninstall` refuses unowned data and preserves the
 runs directory. A destructive purge requires the user's explicit request and:
 
 ```bash
-bash scripts/setup-dvandva.sh uninstall --version 0.1.0 \
+bash scripts/setup-dvandva.sh uninstall --version 0.1.1 \
   --purge-runs --yes-purge-runs
 ```
