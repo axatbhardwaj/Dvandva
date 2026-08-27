@@ -5,6 +5,7 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 test_root="$(mktemp -d)"
 trap 'rm -rf -- "$test_root"' EXIT
 asset="dvandva-kernel-linux-x86_64"
+grep -Fq 'fetch-depth: 0' "$repo_root/.github/workflows/skills-release.yml"
 
 mkdir -p "$test_root/old"
 git -C "$repo_root" archive skills-v0.1.1 v4 skills/setup-dvandva | \
