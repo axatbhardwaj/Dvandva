@@ -2,18 +2,25 @@
 set -euo pipefail
 
 owner="dvandva-skill-v1"
-schema="dvandva.run.v1"
-default_version="0.1.1"
+schema="dvandva.run.v2"
+role_api="2"
+read_schemas="dvandva.run.v2,dvandva.run.v1"
+upgrade_from_v1="true"
+default_version="0.2.0"
 operation="${1:-}"
 shift || true
 version="${DVANDVA_VERSION:-$default_version}"
 purge_runs=false
 confirm_purge=false
 temporary_download=""
+staged_install=""
 
 cleanup() {
   if test -n "$temporary_download"; then
     rm -rf -- "$temporary_download"
+  fi
+  if test -n "$staged_install"; then
+    rm -rf -- "$staged_install"
   fi
 }
 trap cleanup EXIT
@@ -107,13 +114,49 @@ write_manifest() {
     printf '{\n'
     printf '  "owner": "%s",\n' "$owner"
     printf '  "version": "%s",\n' "$version"
-    printf '  "schema": "%s",\n' "$schema"
+    printf '  "write_schema": "%s",\n' "$schema"
+    printf '  "read_schemas": "%s",\n' "$read_schemas"
+    printf '  "role_api": %s,\n' "$role_api"
+    printf '  "upgrade_from_v1": %s,\n' "$upgrade_from_v1"
+    printf '  "publish": false,\n'
     printf '  "asset": "%s",\n' "$(asset_for_host)"
     printf '  "sha256": "%s"\n' "$digest"
     printf '}\n'
   } >"$temporary"
   chmod 600 "$temporary"
   mv -fT -- "$temporary" "$manifest"
+}
+
+validate_candidate() {
+  local candidate="$1"
+  local reported_version probe_output
+  reported_version="$("$candidate" --version 2>/dev/null)" || {
+    printf 'setup-dvandva: version_mismatch expected=%s reported=unavailable\n' "$version" >&2
+    exit 1
+  }
+  test "$reported_version" = "dvandva-v4 $version" || {
+    printf 'setup-dvandva: version_mismatch expected=%s reported=%s\n' \
+      "$version" "$reported_version" >&2
+    exit 1
+  }
+  probe_output="$("$candidate" probe --expected-schema "$schema" \
+    --expected-role-api "$role_api" 2>/dev/null)" || {
+    printf 'setup-dvandva: probe_mismatch expected_schema=%s expected_role_api=%s\n' \
+      "$schema" "$role_api" >&2
+    exit 1
+  }
+  grep -Fq '"package": "dvandva-v4"' <<<"$probe_output" &&
+    grep -Fq "\"version\": \"$version\"" <<<"$probe_output" &&
+    grep -Fq "\"write_schema\": \"$schema\"" <<<"$probe_output" &&
+    grep -Fq '"dvandva.run.v2"' <<<"$probe_output" &&
+    grep -Fq '"dvandva.run.v1"' <<<"$probe_output" &&
+    grep -Fq '"role_api": 2' <<<"$probe_output" &&
+    grep -Fq '"upgrade_from_v1": true' <<<"$probe_output" &&
+    grep -Fq '"compatible": true' <<<"$probe_output" || {
+      printf 'setup-dvandva: probe_mismatch expected_schema=%s expected_role_api=%s\n' \
+        "$schema" "$role_api" >&2
+      exit 1
+    }
 }
 
 install_release() {
@@ -143,26 +186,25 @@ install_release() {
       printf 'setup-dvandva: refusing to replace version %s in place\n' "$version" >&2
       exit 1
     }
+    validate_candidate "$binary"
   else
     local staged="$bin_root/.$version.$$.tmp"
-    local probe_output
+    staged_install="$staged"
     mkdir "$staged"
     install -m 755 "$download_dir/$asset" "$staged/dvandva-kernel"
     printf '%s\n' "$owner" >"$staged/.owner"
     chmod 600 "$staged/.owner"
-    probe_output="$("$staged/dvandva-kernel" probe --expected-schema "$schema")"
-    grep -Fq '"compatible": true' <<<"$probe_output"
+    validate_candidate "$staged/dvandva-kernel"
     mv -- "$staged" "$version_dir"
+    staged_install=""
   fi
 
   local current_tmp="$bin_root/.current.$$.tmp"
   ln -s "$version" "$current_tmp"
   mv -fT -- "$current_tmp" "$bin_root/current"
-  mkdir -p "$state_root/runs" "$state_root/credentials"
-  chmod 700 "$state_root" "$state_root/runs" "$state_root/credentials"
   write_manifest "$digest"
-  printf 'setup-dvandva: installed version=%s schema=%s sha256=%s binary=%s\n' \
-    "$version" "$schema" "$digest" "$binary"
+  printf 'setup-dvandva: installed version=%s write_schema=%s role_api=%s read_schemas=%s upgrade_from_v1=%s publish=false sha256=%s binary=%s\n' \
+    "$version" "$schema" "$role_api" "$read_schemas" "$upgrade_from_v1" "$digest" "$binary"
 }
 
 doctor() {
@@ -170,10 +212,10 @@ doctor() {
     printf 'setup-dvandva: unhealthy reason=installation_manifest_missing\n' >&2
     exit 1
   }
-  local installed_version installed_digest installed_schema probe_output
+  local installed_version installed_digest installed_schema
   installed_version="$(manifest_value version)"
   installed_digest="$(manifest_value sha256)"
-  installed_schema="$(manifest_value schema)"
+  installed_schema="$(manifest_value write_schema)"
   test "$installed_version" = "$version" || {
     printf 'setup-dvandva: unhealthy reason=version_mismatch expected=%s installed=%s\n' "$version" "$installed_version" >&2
     exit 1
@@ -194,15 +236,9 @@ doctor() {
     printf 'setup-dvandva: unhealthy reason=checksum_mismatch\n' >&2
     exit 1
   }
-  probe_output="$("$binary" probe --expected-schema "$schema")" || {
-    printf 'setup-dvandva: unhealthy reason=incompatible_probe\n' >&2
-    exit 1
-  }
-  grep -Fq '"compatible": true' <<<"$probe_output" || {
-    printf 'setup-dvandva: unhealthy reason=incompatible_probe\n' >&2
-    exit 1
-  }
-  printf 'setup-dvandva: healthy version=%s schema=%s binary=%s\n' "$version" "$schema" "$binary"
+  validate_candidate "$binary"
+  printf 'setup-dvandva: healthy version=%s write_schema=%s role_api=%s read_schemas=%s upgrade_from_v1=%s publish=false binary=%s\n' \
+    "$version" "$schema" "$role_api" "$read_schemas" "$upgrade_from_v1" "$binary"
 }
 
 uninstall_owned() {

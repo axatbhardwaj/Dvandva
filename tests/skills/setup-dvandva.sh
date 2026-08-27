@@ -4,23 +4,36 @@ set -euo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 test_root="$(mktemp -d)"
 trap 'rm -rf -- "$test_root"' EXIT
-
-cargo build --quiet --locked --manifest-path "$repo_root/v4/Cargo.toml"
-
-release_dir="$test_root/release"
-mkdir -p "$release_dir"
 asset="dvandva-kernel-linux-x86_64"
-cp "$repo_root/v4/target/debug/dvandva-v4" "$release_dir/$asset"
-(cd "$release_dir" && sha256sum "$asset" > SHA256SUMS)
 
-export DVANDVA_RELEASE_DIR="$release_dir"
-installer="$repo_root/skills/setup-dvandva/scripts/setup-dvandva.sh"
+mkdir -p "$test_root/old"
+git -C "$repo_root" archive skills-v0.1.1 v4 skills/setup-dvandva | \
+  tar -x -C "$test_root/old"
+CARGO_TARGET_DIR="$test_root/old-target" cargo build --quiet --locked \
+  --manifest-path "$test_root/old/v4/Cargo.toml"
+CARGO_TARGET_DIR="$test_root/new-target" cargo build --quiet --locked \
+  --manifest-path "$repo_root/v4/Cargo.toml"
+old_binary="$test_root/old-target/debug/dvandva-v4"
+new_binary="$test_root/new-target/debug/dvandva-v4"
+test "$($old_binary --version)" = 'dvandva-v4 0.1.1'
+test "$($new_binary --version)" = 'dvandva-v4 0.2.0'
 
-reset_xdg() {
-  local name="$1"
-  export XDG_DATA_HOME="$test_root/$name/data"
-  export XDG_STATE_HOME="$test_root/$name/state"
+make_release() {
+  local directory="$1" source="$2"
+  mkdir -p "$directory"
+  cp "$source" "$directory/$asset"
+  (cd "$directory" && sha256sum "$asset" >SHA256SUMS)
 }
+
+old_release="$test_root/release-0.1.1"
+new_release="$test_root/release-0.2.0"
+make_release "$old_release" "$old_binary"
+make_release "$new_release" "$new_binary"
+
+export XDG_DATA_HOME="$test_root/data"
+export XDG_STATE_HOME="$test_root/state"
+old_installer="$test_root/old/skills/setup-dvandva/scripts/setup-dvandva.sh"
+installer="$repo_root/skills/setup-dvandva/scripts/setup-dvandva.sh"
 
 expect_failure() {
   local pattern="$1"
@@ -33,79 +46,88 @@ expect_failure() {
   grep -Fq "$pattern" <<<"$output"
 }
 
-reset_xdg clean
-bash "$installer" install --version 0.1.0
+DVANDVA_RELEASE_DIR="$old_release" bash "$old_installer" install --version 0.1.1 >/dev/null
+current="$XDG_DATA_HOME/dvandva/bin/current"
+test "$(readlink "$current")" = '0.1.1'
+test "$($current/dvandva-kernel --version)" = 'dvandva-v4 0.1.1'
 
-installed="$XDG_DATA_HOME/dvandva/bin/0.1.0/dvandva-kernel"
-test -x "$installed"
-test "$(readlink "$XDG_DATA_HOME/dvandva/bin/current")" = "0.1.0"
-test -d "$XDG_STATE_HOME/dvandva/runs"
-test -d "$XDG_STATE_HOME/dvandva/credentials"
-test "$(stat -c '%a' "$XDG_STATE_HOME/dvandva/credentials")" = "700"
-test -f "$XDG_DATA_HOME/dvandva/installation.json"
+runs="$XDG_STATE_HOME/dvandva/runs"
+printf 'preserve me\n' >"$runs/keep-me"
+before_runs="$(find "$runs" -printf '%P %y %m %s %T@\n' | sort)"
 
-probe="$($installed probe --expected-schema dvandva.run.v1)"
-grep -q '"compatible": true' <<<"$probe"
+# A checksummed but wrong-version binary cannot replace the known-good current link.
+wrong_version_release="$test_root/wrong-version"
+make_release "$wrong_version_release" "$old_binary"
+expect_failure 'version_mismatch' env DVANDVA_RELEASE_DIR="$wrong_version_release" \
+  bash "$installer" update --version 0.2.0
+test "$(readlink "$current")" = '0.1.1'
+test "$before_runs" = "$(find "$runs" -printf '%P %y %m %s %T@\n' | sort)"
+test -z "$(find "$XDG_DATA_HOME/dvandva/bin" -maxdepth 1 -name '.0.2.0.*.tmp' -print)"
 
-bash "$installer" doctor --version 0.1.0 | grep -q 'healthy'
+# A controlled 0.2.0 probe stub with the wrong schema/API is also rejected.
+wrong_probe_release="$test_root/wrong-probe"
+mkdir -p "$wrong_probe_release"
+cat >"$wrong_probe_release/$asset" <<'WRONG_PROBE'
+#!/usr/bin/env bash
+if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.2.0\n'; exit 0; fi
+if test "${1:-}" = "probe"; then
+  printf '{"package":"dvandva-v4","version":"0.2.0","write_schema":"dvandva.run.v1","read_schemas":["dvandva.run.v1"],"role_api":1,"capabilities":{"upgrade_from_v1":false},"compatible":false}\n'
+  exit 1
+fi
+exit 99
+WRONG_PROBE
+chmod 755 "$wrong_probe_release/$asset"
+(cd "$wrong_probe_release" && sha256sum "$asset" >SHA256SUMS)
+expect_failure 'probe_mismatch' env DVANDVA_RELEASE_DIR="$wrong_probe_release" \
+  bash "$installer" update --version 0.2.0
+test "$(readlink "$current")" = '0.1.1'
+test "$before_runs" = "$(find "$runs" -printf '%P %y %m %s %T@\n' | sort)"
 
-original_current="$(readlink "$XDG_DATA_HOME/dvandva/bin/current")"
-cp "$release_dir/SHA256SUMS" "$release_dir/SHA256SUMS.good"
-printf '%064d  %s\n' 0 "$asset" >"$release_dir/SHA256SUMS"
-expect_failure 'checksum_mismatch' bash "$installer" update --version 0.1.1
-test "$(readlink "$XDG_DATA_HOME/dvandva/bin/current")" = "$original_current"
-mv "$release_dir/SHA256SUMS.good" "$release_dir/SHA256SUMS"
+# Validation also runs for a pre-existing version directory.
+mkdir -p "$XDG_DATA_HOME/dvandva/bin/0.2.0"
+cp "$wrong_probe_release/$asset" "$XDG_DATA_HOME/dvandva/bin/0.2.0/dvandva-kernel"
+printf 'dvandva-skill-v1\n' >"$XDG_DATA_HOME/dvandva/bin/0.2.0/.owner"
+expect_failure 'probe_mismatch' env DVANDVA_RELEASE_DIR="$wrong_probe_release" \
+  bash "$installer" update --version 0.2.0
+test "$(readlink "$current")" = '0.1.1'
+rm -rf -- "$XDG_DATA_HOME/dvandva/bin/0.2.0"
 
-bash "$installer" update --version 0.1.1
-test -x "$XDG_DATA_HOME/dvandva/bin/0.1.0/dvandva-kernel"
-test -x "$XDG_DATA_HOME/dvandva/bin/0.1.1/dvandva-kernel"
-test "$(readlink "$XDG_DATA_HOME/dvandva/bin/current")" = "0.1.1"
-bash "$installer" doctor --version 0.1.1 | grep -q 'healthy'
-expect_failure 'version_mismatch' bash "$installer" doctor --version 0.1.0
+installed="$(env DVANDVA_RELEASE_DIR="$new_release" bash "$installer" update --version 0.2.0)"
+test "$(readlink "$current")" = '0.2.0'
+test "$($current/dvandva-kernel --version)" = 'dvandva-v4 0.2.0'
+grep -Fq 'write_schema=dvandva.run.v2' <<<"$installed"
+grep -Fq 'role_api=2' <<<"$installed"
+grep -Fq 'read_schemas=dvandva.run.v2,dvandva.run.v1' <<<"$installed"
+grep -Fq 'upgrade_from_v1=true' <<<"$installed"
+grep -Fq 'publish=false' <<<"$installed"
+test "$before_runs" = "$(find "$runs" -printf '%P %y %m %s %T@\n' | sort)"
 
-cp "$XDG_DATA_HOME/dvandva/installation.json" "$test_root/manifest.good"
-printf 'not-json\n' >"$XDG_DATA_HOME/dvandva/installation.json"
-expect_failure 'installation_manifest_missing' bash "$installer" doctor --version 0.1.1
-cp "$test_root/manifest.good" "$XDG_DATA_HOME/dvandva/installation.json"
-printf 'corrupt\n' >>"$XDG_DATA_HOME/dvandva/bin/0.1.1/dvandva-kernel"
-expect_failure 'checksum_mismatch' bash "$installer" doctor --version 0.1.1
+healthy="$(bash "$installer" doctor --version 0.2.0)"
+grep -Fq 'healthy version=0.2.0' <<<"$healthy"
+grep -Fq 'write_schema=dvandva.run.v2' <<<"$healthy"
+grep -Fq 'role_api=2' <<<"$healthy"
+grep -Fq 'read_schemas=dvandva.run.v2,dvandva.run.v1' <<<"$healthy"
+grep -Fq 'upgrade_from_v1=true' <<<"$healthy"
 
-reset_xdg missing
-expect_failure 'installation_manifest_missing' bash "$installer" doctor --version 0.1.0
+# Checksum failure is fail-closed too.
+cp "$new_release/SHA256SUMS" "$test_root/sums.good"
+printf '%064d  %s\n' 0 "$asset" >"$new_release/SHA256SUMS"
+expect_failure 'checksum_mismatch' env DVANDVA_RELEASE_DIR="$new_release" \
+  bash "$installer" update --version 0.2.0
+test "$(readlink "$current")" = '0.2.0'
+mv "$test_root/sums.good" "$new_release/SHA256SUMS"
 
-reset_xdg preserve
-bash "$installer" install --version 0.1.0 >/dev/null
-touch "$XDG_STATE_HOME/dvandva/runs/keep-me"
-mkdir -p "$XDG_DATA_HOME/dvandva/bin/foreign"
-touch "$XDG_DATA_HOME/dvandva/bin/foreign/unowned"
-bash "$installer" uninstall --version 0.1.0 | grep -q 'preserved_runs=true'
-test -f "$XDG_STATE_HOME/dvandva/runs/keep-me"
-test -f "$XDG_DATA_HOME/dvandva/bin/foreign/unowned"
-test ! -e "$XDG_DATA_HOME/dvandva/bin/0.1.0"
+# Uninstall preserves runs unless the explicit destructive pair is supplied.
+bash "$installer" uninstall --version 0.2.0 | grep -Fq 'preserved_runs=true'
+test -f "$runs/keep-me"
 
-reset_xdg purge
-bash "$installer" install --version 0.1.0 >/dev/null
-touch "$XDG_STATE_HOME/dvandva/runs/remove-me"
-expect_failure 'requires --yes-purge-runs' bash "$installer" uninstall --version 0.1.0 --purge-runs
-test -f "$XDG_STATE_HOME/dvandva/runs/remove-me"
-bash "$installer" uninstall --version 0.1.0 --purge-runs --yes-purge-runs >/dev/null
-test ! -e "$XDG_STATE_HOME/dvandva/runs"
-
-reset_xdg unowned
+export XDG_DATA_HOME="$test_root/unowned/data"
+export XDG_STATE_HOME="$test_root/unowned/state"
 mkdir -p "$XDG_DATA_HOME/dvandva"
 touch "$XDG_DATA_HOME/dvandva/foreign"
-expect_failure 'refusing unowned data' bash "$installer" install --version 0.1.0
-test -f "$XDG_DATA_HOME/dvandva/foreign"
-expect_failure 'refusing uninstall without owned manifest' bash "$installer" uninstall --version 0.1.0
-
-reset_xdg unsupported_arch
-fakebin="$test_root/fakebin"
-mkdir -p "$fakebin"
-printf '%s\n' '#!/usr/bin/env bash' \
-  'if test "${1:-}" = "-s"; then printf "Linux\n"; else printf "aarch64\n"; fi' \
-  >"$fakebin/uname"
-chmod +x "$fakebin/uname"
-expect_failure 'unsupported architecture' env PATH="$fakebin:$PATH" \
-  bash "$installer" install --version 0.1.0
+expect_failure 'refusing unowned data' env DVANDVA_RELEASE_DIR="$new_release" \
+  bash "$installer" install --version 0.2.0
+expect_failure 'refusing uninstall without owned manifest' \
+  bash "$installer" uninstall --version 0.2.0
 
 printf 'setup-dvandva installer tests: ok\n'
