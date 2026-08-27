@@ -8,14 +8,14 @@ use crate::action::Action;
 use crate::claim::{self, ClaimError, Role};
 use crate::discovery::{self, DiscoveryError, DiscoveryQuery};
 use crate::identity::{self, IdentityError};
-use crate::model::{RunBaton, TaskIdentity, WorkspaceIdentity};
-use crate::role_session::{self, RoleSessionError};
+use crate::model::{RunBaton, TaskIdentity, WorkspaceIdentity, SCHEMA};
+use crate::role_session::{self, RoleSessionError, RoleStartRequest};
 use crate::store::{RunChannel, StoreError};
 use crate::transition::{self, TransitionError};
 use crate::wait::{self, WaitError};
 
 #[derive(Debug, Parser)]
-#[command(name = "dvandva-v4")]
+#[command(name = "dvandva-v4", version)]
 pub struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -23,6 +23,10 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    Probe {
+        #[arg(long)]
+        expected_schema: String,
+    },
     Identify {
         #[arg(long)]
         workspace: PathBuf,
@@ -32,20 +36,28 @@ enum Command {
         runs_dir: PathBuf,
         #[arg(long)]
         repository_id: String,
-        #[arg(long)]
+        #[arg(long, alias = "harness")]
         reviewer_harness: String,
+        #[arg(long, default_value = "reviewer")]
+        role: Role,
         #[arg(long)]
         task_reference: Option<String>,
+        #[arg(long)]
+        session_id: Option<String>,
     },
     DiscoverWait {
         #[arg(long)]
         runs_dir: PathBuf,
         #[arg(long)]
         repository_id: String,
-        #[arg(long)]
+        #[arg(long, alias = "harness")]
         reviewer_harness: String,
+        #[arg(long, default_value = "reviewer")]
+        role: Role,
         #[arg(long)]
         task_reference: Option<String>,
+        #[arg(long)]
+        session_id: Option<String>,
         #[arg(long, default_value_t = 1000)]
         poll_interval_ms: u64,
         #[arg(long, default_value_t = 300_000)]
@@ -159,6 +171,36 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum RoleCommand {
+    Start {
+        #[arg(long)]
+        workspace: PathBuf,
+        #[arg(long)]
+        runs_dir: PathBuf,
+        #[arg(long)]
+        credentials_root: PathBuf,
+        #[arg(long)]
+        role: Role,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        current_harness: String,
+        #[arg(long)]
+        peer_harness: String,
+        #[arg(long)]
+        objective: String,
+        #[arg(long)]
+        task_reference: Option<String>,
+        #[arg(long, default_value_t = 300)]
+        lease_seconds: u64,
+        #[arg(long)]
+        wait: bool,
+        #[arg(long, default_value_t = 1000)]
+        poll_interval_ms: u64,
+        #[arg(long, default_value_t = 300_000)]
+        timeout_ms: u64,
+        #[arg(long)]
+        new_run: bool,
+    },
     Claim {
         #[arg(long)]
         run_dir: PathBuf,
@@ -271,8 +313,26 @@ struct Diagnostic<'a> {
     message: String,
 }
 
+#[derive(Serialize)]
+struct Probe<'a> {
+    package: &'a str,
+    version: &'a str,
+    schema: &'a str,
+    compatible: bool,
+}
+
 pub fn run() -> Result<(), CliError> {
     match Cli::parse().command {
+        Command::Probe { expected_schema } => {
+            let probe = Probe {
+                package: env!("CARGO_PKG_NAME"),
+                version: env!("CARGO_PKG_VERSION"),
+                schema: SCHEMA,
+                compatible: expected_schema == SCHEMA,
+            };
+            println!("{}", serde_json::to_string_pretty(&probe)?);
+            Ok(())
+        }
         Command::Identify { workspace } => {
             println!(
                 "{}",
@@ -284,14 +344,18 @@ pub fn run() -> Result<(), CliError> {
             runs_dir,
             repository_id,
             reviewer_harness,
+            role,
             task_reference,
+            session_id,
         } => {
             let outcome = discovery::discover(
                 &runs_dir,
                 DiscoveryQuery {
                     repository_id: &repository_id,
-                    reviewer_harness: &reviewer_harness,
+                    role,
+                    participant_harness: &reviewer_harness,
                     task_reference: task_reference.as_deref(),
+                    session_id: session_id.as_deref(),
                 },
             )?;
             println!("{}", serde_json::to_string_pretty(&outcome)?);
@@ -301,7 +365,9 @@ pub fn run() -> Result<(), CliError> {
             runs_dir,
             repository_id,
             reviewer_harness,
+            role,
             task_reference,
+            session_id,
             poll_interval_ms,
             timeout_ms,
             poll_only,
@@ -310,8 +376,10 @@ pub fn run() -> Result<(), CliError> {
                 &runs_dir,
                 DiscoveryQuery {
                     repository_id: &repository_id,
-                    reviewer_harness: &reviewer_harness,
+                    role,
+                    participant_harness: &reviewer_harness,
                     task_reference: task_reference.as_deref(),
+                    session_id: session_id.as_deref(),
                 },
                 std::time::Duration::from_millis(poll_interval_ms.max(1)),
                 std::time::Duration::from_millis(timeout_ms),
@@ -321,6 +389,41 @@ pub fn run() -> Result<(), CliError> {
             Ok(())
         }
         Command::Role { command } => match command {
+            RoleCommand::Start {
+                workspace,
+                runs_dir,
+                credentials_root,
+                role,
+                session_id,
+                current_harness,
+                peer_harness,
+                objective,
+                task_reference,
+                lease_seconds,
+                wait,
+                poll_interval_ms,
+                timeout_ms,
+                new_run,
+            } => {
+                let result = role_session::start(RoleStartRequest {
+                    workspace: &workspace,
+                    runs_dir: &runs_dir,
+                    credentials_root: &credentials_root,
+                    role,
+                    session_id: &session_id,
+                    current_harness: &current_harness,
+                    peer_harness: &peer_harness,
+                    objective: &objective,
+                    task_reference: task_reference.as_deref(),
+                    lease_seconds,
+                    wait,
+                    poll_interval: std::time::Duration::from_millis(poll_interval_ms.max(1)),
+                    timeout: std::time::Duration::from_millis(timeout_ms),
+                    new_run,
+                })?;
+                println!("{}", serde_json::to_string_pretty(&result)?);
+                Ok(())
+            }
             RoleCommand::Claim {
                 run_dir,
                 role,
@@ -597,6 +700,9 @@ pub fn print_error(error: &CliError) {
         CliError::RoleSession(RoleSessionError::Credential(_)) => "credential_error",
         CliError::RoleSession(RoleSessionError::Transition(_)) => "transition_error",
         CliError::RoleSession(RoleSessionError::Wait(_)) => "wait_error",
+        CliError::RoleSession(RoleSessionError::Identity(_)) => "repository_error",
+        CliError::RoleSession(RoleSessionError::Discovery(_)) => "discovery_error",
+        CliError::RoleSession(RoleSessionError::Invalid(_)) => "invalid_input",
         CliError::Store(StoreError::RunExists) => "run_exists",
         CliError::Store(StoreError::RunMissing) => "run_missing",
         CliError::Store(StoreError::RevisionConflict { .. }) => "revision_conflict",

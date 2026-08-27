@@ -628,3 +628,338 @@ fn relative_run_paths_are_canonicalized_in_credentials() {
     .unwrap();
     assert!(std::path::Path::new(private["run_dir"].as_str().unwrap()).is_absolute());
 }
+
+#[test]
+fn worker_start_creates_claims_and_idempotently_resumes_one_run() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    let runs = root.path().join("state/runs");
+    let credentials = root.path().join("state/credentials");
+    std::fs::create_dir(&workspace).unwrap();
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&workspace)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    };
+    git(&["init", "--quiet"]);
+    git(&[
+        "remote",
+        "add",
+        "origin",
+        "git@github.com:axatbhardwaj/Dvandva.git",
+    ]);
+
+    let start = || {
+        command()
+            .args([
+                "role",
+                "start",
+                "--workspace",
+                workspace.to_str().unwrap(),
+                "--runs-dir",
+                runs.to_str().unwrap(),
+                "--credentials-root",
+                credentials.to_str().unwrap(),
+                "--role",
+                "worker",
+                "--session-id",
+                "worker-session",
+                "--current-harness",
+                "codex",
+                "--peer-harness",
+                "claude",
+                "--objective",
+                "Implement DEF-123",
+                "--task-reference",
+                "DEF-123",
+                "--lease-seconds",
+                "300",
+            ])
+            .output()
+            .unwrap()
+    };
+
+    let created = start();
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let created: serde_json::Value = serde_json::from_slice(&created.stdout).unwrap();
+    assert_eq!(created["outcome"], "started");
+    assert_eq!(created["disposition"], "created");
+    assert_eq!(created["revision"], 1);
+    let run_id = created["run_id"].as_str().unwrap();
+    let run_dir = runs.join(run_id);
+    assert_eq!(created["run_dir"], run_dir.to_str().unwrap());
+
+    let resumed = start();
+    assert!(
+        resumed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resumed.stderr)
+    );
+    let resumed: serde_json::Value = serde_json::from_slice(&resumed.stdout).unwrap();
+    assert_eq!(resumed["outcome"], "started");
+    assert_eq!(resumed["disposition"], "resumed");
+    assert_eq!(resumed["run_id"], run_id);
+    assert_eq!(std::fs::read_dir(&runs).unwrap().count(), 1);
+
+    let baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(run_dir.join("baton.json")).unwrap()).unwrap();
+    assert_eq!(
+        baton["workspace"]["repository_id"],
+        "github.com/axatbhardwaj/dvandva"
+    );
+    assert_eq!(baton["task"]["reference"], "DEF-123");
+    assert_eq!(baton["participants"]["worker"]["harness"], "codex");
+    assert_eq!(baton["participants"]["reviewer"]["harness"], "claude");
+    assert_eq!(
+        baton["participants"]["worker"]["claim"]["session_id"],
+        "worker-session"
+    );
+
+    let separate = command()
+        .args([
+            "role",
+            "start",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-session",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--objective",
+            "Implement DEF-123",
+            "--task-reference",
+            "DEF-123",
+            "--new-run",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        separate.status.success(),
+        "{}",
+        String::from_utf8_lossy(&separate.stderr)
+    );
+    let separate: serde_json::Value = serde_json::from_slice(&separate.stdout).unwrap();
+    assert_eq!(separate["disposition"], "created");
+    assert_ne!(separate["run_id"], run_id);
+    assert_eq!(std::fs::read_dir(&runs).unwrap().count(), 2);
+}
+
+#[test]
+fn reviewer_start_waits_without_model_polling_and_joins_the_created_run() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    let runs = root.path().join("state/runs");
+    let credentials = root.path().join("state/credentials");
+    std::fs::create_dir(&workspace).unwrap();
+    let git = |args: &[&str]| {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&workspace)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+    };
+    git(&["init", "--quiet"]);
+    git(&[
+        "remote",
+        "add",
+        "origin",
+        "git@github.com:axatbhardwaj/Dvandva.git",
+    ]);
+
+    let reviewer = std::process::Command::new(env!("CARGO_BIN_EXE_dvandva-v4"))
+        .args([
+            "role",
+            "start",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "reviewer",
+            "--session-id",
+            "reviewer-session",
+            "--current-harness",
+            "claude",
+            "--peer-harness",
+            "codex",
+            "--objective",
+            "Implement DEF-123",
+            "--task-reference",
+            "DEF-123",
+            "--wait",
+            "--poll-interval-ms",
+            "25",
+            "--timeout-ms",
+            "3000",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let worker = command()
+        .args([
+            "role",
+            "start",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-session",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--objective",
+            "Implement DEF-123",
+            "--task-reference",
+            "DEF-123",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        worker.status.success(),
+        "{}",
+        String::from_utf8_lossy(&worker.stderr)
+    );
+    let worker: serde_json::Value = serde_json::from_slice(&worker.stdout).unwrap();
+
+    let reviewer = reviewer.wait_with_output().unwrap();
+    assert!(
+        reviewer.status.success(),
+        "{}",
+        String::from_utf8_lossy(&reviewer.stderr)
+    );
+    let reviewer: serde_json::Value = serde_json::from_slice(&reviewer.stdout).unwrap();
+    assert_eq!(reviewer["outcome"], "started");
+    assert_eq!(reviewer["disposition"], "claimed");
+    assert_eq!(reviewer["run_id"], worker["run_id"]);
+    assert!(matches!(reviewer["revision"].as_u64(), Some(1 | 2)));
+    assert_eq!(std::fs::read_dir(&runs).unwrap().count(), 1);
+    let run_dir = runs.join(worker["run_id"].as_str().unwrap());
+    let baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(run_dir.join("baton.json")).unwrap()).unwrap();
+    assert_eq!(baton["revision"], 2);
+    assert_eq!(
+        baton["participants"]["worker"]["claim"]["session_id"],
+        "worker-session"
+    );
+    assert_eq!(
+        baton["participants"]["reviewer"]["claim"]["session_id"],
+        "reviewer-session"
+    );
+}
+
+#[test]
+fn worker_start_rejects_unsafe_session_ids_before_creating_a_run() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    let runs = root.path().join("state/runs");
+    let credentials = root.path().join("state/credentials");
+    std::fs::create_dir(&workspace).unwrap();
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&workspace)
+        .args(["init", "--quiet"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(&workspace)
+        .args([
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:axatbhardwaj/Dvandva.git",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+
+    command()
+        .args([
+            "role",
+            "start",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "../escape",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--objective",
+            "Implement DEF-123",
+            "--task-reference",
+            "DEF-123",
+        ])
+        .assert()
+        .failure();
+    assert!(!runs.exists() || std::fs::read_dir(&runs).unwrap().next().is_none());
+
+    command()
+        .args([
+            "role",
+            "start",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-session",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--objective",
+            "Implement DEF-123",
+            "--task-reference",
+            "DEF-123",
+            "--lease-seconds",
+            "0",
+        ])
+        .assert()
+        .failure();
+    assert!(!runs.exists() || std::fs::read_dir(&runs).unwrap().next().is_none());
+}

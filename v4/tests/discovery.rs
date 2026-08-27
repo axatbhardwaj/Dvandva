@@ -424,3 +424,48 @@ fn discovery_wait_fails_closed_on_a_corrupt_baton() {
     assert_eq!(outcome["outcome"], "corrupt");
     assert_eq!(outcome["corrupt"].as_array().unwrap().len(), 1);
 }
+
+#[test]
+fn worker_discovery_is_independent_of_a_live_reviewer_claim() {
+    let root = tempfile::tempdir().unwrap();
+    let run_dir = create_run(
+        root.path(),
+        "def-123-worker",
+        REPOSITORY_ID,
+        Some("DEF-123"),
+        "claude",
+    );
+    claim::claim(
+        &RunChannel::open(&run_dir),
+        Role::Reviewer,
+        "reviewer-session",
+        300,
+        0,
+    )
+    .unwrap();
+
+    let output = command()
+        .args([
+            "discover",
+            "--runs-dir",
+            root.path().to_str().unwrap(),
+            "--repository-id",
+            REPOSITORY_ID,
+            "--role",
+            "worker",
+            "--harness",
+            "codex",
+            "--task-reference",
+            "DEF-123",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let outcome: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(outcome["outcome"], "match");
+    assert_eq!(outcome["candidates"][0]["run_id"], "def-123-worker");
+}

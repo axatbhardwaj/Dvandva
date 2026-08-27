@@ -11,6 +11,7 @@ use thiserror::Error;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
 use crate::{
+    claim::Role,
     model::{RunBaton, Status, SCHEMA},
     store::RunChannel,
 };
@@ -24,8 +25,10 @@ pub enum DiscoveryError {
 #[derive(Debug, Clone, Copy)]
 pub struct DiscoveryQuery<'a> {
     pub repository_id: &'a str,
-    pub reviewer_harness: &'a str,
+    pub role: Role,
+    pub participant_harness: &'a str,
     pub task_reference: Option<&'a str>,
+    pub session_id: Option<&'a str>,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -45,6 +48,15 @@ pub struct RunCandidate {
     pub task_summary: String,
     pub status: Status,
     pub revision: u64,
+    pub claim_state: ClaimState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ClaimState {
+    Unclaimed,
+    Expired,
+    Owned,
 }
 
 #[derive(Debug, Serialize)]
@@ -160,12 +172,14 @@ fn candidate(
         .task
         .as_ref()
         .ok_or_else(|| "baton has no task identity".to_owned())?;
+    let participant = match query.role {
+        Role::Worker => &baton.participants.worker,
+        Role::Reviewer => &baton.participants.reviewer,
+    };
     if workspace.repository_id != query.repository_id
-        || !baton
-            .participants
-            .reviewer
+        || !participant
             .harness
-            .eq_ignore_ascii_case(query.reviewer_harness)
+            .eq_ignore_ascii_case(query.participant_harness)
         || query.task_reference.is_some_and(|expected| {
             !task
                 .reference
@@ -175,13 +189,23 @@ fn candidate(
     {
         return Ok(None);
     }
-    if let Some(claim) = baton.participants.reviewer.claim.as_ref() {
-        let expiry = OffsetDateTime::parse(&claim.lease_expires_at, &Rfc3339)
-            .map_err(|_| "reviewer claim has an invalid expiry".to_owned())?;
-        if expiry > OffsetDateTime::now_utc() {
-            return Ok(None);
+    let claim_state = match participant.claim.as_ref() {
+        None => ClaimState::Unclaimed,
+        Some(claim) => {
+            let expiry = OffsetDateTime::parse(&claim.lease_expires_at, &Rfc3339)
+                .map_err(|_| "participant claim has an invalid expiry".to_owned())?;
+            if expiry <= OffsetDateTime::now_utc() {
+                ClaimState::Expired
+            } else if query
+                .session_id
+                .is_some_and(|session_id| claim.session_id == session_id)
+            {
+                ClaimState::Owned
+            } else {
+                return Ok(None);
+            }
         }
-    }
+    };
     Ok(Some(RunCandidate {
         run_id: baton.run_id,
         run_dir: run_dir.to_owned(),
@@ -189,6 +213,7 @@ fn candidate(
         task_summary: task.summary.clone(),
         status: baton.status,
         revision: baton.revision,
+        claim_state,
     }))
 }
 
