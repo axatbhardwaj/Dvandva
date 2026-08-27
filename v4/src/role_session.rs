@@ -294,10 +294,11 @@ fn start_with_retries(
                 }
                 Err(error) => return Err(error),
             };
-            started_role(
-                "created",
+            finish_created_start(
                 &run_dir,
+                request.credentials_root,
                 request.role,
+                request.session_id,
                 grant.credential,
                 request.role == Role::Worker,
             )
@@ -322,7 +323,8 @@ fn retry_start_conflict(
 fn is_revision_conflict(error: &RoleSessionError) -> bool {
     matches!(
         error,
-        RoleSessionError::Claim(ClaimError::Store(StoreError::RevisionConflict { .. }))
+        RoleSessionError::Store(StoreError::RevisionConflict { .. })
+            | RoleSessionError::Claim(ClaimError::Store(StoreError::RevisionConflict { .. }))
     )
 }
 
@@ -333,7 +335,7 @@ fn start_candidate(
     session_id: &str,
     lease_seconds: u64,
 ) -> Result<RoleStartResult, RoleSessionError> {
-    let (disposition, revision, credential_path) = match candidate.claim_state {
+    let (disposition, expected_revision, credential_path) = match candidate.claim_state {
         ClaimState::Unclaimed => {
             let grant = claim(
                 &candidate.run_dir,
@@ -357,9 +359,8 @@ fn start_candidate(
             ("reclaimed", grant.revision, grant.credential)
         }
         ClaimState::Owned => {
-            let baton = read(&candidate.run_dir, credentials_root, role, session_id)?;
             let path = credential::path(credentials_root, session_id, &candidate.run_id, role)?;
-            ("resumed", baton.baton.revision, path)
+            ("resumed", candidate.revision, path)
         }
         ClaimState::Busy => {
             return Err(RoleSessionError::Invalid(
@@ -367,38 +368,79 @@ fn start_candidate(
             ));
         }
     };
-    let _ = revision;
-    started_role(
-        disposition,
+    let snapshot = read_snapshot_at_revision(
         &candidate.run_dir,
+        credentials_root,
         role,
+        session_id,
+        expected_revision,
+    )?;
+    Ok(started_role(
+        disposition,
+        snapshot,
         credential_path,
         role == Role::Worker,
-    )
+    ))
 }
 
 fn started_role(
     disposition: &'static str,
-    run_dir: &Path,
-    role: Role,
+    snapshot: RoleSnapshot,
     credential: PathBuf,
     include_peer_prompt: bool,
-) -> Result<RoleStartResult, RoleSessionError> {
-    let snapshot = snapshot(RunChannel::open(run_dir).read()?, run_dir, role);
+) -> RoleStartResult {
     let peer_prompt = include_peer_prompt.then(|| {
         format!(
             "Act as prativadi and join Dvandva run {}.",
             snapshot.baton.run_id
         )
     });
-    Ok(RoleStartResult::Started(Box::new(StartedRole {
+    RoleStartResult::Started(Box::new(StartedRole {
         outcome: "started",
         disposition,
         snapshot,
         private_credential_path: credential.clone(),
         credential,
         peer_prompt,
-    })))
+    }))
+}
+
+fn finish_created_start(
+    run_dir: &Path,
+    credentials_root: &Path,
+    role: Role,
+    session_id: &str,
+    credential: PathBuf,
+    include_peer_prompt: bool,
+) -> Result<RoleStartResult, RoleSessionError> {
+    let snapshot = read(run_dir, credentials_root, role, session_id)?;
+    Ok(started_role(
+        "created",
+        snapshot,
+        credential,
+        include_peer_prompt,
+    ))
+}
+
+fn read_snapshot_at_revision(
+    run_dir: &Path,
+    credentials_root: &Path,
+    role: Role,
+    session_id: &str,
+    expected_revision: u64,
+) -> Result<RoleSnapshot, RoleSessionError> {
+    let baton = RunChannel::open(run_dir).read()?;
+    require_current_schema(&baton)?;
+    if baton.revision != expected_revision {
+        return Err(StoreError::RevisionConflict {
+            expected: expected_revision,
+            actual: baton.revision,
+        }
+        .into());
+    }
+    let credential = load_for_run(run_dir, credentials_root, role, session_id, &baton.run_id)?;
+    claim::verify(&baton, role, session_id, &credential.token)?;
+    Ok(snapshot(baton, run_dir, role))
 }
 
 fn scope_matches(
@@ -727,4 +769,191 @@ pub fn upgrade(
             StoreError::InvalidLeaseTimestamp => UpgradeError::InvalidTimestamp,
             other => UpgradeError::Store(other),
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        action::ScopeAmendment,
+        model::{Assignee, WorkspaceIdentity},
+    };
+
+    #[test]
+    fn created_start_accepts_an_immediate_peer_claim_without_recreating() {
+        let root = tempfile::tempdir().unwrap();
+        let runs = root.path().join("runs");
+        let run_dir = runs.join("run-a");
+        let credentials = root.path().join("credentials");
+        let baton = RunBaton::new(
+            "run-a",
+            "Original objective",
+            "codex",
+            "claude",
+            vec![DeliverableRequirement {
+                id: "implementation".to_owned(),
+                description: "Original implementation".to_owned(),
+            }],
+        )
+        .unwrap();
+        RunChannel::open(&run_dir).create(&baton).unwrap();
+        let worker = claim(&run_dir, &credentials, Role::Worker, "worker", 300, 0).unwrap();
+        claim(&run_dir, &credentials, Role::Reviewer, "reviewer", 300, 1).unwrap();
+
+        let result = finish_created_start(
+            &run_dir,
+            &credentials,
+            Role::Worker,
+            "worker",
+            worker.credential,
+            true,
+        )
+        .unwrap();
+        let RoleStartResult::Started(started) = result else {
+            panic!("created run did not return started");
+        };
+        assert_eq!(started.disposition, "created");
+        assert_eq!(started.snapshot.baton.revision, 2);
+        assert_eq!(std::fs::read_dir(&runs).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn resumed_candidate_revision_drift_is_rediscovered_before_snapshot() {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir(&workspace).unwrap();
+        for args in [
+            vec!["init", "--quiet"],
+            vec![
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:axatbhardwaj/Dvandva.git",
+            ],
+        ] {
+            assert!(std::process::Command::new("git")
+                .arg("-C")
+                .arg(&workspace)
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
+        }
+        let workspace_identity = identity::identify(&workspace).unwrap();
+        let runs = root.path().join("runs");
+        let run_dir = runs.join("run-a");
+        let credentials = root.path().join("credentials");
+        let original_scope = [DeliverableRequirement {
+            id: "implementation".to_owned(),
+            description: "Original implementation".to_owned(),
+        }];
+        let baton = RunBaton::new(
+            "run-a",
+            "Original objective",
+            "codex",
+            "claude",
+            original_scope.to_vec(),
+        )
+        .unwrap()
+        .with_discovery_identity(
+            WorkspaceIdentity {
+                repository_id: workspace_identity.repository_id.clone(),
+                origin: workspace_identity.origin.clone(),
+                worktree: workspace_identity.worktree.clone(),
+            },
+            TaskIdentity {
+                reference: Some("DEF-123".to_owned()),
+                summary: "Original objective".to_owned(),
+            },
+        );
+        RunChannel::open(&run_dir).create(&baton).unwrap();
+        claim(&run_dir, &credentials, Role::Worker, "worker", 300, 0).unwrap();
+        let mut discovered = discovery::discover(
+            &runs,
+            DiscoveryQuery {
+                repository_id: &workspace_identity.repository_id,
+                role: Role::Worker,
+                participant_harness: "Codex",
+                task_reference: Some("DEF-123"),
+                run_id: Some("run-a"),
+                session_id: Some("worker"),
+            },
+        )
+        .unwrap();
+        let candidate = discovered.candidates.remove(0);
+        assert_eq!(candidate.revision, 1);
+
+        let private = credential::load(&credentials, "worker", "run-a", Role::Worker).unwrap();
+        let channel = RunChannel::open(&run_dir);
+        transition::apply(
+            &channel,
+            Role::Worker,
+            "worker",
+            &private.token,
+            1,
+            Action::RequestHumanDecision {
+                question: "Use amended scope?".to_owned(),
+                evidence: vec!["new requirement".to_owned()],
+                options: vec!["yes".to_owned(), "no".to_owned()],
+                contact_role: Role::Worker,
+                resume_status: Status::Working,
+                resume_assignee: Assignee::Worker,
+            },
+        )
+        .unwrap();
+        transition::apply(
+            &channel,
+            Role::Worker,
+            "worker",
+            &private.token,
+            2,
+            Action::ResumeHumanDecision {
+                answer: "yes".to_owned(),
+                scope_amendment: Some(ScopeAmendment {
+                    objective: "Amended objective".to_owned(),
+                    objective_refs: Vec::new(),
+                    task_reference: Some("DEF-123".to_owned()),
+                    scope_deliverables: vec![DeliverableRequirement {
+                        id: "implementation".to_owned(),
+                        description: "Amended implementation".to_owned(),
+                    }],
+                }),
+            },
+        )
+        .unwrap();
+
+        let request = RoleStartRequest {
+            workspace: &workspace,
+            runs_dir: &runs,
+            credentials_root: &credentials,
+            role: Role::Worker,
+            session_id: "worker",
+            current_harness: "codex",
+            peer_harness: "claude",
+            objective: Some("Original objective"),
+            objective_refs: &[],
+            task_reference: Some("DEF-123"),
+            run_id: Some("run-a"),
+            lease_seconds: 300,
+            wait: false,
+            poll_interval: Duration::from_millis(1),
+            timeout: Duration::from_millis(1),
+            new_run: false,
+            required_deliverables: &original_scope,
+        };
+        let first = start_candidate(candidate, &credentials, Role::Worker, "worker", 300);
+        let result = retry_start_conflict(first, request, 2).unwrap();
+        match result {
+            RoleStartResult::Discovery(outcome) => {
+                assert_eq!(outcome.outcome, DiscoveryKind::ScopeMismatch);
+                assert_eq!(outcome.candidates[0].revision, 3);
+            }
+            RoleStartResult::Started(started) => panic!(
+                "stale candidate returned resumed snapshot at revision {}",
+                started.snapshot.baton.revision
+            ),
+            RoleStartResult::Upgrade(_) => panic!("unexpected upgrade"),
+        }
+        assert_eq!(std::fs::read_dir(&runs).unwrap().count(), 1);
+    }
 }

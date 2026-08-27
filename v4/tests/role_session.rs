@@ -388,6 +388,70 @@ fn migration_exact_v1_accepts_the_deterministic_default_scope() {
 }
 
 #[test]
+fn migration_broad_start_is_ambiguous_across_multiple_upgrade_candidates() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = initialize_workspace(root.path(), "https://example.com/team/project.git");
+    let runs = root.path().join("runs");
+    write_legacy_run(&runs.join("legacy-run"));
+    let second = runs.join("legacy-second");
+    write_legacy_run(&second);
+    for path in [
+        second.join("baton.json"),
+        second.join("history/00000000000000000000.json"),
+    ] {
+        let mut baton: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        baton["run_id"] = serde_json::json!("legacy-second");
+        std::fs::write(path, serde_json::to_vec_pretty(&baton).unwrap()).unwrap();
+    }
+    let credentials = root.path().join("credentials");
+    let output = command()
+        .args([
+            "role",
+            "start",
+            "--api",
+            "2",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--objective",
+            "Migrate safely",
+            "--task-reference",
+            "DEF-123",
+            "--required-deliverable",
+            "legacy_objective=Migrate safely",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["outcome"], "ambiguous");
+    assert_eq!(result["candidates"].as_array().unwrap().len(), 2);
+    assert!(!credentials.exists());
+    for run_id in ["legacy-run", "legacy-second"] {
+        let baton: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(runs.join(run_id).join("baton.json")).unwrap())
+                .unwrap();
+        assert_eq!(baton["revision"], 0);
+    }
+}
+
+#[test]
 fn migration_discovery_normalizes_v1_storage_and_v2_resume_harnesses() {
     let root = tempfile::tempdir().unwrap();
     let workspace = root.path().join("workspace");
