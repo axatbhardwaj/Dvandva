@@ -78,17 +78,28 @@ workflow edit.
 
 ## GREEN evidence
 
-Final implementation range: `4f9656a..ecc0433`.
+- Original Task 8 range: `b3c6a21..42ac162`.
+- Review-fix implementation, test, and documentation range:
+  `42ac162..f0e97bc`.
+
+The immutable endpoint for the overall evidence range includes this report
+commit and is recorded in the final handoff because a commit cannot contain its
+own object ID.
 
 - `bash tests/skills/package-release.sh`: pass. The wrong-version, v1/API1,
-  and duplicate-key candidates were rejected before final-asset promotion or
-  checksumming; the real stripped asset reported the exact v2/API2 probe and
-  verified against `SHA256SUMS`.
+  root-duplicate, nested-duplicate, NUL-bearing, oversized, invalid-UTF-8, and
+  malformed candidates were rejected without exposing a final output path.
+  The packager rejected existing empty, non-empty, and symlink destinations,
+  preserved a colliding foreign path, and cleaned a failed sibling staging
+  directory. The real stripped candidate produced the exact v2/API2 probe; its
+  final directory contained only the binary and matching `SHA256SUMS`.
 - `bash tests/skills/role-skills.sh`: pass.
 - `bash tests/skills/setup-dvandva.sh`: pass.
 - `bash tests/skills/two-role-canary.sh`: pass.
 - `cargo test --manifest-path v4/Cargo.toml --all-targets`: 172 passed, 0
   failed.
+- `cargo test --manifest-path rust/Cargo.toml --workspace`: pass for the full
+  archived v3 workspace.
 - `cargo fmt --manifest-path v4/Cargo.toml -- --check`: pass.
 - `cargo clippy --manifest-path v4/Cargo.toml --all-targets -- -D warnings`:
   pass.
@@ -101,6 +112,31 @@ Final implementation range: `4f9656a..ecc0433`.
 `actionlint`, `yamllint`, `yq`, PyYAML, and `shellcheck` were unavailable on
 this host; none is represented as run.
 
+The workflow continues to use GitHub's `ubuntu-latest` environment, Rust's
+`stable` channel, and the runner-provided `gh`. Task 8 supplies no principled
+immutable versions for those platform-managed surfaces, so the review fix did
+not invent pins or imply stronger reproducibility than the workflow has.
+
+## Codex Sites capability evidence
+
+On 2026-08-28, a read-only inspection of the active Codex tool registry using
+`ALL_TOOLS.filter(({name}) => name.includes("sites_"))` advertised these local
+surfaces:
+
+```text
+mcp__codex_apps__sites_create_site
+mcp__codex_apps__sites_save_site_version
+mcp__codex_apps__sites_deploy_private_site_version
+mcp__codex_apps__sites_get_deployment_status
+```
+
+No Sites operation was called. This proves only that the current Codex session
+exposes the expected create/save/private-deploy/status tool surface; it does not
+prove account authorization, a successful deployment, access control, or
+provider-signed evidence. The official-source research and earlier read-only
+connectivity probe remain recorded in
+`docs/research/2026-08-26-published-artifact-channels.md`.
+
 ## Preservation and distribution boundaries
 
 - README archive SHA-256 from `## Retired v3 archive` onward:
@@ -108,6 +144,7 @@ this host; none is represented as run.
 - Historical two-mode body SHA-256 from its original heading onward:
   `12d51f85fc0ec5e945e99122f465ee5dcad205604993eeb7cb1340f65acdf6b8`.
 - `v4/Cargo.toml` remains `publish = false`; release automation contains no
-  `cargo publish` and distributes only a GitHub release asset.
+  `cargo publish` and targets exactly two GitHub release assets: the private
+  kernel binary and `SHA256SUMS`.
 - No push, tag, release, asset upload, crate/plugin publication, or installation
   was performed.
