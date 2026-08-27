@@ -23,11 +23,15 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
+      - name: Install release-test tooling
+        run: python3 -m pip install --disable-pip-version-check 'ruamel.yaml==0.18.16'
       - name: Verify v4 kernel
         run: |
           cargo fmt --manifest-path v4/Cargo.toml -- --check
           cargo clippy --manifest-path v4/Cargo.toml --all-targets -- -D warnings
           cargo test --manifest-path v4/Cargo.toml --locked
+          cargo run --quiet --manifest-path v4/Cargo.toml --locked -- \
+            probe --expected-schema dvandva.run.v2 --expected-role-api 2
       - name: Verify archived v3 remains intact
         run: cargo test --manifest-path rust/dvandva/Cargo.toml --locked
       - name: Verify setup skill
@@ -48,6 +52,8 @@ jobs:
     steps:
       - name: Check out the release tag
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
       - name: Select stable Rust
         run: |
           rustup toolchain install stable --profile minimal
@@ -61,4 +67,4 @@ jobs:
           gh release create "$GITHUB_REF_NAME" artifacts/* \
             --verify-tag \
             --title "Dvandva skills ${GITHUB_REF_NAME#skills-v}" \
-            --notes "Skill-only Dvandva v4 kernel for the setup-dvandva, vadi, and prativadi skills. The archived v3 plugin remains retired."
+            --notes "Skill-only Dvandva v4 kernel for setup-dvandva, vadi, and prativadi. Kernel 0.2.0 writes dvandva.run.v2 with role API 2; legacy v1 runs require the explicit one-way upgrade. The crate remains unpublished and the archived v3 plugin remains retired."
