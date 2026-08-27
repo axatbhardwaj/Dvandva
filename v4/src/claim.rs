@@ -54,20 +54,13 @@ pub fn claim(
     expected_revision: u64,
 ) -> Result<ClaimGrant, ClaimError> {
     validate_request(session_id, lease_seconds)?;
+    let now = OffsetDateTime::now_utc();
     let mut baton = read_expected(channel, expected_revision)?;
     reject_terminal(&baton)?;
     if participant(&baton, role).claim.is_some() {
         return Err(ClaimError::Active);
     }
-    install_claim(
-        channel,
-        &mut baton,
-        role,
-        session_id,
-        lease_seconds,
-        expected_revision,
-        1,
-    )
+    install_claim(channel, &mut baton, role, session_id, lease_seconds, 1, now)
 }
 
 pub fn reclaim(
@@ -78,24 +71,28 @@ pub fn reclaim(
     expected_revision: u64,
 ) -> Result<ClaimGrant, ClaimError> {
     validate_request(session_id, lease_seconds)?;
+    let now = OffsetDateTime::now_utc();
     let mut baton = read_expected(channel, expected_revision)?;
     reject_terminal(&baton)?;
     let previous = participant(&baton, role)
         .claim
         .as_ref()
         .ok_or(ClaimError::Missing)?;
-    if parse_timestamp(&previous.lease_expires_at)? > OffsetDateTime::now_utc() {
+    if parse_timestamp(&previous.lease_expires_at)? > now {
         return Err(ClaimError::NotExpired);
     }
-    let epoch = previous.epoch + 1;
+    let epoch = previous
+        .epoch
+        .checked_add(1)
+        .ok_or(ClaimError::InvalidLease)?;
     install_claim(
         channel,
         &mut baton,
         role,
         session_id,
         lease_seconds,
-        expected_revision,
         epoch,
+        now,
     )
 }
 
@@ -108,6 +105,7 @@ pub fn heartbeat(
     expected_revision: u64,
 ) -> Result<u64, ClaimError> {
     validate_request(session_id, lease_seconds)?;
+    let now = OffsetDateTime::now_utc();
     let mut baton = read_expected(channel, expected_revision)?;
     if matches!(baton.status, Status::Done | Status::Abandoned) {
         return Err(ClaimError::Terminal);
@@ -119,10 +117,15 @@ pub fn heartbeat(
     if claim.session_id != session_id || claim.token_digest != digest(token) {
         return Err(ClaimError::Fenced);
     }
-    claim.lease_expires_at = expiry(lease_seconds)?;
+    if parse_timestamp(&claim.lease_expires_at)? <= now {
+        return Err(ClaimError::Fenced);
+    }
+    let (started, expires) = lease_times(now, lease_seconds)?;
+    claim.lease_started_at = Some(started);
+    claim.lease_expires_at = expires;
     claim.lease_seconds = lease_seconds;
     baton.revision += 1;
-    channel.compare_and_swap(expected_revision, &baton)?;
+    channel.compare_and_swap_claim(expected_revision, &baton)?;
     Ok(baton.revision)
 }
 
@@ -138,30 +141,6 @@ pub fn verify(
         .as_ref()
         .ok_or(ClaimError::Missing)?;
     if claim.session_id != session_id
-        || claim.token_digest != digest(token)
-        || parse_timestamp(&claim.lease_expires_at)? <= OffsetDateTime::now_utc()
-    {
-        return Err(ClaimError::Fenced);
-    }
-    Ok(())
-}
-
-pub fn verify_v1_upgrade(
-    baton: &RunBaton,
-    role: Role,
-    session_id: &str,
-    epoch: u64,
-    token: &str,
-) -> Result<(), ClaimError> {
-    if baton.schema != crate::model::LEGACY_SCHEMA {
-        return Err(StoreError::InvalidSchemaTransition.into());
-    }
-    let claim = participant(baton, role)
-        .claim
-        .as_ref()
-        .ok_or(ClaimError::Missing)?;
-    if claim.session_id != session_id
-        || claim.epoch != epoch
         || claim.token_digest != digest(token)
         || parse_timestamp(&claim.lease_expires_at)? <= OffsetDateTime::now_utc()
     {
@@ -192,19 +171,22 @@ fn install_claim(
     role: Role,
     session_id: &str,
     lease_seconds: u64,
-    expected_revision: u64,
     epoch: u64,
+    now: OffsetDateTime,
 ) -> Result<ClaimGrant, ClaimError> {
+    let expected_revision = baton.revision;
     let token = Uuid::new_v4().to_string();
+    let (started, expires) = lease_times(now, lease_seconds)?;
     participant_mut(baton, role).claim = Some(ParticipantClaim {
         session_id: session_id.to_owned(),
         epoch,
         token_digest: digest(&token),
-        lease_expires_at: expiry(lease_seconds)?,
+        lease_started_at: Some(started),
+        lease_expires_at: expires,
         lease_seconds,
     });
     baton.revision += 1;
-    channel.compare_and_swap(expected_revision, baton)?;
+    channel.compare_and_swap_claim(expected_revision, baton)?;
     Ok(ClaimGrant {
         token,
         epoch,
@@ -256,12 +238,20 @@ fn reject_terminal(baton: &RunBaton) -> Result<(), ClaimError> {
     Ok(())
 }
 
-fn expiry(lease_seconds: u64) -> Result<String, ClaimError> {
-    OffsetDateTime::now_utc()
+fn lease_times(
+    started_at: OffsetDateTime,
+    lease_seconds: u64,
+) -> Result<(String, String), ClaimError> {
+    let expires_at = started_at
         .checked_add(Duration::seconds(lease_seconds as i64))
-        .ok_or(ClaimError::InvalidLease)?
+        .ok_or(ClaimError::InvalidLease)?;
+    let started_at = started_at
         .format(&Rfc3339)
-        .map_err(|_| ClaimError::InvalidTimestamp)
+        .map_err(|_| ClaimError::InvalidTimestamp)?;
+    let expires_at = expires_at
+        .format(&Rfc3339)
+        .map_err(|_| ClaimError::InvalidTimestamp)?;
+    Ok((started_at, expires_at))
 }
 
 fn parse_timestamp(value: &str) -> Result<OffsetDateTime, ClaimError> {

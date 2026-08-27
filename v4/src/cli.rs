@@ -860,6 +860,8 @@ fn store_error_code(error: &StoreError) -> &'static str {
         StoreError::UnsupportedSchema(_) => "unsupported_schema",
         StoreError::MigrationRequired => "migration_required",
         StoreError::InvalidSchemaTransition => "invalid_schema_transition",
+        StoreError::LegacyClaimLive => "busy",
+        StoreError::InvalidLeaseTimestamp => "invalid_timestamp",
         StoreError::InvalidBaton(_) => "invalid_baton",
     }
 }
@@ -875,7 +877,7 @@ fn upgrade_error_code(error: &UpgradeError) -> &'static str {
         UpgradeError::InvalidObjective => "invalid_objective",
         UpgradeError::InvalidTopology => "invalid_participants",
         UpgradeError::InvalidSchema => "invalid_schema_transition",
-        UpgradeError::InvalidTimestamp => "invalid_baton",
+        UpgradeError::InvalidTimestamp => "invalid_timestamp",
     }
 }
 

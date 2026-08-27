@@ -2,7 +2,7 @@ use assert_cmd::Command;
 use dvandva_v4::{
     action::Action,
     claim::{self, Role},
-    model::{DeliverableRequirement, ParticipantClaim, RunBaton, TaskIdentity, WorkspaceIdentity},
+    model::{DeliverableRequirement, RunBaton, TaskIdentity, WorkspaceIdentity},
     store::RunChannel,
     transition,
 };
@@ -294,7 +294,7 @@ fn a_live_reviewer_claim_is_not_joinable() {
 fn an_expired_reviewer_claim_is_reclaimable() {
     let root = tempfile::tempdir().unwrap();
     let run_dir = root.path().join("def-123-expired");
-    let mut baton = RunBaton::new(
+    let baton = RunBaton::new(
         "def-123-expired",
         "Implement",
         "codex",
@@ -318,15 +318,8 @@ fn an_expired_reviewer_claim_is_reclaimable() {
     );
     let channel = RunChannel::open(run_dir);
     channel.create(&baton).unwrap();
-    baton.participants.reviewer.claim = Some(ParticipantClaim {
-        session_id: "gone-reviewer".to_owned(),
-        epoch: 1,
-        token_digest: "0".repeat(64),
-        lease_expires_at: "2000-01-01T00:00:00Z".to_owned(),
-        lease_seconds: 300,
-    });
-    baton.revision = 1;
-    channel.compare_and_swap(0, &baton).unwrap();
+    claim::claim(&channel, Role::Reviewer, "gone-reviewer", 1, 0).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1_100));
 
     let outcome = discover(root.path(), Some("DEF-123"));
     assert_eq!(outcome["outcome"], "match");

@@ -5,7 +5,6 @@ use std::{
 
 use serde::Serialize;
 use thiserror::Error;
-use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use uuid::Uuid;
 
 use crate::{
@@ -20,7 +19,7 @@ use crate::{
         normalize_participants, DeliverableRequirement, ModelError, RunBaton, Status, TaskIdentity,
         LEGACY_SCHEMA,
     },
-    store::{migrate_legacy_baton, require_current_schema, RunChannel, StoreError},
+    store::{require_current_schema, RunChannel, StoreError},
     transition::{self, TransitionError},
     wait::{self, WaitError},
 };
@@ -552,7 +551,7 @@ pub fn reclaim(
 
 pub fn upgrade(
     run_dir: &Path,
-    credentials_root: &Path,
+    _credentials_root: &Path,
     role: Role,
     session_id: &str,
     current_harness: &str,
@@ -596,33 +595,12 @@ pub fn upgrade(
     if requested != stored {
         return Err(UpgradeError::InvalidTopology);
     }
-    let current = match role {
-        Role::Worker => &baton.participants.worker,
-        Role::Reviewer => &baton.participants.reviewer,
-    };
-    if let Some(claim) = current.claim.as_ref() {
-        let expires = OffsetDateTime::parse(&claim.lease_expires_at, &Rfc3339)
-            .map_err(|_| UpgradeError::InvalidTimestamp)?;
-        if expires > OffsetDateTime::now_utc() {
-            if claim.session_id != session_id {
-                return Err(UpgradeError::Busy);
-            }
-            let credential = credential::load(credentials_root, session_id, &baton.run_id, role)?;
-            let credential_run =
-                std::fs::canonicalize(&credential.run_dir).map_err(StoreError::Io)?;
-            let requested_run = std::fs::canonicalize(run_dir).map_err(StoreError::Io)?;
-            if credential_run != requested_run {
-                return Err(CredentialError::Mismatch.into());
-            }
-            claim::verify_v1_upgrade(
-                &baton,
-                role,
-                session_id,
-                credential.epoch,
-                &credential.token,
-            )?;
-        }
-    }
-    let next = migrate_legacy_baton(&baton)?;
-    Ok(channel.compare_and_swap(expected_revision, &next)?)
+    channel
+        .upgrade_legacy(expected_revision)
+        .map_err(|error| match error {
+            StoreError::TerminalState => UpgradeError::Terminal,
+            StoreError::LegacyClaimLive => UpgradeError::Busy,
+            StoreError::InvalidLeaseTimestamp => UpgradeError::InvalidTimestamp,
+            other => UpgradeError::Store(other),
+        })
 }

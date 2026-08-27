@@ -346,7 +346,7 @@ fn migration_discovery_normalizes_v1_storage_and_v2_resume_harnesses() {
 }
 
 #[test]
-fn migration_upgrade_requires_the_matching_private_v1_credential_for_a_live_claim() {
+fn migration_upgrade_live_own_claim_is_busy_even_with_matching_private_credential() {
     for credential_token in [None, Some("wrong-token"), Some("valid-token")] {
         let root = tempfile::tempdir().unwrap();
         let run_dir = root.path().join("run");
@@ -397,16 +397,17 @@ fn migration_upgrade_requires_the_matching_private_v1_credential_for_a_live_clai
             ])
             .output()
             .unwrap();
-        assert_eq!(
-            result.status.success(),
-            credential_token == Some("valid-token")
+        assert!(!result.status.success());
+        assert!(
+            String::from_utf8_lossy(&result.stderr).contains(r#""error":"busy""#),
+            "{}",
+            String::from_utf8_lossy(&result.stderr)
         );
         let current: serde_json::Value =
             serde_json::from_slice(&std::fs::read(run_dir.join("baton.json")).unwrap()).unwrap();
-        assert_eq!(
-            current["schema"] == "dvandva.run.v2",
-            credential_token == Some("valid-token")
-        );
+        assert_eq!(current["schema"], "dvandva.run.v1");
+        assert_eq!(current["revision"], 0);
+        assert!(!run_dir.join("history/00000000000000000001.json").exists());
     }
 }
 
@@ -881,7 +882,7 @@ fn role_reclaim_fences_an_expired_session_with_a_new_private_credential() {
     let root = tempfile::tempdir().unwrap();
     let run_dir = root.path().join("runs/run-a");
     let credentials = root.path().join("credentials");
-    let mut baton = dvandva_v4::model::RunBaton::new(
+    let baton = dvandva_v4::model::RunBaton::new(
         "run-a",
         "Implement DEF-123",
         "codex",
@@ -894,15 +895,8 @@ fn role_reclaim_fences_an_expired_session_with_a_new_private_credential() {
     .unwrap();
     let channel = dvandva_v4::store::RunChannel::open(&run_dir);
     channel.create(&baton).unwrap();
-    baton.participants.worker.claim = Some(dvandva_v4::model::ParticipantClaim {
-        session_id: "expired-session".to_owned(),
-        epoch: 1,
-        token_digest: "0".repeat(64),
-        lease_expires_at: "2000-01-01T00:00:00Z".to_owned(),
-        lease_seconds: 300,
-    });
-    baton.revision = 1;
-    channel.compare_and_swap(0, &baton).unwrap();
+    dvandva_v4::claim::claim(&channel, Role::Worker, "expired-session", 1, 0).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1_100));
 
     let output = command()
         .args([

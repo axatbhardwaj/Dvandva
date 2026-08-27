@@ -72,6 +72,8 @@ pub struct ParticipantClaim {
     pub session_id: String,
     pub epoch: u64,
     pub token_digest: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lease_started_at: Option<String>,
     pub lease_expires_at: String,
     pub lease_seconds: u64,
 }
@@ -295,6 +297,7 @@ pub struct RecoveryProvenance {
 pub struct MigrationProvenance {
     pub from_schema: String,
     pub from_revision: u64,
+    pub migrated_at: String,
     pub legacy_state_digest: String,
     pub legacy_checkpoint: Option<Checkpoint>,
 }

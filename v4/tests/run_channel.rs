@@ -1,6 +1,6 @@
 use assert_cmd::Command;
 use dvandva_v4::model::{DeliverableRequirement, RunBaton};
-use dvandva_v4::store::{RunChannel, StoreError};
+use dvandva_v4::store::{migrate_legacy_baton, RunChannel, StoreError};
 use predicates::prelude::*;
 use sha2::{Digest, Sha256};
 
@@ -173,6 +173,34 @@ fn approved_publication_binding(
     })
 }
 
+fn participant_claim_json(
+    session_id: &str,
+    epoch: u64,
+    token_byte: char,
+    lease_started_at: &str,
+    lease_expires_at: &str,
+    lease_seconds: u64,
+) -> serde_json::Value {
+    serde_json::json!({
+        "session_id": session_id,
+        "epoch": epoch,
+        "token_digest": token_byte.to_string().repeat(64),
+        "lease_started_at": lease_started_at,
+        "lease_expires_at": lease_expires_at,
+        "lease_seconds": lease_seconds
+    })
+}
+
+fn shifted_rfc3339(value: &str, seconds: i64) -> String {
+    use time::format_description::well_known::Rfc3339;
+    time::OffsetDateTime::parse(value, &Rfc3339)
+        .unwrap()
+        .checked_add(time::Duration::seconds(seconds))
+        .unwrap()
+        .format(&Rfc3339)
+        .unwrap()
+}
+
 fn approve_current_explainer(
     dir: &std::path::Path,
     codex: (&str, &str, &str),
@@ -329,6 +357,21 @@ fn write_legacy_run(
     std::fs::write(dir.join("history/00000000000000000000.json"), &bytes).unwrap();
     std::fs::write(dir.join("baton.json"), &bytes).unwrap();
     bytes
+}
+
+fn forged_migration_candidate(source: &RunBaton) -> RunBaton {
+    let mut eligible = source.clone();
+    eligible.status = dvandva_v4::model::Status::Working;
+    eligible.assignee = dvandva_v4::model::Assignee::Worker;
+    eligible.participants.worker.claim = None;
+    eligible.participants.reviewer.claim = None;
+    eligible.terminal = None;
+    let mut next = migrate_legacy_baton(&eligible).unwrap();
+    let migration = next.migration.as_mut().unwrap();
+    migration.legacy_state_digest =
+        format!("{:x}", Sha256::digest(serde_json::to_vec(source).unwrap()));
+    migration.legacy_checkpoint = source.checkpoint.clone();
+    next
 }
 
 #[test]
@@ -566,6 +609,221 @@ fn migration_upgrade_is_one_way_and_clears_active_legacy_state() {
 }
 
 #[test]
+fn migration_integrity_direct_cas_rejects_terminal_and_live_claim_sources() {
+    for source_kind in [
+        "terminal",
+        "terminal_provenance",
+        "worker_live",
+        "reviewer_live",
+        "malformed_claim",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let worker_claim = matches!(source_kind, "worker_live" | "malformed_claim").then(|| {
+            serde_json::json!({
+                "session_id": "live-worker", "epoch": 1, "token_digest": "digest",
+                "lease_expires_at": if source_kind == "malformed_claim" { "not-a-time" } else { "2999-01-01T00:00:00Z" },
+                "lease_seconds": 300
+            })
+        });
+        write_legacy_run(
+            dir.path(),
+            if source_kind == "terminal" {
+                "done"
+            } else {
+                "working"
+            },
+            if source_kind == "terminal" {
+                "none"
+            } else {
+                "worker"
+            },
+            worker_claim.unwrap_or(serde_json::Value::Null),
+        );
+        if source_kind == "reviewer_live" {
+            for path in [
+                dir.path().join("baton.json"),
+                dir.path().join("history/00000000000000000000.json"),
+            ] {
+                let mut value: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                value["participants"]["reviewer"]["claim"] = serde_json::json!({
+                    "session_id": "live-reviewer", "epoch": 1, "token_digest": "digest",
+                    "lease_expires_at": "2999-01-01T00:00:00Z", "lease_seconds": 300
+                });
+                std::fs::write(path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+            }
+        }
+        if source_kind == "terminal_provenance" {
+            for path in [
+                dir.path().join("baton.json"),
+                dir.path().join("history/00000000000000000000.json"),
+            ] {
+                let mut value: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                value["terminal"] = serde_json::json!({"outcome": "abandoned", "reason": "forged"});
+                std::fs::write(path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+            }
+        }
+        let channel = RunChannel::open(dir.path());
+        let source = channel.read().unwrap();
+        let forged = forged_migration_candidate(&source);
+        assert!(
+            matches!(
+                channel.compare_and_swap(0, &forged),
+                Err(StoreError::InvalidSchemaTransition | StoreError::InvalidHistory)
+            ),
+            "illegal migration source {source_kind} was accepted"
+        );
+        assert_eq!(channel.read().unwrap(), source);
+        assert!(!dir
+            .path()
+            .join("history/00000000000000000001.json")
+            .exists());
+    }
+}
+
+#[test]
+fn migration_integrity_recovery_rejects_forged_illegal_crossings() {
+    for source_kind in [
+        "terminal",
+        "terminal_provenance",
+        "worker_live",
+        "reviewer_live",
+        "malformed_claim",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        let worker_claim = matches!(source_kind, "worker_live" | "malformed_claim").then(|| {
+            serde_json::json!({
+                "session_id": "live-worker", "epoch": 1, "token_digest": "digest",
+                "lease_expires_at": if source_kind == "malformed_claim" { "not-a-time" } else { "2999-01-01T00:00:00Z" },
+                "lease_seconds": 300
+            })
+        });
+        write_legacy_run(
+            dir.path(),
+            if source_kind == "terminal" {
+                "done"
+            } else {
+                "working"
+            },
+            if source_kind == "terminal" {
+                "none"
+            } else {
+                "worker"
+            },
+            worker_claim.unwrap_or(serde_json::Value::Null),
+        );
+        if source_kind == "reviewer_live" {
+            for path in [
+                dir.path().join("baton.json"),
+                dir.path().join("history/00000000000000000000.json"),
+            ] {
+                let mut value: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                value["participants"]["reviewer"]["claim"] = serde_json::json!({
+                    "session_id": "live-reviewer", "epoch": 1, "token_digest": "digest",
+                    "lease_expires_at": "2999-01-01T00:00:00Z", "lease_seconds": 300
+                });
+                std::fs::write(path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+            }
+        }
+        if source_kind == "terminal_provenance" {
+            for path in [
+                dir.path().join("baton.json"),
+                dir.path().join("history/00000000000000000000.json"),
+            ] {
+                let mut value: serde_json::Value =
+                    serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+                value["terminal"] = serde_json::json!({"outcome": "abandoned", "reason": "forged"});
+                std::fs::write(path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+            }
+        }
+        let source = RunChannel::open(dir.path()).read().unwrap();
+        let forged = forged_migration_candidate(&source);
+        std::fs::write(
+            dir.path().join("history/00000000000000000001.json"),
+            serde_json::to_vec_pretty(&forged).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("baton.json"), b"corrupt\n").unwrap();
+        command()
+            .args([
+                "recover",
+                "--run-dir",
+                dir.path().to_str().unwrap(),
+                "--from-revision",
+                "1",
+            ])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(r#""error":"invalid_history""#));
+        assert!(!dir
+            .path()
+            .join("history/00000000000000000002.json")
+            .exists());
+    }
+}
+
+#[test]
+fn migration_integrity_expired_claims_upgrade_and_are_cleared() {
+    let dir = tempfile::tempdir().unwrap();
+    write_legacy_run(
+        dir.path(),
+        "working",
+        "worker",
+        serde_json::json!({
+            "session_id": "expired-worker", "epoch": 7, "token_digest": "digest",
+            "lease_expires_at": "2000-01-01T00:00:00Z", "lease_seconds": 300
+        }),
+    );
+    command()
+        .args([
+            "role",
+            "upgrade",
+            "--api",
+            "2",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "new-worker",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--expected-revision",
+            "0",
+            "--credentials-root",
+            dir.path().join("credentials").to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    let upgraded = read_baton(dir.path());
+    assert!(upgraded["participants"]["worker"]["claim"].is_null());
+    assert!(upgraded["participants"]["reviewer"]["claim"].is_null());
+    assert!(upgraded["migration"]["migrated_at"].is_string());
+}
+
+#[test]
+fn migration_integrity_generic_cas_rejects_even_an_eligible_crossing() {
+    let dir = tempfile::tempdir().unwrap();
+    write_legacy_run(dir.path(), "working", "worker", serde_json::Value::Null);
+    let channel = RunChannel::open(dir.path());
+    let source = channel.read().unwrap();
+    let next = migrate_legacy_baton(&source).unwrap();
+    assert!(matches!(
+        channel.compare_and_swap(0, &next),
+        Err(StoreError::InvalidSchemaTransition)
+    ));
+    assert_eq!(channel.read().unwrap(), source);
+    assert!(!dir
+        .path()
+        .join("history/00000000000000000001.json")
+        .exists());
+}
+
+#[test]
 fn epoch_validation_rejects_malformed_v2_and_relabelled_v1() {
     for mutation in ["missing_scope", "relabelled_v1"] {
         let dir = tempfile::tempdir().unwrap();
@@ -760,6 +1018,89 @@ fn migration_upgrade_rejects_terminal_busy_and_invalid_topology() {
         .assert()
         .failure()
         .stderr(predicate::str::contains("busy"));
+    assert!(!busy
+        .path()
+        .join("history/00000000000000000001.json")
+        .exists());
+
+    let reviewer_busy = tempfile::tempdir().unwrap();
+    write_legacy_run(
+        reviewer_busy.path(),
+        "working",
+        "worker",
+        serde_json::Value::Null,
+    );
+    for path in [
+        reviewer_busy.path().join("baton.json"),
+        reviewer_busy
+            .path()
+            .join("history/00000000000000000000.json"),
+    ] {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        value["participants"]["reviewer"]["claim"]["lease_expires_at"] =
+            serde_json::json!("2999-01-01T00:00:00Z");
+        std::fs::write(path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+    }
+    command()
+        .args([
+            "role",
+            "upgrade",
+            "--api",
+            "2",
+            "--run-dir",
+            reviewer_busy.path().to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "new",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--expected-revision",
+            "0",
+            "--credentials-root",
+            reviewer_busy.path().join("credentials").to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("busy"));
+
+    let malformed = tempfile::tempdir().unwrap();
+    write_legacy_run(
+        malformed.path(),
+        "working",
+        "worker",
+        serde_json::json!({
+            "session_id": "broken", "epoch": 1, "token_digest": "digest",
+            "lease_expires_at": "not-a-time", "lease_seconds": 300
+        }),
+    );
+    command()
+        .args([
+            "role",
+            "upgrade",
+            "--api",
+            "2",
+            "--run-dir",
+            malformed.path().to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "new",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--expected-revision",
+            "0",
+            "--credentials-root",
+            malformed.path().join("credentials").to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid_timestamp"));
 
     let invalid = tempfile::tempdir().unwrap();
     write_legacy_run(invalid.path(), "working", "worker", serde_json::Value::Null);
@@ -3883,6 +4224,393 @@ fn publication_history_edge_rejects_every_unclassified_unchanged_binding_mutatio
             .join("history/00000000000000000005.json")
             .exists());
     }
+}
+
+#[test]
+fn claim_history_direct_cas_rejects_unproved_lease_transitions() {
+    for attack in [
+        "active_replacement",
+        "unbound_expiry",
+        "duration_mismatch",
+        "heartbeat_after_expiry",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        init_pair(dir.path());
+        claim_role(dir.path(), "worker", "worker-a", 0);
+        let channel = RunChannel::open(dir.path());
+        let current = channel.read().unwrap();
+        let mut attacked = serde_json::to_value(current.clone()).unwrap();
+        let current_claim = &attacked["participants"]["worker"]["claim"];
+        let current_start = current_claim["lease_started_at"].as_str().unwrap();
+        let current_expiry = current_claim["lease_expires_at"].as_str().unwrap();
+        let renewed_start = shifted_rfc3339(current_start, 60);
+        let renewed_expiry = shifted_rfc3339(&renewed_start, 300);
+        let unbound_expiry = shifted_rfc3339(&renewed_start, 360);
+        let expired_start = current_expiry.to_owned();
+        let expired_renewal = shifted_rfc3339(&expired_start, 300);
+        attacked["revision"] = serde_json::json!(2);
+        attacked["participants"]["worker"]["claim"] = match attack {
+            "active_replacement" => {
+                participant_claim_json("worker-b", 2, '1', &renewed_start, &renewed_expiry, 300)
+            }
+            "unbound_expiry" => {
+                participant_claim_json("worker-a", 1, '0', &renewed_start, &unbound_expiry, 300)
+            }
+            "duration_mismatch" => {
+                participant_claim_json("worker-a", 1, '0', &renewed_start, &renewed_expiry, 120)
+            }
+            "heartbeat_after_expiry" => {
+                participant_claim_json("worker-a", 1, '0', &expired_start, &expired_renewal, 300)
+            }
+            _ => unreachable!(),
+        };
+        let attacked: RunBaton = serde_json::from_value(attacked).unwrap();
+        assert!(
+            matches!(
+                channel.compare_and_swap(1, &attacked),
+                Err(StoreError::InvalidHistory | StoreError::InvalidBaton(_))
+            ),
+            "claim attack {attack} was accepted"
+        );
+        assert_eq!(channel.read().unwrap(), current);
+        assert!(!dir
+            .path()
+            .join("history/00000000000000000002.json")
+            .exists());
+    }
+}
+
+#[test]
+fn claim_history_generic_cas_rejects_even_a_well_formed_initial_claim() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let channel = RunChannel::open(dir.path());
+    let current = channel.read().unwrap();
+    let mut next = serde_json::to_value(current.clone()).unwrap();
+    next["revision"] = serde_json::json!(1);
+    next["participants"]["worker"]["claim"] = participant_claim_json(
+        "forged-future-worker",
+        1,
+        '0',
+        "2999-01-01T00:00:00Z",
+        "2999-01-01T00:05:00Z",
+        300,
+    );
+    let next: RunBaton = serde_json::from_value(next).unwrap();
+    assert!(matches!(
+        channel.compare_and_swap(0, &next),
+        Err(StoreError::InvalidHistory)
+    ));
+    assert_eq!(channel.read().unwrap(), current);
+}
+
+#[test]
+fn claim_history_v2_requires_bound_start_while_v1_remains_compatible() {
+    let legacy = tempfile::tempdir().unwrap();
+    write_legacy_run(
+        legacy.path(),
+        "working",
+        "worker",
+        serde_json::json!({
+            "session_id": "legacy", "epoch": 1, "token_digest": "digest",
+            "lease_expires_at": "2000-01-01T00:00:00Z", "lease_seconds": 300
+        }),
+    );
+    assert!(RunChannel::open(legacy.path()).read().is_ok());
+
+    let v2 = tempfile::tempdir().unwrap();
+    init_pair(v2.path());
+    claim_role(v2.path(), "worker", "worker", 0);
+    let mut value = read_baton(v2.path());
+    value["participants"]["worker"]["claim"]
+        .as_object_mut()
+        .unwrap()
+        .remove("lease_started_at");
+    std::fs::write(
+        v2.path().join("baton.json"),
+        serde_json::to_vec_pretty(&value).unwrap(),
+    )
+    .unwrap();
+    assert!(matches!(
+        RunChannel::open(v2.path()).read(),
+        Err(StoreError::InvalidBaton(_))
+    ));
+}
+
+#[test]
+fn claim_history_rejects_timestamp_duration_and_epoch_overflow() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let channel = RunChannel::open(dir.path());
+    let current = channel.read().unwrap();
+    let mut overflow = serde_json::to_value(current).unwrap();
+    overflow["participants"]["worker"]["claim"] = participant_claim_json(
+        "worker",
+        1,
+        '0',
+        "9999-12-31T23:59:59Z",
+        "9999-12-31T23:59:59Z",
+        u64::MAX,
+    );
+    std::fs::write(
+        dir.path().join("baton.json"),
+        serde_json::to_vec_pretty(&overflow).unwrap(),
+    )
+    .unwrap();
+    assert!(matches!(channel.read(), Err(StoreError::InvalidBaton(_))));
+
+    let epoch = tempfile::tempdir().unwrap();
+    init_pair(epoch.path());
+    let mut max_epoch = read_baton(epoch.path());
+    max_epoch["participants"]["worker"]["claim"] = participant_claim_json(
+        "worker",
+        u64::MAX,
+        '0',
+        "1999-12-31T23:55:00Z",
+        "2000-01-01T00:00:00Z",
+        300,
+    );
+    std::fs::write(
+        epoch.path().join("baton.json"),
+        serde_json::to_vec_pretty(&max_epoch).unwrap(),
+    )
+    .unwrap();
+    command()
+        .args([
+            "reclaim",
+            "--run-dir",
+            epoch.path().to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker",
+            "--lease-seconds",
+            "300",
+            "--expected-revision",
+            "0",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(r#""error":"invalid_input""#));
+}
+
+#[test]
+fn claim_history_recovery_rejects_unproved_lease_transitions() {
+    for attack in [
+        "active_replacement",
+        "unbound_expiry",
+        "duration_mismatch",
+        "heartbeat_after_expiry",
+    ] {
+        let dir = tempfile::tempdir().unwrap();
+        init_pair(dir.path());
+        claim_role(dir.path(), "worker", "worker-a", 0);
+        let channel = RunChannel::open(dir.path());
+        let mut attacked = serde_json::to_value(channel.read().unwrap()).unwrap();
+        let current_claim = &attacked["participants"]["worker"]["claim"];
+        let current_start = current_claim["lease_started_at"].as_str().unwrap();
+        let current_expiry = current_claim["lease_expires_at"].as_str().unwrap();
+        let renewed_start = shifted_rfc3339(current_start, 60);
+        let renewed_expiry = shifted_rfc3339(&renewed_start, 300);
+        let unbound_expiry = shifted_rfc3339(&renewed_start, 360);
+        let expired_start = current_expiry.to_owned();
+        let expired_renewal = shifted_rfc3339(&expired_start, 300);
+        attacked["revision"] = serde_json::json!(2);
+        attacked["participants"]["worker"]["claim"] = match attack {
+            "active_replacement" => {
+                participant_claim_json("worker-b", 2, '1', &renewed_start, &renewed_expiry, 300)
+            }
+            "unbound_expiry" => {
+                participant_claim_json("worker-a", 1, '0', &renewed_start, &unbound_expiry, 300)
+            }
+            "duration_mismatch" => {
+                participant_claim_json("worker-a", 1, '0', &renewed_start, &renewed_expiry, 120)
+            }
+            "heartbeat_after_expiry" => {
+                participant_claim_json("worker-a", 1, '0', &expired_start, &expired_renewal, 300)
+            }
+            _ => unreachable!(),
+        };
+        std::fs::write(
+            dir.path().join("history/00000000000000000002.json"),
+            serde_json::to_vec_pretty(&attacked).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("baton.json"), b"corrupt\n").unwrap();
+        command()
+            .args([
+                "recover",
+                "--run-dir",
+                dir.path().to_str().unwrap(),
+                "--from-revision",
+                "2",
+            ])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(r#""error":"invalid_history""#));
+        assert!(!dir
+            .path()
+            .join("history/00000000000000000003.json")
+            .exists());
+    }
+}
+
+#[test]
+fn claim_history_accepts_bound_claim_heartbeat_and_expired_reclaim() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let claims = [
+        participant_claim_json(
+            "worker-a",
+            1,
+            '0',
+            "2026-01-01T00:00:00Z",
+            "2026-01-01T00:05:00Z",
+            300,
+        ),
+        participant_claim_json(
+            "worker-a",
+            1,
+            '0',
+            "2026-01-01T00:04:00Z",
+            "2026-01-01T00:09:00Z",
+            300,
+        ),
+        participant_claim_json(
+            "worker-b",
+            2,
+            '1',
+            "2026-01-01T00:09:00Z",
+            "2026-01-01T00:14:00Z",
+            300,
+        ),
+    ];
+    for (index, claim) in claims.into_iter().enumerate() {
+        let revision = index as u64;
+        let source_path = dir
+            .path()
+            .join("history")
+            .join(format!("{revision:020}.json"));
+        let mut next: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(source_path).unwrap()).unwrap();
+        next["revision"] = serde_json::json!(revision + 1);
+        next["participants"]["worker"]["claim"] = claim;
+        std::fs::write(
+            dir.path()
+                .join("history")
+                .join(format!("{:020}.json", revision + 1)),
+            serde_json::to_vec_pretty(&next).unwrap(),
+        )
+        .unwrap();
+    }
+    std::fs::write(dir.path().join("baton.json"), b"corrupt\n").unwrap();
+    command()
+        .args([
+            "recover",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--from-revision",
+            "3",
+        ])
+        .assert()
+        .success();
+    assert_eq!(read_baton(dir.path())["revision"], 4);
+}
+
+#[test]
+fn claim_history_kernel_binds_one_timestamp_to_each_lease() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let token = claim_role(dir.path(), "worker", "worker-1", 0);
+    let claimed = read_baton(dir.path());
+    let started = claimed["participants"]["worker"]["claim"]["lease_started_at"]
+        .as_str()
+        .expect("v2 claim records lease start");
+    let expires = claimed["participants"]["worker"]["claim"]["lease_expires_at"]
+        .as_str()
+        .unwrap();
+    let parse = |value: &str| {
+        time::OffsetDateTime::parse(value, &time::format_description::well_known::Rfc3339).unwrap()
+    };
+    assert_eq!((parse(expires) - parse(started)).whole_seconds(), 300);
+
+    command()
+        .args([
+            "heartbeat",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-1",
+            "--token",
+            &token,
+            "--lease-seconds",
+            "120",
+            "--expected-revision",
+            "1",
+        ])
+        .assert()
+        .success();
+    let renewed = read_baton(dir.path());
+    let renewed_start = renewed["participants"]["worker"]["claim"]["lease_started_at"]
+        .as_str()
+        .unwrap();
+    let renewed_expiry = renewed["participants"]["worker"]["claim"]["lease_expires_at"]
+        .as_str()
+        .unwrap();
+    assert_eq!(
+        (parse(renewed_expiry) - parse(renewed_start)).whole_seconds(),
+        120
+    );
+}
+
+#[test]
+fn claim_history_kernel_does_not_resurrect_an_expired_heartbeat() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let output = command()
+        .args([
+            "claim",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker",
+            "--lease-seconds",
+            "1",
+            "--expected-revision",
+            "0",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let token = serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()["token"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    std::thread::sleep(std::time::Duration::from_millis(1_100));
+    command()
+        .args([
+            "heartbeat",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker",
+            "--token",
+            &token,
+            "--lease-seconds",
+            "300",
+            "--expected-revision",
+            "1",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(r#""error":"claim_fenced""#));
+    assert_eq!(read_baton(dir.path())["revision"], 1);
 }
 
 #[test]

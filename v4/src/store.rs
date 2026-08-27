@@ -8,7 +8,7 @@ use fs2::FileExt;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
-use time::{format_description::well_known::Rfc3339, OffsetDateTime};
+use time::{format_description::well_known::Rfc3339, Duration, OffsetDateTime};
 use uuid::Uuid;
 
 use crate::model::{
@@ -42,6 +42,10 @@ pub enum StoreError {
     MigrationRequired,
     #[error("schema transition is not monotonic")]
     InvalidSchemaTransition,
+    #[error("legacy participant claim is still live")]
+    LegacyClaimLive,
+    #[error("legacy participant claim has an invalid lease timestamp")]
+    InvalidLeaseTimestamp,
     #[error("baton violates the {0} schema invariants")]
     InvalidBaton(String),
 }
@@ -119,6 +123,23 @@ impl RunChannel {
         expected_revision: u64,
         next: &RunBaton,
     ) -> Result<RunBaton, StoreError> {
+        self.compare_and_swap_internal(expected_revision, next, false)
+    }
+
+    pub(crate) fn compare_and_swap_claim(
+        &self,
+        expected_revision: u64,
+        next: &RunBaton,
+    ) -> Result<RunBaton, StoreError> {
+        self.compare_and_swap_internal(expected_revision, next, true)
+    }
+
+    fn compare_and_swap_internal(
+        &self,
+        expected_revision: u64,
+        next: &RunBaton,
+        claim_mutation: bool,
+    ) -> Result<RunBaton, StoreError> {
         self.with_lock(|| {
             let current = self.read()?;
             if current.revision != expected_revision {
@@ -136,11 +157,45 @@ impl RunChannel {
             if self.read_history_revision(expected_revision)? != current {
                 return Err(StoreError::InvalidHistory);
             }
+            if current.schema != next.schema {
+                return Err(StoreError::InvalidSchemaTransition);
+            }
+            let claims_changed = current.participants.worker.claim
+                != next.participants.worker.claim
+                || current.participants.reviewer.claim != next.participants.reviewer.claim;
+            if claim_mutation {
+                if current.schema != SCHEMA || !valid_claim_edge(&current, next) {
+                    return Err(StoreError::InvalidHistory);
+                }
+            } else if claims_changed {
+                return Err(StoreError::InvalidHistory);
+            }
             validate_baton(next)?;
             validate_history_edge(&current, next)?;
             self.write_history(next)?;
             self.install(next)?;
             Ok(next.clone())
+        })
+    }
+
+    pub(crate) fn upgrade_legacy(&self, expected_revision: u64) -> Result<RunBaton, StoreError> {
+        self.with_lock(|| {
+            let current = self.read()?;
+            if current.revision != expected_revision {
+                return Err(StoreError::RevisionConflict {
+                    expected: expected_revision,
+                    actual: current.revision,
+                });
+            }
+            if self.read_history_revision(expected_revision)? != current {
+                return Err(StoreError::InvalidHistory);
+            }
+            let next = migrate_legacy_baton_at(&current, OffsetDateTime::now_utc())?;
+            validate_baton(&next)?;
+            validate_migration_edge(&current, &next)?;
+            self.write_history(&next)?;
+            self.install(&next)?;
+            Ok(next)
         })
     }
 
@@ -292,10 +347,36 @@ pub fn require_current_schema(baton: &RunBaton) -> Result<(), StoreError> {
 }
 
 pub fn migrate_legacy_baton(current: &RunBaton) -> Result<RunBaton, StoreError> {
+    migrate_legacy_baton_at(current, OffsetDateTime::now_utc())
+}
+
+fn migrate_legacy_baton_at(
+    current: &RunBaton,
+    migrated_at: OffsetDateTime,
+) -> Result<RunBaton, StoreError> {
     validate_baton(current)?;
     if current.schema != LEGACY_SCHEMA || current.objective.summary.trim().is_empty() {
         return Err(StoreError::InvalidSchemaTransition);
     }
+    if matches!(current.status, Status::Done | Status::Abandoned) || current.terminal.is_some() {
+        return Err(StoreError::TerminalState);
+    }
+    for claim in [
+        current.participants.worker.claim.as_ref(),
+        current.participants.reviewer.claim.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let expires_at = OffsetDateTime::parse(&claim.lease_expires_at, &Rfc3339)
+            .map_err(|_| StoreError::InvalidLeaseTimestamp)?;
+        if expires_at > migrated_at {
+            return Err(StoreError::LegacyClaimLive);
+        }
+    }
+    let migrated_at = migrated_at
+        .format(&Rfc3339)
+        .map_err(|_| StoreError::InvalidLeaseTimestamp)?;
     let (worker, reviewer) = normalize_participants(
         current.participants.worker.harness.clone(),
         current.participants.reviewer.harness.clone(),
@@ -336,6 +417,7 @@ pub fn migrate_legacy_baton(current: &RunBaton) -> Result<RunBaton, StoreError> 
     next.migration = Some(MigrationProvenance {
         from_schema: LEGACY_SCHEMA.to_owned(),
         from_revision: current.revision,
+        migrated_at,
         legacy_state_digest,
         legacy_checkpoint: current.checkpoint.clone(),
     });
@@ -411,12 +493,29 @@ fn validate_baton(baton: &RunBaton) -> Result<(), StoreError> {
             .is_some_and(|checkpoint| !baton.checkpoint_history.contains(checkpoint))
         || !valid_checkpoint_state(baton)
         || !valid_publication_binding(binding)
+        || baton
+            .participants
+            .worker
+            .claim
+            .as_ref()
+            .is_some_and(|claim| !valid_participant_claim(claim))
+        || baton
+            .participants
+            .reviewer
+            .claim
+            .as_ref()
+            .is_some_and(|claim| !valid_participant_claim(claim))
     {
         return Err(StoreError::InvalidBaton(baton.schema.clone()));
     }
     if let Some(migration) = baton.migration.as_ref() {
         if migration.from_schema != LEGACY_SCHEMA
             || migration.from_revision >= baton.revision
+            || OffsetDateTime::parse(&migration.migrated_at, &Rfc3339)
+                .ok()
+                .and_then(|timestamp| timestamp.format(&Rfc3339).ok())
+                .as_deref()
+                != Some(migration.migrated_at.as_str())
             || migration.legacy_state_digest.len() != 64
             || !migration
                 .legacy_state_digest
@@ -590,7 +689,15 @@ fn valid_checkpoint(checkpoint: &Checkpoint, baton: &RunBaton) -> bool {
 }
 
 fn validate_migration_edge(current: &RunBaton, next: &RunBaton) -> Result<(), StoreError> {
-    if migrate_legacy_baton(current)? == *next {
+    let migrated_at = next
+        .migration
+        .as_ref()
+        .ok_or(StoreError::InvalidSchemaTransition)
+        .and_then(|migration| {
+            OffsetDateTime::parse(&migration.migrated_at, &Rfc3339)
+                .map_err(|_| StoreError::InvalidSchemaTransition)
+        })?;
+    if migrate_legacy_baton_at(current, migrated_at)? == *next {
         Ok(())
     } else {
         Err(StoreError::InvalidSchemaTransition)
@@ -711,21 +818,46 @@ fn valid_claim_mutation(
                 && next.epoch == current.epoch
                 && next.token_digest == current.token_digest =>
         {
-            true
+            let Some((current_start, current_expiry)) = claim_times(current) else {
+                return false;
+            };
+            let Some((next_start, _)) = claim_times(next) else {
+                return false;
+            };
+            next_start >= current_start && next_start < current_expiry
         }
         Some(current) => {
+            let Some((_, current_expiry)) = claim_times(current) else {
+                return false;
+            };
+            let Some((next_start, _)) = claim_times(next) else {
+                return false;
+            };
             current.epoch.checked_add(1) == Some(next.epoch)
                 && next.token_digest != current.token_digest
+                && next_start >= current_expiry
         }
     }
 }
 
 fn valid_participant_claim(claim: &ParticipantClaim) -> bool {
+    let Some((started_at, expires_at)) = claim_times(claim) else {
+        return false;
+    };
     !claim.session_id.trim().is_empty()
         && valid_sha256(&claim.token_digest)
         && claim.lease_seconds > 0
         && claim.lease_seconds <= i64::MAX as u64
-        && OffsetDateTime::parse(&claim.lease_expires_at, &Rfc3339).is_ok()
+        && started_at.checked_add(Duration::seconds(claim.lease_seconds as i64)) == Some(expires_at)
+}
+
+fn claim_times(claim: &ParticipantClaim) -> Option<(OffsetDateTime, OffsetDateTime)> {
+    let started_value = claim.lease_started_at.as_ref()?;
+    let started_at = OffsetDateTime::parse(started_value, &Rfc3339).ok()?;
+    let expires_at = OffsetDateTime::parse(&claim.lease_expires_at, &Rfc3339).ok()?;
+    (started_at.format(&Rfc3339).ok()?.as_str() == started_value
+        && expires_at.format(&Rfc3339).ok()?.as_str() == claim.lease_expires_at)
+        .then_some((started_at, expires_at))
 }
 
 fn valid_human_decision_request_edge(current: &RunBaton, next: &RunBaton) -> bool {
