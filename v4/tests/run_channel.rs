@@ -1,7 +1,7 @@
 use assert_cmd::Command;
 use dvandva_v4::action::Action;
 use dvandva_v4::claim::{self, ClaimError, Role};
-use dvandva_v4::model::{DeliverableRequirement, RunBaton};
+use dvandva_v4::model::{DeliverableRequirement, RunBaton, TaskIdentity};
 use dvandva_v4::store::{migrate_legacy_baton, RunChannel, StoreError};
 use dvandva_v4::transition::{self, TransitionError};
 use fs2::FileExt;
@@ -976,6 +976,96 @@ fn migration_integrity_generic_cas_rejects_even_an_eligible_crossing() {
         .path()
         .join("history/00000000000000000001.json")
         .exists());
+}
+
+#[test]
+fn legacy_cas_rejects_task_identity_mutations_without_writing_history() {
+    let cases = [
+        (
+            "create",
+            None,
+            Some(TaskIdentity {
+                reference: Some("DEF-456".to_owned()),
+                summary: "Created identity".to_owned(),
+            }),
+        ),
+        (
+            "erase",
+            Some(TaskIdentity {
+                reference: Some("DEF-123".to_owned()),
+                summary: "Preserved objective".to_owned(),
+            }),
+            None,
+        ),
+        (
+            "mutate",
+            Some(TaskIdentity {
+                reference: Some("DEF-123".to_owned()),
+                summary: "Preserved objective".to_owned(),
+            }),
+            Some(TaskIdentity {
+                reference: Some("DEF-789".to_owned()),
+                summary: "Mutated identity".to_owned(),
+            }),
+        ),
+        (
+            "blank",
+            Some(TaskIdentity {
+                reference: Some("DEF-123".to_owned()),
+                summary: "Preserved objective".to_owned(),
+            }),
+            Some(TaskIdentity {
+                reference: Some(" ".to_owned()),
+                summary: " ".to_owned(),
+            }),
+        ),
+    ];
+
+    for (case, source_task, next_task) in cases {
+        let dir = tempfile::tempdir().unwrap();
+        write_legacy_run(dir.path(), "working", "worker", serde_json::Value::Null);
+        for path in [
+            dir.path().join("baton.json"),
+            dir.path().join("history/00000000000000000000.json"),
+        ] {
+            let mut source: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            source["task"] = serde_json::to_value(source_task.clone()).unwrap();
+            std::fs::write(path, serde_json::to_vec_pretty(&source).unwrap()).unwrap();
+        }
+
+        let head_path = dir.path().join("baton.json");
+        let original_bytes = std::fs::read(&head_path).unwrap();
+        let channel = RunChannel::open(dir.path());
+        let original = channel.read().unwrap();
+        let mut next = original.clone();
+        next.revision = 1;
+        next.task = next_task;
+
+        assert!(
+            matches!(
+                channel.compare_and_swap(0, &next),
+                Err(StoreError::MigrationRequired)
+            ),
+            "legacy CAS accepted the {case} task-identity mutation"
+        );
+        assert_eq!(
+            std::fs::read(&head_path).unwrap(),
+            original_bytes,
+            "legacy CAS rewrote the {case} source head"
+        );
+        assert_eq!(
+            channel.read().unwrap(),
+            original,
+            "legacy CAS structurally changed the {case} source head"
+        );
+        assert!(
+            !dir.path()
+                .join("history/00000000000000000001.json")
+                .exists(),
+            "legacy CAS wrote successor history for the {case} mutation"
+        );
+    }
 }
 
 #[test]
