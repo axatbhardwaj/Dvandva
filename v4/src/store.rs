@@ -99,13 +99,8 @@ impl RunChannel {
         identity: &str,
         through_revision: u64,
     ) -> Result<bool, StoreError> {
-        let history = self.directory.join("history");
         for revision in 0..=through_revision {
-            let path = history.join(format!("{revision:020}.json"));
-            let baton = decode_baton(&fs::read(path)?).map_err(|_| StoreError::InvalidHistory)?;
-            if baton.revision != revision {
-                return Err(StoreError::InvalidHistory);
-            }
+            let baton = self.read_history_revision(revision)?;
             if baton.schema == SCHEMA
                 && (baton
                     .checkpoint
@@ -141,12 +136,11 @@ impl RunChannel {
                     actual: next.revision,
                 });
             }
-            validate_baton(next)?;
-            match (current.schema.as_str(), next.schema.as_str()) {
-                (left, right) if left == right => {}
-                (LEGACY_SCHEMA, SCHEMA) => validate_migration_edge(&current, next)?,
-                _ => return Err(StoreError::InvalidSchemaTransition),
+            if self.read_history_revision(expected_revision)? != current {
+                return Err(StoreError::InvalidHistory);
             }
+            validate_baton(next)?;
+            validate_history_edge(&current, next)?;
             self.write_history(next)?;
             self.install(next)?;
             Ok(next.clone())
@@ -176,28 +170,11 @@ impl RunChannel {
             let mut selected = None;
             let mut terminal_head = false;
             let mut previous: Option<RunBaton> = None;
-            let mut crossed = false;
             for revision in 0..=high {
-                let path = history_dir.join(format!("{revision:020}.json"));
-                let baton =
-                    decode_baton(&fs::read(path)?).map_err(|_| StoreError::InvalidHistory)?;
-                if baton.revision != revision {
-                    return Err(StoreError::InvalidHistory);
-                }
+                let baton = self.read_history_revision(revision)?;
                 if let Some(previous_baton) = previous.as_ref() {
-                    match (previous_baton.schema.as_str(), baton.schema.as_str()) {
-                        (SCHEMA, LEGACY_SCHEMA) => return Err(StoreError::InvalidHistory),
-                        (LEGACY_SCHEMA, SCHEMA) if crossed => {
-                            return Err(StoreError::InvalidHistory)
-                        }
-                        (LEGACY_SCHEMA, SCHEMA) => {
-                            validate_migration_edge(previous_baton, &baton)
-                                .map_err(|_| StoreError::InvalidHistory)?;
-                            crossed = true;
-                        }
-                        (left, right) if left != right => return Err(StoreError::InvalidHistory),
-                        _ => {}
-                    }
+                    validate_history_edge(previous_baton, &baton)
+                        .map_err(|_| StoreError::InvalidHistory)?;
                 }
                 previous = Some(baton.clone());
                 match &run_id {
@@ -221,6 +198,7 @@ impl RunChannel {
             if recovered.schema != SCHEMA {
                 return Err(StoreError::MigrationRequired);
             }
+            let source = recovered.clone();
             recovered.revision = high + 1;
             recovered.participants.worker.claim = None;
             recovered.participants.reviewer.claim = None;
@@ -229,6 +207,7 @@ impl RunChannel {
                 previous_high_revision: high,
             });
             validate_baton(&recovered)?;
+            validate_history_edge(&source, &recovered).map_err(|_| StoreError::InvalidHistory)?;
             self.write_history(&recovered)?;
             self.install(&recovered)?;
             Ok(recovered)
@@ -237,6 +216,25 @@ impl RunChannel {
 
     fn baton_path(&self) -> PathBuf {
         self.directory.join("baton.json")
+    }
+
+    fn read_history_revision(&self, revision: u64) -> Result<RunBaton, StoreError> {
+        let path = self
+            .directory
+            .join("history")
+            .join(format!("{revision:020}.json"));
+        let bytes = match fs::read(path) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                return Err(StoreError::InvalidHistory)
+            }
+            Err(error) => return Err(StoreError::Io(error)),
+        };
+        let baton = decode_baton(&bytes).map_err(|_| StoreError::InvalidHistory)?;
+        if baton.revision != revision {
+            return Err(StoreError::InvalidHistory);
+        }
+        Ok(baton)
     }
 
     fn with_lock<T>(
@@ -436,6 +434,10 @@ fn valid_checkpoint_state(baton: &RunBaton) -> bool {
             .as_ref()
             .is_some_and(|review| review.binding() != binding)
         || baton
+            .review
+            .as_ref()
+            .is_some_and(|review| !valid_review(review, baton))
+        || baton
             .pending_checkpoint_supersession
             .as_ref()
             .is_some_and(|pending| {
@@ -447,6 +449,18 @@ fn valid_checkpoint_state(baton: &RunBaton) -> bool {
         return false;
     }
     true
+}
+
+fn valid_review(review: &crate::model::ReviewReceipt, baton: &RunBaton) -> bool {
+    let findings_are_normalized = review
+        .findings
+        .iter()
+        .all(|finding| !finding.is_empty() && finding.trim() == finding);
+    match review.verdict.as_str() {
+        "approved" => review.findings.is_empty() && baton.pending_checkpoint_supersession.is_none(),
+        "changes_requested" => !review.findings.is_empty() && findings_are_normalized,
+        _ => false,
+    }
 }
 
 fn valid_checkpoint(checkpoint: &Checkpoint, baton: &RunBaton) -> bool {
@@ -504,6 +518,26 @@ fn validate_migration_edge(current: &RunBaton, next: &RunBaton) -> Result<(), St
         Ok(())
     } else {
         Err(StoreError::InvalidSchemaTransition)
+    }
+}
+
+fn validate_history_edge(current: &RunBaton, next: &RunBaton) -> Result<(), StoreError> {
+    if next.revision != current.revision + 1 || next.run_id != current.run_id {
+        return Err(StoreError::InvalidHistory);
+    }
+    match (current.schema.as_str(), next.schema.as_str()) {
+        (SCHEMA, SCHEMA)
+            if next.scope_revision >= current.scope_revision
+                && next
+                    .checkpoint_history
+                    .starts_with(&current.checkpoint_history) =>
+        {
+            Ok(())
+        }
+        (SCHEMA, SCHEMA) => Err(StoreError::InvalidHistory),
+        (LEGACY_SCHEMA, LEGACY_SCHEMA) => Ok(()),
+        (LEGACY_SCHEMA, SCHEMA) => validate_migration_edge(current, next),
+        _ => Err(StoreError::InvalidSchemaTransition),
     }
 }
 

@@ -1,5 +1,6 @@
 use assert_cmd::Command;
 use dvandva_v4::model::{DeliverableRequirement, RunBaton};
+use dvandva_v4::store::{RunChannel, StoreError};
 use predicates::prelude::*;
 use sha2::{Digest, Sha256};
 
@@ -94,6 +95,64 @@ fn review_action(
         "scope_revision": binding["scope_revision"],
         "findings": findings
     })
+}
+
+fn setup_reviewing_checkpoint(dir: &std::path::Path) -> (String, String, serde_json::Value) {
+    init_pair(dir);
+    let worker = claim_role(dir, "worker", "worker-1", 0);
+    let reviewer = claim_role(dir, "reviewer", "reviewer-1", 1);
+    apply_action(
+        dir,
+        "worker",
+        "worker-1",
+        &worker,
+        2,
+        "checkpoint.json",
+        checkpoint_submission(
+            "checkpoint-a",
+            serde_json::json!([
+                {"id": "implementation", "artifacts": [{"kind": "commit", "value": "abc"}]}
+            ]),
+        ),
+    )
+    .success();
+    let binding = checkpoint_binding(dir);
+    (worker, reviewer, binding)
+}
+
+fn setup_scope_amended_checkpoint(dir: &std::path::Path) -> (String, String) {
+    let (worker, reviewer, _) = setup_reviewing_checkpoint(dir);
+    apply_action(
+        dir,
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        3,
+        "human.json",
+        serde_json::json!({
+            "type": "request_human_decision", "question": "Replace scope?",
+            "evidence": ["New requirement"], "options": ["yes", "no"],
+            "contact_role": "reviewer", "resume_status": "reviewing", "resume_assignee": "reviewer"
+        }),
+    )
+    .success();
+    apply_action(
+        dir,
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        4,
+        "amend.json",
+        serde_json::json!({
+            "type": "resume_human_decision", "answer": "yes",
+            "scope_amendment": {
+                "objective": "New objective", "objective_refs": [], "task_reference": null,
+                "scope_deliverables": [{"id": "implementation", "description": "New code"}]
+            }
+        }),
+    )
+    .success();
+    (worker, reviewer)
 }
 
 fn write_legacy_run(
@@ -2876,4 +2935,276 @@ fn supersession_mutations_reject_terminal_runs() {
         .failure()
         .stderr(predicate::str::contains(r#""error":"terminal_state""#));
     }
+}
+
+#[test]
+fn store_edge_rejects_a_truncated_installed_head_without_mutation() {
+    let dir = tempfile::tempdir().unwrap();
+    let (worker, _) = setup_scope_amended_checkpoint(dir.path());
+    let baton_path = dir.path().join("baton.json");
+    let mut baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&baton_path).unwrap()).unwrap();
+    baton["checkpoint_history"] = serde_json::json!([]);
+    std::fs::write(&baton_path, serde_json::to_vec_pretty(&baton).unwrap()).unwrap();
+    command()
+        .args(["read", "--run-dir", dir.path().to_str().unwrap()])
+        .assert()
+        .success();
+    let before = std::fs::read(&baton_path).unwrap();
+
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        5,
+        "mutation.json",
+        serde_json::json!({
+            "type": "record_publication", "required": true,
+            "desired_revision": 0, "published_revision": null, "refs": []
+        }),
+    )
+    .failure()
+    .stderr(predicate::str::contains(r#""error":"invalid_history""#));
+    assert_eq!(std::fs::read(&baton_path).unwrap(), before);
+    assert!(!dir
+        .path()
+        .join("history/00000000000000000006.json")
+        .exists());
+}
+
+#[test]
+fn store_edge_rejects_scope_rollback_without_mutation() {
+    let dir = tempfile::tempdir().unwrap();
+    let (worker, _) = setup_scope_amended_checkpoint(dir.path());
+    let baton_path = dir.path().join("baton.json");
+    let mut baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&baton_path).unwrap()).unwrap();
+    baton["scope_revision"] = serde_json::json!(0);
+    baton["publication_binding"]["obligation"]["scope_revision"] = serde_json::json!(0);
+    std::fs::write(&baton_path, serde_json::to_vec_pretty(&baton).unwrap()).unwrap();
+    command()
+        .args(["read", "--run-dir", dir.path().to_str().unwrap()])
+        .assert()
+        .success();
+    let before = std::fs::read(&baton_path).unwrap();
+
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        5,
+        "mutation.json",
+        serde_json::json!({
+            "type": "record_publication", "required": true,
+            "desired_revision": 0, "published_revision": null, "refs": []
+        }),
+    )
+    .failure()
+    .stderr(predicate::str::contains(r#""error":"invalid_history""#));
+    assert_eq!(std::fs::read(&baton_path).unwrap(), before);
+}
+
+#[test]
+fn store_edge_direct_cas_cannot_replace_checkpoint_history() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scope_amended_checkpoint(dir.path());
+    let channel = RunChannel::open(dir.path());
+    let current = channel.read().unwrap();
+    let mut next = current.clone();
+    next.revision += 1;
+    next.checkpoint_history[0].manifest_digest = "0".repeat(64);
+
+    let error = channel.compare_and_swap(5, &next).unwrap_err();
+    assert!(matches!(error, StoreError::InvalidHistory));
+    assert_eq!(channel.read().unwrap(), current);
+    assert!(!dir
+        .path()
+        .join("history/00000000000000000006.json")
+        .exists());
+}
+
+#[test]
+fn store_edge_recovery_rejects_non_monotonic_v2_history() {
+    let dir = tempfile::tempdir().unwrap();
+    setup_scope_amended_checkpoint(dir.path());
+    let channel = RunChannel::open(dir.path());
+    let mut bad = channel.read().unwrap();
+    bad.revision += 1;
+    bad.scope_revision = 0;
+    bad.checkpoint_history.clear();
+    bad.publication_binding
+        .as_mut()
+        .unwrap()
+        .obligation
+        .scope_revision = 0;
+    std::fs::write(
+        dir.path().join("history/00000000000000000006.json"),
+        serde_json::to_vec_pretty(&bad).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("baton.json"), b"corrupt\n").unwrap();
+
+    command()
+        .args([
+            "recover",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--from-revision",
+            "6",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(r#""error":"invalid_history""#));
+    assert!(!dir
+        .path()
+        .join("history/00000000000000000007.json")
+        .exists());
+}
+
+#[test]
+fn store_edge_missing_expected_history_is_typed_and_non_mutating() {
+    let dir = tempfile::tempdir().unwrap();
+    let (worker, _) = setup_scope_amended_checkpoint(dir.path());
+    let baton_path = dir.path().join("baton.json");
+    let before = std::fs::read(&baton_path).unwrap();
+    std::fs::remove_file(dir.path().join("history/00000000000000000005.json")).unwrap();
+
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        5,
+        "mutation.json",
+        serde_json::json!({
+            "type": "record_publication", "required": true,
+            "desired_revision": 0, "published_revision": null, "refs": []
+        }),
+    )
+    .failure()
+    .stderr(predicate::str::contains(r#""error":"invalid_history""#));
+    assert_eq!(std::fs::read(&baton_path).unwrap(), before);
+    assert!(!dir
+        .path()
+        .join("history/00000000000000000006.json")
+        .exists());
+}
+
+#[test]
+fn supersession_changes_requested_resolves_the_pending_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let (worker, reviewer, binding) = setup_reviewing_checkpoint(dir.path());
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        3,
+        "supersede.json",
+        serde_json::json!({
+            "type": "request_checkpoint_supersession", "reason": "new evidence"
+        }),
+    )
+    .success();
+
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        4,
+        "changes.json",
+        review_action(
+            "changes_requested",
+            &binding,
+            serde_json::json!(["Include the new evidence"]),
+        ),
+    )
+    .success();
+    let baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
+    assert_eq!(baton["status"], "revising");
+    assert_eq!(baton["assignee"], "worker");
+    assert!(baton["pending_checkpoint_supersession"].is_null());
+    assert_eq!(baton["review"]["verdict"], "changes_requested");
+}
+
+#[test]
+fn store_rejects_approved_review_with_blocking_findings() {
+    let dir = tempfile::tempdir().unwrap();
+    let (_, reviewer, binding) = setup_reviewing_checkpoint(dir.path());
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        3,
+        "approve.json",
+        review_action("approved", &binding, serde_json::json!([])),
+    )
+    .success();
+    let baton_path = dir.path().join("baton.json");
+    let mut baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&baton_path).unwrap()).unwrap();
+    baton["review"]["findings"] = serde_json::json!(["blocking"]);
+    std::fs::write(&baton_path, serde_json::to_vec_pretty(&baton).unwrap()).unwrap();
+
+    command()
+        .args(["read", "--run-dir", dir.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(r#""error":"invalid_baton""#));
+}
+
+#[test]
+fn supersession_finalize_rejects_approved_review_with_pending_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let (worker, reviewer, binding) = setup_reviewing_checkpoint(dir.path());
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        3,
+        "approve.json",
+        review_action("approved", &binding, serde_json::json!([])),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        4,
+        "publication.json",
+        serde_json::json!({
+            "type": "record_publication", "required": true,
+            "desired_revision": 0, "published_revision": 0,
+            "refs": [{"kind": "explainer", "value": "https://example.test/run"}]
+        }),
+    )
+    .success();
+    let baton_path = dir.path().join("baton.json");
+    let mut baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&baton_path).unwrap()).unwrap();
+    baton["pending_checkpoint_supersession"] = serde_json::json!({
+        "reason": "late evidence", "checkpoint": binding
+    });
+    std::fs::write(&baton_path, serde_json::to_vec_pretty(&baton).unwrap()).unwrap();
+
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        5,
+        "finalize.json",
+        serde_json::json!({"type": "finalize"}),
+    )
+    .failure();
+    let persisted: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&baton_path).unwrap()).unwrap();
+    assert_ne!(persisted["status"], "done");
 }

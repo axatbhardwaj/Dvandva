@@ -120,9 +120,6 @@ pub fn apply(
             if checkpoint.binding() != submitted_binding {
                 return Err(TransitionError::StaleReview);
             }
-            if baton.pending_checkpoint_supersession.is_some() {
-                return Err(TransitionError::SupersessionPending);
-            }
             let findings = findings
                 .into_iter()
                 .map(|finding| finding.trim().to_owned())
@@ -136,9 +133,13 @@ pub fn apply(
                     }
                     baton.status = Status::Revising;
                     baton.assignee = Assignee::Worker;
+                    baton.pending_checkpoint_supersession = None;
                     "changes_requested"
                 }
                 ReviewVerdict::Approved => {
+                    if baton.pending_checkpoint_supersession.is_some() {
+                        return Err(TransitionError::SupersessionPending);
+                    }
                     if !findings.is_empty() {
                         return Err(TransitionError::BlockingFindings);
                     }
@@ -159,6 +160,9 @@ pub fn apply(
             require_owner(&baton, role, Role::Worker, Assignee::Worker)?;
             if baton.status != Status::Finalizing {
                 return Err(TransitionError::IllegalState);
+            }
+            if baton.pending_checkpoint_supersession.is_some() {
+                return Err(TransitionError::SupersessionPending);
             }
             let checkpoint = baton
                 .checkpoint
