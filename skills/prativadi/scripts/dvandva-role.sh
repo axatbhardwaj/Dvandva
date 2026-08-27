@@ -18,6 +18,19 @@ credentials_root="$state_home/dvandva/credentials"
 kernel_version="0.2.0"
 schema="dvandva.run.v2"
 role_api="2"
+version_max_bytes=256
+probe_max_bytes=16384
+handshake_dir=""
+
+cleanup() {
+  local status=$?
+  trap - EXIT
+  if test -n "$handshake_dir"; then
+    rm -rf -- "$handshake_dir" || true
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
 
 incompatible_kernel() {
   printf 'dvandva-role: incompatible kernel; explicitly invoke $setup-dvandva doctor\n' >&2
@@ -33,13 +46,47 @@ require_kernel() {
     printf 'dvandva-role: kernel missing; explicitly invoke $setup-dvandva first\n' >&2
     exit 1
   }
-  local version_output probe_output
-  version_output="$("$binary" --version 2>/dev/null)" || incompatible_kernel
-  test "$version_output" = "dvandva-v4 $kernel_version" || incompatible_kernel
-  probe_output="$("$binary" probe \
-    --expected-schema "$schema" --expected-role-api "$role_api" 2>/dev/null)" || incompatible_kernel
-  python3 -c '
+  handshake_dir="$(mktemp -d "${TMPDIR:-/tmp}/dvandva-role.XXXXXX")" || incompatible_kernel
+  local version_file="$handshake_dir/version" probe_file="$handshake_dir/probe"
+  local version_size probe_size
+  local -a statuses
+
+  set +e
+  "$binary" --version 2>/dev/null | \
+    head -c "$((version_max_bytes + 1))" >"$version_file"
+  statuses=("${PIPESTATUS[@]}")
+  set -e
+  version_size="$(wc -c <"$version_file")"
+  test "$version_size" -le "$version_max_bytes" || incompatible_kernel
+  test "${statuses[0]}" -eq 0 && test "${statuses[1]}" -eq 0 || incompatible_kernel
+  python3 - "$kernel_version" "$version_file" "$version_max_bytes" <<'PY' || incompatible_kernel
+import sys
+from pathlib import Path
+
+raw = Path(sys.argv[2]).read_bytes()
+if len(raw) > int(sys.argv[3]) or b"\0" in raw:
+    raise SystemExit(1)
+try:
+    reported = raw.decode("utf-8", errors="strict")
+except UnicodeDecodeError:
+    raise SystemExit(1)
+expected = f"dvandva-v4 {sys.argv[1]}"
+raise SystemExit(0 if reported in (expected, expected + "\n") else 1)
+PY
+
+  set +e
+  "$binary" probe \
+    --expected-schema "$schema" --expected-role-api "$role_api" 2>/dev/null | \
+    head -c "$((probe_max_bytes + 1))" >"$probe_file"
+  statuses=("${PIPESTATUS[@]}")
+  set -e
+  probe_size="$(wc -c <"$probe_file")"
+  test "$probe_size" -le "$probe_max_bytes" || incompatible_kernel
+  test "${statuses[0]}" -eq 0 && test "${statuses[1]}" -eq 0 || incompatible_kernel
+  python3 - "$kernel_version" "$probe_file" "$probe_max_bytes" <<'PY' || incompatible_kernel
 import json, sys
+from pathlib import Path
+
 def unique(pairs):
     result = {}
     for key, value in pairs:
@@ -48,7 +95,10 @@ def unique(pairs):
         result[key] = value
     return result
 try:
-    probe = json.load(sys.stdin, object_pairs_hook=unique)
+    raw = Path(sys.argv[2]).read_bytes()
+    if len(raw) > int(sys.argv[3]) or b"\0" in raw:
+        raise ValueError("invalid raw probe")
+    probe = json.loads(raw.decode("utf-8", errors="strict"), object_pairs_hook=unique)
 except (json.JSONDecodeError, UnicodeDecodeError, ValueError, TypeError):
     raise SystemExit(1)
 capabilities = probe.get("capabilities") if type(probe) is dict else None
@@ -66,7 +116,10 @@ valid = (
     and probe.get("compatible") is True
 )
 raise SystemExit(0 if valid else 1)
-' "$kernel_version" <<<"$probe_output" || incompatible_kernel
+PY
+
+  rm -rf -- "$handshake_dir"
+  handshake_dir=""
 }
 
 session_id() {
@@ -170,10 +223,12 @@ start_role() {
       printf 'dvandva-role: new or discovered runs require an objective\n' >&2
       exit 2
     }
-    test "${#deliverables[@]}" -gt 0 || {
-      printf 'dvandva-role: new runs require --required-deliverable\n' >&2
-      exit 2
-    }
+    if test "$role" = worker; then
+      test "${#deliverables[@]}" -gt 0 || {
+        printf 'dvandva-role: worker non-exact starts require --required-deliverable\n' >&2
+        exit 2
+      }
+    fi
   fi
   test -z "$selected_run" || test -z "$new_flag" || {
     printf 'dvandva-role: --run-id and --new-run are mutually exclusive\n' >&2
@@ -229,7 +284,7 @@ run_dir_command() {
       ;;
     apply)
       test "$#" -eq 2 || {
-        printf 'usage: dvandva-role.sh apply SESSION RUN_DIR REVISION ACTION_JSON\n' >&2
+        printf 'usage: dvandva-role.sh apply SESSION RUN_DIR REVISION ACTION_FILE\n' >&2
         exit 2
       }
       "$binary" role apply "${common[@]}" --expected-revision "$1" --action "$2"

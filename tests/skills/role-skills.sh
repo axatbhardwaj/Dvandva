@@ -49,6 +49,47 @@ grep -Fq '"role_api": 2' <<<"$probe"
 grep -Fq '"upgrade_from_v1": true' <<<"$probe"
 grep -Fq '"publish": false' <<<"$probe"
 
+# Handshake validation preserves raw bytes, size, and producer status.
+mv "$binary" "$binary.real"
+cat >"$binary" <<'ADVERSARIAL_KERNEL'
+#!/usr/bin/env bash
+valid_probe='{"package":"dvandva-v4","version":"0.2.0","publish":false,"write_schema":"dvandva.run.v2","read_schemas":["dvandva.run.v2","dvandva.run.v1"],"role_api":2,"capabilities":{"upgrade_from_v1":true},"compatible":true}'
+if test "${1:-}" = "--version"; then
+  case "${DVANDVA_FAKE_MODE:-valid}" in
+    valid|probe_*) printf 'dvandva-v4 0.2.0\n' ;;
+    version_nul) printf 'dvandva-v4 0.2.0\0\n' ;;
+    version_invalid_utf8) printf 'dvandva-v4 0.2.0\377\n' ;;
+    version_oversized) printf 'dvandva-v4 0.2.0'; head -c 20000 /dev/zero | tr '\0' '\n' ;;
+    version_extra_newline) printf 'dvandva-v4 0.2.0\n\n' ;;
+    version_nonzero) printf 'dvandva-v4 0.2.0\n'; exit 7 ;;
+  esac
+  exit 0
+fi
+if test "${1:-}" = "probe"; then
+  case "${DVANDVA_FAKE_MODE:-valid}" in
+    probe_nul) printf '%s\0\n' "$valid_probe" ;;
+    probe_invalid_utf8) printf '%s\377\n' "$valid_probe" ;;
+    probe_oversized) printf '%s' "$valid_probe"; head -c 20000 /dev/zero | tr '\0' ' ' ;;
+    probe_nonzero) printf '%s\n' "$valid_probe"; exit 9 ;;
+    *) printf '%s\n' "$valid_probe" ;;
+  esac
+  exit 0
+fi
+exit 99
+ADVERSARIAL_KERNEL
+chmod 755 "$binary"
+for facade in "$vadi" "$prativadi"; do
+  for mode in \
+    version_nul version_invalid_utf8 version_oversized \
+    version_extra_newline version_nonzero \
+    probe_nul probe_invalid_utf8 probe_oversized probe_nonzero
+  do
+    expect_failure 'incompatible kernel' env DVANDVA_FAKE_MODE="$mode" \
+      bash "$facade" probe
+  done
+done
+mv "$binary.real" "$binary"
+
 # Correct strings hidden in a nested decoy cannot satisfy the top-level contract.
 mv "$binary" "$binary.real"
 cat >"$binary" <<'DECOY_KERNEL'
@@ -82,6 +123,13 @@ expect_failure 'incompatible kernel' bash "$vadi" start old codex claude "$works
 test ! -e "$XDG_STATE_HOME/dvandva/runs"
 mv "$binary.new" "$binary"
 
+# Reviewer-first discovery reaches the kernel without inventing a manifest and
+# cannot create a run.
+reviewer_first="$(DVANDVA_WAIT_TIMEOUT_MS=1 bash "$prativadi" start \
+  reviewer-first claude codex "$workspace" 'Review DEF-123' --wait)"
+grep -Fq '"outcome": "none"' <<<"$reviewer_first"
+test ! -e "$XDG_STATE_HOME/dvandva/runs"
+
 # The released 0.1.1 facade also fails its v1 handshake against the new kernel.
 old_facade="$test_root/old/skills/vadi/scripts/dvandva-role.sh"
 expect_failure 'incompatible kernel' bash "$old_facade" start old codex claude \
@@ -105,7 +153,12 @@ test "$(find "$XDG_STATE_HOME/dvandva/runs" -mindepth 1 -maxdepth 1 -type d | wc
 
 bash "$vadi" read codex-session "$run_dir" | grep -Fq '"status": "working"'
 sleep 2
-bash "$vadi" reclaim codex-session "$run_dir" 2 | grep -Fq '"revision": 3'
+reclaimed="$(bash "$vadi" start codex-session codex claude "$workspace" \
+  --run-id "$run_id")"
+grep -Fq '"outcome": "started"' <<<"$reclaimed"
+grep -Fq '"disposition": "reclaimed"' <<<"$reclaimed"
+grep -Fq '"revision": 3' <<<"$reclaimed"
+bash "$vadi" read codex-session "$run_dir" | grep -Fq '"revision": 3'
 bash "$vadi" heartbeat codex-session "$run_dir" 3 | grep -Fq '"revision":4'
 bash "$vadi" wait codex-session "$run_dir" 4 50 | grep -Fq '"revision": 4'
 
@@ -185,6 +238,8 @@ do
     'upgrade SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION' \
     'claim SESSION RUN_DIR EXPECTED_REVISION' \
     'reclaim SESSION RUN_DIR EXPECTED_REVISION' \
+    'exact `start --run-id` automatically reclaims' \
+    'ACTION_FILE' \
     '"type":"resume_human_decision"' \
     '"scope_amendment"'
   do
@@ -236,6 +291,10 @@ do
 done
 
 grep -Fq 'Exact joins pass only `--run-id`' <<<"$role_contract"
+grep -Fq 'mode 0600' <<<"$role_contract"
+grep -Fq 'private temporary file' <<<"$role_contract"
+grep -Fq 'deletes it after' <<<"$role_contract"
+! grep -Fq 'ACTION_JSON' <<<"$role_contract"
 grep -Fq 'Publication never substitutes for supersession or withdrawal.' <<<"$role_contract"
 grep -Fq 'foreground local wait' <<<"$role_contract"
 grep -Fq 'Prativadi never creates a run.' "$prativadi_contract"

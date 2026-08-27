@@ -60,6 +60,8 @@ fn assert_role_source_contract(role: &str) {
         "upgrade SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION",
         "claim SESSION RUN_DIR EXPECTED_REVISION",
         "reclaim SESSION RUN_DIR EXPECTED_REVISION",
+        "exact `start --run-id` automatically reclaims",
+        "ACTION_FILE",
     ] {
         assert!(
             source.contains(required),
@@ -68,6 +70,10 @@ fn assert_role_source_contract(role: &str) {
     }
 
     assert!(source.contains("Exact joins pass only `--run-id`"));
+    assert!(source.contains("mode 0600"));
+    assert!(source.contains("private temporary file"));
+    assert!(source.contains("deletes it after"));
+    assert!(!source.contains("ACTION_JSON"));
     assert!(source.contains("Publication never substitutes for supersession or withdrawal."));
     let allowed_exception =
         "new human scope, ambiguity, or unavailable mandated publication/review capability";
@@ -192,7 +198,7 @@ fn normalize_documented_action(template: &str) -> serde_json::Value {
         )
         .replace("<snapshot.checkpoint.identity>", "checkpoint-a")
         .replace("<snapshot.checkpoint.manifest_digest>", &"b".repeat(64))
-        .replace(r#""<snapshot.checkpoint.scope_revision>""#, "0")
+        .replace("<snapshot.checkpoint.scope_revision>", "0")
         .replace(
             "<snapshot.publication_binding.deployment.source_digest>",
             &"a".repeat(64),

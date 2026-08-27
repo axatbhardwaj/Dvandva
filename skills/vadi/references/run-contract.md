@@ -7,7 +7,7 @@ The facade JSON is authoritative. Use only `scripts/dvandva-role.sh`; first
 ```text
 start SESSION CURRENT_HARNESS PEER_HARNESS WORKSPACE [OBJECTIVE [TASK]] [--objective-ref KIND=VALUE] [--required-deliverable ID=DESCRIPTION] [--wait|--new-run|--run-id ID]
 read  SESSION RUN_DIR
-apply SESSION RUN_DIR EXPECTED_REVISION ACTION_JSON
+apply SESSION RUN_DIR EXPECTED_REVISION ACTION_FILE
 wait  SESSION RUN_DIR AFTER_REVISION [TIMEOUT_MS]
 heartbeat SESSION RUN_DIR EXPECTED_REVISION
 upgrade SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION
@@ -31,9 +31,11 @@ objective and scope, status and assignee, `next_actions`, and exact
 
 For `upgrade_required`, run `upgrade` with the exact returned run directory,
 harnesses, and revision. Upgrade clears claims: use its returned revision with
-`claim`, then read a fresh v2 snapshot. Use `reclaim` only when a later facade
-snapshot reports this role's claim expired. Never route migration through an
-ordinary action payload.
+`claim`, then read a fresh v2 snapshot. For ordinary expired-claim recovery,
+exact `start --run-id` automatically reclaims a claim owned by the same
+session. Reserve direct `reclaim` for a revision explicitly returned by the
+facade, and follow it immediately with `read`. Never route migration through
+an ordinary action payload.
 
 After every facade operation, use the fresh facade snapshot. `next_actions`
 combines `advisory_actions` and ordinary `legal_actions`; semantic work happens
@@ -43,6 +45,9 @@ legal action. `request_human_decision` may be selected directly from
 publication/review capability; it is never an ordinary wake or action.
 
 ## Checkpoint and worker mutations
+
+For every mutation, the role writes its JSON action to a private temporary file
+with mode 0600, passes its path as `ACTION_FILE`, and deletes it after `apply`.
 
 A checkpoint contains one complete deliverable manifest. It covers the
 canonical deliverable IDs exactly once and includes non-empty verification.

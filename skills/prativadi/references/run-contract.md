@@ -7,7 +7,7 @@ The facade JSON is authoritative. Use only `scripts/dvandva-role.sh`; first
 ```text
 start SESSION CURRENT_HARNESS PEER_HARNESS WORKSPACE [OBJECTIVE [TASK]] [--objective-ref KIND=VALUE] [--required-deliverable ID=DESCRIPTION] [--wait|--run-id ID]
 read  SESSION RUN_DIR
-apply SESSION RUN_DIR EXPECTED_REVISION ACTION_JSON
+apply SESSION RUN_DIR EXPECTED_REVISION ACTION_FILE
 wait  SESSION RUN_DIR AFTER_REVISION [TIMEOUT_MS]
 heartbeat SESSION RUN_DIR EXPECTED_REVISION
 upgrade SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION
@@ -33,9 +33,11 @@ work.
 
 For `upgrade_required`, run `upgrade` with the exact returned run directory,
 harnesses, and revision. Upgrade clears claims: use its returned revision with
-`claim`, then read a fresh v2 snapshot. Use `reclaim` only when a later facade
-snapshot reports this role's claim expired. Never route migration through an
-ordinary action payload.
+`claim`, then read a fresh v2 snapshot. For ordinary expired-claim recovery,
+exact `start --run-id` automatically reclaims a claim owned by the same
+session. Reserve direct `reclaim` for a revision explicitly returned by the
+facade, and follow it immediately with `read`. Never route migration through
+an ordinary action payload.
 
 After every facade operation, use the fresh facade snapshot. `next_actions`
 combines `advisory_actions` and ordinary `legal_actions`; semantic work happens
@@ -45,6 +47,9 @@ legal action. `request_human_decision` may be selected directly from
 publication/review capability; it is never an ordinary wake or action.
 
 ## Checkpoint and review bindings
+
+For every mutation, the role writes its JSON action to a private temporary file
+with mode 0600, passes its path as `ACTION_FILE`, and deletes it after `apply`.
 
 Review only when `advisory_actions` includes `review_checkpoint`. Materialize
 the exact immutable checkpoint, whose complete deliverable manifest covers the
@@ -57,7 +62,7 @@ Never type, increment, or reuse them from an older snapshot. Bind every verdict
 to all three and discard a stale verdict:
 
 ```json
-{"type":"record_review","verdict":"changes_requested","checkpoint_identity":"<snapshot.checkpoint.identity>","manifest_digest":"<snapshot.checkpoint.manifest_digest>","scope_revision":"<snapshot.checkpoint.scope_revision>","findings":["<actionable finding>"]}
+{"type":"record_review","verdict":"changes_requested","checkpoint_identity":"<snapshot.checkpoint.identity>","manifest_digest":"<snapshot.checkpoint.manifest_digest>","scope_revision":<snapshot.checkpoint.scope_revision>,"findings":["<actionable finding>"]}
 ```
 
 When a pending supersession is returned in `reviewing`, accept it only through
