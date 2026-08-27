@@ -26,7 +26,7 @@ $setup-dvandva install Dvandva.
 ```
 
 Setup downloads `dvandva-kernel-linux-x86_64` and `SHA256SUMS` from the
-`skills-v0.1.0` GitHub release, verifies the exact digest and schema probe, and
+`skills-v0.1.1` GitHub release, verifies the exact digest and schema probe, and
 installs the helper under `${XDG_DATA_HOME:-$HOME/.local/share}/dvandva/`.
 It creates private run and credential roots under
 `${XDG_STATE_HOME:-$HOME/.local/state}/dvandva/`. It never puts the helper on
@@ -50,6 +50,11 @@ casting, but one run must use different harness families.
 
 Vadi discovers or creates exactly one repository/task-matched run, implements
 only its objective, verifies an immutable checkpoint, and hands it off.
+An explicit ticket ID or URL is copied verbatim as the task identity in both
+sessions. If discovery finds compatible runs under a different identity, it
+returns `task_mismatch` immediately instead of waiting; a human-selected exact
+`--run-id` is authoritative while all repository, harness, terminal,
+corruption, and live-claim guards remain enforced.
 If another live vadi already owns that repository/task run, discovery reports
 it as busy instead of silently creating a duplicate; only an explicit request
 may create a separate run.

@@ -16,7 +16,7 @@ export XDG_DATA_HOME="$test_root/data"
 export XDG_STATE_HOME="$test_root/state"
 export DVANDVA_RELEASE_DIR="$release_dir"
 bash "$repo_root/skills/setup-dvandva/scripts/setup-dvandva.sh" \
-  install --version 0.1.0 >/dev/null
+  install --version 0.1.1 >/dev/null
 
 workspace="$test_root/workspace"
 mkdir -p "$workspace"
@@ -93,7 +93,7 @@ for skill in setup-dvandva vadi prativadi; do
   test -f "$skills_home/.agents/skills/$skill/SKILL.md"
 done
 
-installed_kernel="$XDG_DATA_HOME/dvandva/bin/0.1.0/dvandva-kernel"
+installed_kernel="$XDG_DATA_HOME/dvandva/bin/0.1.1/dvandva-kernel"
 mv -- "$installed_kernel" "$installed_kernel.real"
 printf '%s\n' \
   '#!/usr/bin/env bash' \

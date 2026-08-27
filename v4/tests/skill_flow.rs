@@ -11,7 +11,7 @@ fn version_and_probe_report_the_installation_contract() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("dvandva-v4 0.1.0"));
+        .stdout(predicate::str::contains("dvandva-v4 0.1.1"));
 
     let output = command()
         .args(["probe", "--expected-schema", "dvandva.run.v1"])
@@ -24,7 +24,7 @@ fn version_and_probe_report_the_installation_contract() {
     );
     let probe: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(probe["package"], "dvandva-v4");
-    assert_eq!(probe["version"], "0.1.0");
+    assert_eq!(probe["version"], "0.1.1");
     assert_eq!(probe["schema"], "dvandva.run.v1");
     assert_eq!(probe["compatible"], true);
 }
@@ -458,9 +458,9 @@ fn explicit_run_id_resolves_an_ambiguous_role_start() {
             "--peer-harness",
             "codex",
             "--objective",
-            "Implement DEF-123",
+            "Review the mobile app tech spec",
             "--task-reference",
-            "DEF-123",
+            "https://app.notion.com/p/Mobile-App-Tech-Spec",
             "--run-id",
             first_run,
         ])

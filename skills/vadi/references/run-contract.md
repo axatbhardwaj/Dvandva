@@ -12,10 +12,18 @@ wait  SESSION RUN_DIR AFTER_REVISION [TIMEOUT_MS]
 heartbeat SESSION RUN_DIR EXPECTED_REVISION
 ```
 
+`TASK` is a copied identity field. When the human supplies an explicit ticket
+ID or URL, trim its surrounding whitespace and pass the remaining string
+verbatim. When neither appears, omit `TASK`. Keep the same copied identity on
+later starts; a human-selected `--run-id` is authoritative if a supplied task
+identity differs from that run.
+
 `start` returns `created`, `resumed`, `claimed`, or `reclaimed`, or a fail-closed
-discovery result. Several matches require human selection; repeat `start` with
-the selected exact `--run-id`. Use `--new-run` only when the human explicitly
-asks for a separate run, and never combine it with `--run-id`.
+discovery result. `task_mismatch` returns compatible candidates immediately;
+surface them instead of starting another discovery wait. Several matches
+require human selection; repeat `start` with the selected exact `--run-id`.
+Use `--new-run` only when the human explicitly asks for a separate run, and
+never combine it with `--run-id`.
 
 Drive these states:
 

@@ -22,7 +22,7 @@ mkdir -p "$HOME"
 npx --yes skills add "$repo_root" --copy --global \
   --agent claude-code codex --skill setup-dvandva vadi prativadi -y >/dev/null
 bash "$HOME/.agents/skills/setup-dvandva/scripts/setup-dvandva.sh" \
-  install --version 0.1.0 >/dev/null
+  install --version 0.1.1 >/dev/null
 
 vadi="$HOME/.agents/skills/vadi/scripts/dvandva-role.sh"
 prativadi="$HOME/.claude/skills/prativadi/scripts/dvandva-role.sh"

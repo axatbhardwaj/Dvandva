@@ -16,7 +16,7 @@ npx --yes skills add axatbhardwaj/Dvandva --global \
 ```
 
 Then explicitly invoke `$setup-dvandva` with an install request once. The
-setup skill downloads and verifies the private `skills-v0.1.0` Linux kernel.
+setup skill downloads and verifies the private `skills-v0.1.1` Linux kernel.
 It remains under XDG data and outside `PATH`.
 
 Start two independent T3 Code sessions for one ticket:

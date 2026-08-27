@@ -8,9 +8,10 @@ description: Act as vadi for a paired Dvandva run. Use when the user says act as
 Read `references/run-contract.md`, then remain the run's worker until terminal
 state or an explicit human stop.
 
-1. Read repository instructions and the requested task. Resolve a stable
-   harness session ID with the bundled facade; retain a generated fallback for
-   this harness session.
+1. Read repository instructions and the requested task. Resolve its task
+   identity mechanically under the run contract. Resolve a stable harness
+   session ID with the bundled facade; retain a generated fallback for this
+   harness session.
 2. Start or resume by repository and task identity. Codex vadi pairs with
    Claude prativadi by default; reverse only when the human explicitly asks.
    Surface ambiguity—never choose newest or silently create a duplicate.

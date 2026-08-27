@@ -3,7 +3,7 @@ set -euo pipefail
 
 owner="dvandva-skill-v1"
 schema="dvandva.run.v1"
-default_version="0.1.0"
+default_version="0.1.1"
 operation="${1:-}"
 shift || true
 version="${DVANDVA_VERSION:-$default_version}"

@@ -167,9 +167,107 @@ fn explicit_task_reference_narrows_otherwise_ambiguous_runs() {
         vec!["def-123-a", "def-456-b"]
     );
 
-    let narrow = discover(root.path(), Some("def-456"));
+    let narrow = discover(root.path(), Some("DEF-456"));
     assert_eq!(narrow["outcome"], "match");
     assert_eq!(narrow["candidates"][0]["run_id"], "def-456-b");
+}
+
+#[test]
+fn task_reference_matching_is_case_sensitive_after_trimming() {
+    let root = tempfile::tempdir().unwrap();
+    create_run(
+        root.path(),
+        "mobile-spec-review",
+        REPOSITORY_ID,
+        Some("https://app.notion.com/p/Mobile-App-Tech-Spec"),
+        "claude",
+    );
+
+    let case_mismatch = discover(
+        root.path(),
+        Some("https://app.notion.com/p/mobile-app-tech-spec"),
+    );
+    assert_eq!(case_mismatch["outcome"], "task_mismatch");
+
+    let trimmed_match = discover(
+        root.path(),
+        Some("  https://app.notion.com/p/Mobile-App-Tech-Spec  "),
+    );
+    assert_eq!(trimmed_match["outcome"], "match");
+}
+
+#[test]
+fn a_task_reference_mismatch_is_reported_without_claiming_the_run() {
+    let root = tempfile::tempdir().unwrap();
+    let run_dir = create_run(
+        root.path(),
+        "mobile-spec-review",
+        REPOSITORY_ID,
+        Some("notion-mobile-app-tech-spec-review"),
+        "claude",
+    );
+
+    let outcome = discover(
+        root.path(),
+        Some("https://app.notion.com/p/Mobile-App-Tech-Spec"),
+    );
+
+    assert_eq!(outcome["outcome"], "task_mismatch");
+    assert_eq!(outcome["candidates"][0]["run_id"], "mobile-spec-review");
+    assert_eq!(
+        outcome["candidates"][0]["task_reference"],
+        "notion-mobile-app-tech-spec-review"
+    );
+    assert!(RunChannel::open(&run_dir)
+        .read()
+        .unwrap()
+        .participants
+        .reviewer
+        .claim
+        .is_none());
+}
+
+#[test]
+fn a_live_worker_claim_on_another_task_is_not_actionable() {
+    let root = tempfile::tempdir().unwrap();
+    let run_dir = create_run(
+        root.path(),
+        "def-123-busy",
+        REPOSITORY_ID,
+        Some("DEF-123"),
+        "claude",
+    );
+    claim::claim(
+        &RunChannel::open(run_dir),
+        Role::Worker,
+        "existing-worker",
+        300,
+        0,
+    )
+    .unwrap();
+
+    let output = command()
+        .args([
+            "discover",
+            "--runs-dir",
+            root.path().to_str().unwrap(),
+            "--repository-id",
+            REPOSITORY_ID,
+            "--role",
+            "worker",
+            "--reviewer-harness",
+            "codex",
+            "--task-reference",
+            "DEF-456",
+            "--session-id",
+            "new-worker",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let outcome: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(outcome["outcome"], "none");
+    assert_eq!(outcome["candidates"], serde_json::json!([]));
 }
 
 #[test]
