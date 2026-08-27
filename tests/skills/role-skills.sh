@@ -110,7 +110,7 @@ bash "$vadi" heartbeat codex-session "$run_dir" 3 | grep -Fq '"revision":4'
 bash "$vadi" wait codex-session "$run_dir" 4 50 | grep -Fq '"revision": 4'
 
 action="$test_root/human.json"
-printf '%s\n' '{"type":"request_human_decision","question":"Confirm scope","evidence":["scope changed"],"options":["yes","no"],"contact_role":"worker","resume_status":"working","resume_assignee":"worker"}' >"$action"
+printf '%s\n' '{"type":"request_human_decision","question":"Confirm scope","evidence":["scope changed"],"options":["yes","no"]}' >"$action"
 bash "$vadi" apply codex-session "$run_dir" 4 "$action" | grep -Fq '"status": "human_decision"'
 
 # Explicit upgrade is followed by an explicit reclaim and a normal v2 read.
@@ -139,5 +139,103 @@ cmp "$vadi" "$prativadi"
 
 grep -Fq 'act as vadi' "$repo_root/skills/vadi/SKILL.md"
 grep -Fq 'act as prativadi' "$repo_root/skills/prativadi/SKILL.md"
+
+vadi_skill="$repo_root/skills/vadi/SKILL.md"
+vadi_contract="$repo_root/skills/vadi/references/run-contract.md"
+vadi_prompt="$repo_root/skills/vadi/agents/openai.yaml"
+prativadi_skill="$repo_root/skills/prativadi/SKILL.md"
+prativadi_contract="$repo_root/skills/prativadi/references/run-contract.md"
+prativadi_prompt="$repo_root/skills/prativadi/agents/openai.yaml"
+setup_skill="$repo_root/skills/setup-dvandva/SKILL.md"
+setup_contract="$repo_root/skills/setup-dvandva/references/installation.md"
+
+role_contract="$(cat "$vadi_skill" "$vadi_contract" "$prativadi_skill" "$prativadi_contract")"
+setup_docs="$(cat "$setup_skill" "$setup_contract")"
+
+for required in \
+  'first user-visible protocol output' \
+  'canonical objective and scope' \
+  'status and assignee' \
+  'next_actions' \
+  'peer_prompt' \
+  'fresh facade snapshot' \
+  'advisory_actions' \
+  'legal_actions' \
+  'new human scope or ambiguity' \
+  'never an ordinary wake or action' \
+  'scope_mismatch' \
+  'complete deliverable manifest' \
+  'canonical deliverable IDs exactly once' \
+  'manifest_digest' \
+  'scope_revision' \
+  'request_checkpoint_supersession' \
+  'accept_checkpoint_supersession' \
+  'withdraw_approval' \
+  'Codex harness publishes' \
+  'Claude harness reviews' \
+  'regardless of semantic casting' \
+  'canonical scope, complete manifest, findings and decisions, and a current plan/TODO' \
+  'stable Site ID' \
+  'new Site version' \
+  'owner-only' \
+  'Claude Artifact' \
+  'generic publisher' \
+  'public access' \
+  'silent fallback' \
+  'user-created harness goals remain unchanged' \
+  'human starts the peer session' \
+  'explicitly invokes them in this session' \
+  'What changed' \
+  'What was verified' \
+  'What is blocked' \
+  'Who owns the next action' \
+  'Exact command or prompt'
+do
+  grep -Fq "$required" <<<"$role_contract"
+done
+
+grep -Fq 'Exact joins pass only `--run-id`' <<<"$role_contract"
+grep -Fq 'Publication never substitutes for supersession or withdrawal.' <<<"$role_contract"
+grep -Fq 'foreground local wait' <<<"$role_contract"
+
+for forbidden in create_goal update_goal get_goal pause_goal complete_goal clear_goal; do
+  ! grep -Fq "$forbidden" <<<"$role_contract"
+done
+
+for required in \
+  '"type":"submit_checkpoint"' \
+  '"deliverables"' \
+  '"verification"' \
+  '"type":"record_review"' \
+  '"checkpoint_identity"' \
+  '"manifest_digest"' \
+  '"scope_revision"' \
+  '"type":"request_human_decision"' \
+  '"question"' \
+  '"evidence"' \
+  '"options"' \
+  '"type":"record_explainer_publication"' \
+  '"channel":"codex_sites"' \
+  '"access":"owner_only"' \
+  '"type":"record_explainer_review"'
+do
+  grep -Fq "$required" <<<"$role_contract"
+done
+
+for required in \
+  '0.2.0' \
+  'skills-v0.2.0' \
+  'dvandva.run.v2' \
+  'facade API 2' \
+  'v1 read support is only for explicit migration' \
+  'setup never migrates runs'
+do
+  grep -Fq "$required" <<<"$setup_docs"
+done
+
+test "$(wc -l <"$vadi_prompt")" -le 7
+test "$(wc -l <"$prativadi_prompt")" -le 7
+! grep -Eq 'next_actions|legal_actions|submit_checkpoint|record_review' \
+  "$vadi_prompt" "$prativadi_prompt"
 
 printf 'role skill wrappers: ok\n'

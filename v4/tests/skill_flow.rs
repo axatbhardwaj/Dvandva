@@ -5,6 +5,163 @@ fn command() -> Command {
     Command::new(env!("CARGO_BIN_EXE_dvandva-v4"))
 }
 
+fn repository_file(path: &str) -> String {
+    let repository = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap();
+    std::fs::read_to_string(repository.join(path)).unwrap()
+}
+
+#[test]
+fn active_role_skill_sources_define_the_complete_v2_contract() {
+    let vadi = format!(
+        "{}\n{}",
+        repository_file("skills/vadi/SKILL.md"),
+        repository_file("skills/vadi/references/run-contract.md")
+    );
+    let prativadi = format!(
+        "{}\n{}",
+        repository_file("skills/prativadi/SKILL.md"),
+        repository_file("skills/prativadi/references/run-contract.md")
+    );
+    let both = format!("{vadi}\n{prativadi}");
+
+    for required in [
+        "first user-visible protocol output",
+        "canonical objective and scope",
+        "status and assignee",
+        "next_actions",
+        "peer_prompt",
+        "fresh facade snapshot",
+        "advisory_actions",
+        "legal_actions",
+        "new human scope or ambiguity",
+        "never an ordinary wake or action",
+        "scope_mismatch",
+        "complete deliverable manifest",
+        "canonical deliverable IDs exactly once",
+        "manifest_digest",
+        "scope_revision",
+        "request_checkpoint_supersession",
+        "accept_checkpoint_supersession",
+        "withdraw_approval",
+        "Codex harness publishes",
+        "Claude harness reviews",
+        "regardless of semantic casting",
+        "canonical scope, complete manifest, findings and decisions, and a current plan/TODO",
+        "stable Site ID",
+        "new Site version",
+        "owner-only",
+        "Claude Artifact",
+        "generic publisher",
+        "public access",
+        "silent fallback",
+        "user-created harness goals remain unchanged",
+        "human starts the peer session",
+        "explicitly invokes them in this session",
+        "What changed",
+        "What was verified",
+        "What is blocked",
+        "Who owns the next action",
+        "Exact command or prompt",
+        "foreground local wait",
+    ] {
+        assert!(
+            both.contains(required),
+            "role contract omitted {required:?}"
+        );
+    }
+
+    assert!(both.contains("Exact joins pass only `--run-id`"));
+    assert!(both.contains("Publication never substitutes for supersession or withdrawal."));
+    for forbidden in [
+        "create_goal",
+        "update_goal",
+        "get_goal",
+        "pause_goal",
+        "complete_goal",
+        "clear_goal",
+    ] {
+        assert!(
+            !both.contains(forbidden),
+            "role skill names goal tool {forbidden}"
+        );
+    }
+
+    for required_json in [
+        r#""type":"submit_checkpoint""#,
+        r#""deliverables""#,
+        r#""verification""#,
+        r#""type":"record_review""#,
+        r#""checkpoint_identity""#,
+        r#""manifest_digest""#,
+        r#""scope_revision""#,
+        r#""type":"request_human_decision""#,
+        r#""question""#,
+        r#""evidence""#,
+        r#""options""#,
+        r#""type":"record_explainer_publication""#,
+        r#""channel":"codex_sites""#,
+        r#""access":"owner_only""#,
+        r#""type":"record_explainer_review""#,
+    ] {
+        assert!(
+            both.contains(required_json),
+            "role references omitted v2 JSON member {required_json:?}"
+        );
+    }
+
+    for skill in [&vadi, &prativadi] {
+        assert!(skill.contains("fresh facade snapshot"));
+        assert!(skill.contains("user-created harness goals remain unchanged"));
+        assert!(skill.contains("human starts the peer session"));
+    }
+}
+
+#[test]
+fn setup_skill_sources_pin_v2_without_implicit_run_migration() {
+    let setup = format!(
+        "{}\n{}",
+        repository_file("skills/setup-dvandva/SKILL.md"),
+        repository_file("skills/setup-dvandva/references/installation.md")
+    );
+    for required in [
+        "0.2.0",
+        "skills-v0.2.0",
+        "dvandva.run.v2",
+        "facade API 2",
+        "v1 read support is only for explicit migration",
+        "setup never migrates runs",
+    ] {
+        assert!(
+            setup.contains(required),
+            "setup contract omitted {required:?}"
+        );
+    }
+}
+
+#[test]
+fn role_entry_prompts_remain_concise_pointers_not_duplicate_contracts() {
+    for path in [
+        "skills/vadi/agents/openai.yaml",
+        "skills/prativadi/agents/openai.yaml",
+    ] {
+        let prompt = repository_file(path);
+        assert!(prompt.lines().count() <= 7, "{path} is no longer concise");
+        for duplicate in [
+            "next_actions",
+            "legal_actions",
+            "submit_checkpoint",
+            "record_review",
+        ] {
+            assert!(
+                !prompt.contains(duplicate),
+                "{path} duplicates contract term {duplicate}"
+            );
+        }
+    }
+}
+
 #[test]
 fn version_and_probe_report_the_installation_contract() {
     command()
