@@ -60,6 +60,7 @@ if PATH="$fake_bin:$PATH" FAKE_KERNEL="$test_root/fake-kernel" \
   fail 'correct-version v1/API1 kernel unexpectedly packaged'
 fi
 require_text 'probe_mismatch' "$test_root/incompatible.out"
+reject_text 'package-skills-release: packaged' "$test_root/incompatible.out"
 test ! -e "$incompatible/SHA256SUMS" || fail 'incompatible kernel was checksummed'
 test ! -e "$incompatible/dvandva-kernel-linux-x86_64" || \
   fail 'incompatible kernel was promoted to the final asset path'
@@ -87,6 +88,7 @@ if PATH="$fake_bin:$PATH" FAKE_KERNEL="$test_root/duplicate-kernel" \
   fail 'duplicate-key probe unexpectedly packaged'
 fi
 require_text 'probe_mismatch' "$test_root/duplicate.out"
+reject_text 'package-skills-release: packaged' "$test_root/duplicate.out"
 test ! -e "$duplicate/SHA256SUMS" || fail 'duplicate-key kernel was checksummed'
 test ! -e "$duplicate/dvandva-kernel-linux-x86_64" || \
   fail 'duplicate-key kernel was promoted to the final asset path'
@@ -110,6 +112,7 @@ if PATH="$fake_bin:$PATH" FAKE_KERNEL="$test_root/wrong-version-kernel" \
   fail 'wrong-version kernel unexpectedly packaged'
 fi
 require_text 'binary_version_mismatch' "$test_root/wrong-binary.out"
+reject_text 'package-skills-release: packaged' "$test_root/wrong-binary.out"
 test ! -e "$wrong_binary/SHA256SUMS" || fail 'wrong-version kernel was checksummed'
 test ! -e "$wrong_binary/dvandva-kernel-linux-x86_64" || \
   fail 'wrong-version kernel was promoted to the final asset path'
@@ -191,15 +194,18 @@ assert isinstance(workflow, dict)
 assert workflow["on"]["push"]["tags"] == ["skills-v*"]
 assert workflow["permissions"] == {"contents": "read"}
 assert workflow["jobs"]["release"]["if"] == "startsWith(github.ref, 'refs/tags/skills-v')"
+assert workflow["jobs"]["release"]["needs"] == "verify"
 assert workflow["jobs"]["release"]["permissions"] == {"contents": "write"}
 steps = workflow["jobs"]["verify"]["steps"]
 runs = "\n".join(step.get("run", "") for step in steps)
 assert "cargo test --manifest-path rust/dvandva/Cargo.toml --locked" in runs
 assert "bash tests/skills/two-role-canary.sh" in runs
 checkout = next(step for step in steps if step["name"] == "Check out the tested revision")
+assert checkout["uses"] == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 assert checkout["with"]["fetch-depth"] == 0
 release_steps = workflow["jobs"]["release"]["steps"]
 release_checkout = next(step for step in release_steps if step["name"] == "Check out the release tag")
+assert release_checkout["uses"] == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1"
 assert release_checkout["with"]["fetch-depth"] == 0
 PY
 require_text 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' "$workflow"
@@ -289,7 +295,7 @@ adr="$repo_root/docs/adr/0003-run-v2-security-epoch.md"
 require_text 'status: accepted' "$adr"
 require_text 'dvandva.run.v2' "$adr"
 require_text 'role API 2' "$adr"
-require_text 'provider-signed' "$adr"
+require_text 'structural receipts are not provider-signed proof' "$adr"
 require_text 'future protocol epoch' "$adr"
 
 if test "$failures" -ne 0; then
