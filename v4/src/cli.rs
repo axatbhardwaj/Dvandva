@@ -6,6 +6,7 @@ use thiserror::Error;
 
 use crate::action::Action;
 use crate::claim::{self, ClaimError, Role};
+use crate::identity::{self, IdentityError};
 use crate::model::{RunBaton, TaskIdentity, WorkspaceIdentity};
 use crate::store::{RunChannel, StoreError};
 use crate::transition::{self, TransitionError};
@@ -20,6 +21,10 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    Identify {
+        #[arg(long)]
+        workspace: PathBuf,
+    },
     Init {
         #[arg(long)]
         run_dir: PathBuf,
@@ -134,6 +139,8 @@ pub enum CliError {
     Transition(#[from] TransitionError),
     #[error(transparent)]
     Wait(#[from] WaitError),
+    #[error(transparent)]
+    Identity(#[from] IdentityError),
 }
 
 #[derive(Serialize)]
@@ -144,6 +151,13 @@ struct Diagnostic<'a> {
 
 pub fn run() -> Result<(), CliError> {
     match Cli::parse().command {
+        Command::Identify { workspace } => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&identity::identify(&workspace)?)?
+            );
+            Ok(())
+        }
         Command::Init {
             run_dir,
             run_id,
@@ -289,6 +303,9 @@ pub fn run() -> Result<(), CliError> {
 pub fn print_error(error: &CliError) {
     let code = match error {
         CliError::Invalid(_) => "invalid_input",
+        CliError::Identity(IdentityError::RepositoryMissing) => "repository_missing",
+        CliError::Identity(IdentityError::InvalidOrigin) => "invalid_origin",
+        CliError::Identity(IdentityError::InvalidUtf8) => "invalid_git_output",
         CliError::Store(StoreError::RunExists) => "run_exists",
         CliError::Store(StoreError::RunMissing) => "run_missing",
         CliError::Store(StoreError::RevisionConflict { .. }) => "revision_conflict",
