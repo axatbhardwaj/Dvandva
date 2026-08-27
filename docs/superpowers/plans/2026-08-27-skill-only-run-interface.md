@@ -462,11 +462,13 @@ Use an isolated home and list/install from the local repository:
 
 ```bash
 bash tests/skills/role-skills.sh
-npx --yes skills add . --list --full-depth
+npx --yes skills add . --list
 ```
 
 Confirm exactly `setup-dvandva`, `vadi`, and `prativadi` are distributable
-skills. Then commit:
+skills. Do not use `--full-depth`: that diagnostic mode intentionally descends
+into the preserved v3 plugin archive, while normal repository discovery stops
+at the active root `skills/` surface. Then commit:
 
 ```bash
 git add skills/vadi skills/prativadi tests/skills/role-skills.sh
@@ -616,7 +618,7 @@ cargo clippy --manifest-path v4/Cargo.toml --all-targets -- -D warnings
 cargo test --manifest-path v4/Cargo.toml
 cargo test --manifest-path rust/Cargo.toml
 for test_script in tests/skills/*.sh; do bash "$test_script"; done
-npx --yes skills add . --list --full-depth
+npx --yes skills add . --list
 git diff --check
 git status --short
 ```
@@ -666,7 +668,7 @@ gh release download skills-v0.1.0 --pattern SHA256SUMS \
 In fresh temporary homes:
 
 ```bash
-npx --yes skills add axatbhardwaj/Dvandva --list --full-depth
+npx --yes skills add axatbhardwaj/Dvandva --list
 npx --yes skills add axatbhardwaj/Dvandva --global --agent claude-code codex \
   --skill setup-dvandva vadi prativadi -y
 ```
