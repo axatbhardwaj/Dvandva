@@ -233,6 +233,62 @@ Claude as exact-deployment reviewer, rejected a Claude Artifact, copied the
 revision 27/scope 4 obligation exactly, and blocked semantic approval until a
 fresh legal action follows Claude's recorded deployment review.
 
+## Review fix round 2 — role-owned actions and scope resume
+
+Before editing either role contract, the new focused source and transition
+tests failed together:
+
+```text
+prativadi contract omitted "new human scope, ambiguity, or unavailable mandated publication/review capability"
+vadi contract omitted "new human scope, ambiguity, or unavailable mandated publication/review capability"
+assertion failed: vadi action map is not role-specific
+vadi omitted documented scope-amending resume payload
+test result: FAILED. 0 passed; 4 failed
+RUST_STATUS=101 SHELL_STATUS=1
+```
+
+The tests now reject either old contradictory Human Decision restriction even
+if the new sentence is also present. Both concise skills and both references
+allow the exception only for new human scope, ambiguity, or unavailable
+mandated publication/review capability.
+
+Each reference retains a plain-answer resume and adds an executable
+`resume_human_decision` with `scope_amendment`. Its objective, objective refs,
+nullable task reference, and deliverables must come only from explicit
+human-approved values; the Human Decision object is not described as returning
+them. Per-role flow tests request and resume the decision, then verify the
+canonical amended scope, revision increment, `revising`/worker routing, and
+fresh `scope_amended` obligation.
+
+Documented JSON inventories are now exact and role-owned. Vadi documents its
+worker actions; prativadi documents its reviewer actions; both retain the
+Codex/Claude harness-specific explainer actions. Peer-owned payload examples
+were removed, and prativadi's start synopsis no longer advertises
+`--new-run`.
+
+### Round-2 GREEN evidence
+
+- `cargo test --manifest-path v4/Cargo.toml --test skill_flow` — 12 passed.
+- `bash tests/skills/role-skills.sh` — `role skill wrappers: ok`.
+- `cargo test --manifest-path v4/Cargo.toml --all-targets` — 169 passed,
+  0 failed.
+- `cargo fmt --manifest-path v4/Cargo.toml -- --check` — passed after the
+  formatter identified and corrected one wrapped test expression.
+- `cargo clippy --manifest-path v4/Cargo.toml --all-targets -- -D warnings`
+  — passed.
+- `bash -n skills/vadi/scripts/dvandva-role.sh \
+  skills/prativadi/scripts/dvandva-role.sh \
+  skills/setup-dvandva/scripts/setup-dvandva.sh` — passed.
+- `git diff --check 0e5b695..HEAD` — passed.
+
+The private kernel intentionally does not resolve Git objects or call the
+Codex Sites API. Its accepted v0.2 trust boundary is typed external references,
+structural exact-binding checks, and two harness-derived attestations. No live
+deployment is claimed. Task 8 should make this trust boundary explicit in its
+ADR/release documentation; it is not a Task 7B kernel or facade change.
+Independent role references remain near-duplicates by design so each skill is
+self-contained when installed.
+
 ## Commits
 
 - `e48fb83 test(v4): define active role contract`
@@ -244,6 +300,10 @@ fresh legal action follows Claude's recorded deployment review.
 - `709b51a fix(v4): make role action contracts executable`
 - `ffd4331 docs(setup): mark v0.2 as release target`
 - `docs(sdd): record task 7b review fixes` (this report commit)
+- `3e70336 test(v4): enforce role-owned action contracts`
+- `a179b74 fix(v4): scope role action contracts`
+- `12c7018 style(v4): format role contract test`
+- `docs(sdd): record task 7b review fix round 2` (this report commit)
 
 ## Boundary and next action
 
@@ -251,8 +311,10 @@ No kernel, facade, installer implementation, workflow documentation, package
 automation, v3 archive, or harness goal changed. No push, tag, or release was
 performed. The JSON examples intentionally retain facade-copy placeholders;
 tests normalize those placeholders before deserialization and transition.
-No live Codex Sites deployment was performed or claimed. No blocker remains.
-The reviewer owns the next action. Run:
+No live Codex Sites deployment was performed or claimed. The external-reference
+trust boundary above remains for Task 8 documentation; it is not a release
+blocker under the accepted design. No blocker remains. The reviewer owns the
+next action. Run:
 
 ```bash
 git diff 0e5b695..HEAD -- \
