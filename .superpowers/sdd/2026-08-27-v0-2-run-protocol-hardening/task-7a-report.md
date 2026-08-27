@@ -67,12 +67,43 @@ immediately because the exogenous escape appears only in `legal_actions`.
 ## Commit
 
 - `937f97f feat(v4): make human escalation kernel authoritative`
+- `6708f61 fix(v4): scope strict decoding to human escalation`
 
 ## Boundary and blockers
 
 - No role skills, active docs, installer, packaging, v3 archive, push, PR, or
   release state was changed.
 - No blocker remains for Task 7 to consume the kernel-provided escape action.
+
+## Review fix round 1
+
+The first implementation put `deny_unknown_fields` on the whole `Action` enum.
+That correctly rejected obsolete Human Decision routing, but also changed the
+forward-compatibility contract of every unrelated action.
+
+### Additional RED evidence
+
+An unrelated `abandon` action containing additive `future_metadata` failed to
+decode:
+
+```text
+test unrelated_action_payloads_remain_forward_compatible_with_additive_fields ... FAILED
+called `Result::unwrap()` on an `Err` value:
+Error("unknown field `future_metadata`, expected `reason`")
+test result: FAILED. 0 passed; 1 failed
+```
+
+### Fix and GREEN evidence
+
+- Moved strict decoding to a dedicated `HumanDecisionRequest` payload struct.
+  Its externally tagged JSON remains flat and contains only `question`,
+  `evidence`, and `options`.
+- Restored Serde's additive-field tolerance on all other `Action` variants.
+- Re-ran `human_decision_rejects_legacy_caller_supplied_routing`; all three
+  obsolete keys still fail decoding before mutation.
+- Fresh final verification: `role_session` passed 34/34, focused Human Decision
+  tests passed 3/3, `skill_flow` passed 5/5, and all-targets passed 162/162.
+  Formatting, clippy with denied warnings, and diff checks passed.
 
 ## Next action
 
