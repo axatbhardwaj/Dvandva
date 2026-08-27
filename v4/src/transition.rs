@@ -217,11 +217,12 @@ fn apply_locked(
                 reason: None,
             });
         }
-        Action::RequestHumanDecision {
-            question,
-            evidence,
-            options,
-        } => {
+        Action::RequestHumanDecision(request) => {
+            let crate::action::HumanDecisionRequest {
+                question,
+                evidence,
+                options,
+            } = request;
             if baton
                 .human_decision
                 .as_ref()

@@ -12,7 +12,7 @@ pub struct ScopeAmendment {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+#[serde(tag = "type", rename_all = "snake_case")]
 pub enum Action {
     SubmitCheckpoint {
         checkpoint: CheckpointSubmission,
@@ -26,11 +26,7 @@ pub enum Action {
         findings: Vec<String>,
     },
     Finalize,
-    RequestHumanDecision {
-        question: String,
-        evidence: Vec<String>,
-        options: Vec<String>,
-    },
+    RequestHumanDecision(HumanDecisionRequest),
     ResumeHumanDecision {
         answer: String,
         #[serde(default)]
@@ -72,6 +68,14 @@ pub enum Action {
     Abandon {
         reason: String,
     },
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HumanDecisionRequest {
+    pub question: String,
+    pub evidence: Vec<String>,
+    pub options: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]

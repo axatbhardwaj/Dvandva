@@ -2405,6 +2405,21 @@ fn human_decision_rejects_legacy_caller_supplied_routing() {
 }
 
 #[test]
+fn unrelated_action_payloads_remain_forward_compatible_with_additive_fields() {
+    let action: Action = serde_json::from_value(serde_json::json!({
+        "type": "abandon",
+        "reason": "Operator stopped the run",
+        "future_metadata": {"source": "newer facade"}
+    }))
+    .unwrap();
+
+    assert!(matches!(
+        action,
+        Action::Abandon { reason } if reason == "Operator stopped the run"
+    ));
+}
+
+#[test]
 fn local_watcher_wakes_the_reviewer_after_a_checkpoint() {
     let dir = tempfile::tempdir().unwrap();
     init_pair(dir.path());

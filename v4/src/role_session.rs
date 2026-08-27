@@ -848,7 +848,10 @@ pub fn upgrade(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{action::ScopeAmendment, model::WorkspaceIdentity};
+    use crate::{
+        action::{HumanDecisionRequest, ScopeAmendment},
+        model::WorkspaceIdentity,
+    };
 
     fn fixture_workspace(root: &Path) -> (PathBuf, WorkspaceIdentity) {
         let workspace = root.join("workspace");
@@ -941,11 +944,11 @@ mod tests {
             session_id,
             &private.token,
             expected_revision,
-            Action::RequestHumanDecision {
+            Action::RequestHumanDecision(HumanDecisionRequest {
                 question: "Use amended scope?".to_owned(),
                 evidence: vec!["new requirement".to_owned()],
                 options: vec!["yes".to_owned(), "no".to_owned()],
-            },
+            }),
         )
         .unwrap();
         transition::apply(
@@ -1231,11 +1234,11 @@ mod tests {
             "worker",
             &private.token,
             1,
-            Action::RequestHumanDecision {
+            Action::RequestHumanDecision(HumanDecisionRequest {
                 question: "Use amended scope?".to_owned(),
                 evidence: vec!["new requirement".to_owned()],
                 options: vec!["yes".to_owned(), "no".to_owned()],
-            },
+            }),
         )
         .unwrap();
         transition::apply(
