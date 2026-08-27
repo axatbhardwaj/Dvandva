@@ -33,6 +33,7 @@ fn version_and_probe_report_the_installation_contract() {
     assert_eq!(probe["version"], "0.2.0");
     assert_eq!(probe["write_schema"], "dvandva.run.v2");
     assert_eq!(probe["role_api"], 2);
+    assert_eq!(probe["publish"], false);
     assert_eq!(probe["compatible"], true);
 }
 

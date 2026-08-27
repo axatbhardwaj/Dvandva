@@ -368,6 +368,7 @@ struct Diagnostic<'a> {
 struct Probe<'a> {
     package: &'a str,
     version: &'a str,
+    publish: bool,
     write_schema: &'a str,
     read_schemas: [&'a str; 2],
     role_api: u32,
@@ -390,6 +391,7 @@ pub fn run() -> Result<(), CliError> {
             let probe = Probe {
                 package: env!("CARGO_PKG_NAME"),
                 version: env!("CARGO_PKG_VERSION"),
+                publish: false,
                 write_schema: SCHEMA,
                 read_schemas: [SCHEMA, LEGACY_SCHEMA],
                 role_api: ROLE_API,
