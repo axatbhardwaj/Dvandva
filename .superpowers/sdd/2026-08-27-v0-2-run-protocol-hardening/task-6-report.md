@@ -213,3 +213,44 @@ in Cargo metadata.
   passed 156/156; fmt and clippy with denied warnings passed; `bash -n` passed
   for all seven changed shell files; facade byte equality and diff checks
   passed. `shellcheck` remains unavailable.
+
+## Review fix round 3
+
+### Additional RED evidence
+
+1. After validating a promoted directory's device and inode, a controlled
+   pathname replacement before recursive cleanup caused the replacement to be
+   removed rather than the directory created by the installer. The prior
+   current link and manifest remained intact, but no uncertainty evidence was
+   retained.
+2. A pre-existing empty, unowned data root was accepted and claimed by setup.
+   The fail-closed ownership rule requires setup to create only an absent root.
+3. Refusing empty unowned roots initially exposed an uninstall/reinstall
+   regression: owned uninstall left an empty data root, so the next install was
+   refused.
+
+### Fixes, boundary, and GREEN evidence
+
+- Rollback now atomically moves the public promoted path into an
+  invocation-private quarantine using Linux `RENAME_NOREPLACE`, verifies the
+  quarantined device and inode, and never recursively deletes quarantined
+  state. The active version path is cleared while the candidate and old
+  manifest remain as evidence, and setup emits `rollback_uncertain`.
+- Setup refuses and preserves a pre-existing empty unowned data root. Owned
+  uninstall removes its now-empty data root under the installation lock, so a
+  normal reinstall succeeds without weakening the ownership boundary or
+  touching run state.
+- Installer safety covers truthful tools, ordinary signals/crashes,
+  pre-existing foreign or symlinked paths, and cooperating operations
+  serialized by the installation lock. A malicious same-UID process or hostile
+  `PATH` wrapper is outside the Bash installer's security boundary because it
+  can already mutate the user's files or execute arbitrary user code; defending
+  that boundary would require a separate fd-relative installer.
+- The focused installer reviewer replayed target replacement, quarantine
+  retention, empty-root refusal, and uninstall/reinstall and returned a clean
+  verdict under that boundary.
+- Fresh controller verification at `c3f7a8f`: all four shell suites passed;
+  focused `skill_flow` passed 5/5; all-targets passed 156/156; fmt and clippy
+  with denied warnings passed; `bash -n` passed for all seven changed shell
+  files; facade byte equality and diff checks passed. `shellcheck` remains
+  unavailable.
