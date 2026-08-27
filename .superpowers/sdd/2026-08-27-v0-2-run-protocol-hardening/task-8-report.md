@@ -50,6 +50,32 @@ FAIL: wrong-version kernel was promoted to the final asset path
 skills release packaging: 3 failure(s)
 ```
 
+### Review-fix wave 1 RED
+
+Baseline: `42ac162c6db129f8901228bf90990085474db723`.
+
+Before the fix wave changed the packager, workflow, or active instructions,
+the expanded black-box package suite exited 1 and reproduced each accepted
+release-boundary finding:
+
+```text
+FAIL: nul-bearing probe unexpectedly packaged
+FAIL: oversized probe unexpectedly packaged
+FAIL: pre-existing empty output directory unexpectedly accepted
+FAIL: pre-existing empty output directory was modified
+FAIL: pre-existing output symlink unexpectedly accepted
+FAIL: pre-existing output symlink target was modified
+FAIL: checksum failure exposed a partial output path
+FAIL: promotion collision unexpectedly packaged
+FAIL: promotion collision replaced the foreign path
+```
+
+Focused source checks on the same baseline showed the probe captured through
+`probe_output="$(...)"`, the workflow omitted `--all-targets`, release notes
+hard-coded `Kernel 0.2.0`, and the glossary omitted Approval Withdrawal and
+Protocol Upgrade. The workflow structural test also exited 1 before any
+workflow edit.
+
 ## GREEN evidence
 
 Final implementation range: `4f9656a..ecc0433`.
