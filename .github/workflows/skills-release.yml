@@ -28,12 +28,14 @@ jobs:
           cargo test --manifest-path v4/Cargo.toml --locked
       - name: Verify archived v3 remains intact
         run: cargo test --manifest-path rust/dvandva/Cargo.toml --locked
-      - name: Verify skill surfaces and packaging
-        run: |
-          bash tests/skills/setup-dvandva.sh
-          bash tests/skills/role-skills.sh
-          bash tests/skills/package-release.sh
-          bash tests/skills/two-role-canary.sh
+      - name: Verify setup skill
+        run: bash tests/skills/setup-dvandva.sh
+      - name: Verify role skills
+        run: bash -x tests/skills/role-skills.sh
+      - name: Verify release packaging
+        run: bash tests/skills/package-release.sh
+      - name: Verify two-role canary
+        run: bash tests/skills/two-role-canary.sh
 
   release:
     if: startsWith(github.ref, 'refs/tags/skills-v')
