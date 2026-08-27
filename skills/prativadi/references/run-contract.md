@@ -5,7 +5,7 @@ The facade JSON is authoritative. Use only `scripts/dvandva-role.sh`; first
 `session-id --generate` fallback.
 
 ```text
-start SESSION CURRENT_HARNESS PEER_HARNESS WORKSPACE [OBJECTIVE [TASK]] [--objective-ref KIND=VALUE] [--required-deliverable ID=DESCRIPTION] [--wait|--new-run|--run-id ID]
+start SESSION CURRENT_HARNESS PEER_HARNESS WORKSPACE [OBJECTIVE [TASK]] [--objective-ref KIND=VALUE] [--required-deliverable ID=DESCRIPTION] [--wait|--run-id ID]
 read  SESSION RUN_DIR
 apply SESSION RUN_DIR EXPECTED_REVISION ACTION_JSON
 wait  SESSION RUN_DIR AFTER_REVISION [TIMEOUT_MS]
@@ -41,19 +41,16 @@ After every facade operation, use the fresh facade snapshot. `next_actions`
 combines `advisory_actions` and ordinary `legal_actions`; semantic work happens
 only when the returned advisory action authorizes it. Apply only a returned
 legal action. `request_human_decision` may be selected directly from
-`legal_actions` solely for new human scope or ambiguity; it is never an
-ordinary wake or action.
+`legal_actions` solely for new human scope, ambiguity, or unavailable mandated
+publication/review capability; it is never an ordinary wake or action.
 
 ## Checkpoint and review bindings
 
 Review only when `advisory_actions` includes `review_checkpoint`. Materialize
 the exact immutable checkpoint, whose complete deliverable manifest covers the
 canonical deliverable IDs exactly once. Never review branch `HEAD` or the
-vadi's mutable worktree. A submission has this v2 shape:
-
-```json
-{"type":"submit_checkpoint","checkpoint":{"kind":"git","identity":"<immutable SHA>","deliverables":[{"id":"<canonical ID>","artifacts":[{"kind":"commit","value":"<immutable SHA>"}]}],"verification":["<exact command and result>"]}}
-```
+vadi's mutable worktree. Do not apply worker-owned `submit_checkpoint`,
+`request_checkpoint_supersession`, `withdraw_approval`, or `finalize` actions.
 
 Before a verdict, read or claim a fresh snapshot, then copy the exact current `checkpoint` coordinates.
 Never type, increment, or reuse them from an older snapshot. Bind every verdict
@@ -63,17 +60,14 @@ to all three and discard a stale verdict:
 {"type":"record_review","verdict":"changes_requested","checkpoint_identity":"<snapshot.checkpoint.identity>","manifest_digest":"<snapshot.checkpoint.manifest_digest>","scope_revision":"<snapshot.checkpoint.scope_revision>","findings":["<actionable finding>"]}
 ```
 
-In `reviewing`, newly discovered work uses
-`request_checkpoint_supersession`; when returned, the reviewer uses
-`accept_checkpoint_supersession`. After approval, new work uses
-`withdraw_approval`.
+When a pending supersession is returned in `reviewing`, accept it only through
+the reviewer-owned action below. The worker owns requesting supersession and
+withdrawing approval.
 
 Publication never substitutes for supersession or withdrawal.
 
 ```json
-{"type":"request_checkpoint_supersession","reason":"<new required work>"}
 {"type":"accept_checkpoint_supersession"}
-{"type":"withdraw_approval","reason":"<new required work>"}
 ```
 
 ## Human Decision
@@ -86,8 +80,13 @@ Use only the minimal request. The kernel derives contact and resume routing:
 ```
 
 `answer_human` maps to `resume_human_decision`; copy the human's answer. If the
-human changes scope, include the exact human-approved `scope_amendment` shape
-returned by that decision instead of silently changing scope.
+human changes scope, populate every field below only from explicit
+human-approved values. `task_reference` must be a JSON string or `null`; it is
+not returned by the Human Decision object and must never be inferred:
+
+```json
+{"type":"resume_human_decision","answer":"<human-approved answer>","scope_amendment":{"objective":"<human-approved objective>","objective_refs":[{"kind":"<human-approved ref kind>","value":"<human-approved ref value>"}],"task_reference":"<human-approved task reference>","scope_deliverables":[{"id":"<human-approved deliverable ID>","description":"<human-approved deliverable description>"}]}}
+```
 
 ## Explainer obligation
 
@@ -118,12 +117,6 @@ snapshot:
 A Claude Artifact, generic publisher, public access, or silent fallback cannot
 satisfy the gate. Missing Sites or exact review capability routes to Human
 Decision and leaves the run blocked.
-
-`finalize` maps directly to:
-
-```json
-{"type":"finalize"}
-```
 
 ## Run boundaries and handoff
 

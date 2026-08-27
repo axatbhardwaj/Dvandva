@@ -29,13 +29,10 @@ fn assert_role_source_contract(role: &str) {
         "next_actions",
         "advisory_actions",
         "legal_actions",
-        "new human scope, ambiguity, or unavailable mandated publication/review capability",
         "never an ordinary wake or action",
         "scope_mismatch",
         "complete deliverable manifest",
         "canonical deliverable IDs exactly once",
-        "manifest_digest",
-        "scope_revision",
         "request_checkpoint_supersession",
         "accept_checkpoint_supersession",
         "withdraw_approval",
@@ -72,6 +69,23 @@ fn assert_role_source_contract(role: &str) {
 
     assert!(source.contains("Exact joins pass only `--run-id`"));
     assert!(source.contains("Publication never substitutes for supersession or withdrawal."));
+    let allowed_exception =
+        "new human scope, ambiguity, or unavailable mandated publication/review capability";
+    assert!(
+        skill.split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .contains(allowed_exception),
+        "{role} skill omits the complete Human Decision exception"
+    );
+    assert!(
+        contract
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ")
+            .contains(allowed_exception),
+        "{role} reference omits the complete Human Decision exception"
+    );
     assert!(skill.contains(
         "Dvandva never creates, replaces, pauses, completes, or clears any harness goal."
     ));
@@ -102,7 +116,6 @@ fn assert_role_source_contract(role: &str) {
         !contract.contains(r#""identity":"<checkpoint.identity>""#),
         "{role} uses identity where CheckpointBinding requires checkpoint_identity"
     );
-    assert!(contract.contains("copy the exact current `checkpoint` coordinates"));
     assert!(contract.contains("copy `publication_binding.obligation` unchanged"));
     for contradictory in [
         "only for new human scope or ambiguity",
@@ -135,6 +148,9 @@ fn prativadi_skill_sources_define_the_complete_v2_contract() {
     assert_role_source_contract("prativadi");
     let (_, contract) = role_sources("prativadi");
     assert!(contract.contains("Prativadi never creates a run."));
+    assert!(contract.contains("copy the exact current `checkpoint` coordinates"));
+    assert!(contract.contains("manifest_digest"));
+    assert!(contract.contains("scope_revision"));
     let synopsis = contract.split("```").nth(1).unwrap();
     assert!(!synopsis.contains("--new-run"));
 }
@@ -191,6 +207,16 @@ fn normalize_documented_action(template: &str) -> serde_json::Value {
         .replace(
             "<snapshot.publication_binding.deployment.url>",
             "https://sites.openai.test/site-run/site-version",
+        )
+        .replace("<human-approved answer>", "Include report")
+        .replace("<human-approved objective>", "Ship approved scope")
+        .replace("<human-approved ref kind>", "issue")
+        .replace("<human-approved ref value>", "DEF-456")
+        .replace("<human-approved task reference>", "DEF-456")
+        .replace("<human-approved deliverable ID>", "report")
+        .replace(
+            "<human-approved deliverable description>",
+            "Approved report",
         );
     serde_json::from_str(&normalized).unwrap_or_else(|error| {
         panic!("documented action is not normalizable JSON: {error}\n{template}")
@@ -392,7 +418,7 @@ fn documented_scope_amendment_transitions_for_each_role() {
             amended["objective"]["refs"],
             serde_json::json!([{"kind":"issue","value":"DEF-456"}])
         );
-        assert_eq!(amended["task_reference"], "DEF-456");
+        assert_eq!(amended["task"]["reference"], "DEF-456");
         assert_eq!(
             amended["scope_deliverables"],
             serde_json::json!([{"id":"report","description":"Approved report"}])

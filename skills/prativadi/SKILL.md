@@ -27,8 +27,9 @@ before domain-tool work.
 4. Repeat from a fresh snapshot. Stop only on terminal state or human stop.
 
 `request_human_decision` is the sole documented exception to `next_actions`:
-choose it from `legal_actions` only for new human scope or ambiguity. It is
-never an ordinary wake or action.
+choose it from `legal_actions` only for new human scope, ambiguity, or
+unavailable mandated publication/review capability. It is never an ordinary
+wake or action.
 
 ## Boundaries
 
