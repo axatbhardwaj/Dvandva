@@ -27,7 +27,7 @@ ref="refs/tags/$tag"
 set +e
 git show-ref --verify --hash "$ref" >"$capture_root/local-object" 2>/dev/null
 local_object_status=$?
-git rev-parse --verify "$ref^{}" >"$capture_root/local-peeled" 2>/dev/null
+git rev-parse --verify "$ref^{commit}" >"$capture_root/local-peeled" 2>/dev/null
 local_peeled_status=$?
 git ls-remote --tags "$remote" "$ref" "$ref^{}" \
   >"$capture_root/remote-refs" 2>/dev/null

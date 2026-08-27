@@ -44,7 +44,7 @@ printf '%s\n' \
   '  rev-parse)' \
   '    test "$#" -eq 3' \
   '    test "$2" = "--verify"' \
-  '    test "$3" = "refs/tags/skills-v0.2.0^{}"' \
+  '    test "$3" = "refs/tags/skills-v0.2.0^{commit}"' \
   '    test "${FAKE_LOCAL_PEELED+x}" = x || exit 1' \
   '    printf "%b" "$FAKE_LOCAL_PEELED"' \
   '    ;;' \
@@ -137,6 +137,34 @@ expect_ref_rejected malformed-local \
 expect_ref_rejected malformed-remote \
   "$release_commit\n" "$release_commit\n" "$release_commit" \
   "not-an-object\trefs/tags/skills-v0.2.0\n"
+
+# A release ref must resolve to a commit, not merely to any Git object whose
+# identity happens to match the event payload.
+noncommit_repo="$test_root/noncommit-repo"
+noncommit_remote="$test_root/noncommit-remote.git"
+git init -q "$noncommit_repo"
+git -C "$noncommit_repo" config user.name Dvandva
+git -C "$noncommit_repo" config user.email dvandva@example.invalid
+printf 'release fixture\n' >"$noncommit_repo/fixture"
+git -C "$noncommit_repo" add fixture
+git -C "$noncommit_repo" commit -qm fixture
+tree_object="$(git -C "$noncommit_repo" rev-parse 'HEAD^{tree}')"
+blob_object="$(git -C "$noncommit_repo" rev-parse 'HEAD:fixture')"
+git -C "$noncommit_repo" update-ref refs/tags/skills-v0.2.0 "$tree_object"
+git -C "$noncommit_repo" update-ref refs/tags/skills-v0.2.1 "$blob_object"
+git init -q --bare "$noncommit_remote"
+git -C "$noncommit_repo" remote add origin "$noncommit_remote"
+git -C "$noncommit_repo" push -q origin \
+  refs/tags/skills-v0.2.0 refs/tags/skills-v0.2.1
+for noncommit_tag in skills-v0.2.0 skills-v0.2.1; do
+  noncommit_object="$(git -C "$noncommit_repo" rev-parse "refs/tags/$noncommit_tag")"
+  if (cd "$noncommit_repo" && GITHUB_SHA="$noncommit_object" \
+    bash "$ref_verifier" "$noncommit_tag" origin) \
+    >"$test_root/$noncommit_tag.out" 2>&1; then
+    fail "$noncommit_tag release ref was unexpectedly accepted"
+  fi
+  require_text 'release_ref_invalid' "$test_root/$noncommit_tag.out"
+done
 
 fake_bin="$test_root/fake-bin"
 fake_target="$test_root/fake-target"
