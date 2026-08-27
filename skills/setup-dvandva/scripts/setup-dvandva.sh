@@ -167,12 +167,10 @@ raise SystemExit(0 if valid else 1)
 ' "$manifest" "$owner" 2>/dev/null
 }
 
-require_owned_or_empty() {
-  if test -e "$data_root" && ! manifest_owned; then
-    if find "$data_root" -mindepth 1 -maxdepth 1 -print -quit 2>/dev/null | grep -q .; then
-      printf 'setup-dvandva: refusing unowned data at %s\n' "$data_root" >&2
-      exit 1
-    fi
+require_owned_or_absent() {
+  if { test -e "$data_root" || test -L "$data_root"; } && ! manifest_owned; then
+    printf 'setup-dvandva: refusing unowned data at %s\n' "$data_root" >&2
+    exit 1
   fi
 }
 
@@ -355,7 +353,61 @@ owned_version_path() {
     owner_marker_matches "$owner_file"
 }
 
-remove_promoted_install() {
+quarantine_promoted_path() {
+  local quarantine="$transaction_dir/promoted-install"
+  ! test -e "$quarantine" && ! test -L "$quarantine" || return 1
+  python3 -c '
+import ctypes, os, stat, sys
+
+source, quarantine, expected = sys.argv[1:]
+try:
+    expected_device, expected_inode = (int(part) for part in expected.split(":", 1))
+    source_parent, source_name = os.path.split(source)
+    quarantine_parent, quarantine_name = os.path.split(quarantine)
+    open_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    source_parent_fd = os.open(source_parent, open_flags)
+    quarantine_parent_fd = os.open(quarantine_parent, open_flags)
+except (OSError, TypeError, ValueError):
+    raise SystemExit(1)
+
+quarantine_fd = None
+try:
+    libc = ctypes.CDLL(None, use_errno=True)
+    renameat2 = libc.renameat2
+    renameat2.argtypes = (
+        ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint
+    )
+    renameat2.restype = ctypes.c_int
+    result = renameat2(
+        source_parent_fd,
+        os.fsencode(source_name),
+        quarantine_parent_fd,
+        os.fsencode(quarantine_name),
+        1,  # RENAME_NOREPLACE
+    )
+    if result != 0:
+        raise OSError(ctypes.get_errno(), "renameat2")
+    quarantine_fd = os.open(
+        quarantine_name, open_flags, dir_fd=quarantine_parent_fd
+    )
+    status = os.fstat(quarantine_fd)
+    valid = (
+        stat.S_ISDIR(status.st_mode)
+        and status.st_dev == expected_device
+        and status.st_ino == expected_inode
+    )
+except (AttributeError, OSError):
+    valid = False
+finally:
+    if quarantine_fd is not None:
+        os.close(quarantine_fd)
+    os.close(quarantine_parent_fd)
+    os.close(source_parent_fd)
+raise SystemExit(0 if valid else 1)
+' "$promoted_install" "$quarantine" "$promoted_install_identity" 2>/dev/null
+}
+
+preserve_promoted_install() {
   if ! test -e "$promoted_install" && ! test -L "$promoted_install"; then
     return 0
   fi
@@ -363,8 +415,10 @@ remove_promoted_install() {
   test -n "$promoted_install_identity" || return 1
   test "$(stat -c '%d:%i' -- "$promoted_install" 2>/dev/null)" = \
     "$promoted_install_identity" || return 1
-  rm -rf -- "$promoted_install" &&
-    ! test -e "$promoted_install" && ! test -L "$promoted_install"
+  quarantine_promoted_path || return 1
+  # Linux cannot recursively unlink this directory by its verified descriptor.
+  # Keep the quarantined inode and transaction evidence instead of reopening it.
+  return 1
 }
 
 rollback_uncertain() {
@@ -400,7 +454,7 @@ rollback_transaction() {
   if $current_restored && $manifest_restored; then
     if test -n "$promoted_install"; then
       preserve_transaction=true
-      if ! remove_promoted_install; then
+      if ! preserve_promoted_install; then
         rollback_uncertain
         return 1
       fi
@@ -449,7 +503,7 @@ prepare_transaction() {
 }
 
 install_release() {
-  require_owned_or_empty
+  require_owned_or_absent
   local asset
   asset="$(asset_for_host)"
   local download_dir
@@ -541,6 +595,7 @@ uninstall_owned() {
   done
   rmdir -- "$bin_root" 2>/dev/null || true
   rm -f -- "$manifest"
+  rmdir -- "$data_root" 2>/dev/null || true
   if $purge_runs; then
     rm -rf -- "$state_root/runs"
   fi

@@ -190,6 +190,18 @@ path_safety_case binary-symlink
 path_safety_case owner-symlink
 path_safety_case owner-wrong-bytes
 
+empty_unowned_data_root_case() (
+  export XDG_DATA_HOME="$test_root/empty-unowned/data"
+  export XDG_STATE_HOME="$test_root/empty-unowned/state"
+  mkdir -p "$XDG_DATA_HOME/dvandva"
+  local before
+  before="$(stat -c '%d:%i:%a:%s:%Y' "$XDG_DATA_HOME/dvandva")"
+  expect_failure 'refusing unowned data' env DVANDVA_RELEASE_DIR="$new_release" \
+    bash "$installer" install --version 0.2.0
+  test "$before" = "$(stat -c '%d:%i:%a:%s:%Y' "$XDG_DATA_HOME/dvandva")"
+  test -z "$(find "$XDG_DATA_HOME/dvandva" -mindepth 1 -print)"
+)
+
 # Managed parent directories may not redirect writes through symlinks.
 (
   export XDG_DATA_HOME="$test_root/data-root-symlink/data"
@@ -273,7 +285,7 @@ grep -Fq 'role_api=2' <<<"$healthy"
 grep -Fq 'read_schemas=dvandva.run.v2,dvandva.run.v1' <<<"$healthy"
 grep -Fq 'upgrade_from_v1=true' <<<"$healthy"
 
-# Failure after manifest replacement rolls back both files and only fresh promotion.
+# Failure after manifest replacement restores the old pair and quarantines fresh promotion.
 rollback_bin="$test_root/rollback-bin"
 mkdir -p "$rollback_bin"
 cat >"$rollback_bin/mv" <<'FAIL_CURRENT_MV'
@@ -302,64 +314,137 @@ rollback_case() (
     cp "$new_binary" "$case_data/bin/0.2.0/dvandva-kernel"
     printf 'dvandva-skill-v1\n' >"$case_data/bin/0.2.0/.owner"
   fi
-  expect_failure 'injected current commit failure' env \
+  if env \
     PATH="$rollback_bin:$PATH" MV_FAIL_MARKER="$case_root/mv.failed" \
-    DVANDVA_RELEASE_DIR="$new_release" bash "$installer" update --version 0.2.0
+    DVANDVA_RELEASE_DIR="$new_release" bash "$installer" update --version 0.2.0 \
+    >"$case_root/update.out" 2>&1; then
+    printf 'current commit failure unexpectedly installed the update\n' >&2
+    exit 1
+  fi
+  grep -Fq 'injected current commit failure' "$case_root/update.out"
   test "$(readlink "$case_data/bin/current")" = '0.1.1'
   cmp "$before_manifest" "$case_data/installation.json"
   if test "$kind" = fresh; then
     test ! -e "$case_data/bin/0.2.0"
+    grep -Fq 'rollback_uncertain evidence=' "$case_root/update.out"
+    mapfile -t transaction_evidence < <(
+      find "$case_data" -maxdepth 1 -type d -name '.install-txn.*' -print
+    )
+    test "${#transaction_evidence[@]}" -eq 1
+    test -x "${transaction_evidence[0]}/promoted-install/dvandva-kernel"
+    test -f "${transaction_evidence[0]}/old-manifest"
   else
     test -x "$case_data/bin/0.2.0/dvandva-kernel"
+    ! grep -Fq 'rollback_uncertain evidence=' "$case_root/update.out"
+    test -z "$(find "$case_data" -maxdepth 1 -type d -name '.install-txn.*' -print)"
   fi
-  test -z "$(find "$case_data" \( -name '*.tmp' -o -name '.install-txn.*' \) -print)"
+  test -z "$(find "$case_data/bin" -maxdepth 1 -name '.0.2.0.*.tmp' -print)"
 )
 
 rollback_case fresh
 rollback_case preexisting
 
-# If promoted cleanup fails, retain transaction evidence and say rollback is uncertain.
-rollback_cleanup_bin="$test_root/rollback-cleanup-bin"
-mkdir -p "$rollback_cleanup_bin"
-cp "$rollback_bin/mv" "$rollback_cleanup_bin/mv"
-cat >"$rollback_cleanup_bin/rm" <<'FAIL_PROMOTED_RM'
+# A pathname replacement after identity lookup is never recursively deleted.
+rollback_swap_bin="$test_root/rollback-swap-bin"
+mkdir -p "$rollback_swap_bin"
+cp "$rollback_bin/mv" "$rollback_swap_bin/mv"
+cat >"$rollback_swap_bin/stat" <<'SWAP_AFTER_STAT'
 #!/usr/bin/env bash
 set -euo pipefail
-for argument in "$@"; do
-  if test "$argument" = "${PROMOTED_REMOVE_TARGET:?}"; then
-    printf 'injected promoted cleanup failure\n' >&2
-    exit 1
-  fi
-done
-exec /usr/bin/rm "$@"
-FAIL_PROMOTED_RM
-chmod 755 "$rollback_cleanup_bin/rm"
-(
-  export XDG_DATA_HOME="$test_root/rollback-cleanup/data"
-  export XDG_STATE_HOME="$test_root/rollback-cleanup/state"
+last="${!#}"
+output="$(/usr/bin/stat "$@")"
+if test "$last" = "${SWAP_TARGET:?}" && test ! -e "${SWAP_MARKER:?}"; then
+  /usr/bin/touch "$SWAP_MARKER"
+  /usr/bin/mv -T -- "$SWAP_TARGET" "${SWAPPED_PROMOTED:?}"
+  /usr/bin/mkdir -- "$SWAP_TARGET"
+  printf 'foreign replacement\n' >"$SWAP_TARGET/foreign-marker"
+fi
+printf '%s\n' "$output"
+SWAP_AFTER_STAT
+chmod 755 "$rollback_swap_bin/stat"
+
+rollback_path_swap_case() (
+  export XDG_DATA_HOME="$test_root/rollback-swap/data"
+  export XDG_STATE_HOME="$test_root/rollback-swap/state"
   DVANDVA_RELEASE_DIR="$old_release" bash "$old_installer" \
     install --version 0.1.1 >/dev/null
   case_data="$XDG_DATA_HOME/dvandva"
-  cp "$case_data/installation.json" "$test_root/rollback-cleanup.manifest"
-  if env PATH="$rollback_cleanup_bin:$PATH" \
-    MV_FAIL_MARKER="$test_root/rollback-cleanup.mv-failed" \
-    PROMOTED_REMOVE_TARGET="$case_data/bin/0.2.0" \
+  cp "$case_data/installation.json" "$test_root/rollback-swap.manifest"
+  if env PATH="$rollback_swap_bin:$PATH" \
+    MV_FAIL_MARKER="$test_root/rollback-swap.mv-failed" \
+    SWAP_MARKER="$test_root/rollback-swap.stat-swapped" \
+    SWAP_TARGET="$case_data/bin/0.2.0" \
+    SWAPPED_PROMOTED="$case_data/bin/invocation-promoted" \
     DVANDVA_RELEASE_DIR="$new_release" bash "$installer" \
-    update --version 0.2.0 >"$test_root/rollback-cleanup.out" 2>&1; then
-    printf 'promoted cleanup failure unexpectedly installed the update\n' >&2
+    update --version 0.2.0 >"$test_root/rollback-swap.out" 2>&1; then
+    printf 'path-swapped rollback unexpectedly installed the update\n' >&2
     exit 1
   fi
   test "$(readlink "$case_data/bin/current")" = '0.1.1'
-  cmp "$test_root/rollback-cleanup.manifest" "$case_data/installation.json"
-  test -d "$case_data/bin/0.2.0"
-  grep -Fq 'rollback_uncertain evidence=' "$test_root/rollback-cleanup.out"
+  cmp "$test_root/rollback-swap.manifest" "$case_data/installation.json"
+  test -x "$case_data/bin/invocation-promoted/dvandva-kernel"
+  mapfile -t foreign_markers < <(find "$case_data" -name foreign-marker -print)
+  test "${#foreign_markers[@]}" -eq 1
+  grep -Fq 'rollback_uncertain evidence=' "$test_root/rollback-swap.out"
   mapfile -t transaction_evidence < <(
     find "$case_data" -maxdepth 1 -type d -name '.install-txn.*' -print
   )
   test "${#transaction_evidence[@]}" -eq 1
+  test "${foreign_markers[0]}" = "${transaction_evidence[0]}/promoted-install/foreign-marker"
   test -f "${transaction_evidence[0]}/old-manifest"
-  test -z "$(find "$case_data/bin" -maxdepth 1 -name '.0.2.0.*.tmp' -print)"
 )
+
+rollback_quarantine_swap_bin="$test_root/rollback-quarantine-swap-bin"
+mkdir -p "$rollback_quarantine_swap_bin"
+cp "$rollback_bin/mv" "$rollback_quarantine_swap_bin/mv"
+cat >"$rollback_quarantine_swap_bin/rm" <<'SWAP_QUARANTINE_BEFORE_RM'
+#!/usr/bin/env bash
+set -euo pipefail
+for argument in "$@"; do
+  case "$argument" in
+    */.install-txn.*/promoted-install)
+      /usr/bin/touch "${QUARANTINE_SWAP_MARKER:?}"
+      /usr/bin/mv -T -- "$argument" "${SWAPPED_QUARANTINE:?}"
+      /usr/bin/mkdir -- "$argument"
+      printf 'foreign replacement\n' >"$argument/foreign-marker"
+      ;;
+  esac
+done
+exec /usr/bin/rm "$@"
+SWAP_QUARANTINE_BEFORE_RM
+chmod 755 "$rollback_quarantine_swap_bin/rm"
+
+rollback_quarantine_swap_case() (
+  export XDG_DATA_HOME="$test_root/rollback-quarantine-swap/data"
+  export XDG_STATE_HOME="$test_root/rollback-quarantine-swap/state"
+  DVANDVA_RELEASE_DIR="$old_release" bash "$old_installer" \
+    install --version 0.1.1 >/dev/null
+  case_data="$XDG_DATA_HOME/dvandva"
+  cp "$case_data/installation.json" "$test_root/rollback-quarantine-swap.manifest"
+  if env PATH="$rollback_quarantine_swap_bin:$PATH" \
+    MV_FAIL_MARKER="$test_root/rollback-quarantine-swap.mv-failed" \
+    QUARANTINE_SWAP_MARKER="$test_root/rollback-quarantine-swap.rm-swapped" \
+    SWAPPED_QUARANTINE="$case_data/bin/invocation-quarantined" \
+    DVANDVA_RELEASE_DIR="$new_release" bash "$installer" \
+    update --version 0.2.0 >"$test_root/rollback-quarantine-swap.out" 2>&1; then
+    printf 'quarantine-swapped rollback unexpectedly installed the update\n' >&2
+    exit 1
+  fi
+  test "$(readlink "$case_data/bin/current")" = '0.1.1'
+  cmp "$test_root/rollback-quarantine-swap.manifest" "$case_data/installation.json"
+  test ! -e "$test_root/rollback-quarantine-swap.rm-swapped"
+  grep -Fq 'rollback_uncertain evidence=' "$test_root/rollback-quarantine-swap.out"
+  mapfile -t transaction_evidence < <(
+    find "$case_data" -maxdepth 1 -type d -name '.install-txn.*' -print
+  )
+  test "${#transaction_evidence[@]}" -eq 1
+  test -x "${transaction_evidence[0]}/promoted-install/dvandva-kernel"
+  test -f "${transaction_evidence[0]}/old-manifest"
+)
+
+rollback_quarantine_swap_case
+empty_unowned_data_root_case
+rollback_path_swap_case
 
 # A signal delivered immediately after promotion still removes the fresh version.
 promotion_term_bin="$test_root/promotion-term-bin"
@@ -391,7 +476,14 @@ chmod 755 "$promotion_term_bin/mv"
   test "$(readlink "$case_data/bin/current")" = '0.1.1'
   cmp "$test_root/promotion-term.manifest" "$case_data/installation.json"
   test ! -e "$case_data/bin/0.2.0"
-  test -z "$(find "$case_data" \( -name '*.tmp' -o -name '.install-txn.*' \) -print)"
+  grep -Fq 'rollback_uncertain evidence=' "$test_root/promotion-term.out"
+  mapfile -t transaction_evidence < <(
+    find "$case_data" -maxdepth 1 -type d -name '.install-txn.*' -print
+  )
+  test "${#transaction_evidence[@]}" -eq 1
+  test -x "${transaction_evidence[0]}/promoted-install/dvandva-kernel"
+  test -f "${transaction_evidence[0]}/old-manifest"
+  test -z "$(find "$case_data/bin" -maxdepth 1 -name '.0.2.0.*.tmp' -print)"
 )
 
 # Concurrent installers serialize: both succeed and no staging directory nests.
@@ -442,6 +534,14 @@ mv "$test_root/sums.good" "$new_release/SHA256SUMS"
 
 # Uninstall preserves runs unless the explicit destructive pair is supplied.
 bash "$installer" uninstall --version 0.2.0 | grep -Fq 'preserved_runs=true'
+test -f "$runs/keep-me"
+test ! -e "$XDG_DATA_HOME/dvandva"
+
+# An owned uninstall leaves an absent root, so a normal reinstall remains valid.
+DVANDVA_RELEASE_DIR="$new_release" bash "$installer" install --version 0.2.0 >/dev/null
+test "$(readlink "$current")" = '0.2.0'
+bash "$installer" uninstall --version 0.2.0 >/dev/null
+test ! -e "$XDG_DATA_HOME/dvandva"
 test -f "$runs/keep-me"
 
 export XDG_DATA_HOME="$test_root/unowned/data"
