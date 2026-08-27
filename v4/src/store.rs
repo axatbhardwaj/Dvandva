@@ -140,6 +140,9 @@ impl RunChannel {
             if self.read_history_revision(expected_revision)? != current {
                 return Err(StoreError::InvalidHistory);
             }
+            if current.schema != SCHEMA {
+                return Err(StoreError::MigrationRequired);
+            }
             if current.schema != next.schema {
                 return Err(StoreError::InvalidSchemaTransition);
             }
