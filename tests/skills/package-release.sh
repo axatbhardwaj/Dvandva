@@ -7,17 +7,17 @@ trap 'rm -rf -- "$test_root"' EXIT
 packager="$repo_root/scripts/package-skills-release.sh"
 
 output="$test_root/output"
-CARGO_TARGET_DIR="$test_root/target" bash "$packager" skills-v0.1.1 "$output"
+CARGO_TARGET_DIR="$test_root/target" bash "$packager" skills-v0.2.0 "$output"
 
 test -x "$output/dvandva-kernel-linux-x86_64"
 test -f "$output/SHA256SUMS"
 test "$(find "$output" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" = \
   'SHA256SUMS dvandva-kernel-linux-x86_64 '
 (cd "$output" && sha256sum -c SHA256SUMS)
-test "$($output/dvandva-kernel-linux-x86_64 --version)" = 'dvandva-v4 0.1.1'
+test "$($output/dvandva-kernel-linux-x86_64 --version)" = 'dvandva-v4 0.2.0'
 
 wrong="$test_root/wrong"
-if CARGO_TARGET_DIR="$test_root/target" bash "$packager" skills-v0.2.0 "$wrong" \
+if CARGO_TARGET_DIR="$test_root/target" bash "$packager" skills-v0.2.1 "$wrong" \
   >"$test_root/wrong.out" 2>&1; then
   printf 'mismatched tag unexpectedly packaged\n' >&2
   exit 1
@@ -28,7 +28,7 @@ test ! -e "$wrong"
 nonempty="$test_root/nonempty"
 mkdir -p "$nonempty"
 touch "$nonempty/foreign"
-if CARGO_TARGET_DIR="$test_root/target" bash "$packager" skills-v0.1.1 "$nonempty" \
+if CARGO_TARGET_DIR="$test_root/target" bash "$packager" skills-v0.2.0 "$nonempty" \
   >"$test_root/nonempty.out" 2>&1; then
   printf 'non-empty destination unexpectedly accepted\n' >&2
   exit 1
