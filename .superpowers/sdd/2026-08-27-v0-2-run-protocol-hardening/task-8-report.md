@@ -38,3 +38,14 @@ also exited 1 for the expected reason:
 FAIL: duplicate-key probe unexpectedly packaged
 FAIL: duplicate-key kernel was checksummed
 ```
+
+Before staging was introduced, the packager rejected incompatible probes but
+left the stripped candidate at the final asset path. A third RED run added
+wrong-version coverage and required all failures to leave no final asset:
+
+```text
+FAIL: incompatible kernel was promoted to the final asset path
+FAIL: duplicate-key kernel was promoted to the final asset path
+FAIL: wrong-version kernel was promoted to the final asset path
+skills release packaging: 3 failure(s)
+```

@@ -61,6 +61,8 @@ if PATH="$fake_bin:$PATH" FAKE_KERNEL="$test_root/fake-kernel" \
 fi
 require_text 'probe_mismatch' "$test_root/incompatible.out"
 test ! -e "$incompatible/SHA256SUMS" || fail 'incompatible kernel was checksummed'
+test ! -e "$incompatible/dvandva-kernel-linux-x86_64" || \
+  fail 'incompatible kernel was promoted to the final asset path'
 
 printf '%s\n' \
   '#!/usr/bin/env bash' \
@@ -86,6 +88,31 @@ if PATH="$fake_bin:$PATH" FAKE_KERNEL="$test_root/duplicate-kernel" \
 fi
 require_text 'probe_mismatch' "$test_root/duplicate.out"
 test ! -e "$duplicate/SHA256SUMS" || fail 'duplicate-key kernel was checksummed'
+test ! -e "$duplicate/dvandva-kernel-linux-x86_64" || \
+  fail 'duplicate-key kernel was promoted to the final asset path'
+
+printf '%s\n' \
+  '#!/usr/bin/env bash' \
+  'set -euo pipefail' \
+  'if test "${1:-}" = "--version"; then' \
+  '  printf "dvandva-v4 9.9.9\\n"' \
+  '  exit 0' \
+  'fi' \
+  'exit 2' \
+  >"$test_root/wrong-version-kernel"
+chmod 755 "$test_root/wrong-version-kernel"
+
+wrong_binary="$test_root/wrong-binary"
+if PATH="$fake_bin:$PATH" FAKE_KERNEL="$test_root/wrong-version-kernel" \
+  CARGO_TARGET_DIR="$test_root/wrong-binary-target" \
+  bash "$packager" skills-v0.2.0 "$wrong_binary" \
+  >"$test_root/wrong-binary.out" 2>&1; then
+  fail 'wrong-version kernel unexpectedly packaged'
+fi
+require_text 'binary_version_mismatch' "$test_root/wrong-binary.out"
+test ! -e "$wrong_binary/SHA256SUMS" || fail 'wrong-version kernel was checksummed'
+test ! -e "$wrong_binary/dvandva-kernel-linux-x86_64" || \
+  fail 'wrong-version kernel was promoted to the final asset path'
 
 output="$test_root/output"
 CARGO_TARGET_DIR="$test_root/target" bash "$packager" skills-v0.2.0 "$output"
