@@ -1258,7 +1258,12 @@ fn valid_checkpoint_superseded(
         return false;
     };
     let checkpoint = checkpoint.binding();
-    if current.status != Status::Reviewing
+    let expected_gate = Some((&HandoffKind::WorkerToReviewer, &checkpoint));
+    if !current
+        .publication_binding
+        .as_ref()
+        .is_some_and(|current_binding| approved_publication_gate(current_binding, expected_gate))
+        || current.status != Status::Reviewing
         || current.assignee != Assignee::Reviewer
         || pending.checkpoint != checkpoint
         || next.status != Status::Revising
@@ -1281,7 +1286,12 @@ fn valid_approval_withdrawn(
         return false;
     };
     let checkpoint = checkpoint.binding();
-    if current.status != Status::Finalizing
+    let expected_gate = Some((&HandoffKind::ReviewerToWorker, &checkpoint));
+    if !current
+        .publication_binding
+        .as_ref()
+        .is_some_and(|current_binding| approved_publication_gate(current_binding, expected_gate))
+        || current.status != Status::Finalizing
         || current.assignee != Assignee::Worker
         || review.verdict != "approved"
         || review.binding() != checkpoint

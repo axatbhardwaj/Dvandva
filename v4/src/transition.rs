@@ -317,6 +317,7 @@ fn apply_locked(
             if pending.checkpoint != checkpoint {
                 return Err(TransitionError::InvalidCheckpoint);
             }
+            require_publication_gate(baton, Some((&HandoffKind::WorkerToReviewer, &checkpoint)))?;
             baton.checkpoint = None;
             baton.review = None;
             baton.pending_checkpoint_supersession = None;
@@ -341,6 +342,7 @@ fn apply_locked(
             if review.verdict != "approved" || review.binding() != checkpoint {
                 return Err(TransitionError::StaleReview);
             }
+            require_publication_gate(baton, Some((&HandoffKind::ReviewerToWorker, &checkpoint)))?;
             baton.checkpoint = None;
             baton.review = None;
             baton.pending_checkpoint_supersession = None;

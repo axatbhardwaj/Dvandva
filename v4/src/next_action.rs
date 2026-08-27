@@ -64,7 +64,16 @@ pub fn classify(baton: &RunBaton, role: Role, participant_harness: &str) -> Next
             (Role::Reviewer, Status::Reviewing, Assignee::Reviewer) => {
                 advisory.push("review_checkpoint");
                 if baton.pending_checkpoint_supersession.is_some() {
-                    legal.push("accept_checkpoint_supersession");
+                    if publication_gate_satisfied_for_current_checkpoint(
+                        baton,
+                        crate::model::HandoffKind::WorkerToReviewer,
+                    ) {
+                        legal.push("accept_checkpoint_supersession");
+                    } else {
+                        blocking_reason = Some(
+                            "accept_checkpoint_supersession awaits current explainer approval",
+                        );
+                    }
                 } else if publication_gate_satisfied(baton) {
                     legal.push("record_review");
                 } else {
@@ -77,7 +86,12 @@ pub fn classify(baton: &RunBaton, role: Role, participant_harness: &str) -> Next
                 legal.push("request_checkpoint_supersession");
             }
             (Role::Worker, Status::Finalizing, Assignee::Worker) => {
-                legal.push("withdraw_approval");
+                if publication_gate_satisfied_for_current_checkpoint(
+                    baton,
+                    crate::model::HandoffKind::ReviewerToWorker,
+                ) {
+                    legal.push("withdraw_approval");
+                }
                 if publication_gate_satisfied(baton) {
                     legal.push("finalize");
                 } else {
@@ -179,4 +193,21 @@ fn publication_gate_satisfied(baton: &RunBaton) -> bool {
             })
         })
     })
+}
+
+fn publication_gate_satisfied_for_current_checkpoint(
+    baton: &RunBaton,
+    kind: crate::model::HandoffKind,
+) -> bool {
+    let Some(checkpoint) = baton
+        .checkpoint
+        .as_ref()
+        .map(|checkpoint| checkpoint.binding())
+    else {
+        return false;
+    };
+    baton.publication_binding.as_ref().is_some_and(|binding| {
+        binding.obligation.kind == kind
+            && binding.obligation.checkpoint.as_ref() == Some(&checkpoint)
+    }) && publication_gate_satisfied(baton)
 }

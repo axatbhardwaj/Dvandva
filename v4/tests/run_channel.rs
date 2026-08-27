@@ -3410,6 +3410,24 @@ fn supersession_request_blocks_approval_and_acceptance_reopens_revision() {
         serde_json::json!({"type": "request_checkpoint_supersession", "reason": "new evidence"}),
     )
     .success();
+    let before_gate = read_baton(dir.path());
+    let before_gate: RunBaton = serde_json::from_value(before_gate).unwrap();
+    assert!(
+        !dvandva_v4::next_action::classify(&before_gate, Role::Reviewer, "claude")
+            .legal_actions
+            .contains(&"accept_checkpoint_supersession")
+    );
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        6,
+        "accept-before-publication.json",
+        serde_json::json!({"type": "accept_checkpoint_supersession"}),
+    )
+    .failure()
+    .stderr(predicate::str::contains(r#""error":"publication_stale""#));
     approve_current_explainer(
         dir.path(),
         ("worker", "worker-1", &worker),
@@ -3508,12 +3526,18 @@ fn checkpoint_supersession_cas_races_are_fail_closed() {
     )
     .failure()
     .stderr(predicate::str::contains(r#""error":"revision_conflict""#));
+    approve_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker),
+        ("reviewer", "reviewer-1", &reviewer),
+        "race-withdrawal",
+    );
     apply_action(
         dir.path(),
         "worker",
         "worker-1",
         &worker,
-        8,
+        10,
         "withdraw.json",
         serde_json::json!({"type": "withdraw_approval", "reason": "new evidence"}),
     )
@@ -3617,12 +3641,36 @@ fn supersession_approval_withdrawal_reopens_revision_and_replaces_handoff() {
         review_action("approved", &binding, serde_json::json!([])),
     )
     .success();
+    let before_gate = read_baton(dir.path());
+    let before_gate: RunBaton = serde_json::from_value(before_gate).unwrap();
+    assert!(
+        !dvandva_v4::next_action::classify(&before_gate, Role::Worker, "codex")
+            .legal_actions
+            .contains(&"withdraw_approval")
+    );
     apply_action(
         dir.path(),
         "worker",
         "worker-1",
         &worker,
         8,
+        "withdraw-before-publication.json",
+        serde_json::json!({"type": "withdraw_approval", "reason": "new deliverable"}),
+    )
+    .failure()
+    .stderr(predicate::str::contains(r#""error":"publication_stale""#));
+    approve_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker),
+        ("reviewer", "reviewer-1", &reviewer),
+        "withdraw-approved",
+    );
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        10,
         "blank.json",
         serde_json::json!({"type": "withdraw_approval", "reason": " "}),
     )
@@ -3633,7 +3681,7 @@ fn supersession_approval_withdrawal_reopens_revision_and_replaces_handoff() {
         "worker",
         "worker-1",
         &worker,
-        8,
+        10,
         "withdraw.json",
         serde_json::json!({"type": "withdraw_approval", "reason": "new deliverable"}),
     )
@@ -3653,6 +3701,128 @@ fn supersession_approval_withdrawal_reopens_revision_and_replaces_handoff() {
         baton["publication_binding"]["obligation"]["checkpoint"],
         binding
     );
+}
+
+#[test]
+fn immutable_history_rejects_supersession_edges_without_the_current_publication_gate() {
+    use dvandva_v4::model::{
+        create_bound_handoff_obligation, Assignee, HandoffKind, RunBaton, Status,
+    };
+
+    let supersession = tempfile::tempdir().unwrap();
+    init_pair(supersession.path());
+    let (worker, _reviewer) = claim_pair_and_approve_run_started(supersession.path());
+    apply_action(
+        supersession.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        4,
+        "checkpoint.json",
+        checkpoint_submission(
+            "checkpoint-a",
+            serde_json::json!([
+                {"id": "implementation", "artifacts": [{"kind": "commit", "value": "abc"}]}
+            ]),
+        ),
+    )
+    .success();
+    apply_action(
+        supersession.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        5,
+        "request.json",
+        serde_json::json!({"type": "request_checkpoint_supersession", "reason": "new evidence"}),
+    )
+    .success();
+    let current = RunChannel::open(supersession.path()).read().unwrap();
+    let checkpoint = current.checkpoint.as_ref().unwrap().binding();
+    let mut forged = current.clone();
+    forged.revision += 1;
+    forged.status = Status::Revising;
+    forged.assignee = Assignee::Worker;
+    forged.checkpoint = None;
+    forged.review = None;
+    forged.pending_checkpoint_supersession = None;
+    forged.publication_binding = Some(create_bound_handoff_obligation(
+        HandoffKind::CheckpointSuperseded,
+        forged.revision,
+        forged.scope_revision,
+        Some(checkpoint),
+    ));
+    forged.publication_binding.as_mut().unwrap().site_id = current
+        .publication_binding
+        .as_ref()
+        .unwrap()
+        .site_id
+        .clone();
+    assert!(matches!(
+        RunChannel::open(supersession.path()).compare_and_swap(current.revision, &forged),
+        Err(StoreError::InvalidHistory)
+    ));
+
+    let withdrawal = tempfile::tempdir().unwrap();
+    init_pair(withdrawal.path());
+    let (worker, reviewer) = claim_pair_and_approve_run_started(withdrawal.path());
+    apply_action(
+        withdrawal.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        4,
+        "checkpoint.json",
+        checkpoint_submission(
+            "checkpoint-a",
+            serde_json::json!([
+                {"id": "implementation", "artifacts": [{"kind": "commit", "value": "abc"}]}
+            ]),
+        ),
+    )
+    .success();
+    let binding = checkpoint_binding(withdrawal.path());
+    approve_current_explainer(
+        withdrawal.path(),
+        ("worker", "worker-1", &worker),
+        ("reviewer", "reviewer-1", &reviewer),
+        "reviewed",
+    );
+    apply_action(
+        withdrawal.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        7,
+        "approve.json",
+        review_action("approved", &binding, serde_json::json!([])),
+    )
+    .success();
+    let current: RunBaton = RunChannel::open(withdrawal.path()).read().unwrap();
+    let checkpoint = current.checkpoint.as_ref().unwrap().binding();
+    let mut forged = current.clone();
+    forged.revision += 1;
+    forged.status = Status::Revising;
+    forged.assignee = Assignee::Worker;
+    forged.checkpoint = None;
+    forged.review = None;
+    forged.pending_checkpoint_supersession = None;
+    forged.publication_binding = Some(create_bound_handoff_obligation(
+        HandoffKind::ApprovalWithdrawn,
+        forged.revision,
+        forged.scope_revision,
+        Some(checkpoint),
+    ));
+    forged.publication_binding.as_mut().unwrap().site_id = current
+        .publication_binding
+        .as_ref()
+        .unwrap()
+        .site_id
+        .clone();
+    assert!(matches!(
+        RunChannel::open(withdrawal.path()).compare_and_swap(current.revision, &forged),
+        Err(StoreError::InvalidHistory)
+    ));
 }
 
 #[test]
