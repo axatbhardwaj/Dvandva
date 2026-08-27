@@ -31,21 +31,26 @@ cargo build --locked --release --manifest-path "$manifest"
 target_root="${CARGO_TARGET_DIR:-$repo_root/v4/target}"
 source_binary="$target_root/release/dvandva-v4"
 asset="dvandva-kernel-linux-x86_64"
+staging="$(mktemp -d)"
 
-mkdir -p "$output"
-install -m 755 "$source_binary" "$output/$asset"
+cleanup() {
+  rm -rf -- "$staging"
+}
+trap cleanup EXIT
+
+install -m 755 "$source_binary" "$staging/$asset"
 if command -v strip >/dev/null 2>&1; then
-  strip "$output/$asset"
+  strip "$staging/$asset"
 fi
 
-reported_version="$("$output/$asset" --version 2>/dev/null || true)"
+reported_version="$("$staging/$asset" --version 2>/dev/null || true)"
 if test "$reported_version" != "dvandva-v4 $version"; then
   printf 'package-skills-release: binary_version_mismatch expected=%s reported=%s\n' \
     "dvandva-v4 $version" "$reported_version" >&2
   exit 1
 fi
 
-probe_output="$("$output/$asset" probe \
+probe_output="$("$staging/$asset" probe \
   --expected-schema dvandva.run.v2 --expected-role-api 2 2>/dev/null)" || {
   printf 'package-skills-release: probe_mismatch expected_schema=dvandva.run.v2 expected_role_api=2\n' >&2
   exit 1
@@ -91,6 +96,8 @@ PY
   exit 1
 }
 
+mkdir -p "$output"
+install -m 755 "$staging/$asset" "$output/$asset"
 (cd "$output" && sha256sum "$asset" >SHA256SUMS)
 printf 'package-skills-release: packaged tag=%s asset=%s output=%s\n' \
   "$tag" "$asset" "$output"
