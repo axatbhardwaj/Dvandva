@@ -142,6 +142,37 @@ fn explainer_review_action(
     })
 }
 
+fn approved_publication_binding(
+    obligation: serde_json::Value,
+    site_id: &str,
+    site_version: &str,
+) -> serde_json::Value {
+    let deployment = serde_json::json!({
+        "obligation": obligation,
+        "source_digest": "c".repeat(64),
+        "site_id": site_id,
+        "site_version": site_version,
+        "url": format!("https://sites.openai.test/{site_id}/{site_version}"),
+        "channel": "codex_sites",
+        "access": "owner_only",
+        "publisher_harness": "Codex"
+    });
+    serde_json::json!({
+        "site_id": site_id,
+        "obligation": obligation,
+        "deployment": deployment,
+        "review": {
+            "obligation": obligation,
+            "source_digest": deployment["source_digest"],
+            "site_id": deployment["site_id"],
+            "site_version": deployment["site_version"],
+            "url": deployment["url"],
+            "verdict": "approved",
+            "reviewer_harness": "Claude"
+        }
+    })
+}
+
 fn approve_current_explainer(
     dir: &std::path::Path,
     codex: (&str, &str, &str),
@@ -183,16 +214,34 @@ fn approve_current_explainer(
     .success();
 }
 
+fn claim_pair_and_approve_run_started(dir: &std::path::Path) -> (String, String) {
+    let worker = claim_role(dir, "worker", "worker-1", 0);
+    let reviewer = claim_role(dir, "reviewer", "reviewer-1", 1);
+    approve_current_explainer(
+        dir,
+        ("worker", "worker-1", &worker),
+        ("reviewer", "reviewer-1", &reviewer),
+        "run-started",
+    );
+    (worker, reviewer)
+}
+
 fn setup_reviewing_checkpoint(dir: &std::path::Path) -> (String, String, serde_json::Value) {
     init_pair(dir);
     let worker = claim_role(dir, "worker", "worker-1", 0);
     let reviewer = claim_role(dir, "reviewer", "reviewer-1", 1);
+    approve_current_explainer(
+        dir,
+        ("worker", "worker-1", &worker),
+        ("reviewer", "reviewer-1", &reviewer),
+        "setup-run-started",
+    );
     apply_action(
         dir,
         "worker",
         "worker-1",
         &worker,
-        2,
+        4,
         "checkpoint.json",
         checkpoint_submission(
             "checkpoint-a",
@@ -213,7 +262,7 @@ fn setup_scope_amended_checkpoint(dir: &std::path::Path) -> (String, String) {
         "reviewer",
         "reviewer-1",
         &reviewer,
-        3,
+        5,
         "human.json",
         serde_json::json!({
             "type": "request_human_decision", "question": "Replace scope?",
@@ -227,7 +276,7 @@ fn setup_scope_amended_checkpoint(dir: &std::path::Path) -> (String, String) {
         "reviewer",
         "reviewer-1",
         &reviewer,
-        4,
+        6,
         "amend.json",
         serde_json::json!({
             "type": "resume_human_decision", "answer": "yes",
@@ -922,12 +971,6 @@ fn apply_action(
     name: &str,
     action: serde_json::Value,
 ) -> assert_cmd::assert::Assert {
-    if matches!(
-        action["type"].as_str(),
-        Some("submit_checkpoint" | "record_review" | "finalize")
-    ) {
-        satisfy_current_gate_fixture(dir, revision);
-    }
     apply_action_raw(dir, role, session, token, revision, name, action)
 }
 
@@ -958,51 +1001,6 @@ fn apply_action_raw(
             &path,
         ])
         .assert()
-}
-
-fn satisfy_current_gate_fixture(dir: &std::path::Path, revision: u64) {
-    let baton_path = dir.join("baton.json");
-    let Ok(bytes) = std::fs::read(&baton_path) else {
-        return;
-    };
-    let Ok(mut baton) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
-        return;
-    };
-    if baton["revision"].as_u64() != Some(revision)
-        || baton["publication_binding"]["review"]["verdict"] == "approved"
-    {
-        return;
-    }
-    let obligation = baton["publication_binding"]["obligation"].clone();
-    let site_id = baton["publication_binding"]["site_id"]
-        .as_str()
-        .unwrap_or("site-fixture")
-        .to_owned();
-    let deployment = serde_json::json!({
-        "obligation": obligation,
-        "source_digest": "f".repeat(64),
-        "site_id": site_id,
-        "site_version": format!("fixture-{revision}"),
-        "url": format!("https://sites.openai.test/site-fixture/{revision}"),
-        "channel": "codex_sites", "access": "owner_only", "publisher_harness": "Codex"
-    });
-    let review = serde_json::json!({
-        "obligation": obligation,
-        "source_digest": deployment["source_digest"],
-        "site_id": deployment["site_id"],
-        "site_version": deployment["site_version"], "url": deployment["url"],
-        "verdict": "approved", "reviewer_harness": "Claude"
-    });
-    baton["publication_binding"]["site_id"] = serde_json::json!(site_id);
-    baton["publication_binding"]["deployment"] = deployment;
-    baton["publication_binding"]["review"] = review;
-    let bytes = serde_json::to_vec_pretty(&baton).unwrap();
-    std::fs::write(&baton_path, &bytes).unwrap();
-    std::fs::write(
-        dir.join("history").join(format!("{revision:020}.json")),
-        bytes,
-    )
-    .unwrap();
 }
 
 #[test]
@@ -1052,7 +1050,7 @@ fn new_runs_require_a_synchronized_publication() {
         }],
     )
     .unwrap();
-    assert!(baton.publication.is_empty());
+    assert!(baton.publication.is_none());
     let binding = baton.publication_binding.unwrap();
     assert_eq!(
         binding.obligation.kind,
@@ -1812,12 +1810,17 @@ fn complete_review_fix_loop_reaches_done() {
             .success();
     };
 
-    satisfy_current_gate_fixture(dir.path(), 2);
+    approve_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker_token),
+        ("reviewer", "reviewer-1", &reviewer_token),
+        "complete-run-started",
+    );
     apply(
         "worker",
         "worker-1",
         &worker_token,
-        "2",
+        "4",
         write_action(
             dir.path(),
             "first.json",
@@ -1830,12 +1833,17 @@ fn complete_review_fix_loop_reaches_done() {
         ),
     );
     let first_binding = checkpoint_binding(dir.path());
-    satisfy_current_gate_fixture(dir.path(), 3);
+    approve_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker_token),
+        ("reviewer", "reviewer-1", &reviewer_token),
+        "complete-checkpoint-a",
+    );
     apply(
         "reviewer",
         "reviewer-1",
         &reviewer_token,
-        "3",
+        "7",
         write_action(
             dir.path(),
             "changes.json",
@@ -1846,12 +1854,17 @@ fn complete_review_fix_loop_reaches_done() {
             ),
         ),
     );
-    satisfy_current_gate_fixture(dir.path(), 4);
+    approve_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker_token),
+        ("reviewer", "reviewer-1", &reviewer_token),
+        "complete-revise-a",
+    );
     apply(
         "worker",
         "worker-1",
         &worker_token,
-        "4",
+        "10",
         write_action(
             dir.path(),
             "second.json",
@@ -1864,24 +1877,34 @@ fn complete_review_fix_loop_reaches_done() {
         ),
     );
     let second_binding = checkpoint_binding(dir.path());
-    satisfy_current_gate_fixture(dir.path(), 5);
+    approve_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker_token),
+        ("reviewer", "reviewer-1", &reviewer_token),
+        "complete-checkpoint-b",
+    );
     apply(
         "reviewer",
         "reviewer-1",
         &reviewer_token,
-        "5",
+        "13",
         write_action(
             dir.path(),
             "approve.json",
             review_action("approved", &second_binding, serde_json::json!([])),
         ),
     );
-    satisfy_current_gate_fixture(dir.path(), 6);
+    approve_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker_token),
+        ("reviewer", "reviewer-1", &reviewer_token),
+        "complete-approved",
+    );
     apply(
         "worker",
         "worker-1",
         &worker_token,
-        "6",
+        "16",
         write_action(
             dir.path(),
             "finalize.json",
@@ -1957,8 +1980,7 @@ fn human_decision_resumes_declared_owner() {
 fn local_watcher_wakes_the_reviewer_after_a_checkpoint() {
     let dir = tempfile::tempdir().unwrap();
     init_pair(dir.path());
-    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
-    let reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+    let (worker, reviewer) = claim_pair_and_approve_run_started(dir.path());
 
     let mut waiter = std::process::Command::new(env!("CARGO_BIN_EXE_dvandva-v4"))
         .args([
@@ -1972,7 +1994,7 @@ fn local_watcher_wakes_the_reviewer_after_a_checkpoint() {
             "--token",
             &reviewer,
             "--after-revision",
-            "2",
+            "4",
             "--poll-interval-ms",
             "1000",
             "--timeout-ms",
@@ -1990,7 +2012,7 @@ fn local_watcher_wakes_the_reviewer_after_a_checkpoint() {
         "worker",
         "worker-1",
         &worker,
-        2,
+        4,
         "wake.json",
         checkpoint_submission(
             "sha256:wake",
@@ -2009,21 +2031,20 @@ fn local_watcher_wakes_the_reviewer_after_a_checkpoint() {
     let baton: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(baton["status"], "reviewing");
     assert_eq!(baton["assignee"], "reviewer");
-    assert_eq!(baton["revision"], 3);
+    assert_eq!(baton["revision"], 5);
 }
 
 #[test]
 fn recovery_fences_old_sessions_and_preserves_evidence() {
     let dir = tempfile::tempdir().unwrap();
     init_pair(dir.path());
-    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
-    let _reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+    let (worker, _reviewer) = claim_pair_and_approve_run_started(dir.path());
     apply_action(
         dir.path(),
         "worker",
         "worker-1",
         &worker,
-        2,
+        4,
         "checkpoint.json",
         checkpoint_submission(
             "sha256:recover",
@@ -2046,17 +2067,17 @@ fn recovery_fences_old_sessions_and_preserves_evidence() {
             "--run-dir",
             dir.path().to_str().unwrap(),
             "--from-revision",
-            "3",
+            "5",
         ])
         .assert()
         .success();
     let baton: serde_json::Value =
         serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
-    assert_eq!(baton["revision"], 4);
+    assert_eq!(baton["revision"], 6);
     assert_eq!(baton["checkpoint"]["identity"], "sha256:recover");
     assert!(baton["participants"]["worker"]["claim"].is_null());
     assert!(baton["participants"]["reviewer"]["claim"].is_null());
-    assert_eq!(baton["recovery"]["from_revision"], 3);
+    assert_eq!(baton["recovery"]["from_revision"], 5);
 }
 
 #[test]
@@ -2259,8 +2280,7 @@ fn checkpoint_manifest_must_exactly_cover_canonical_scope() {
         dir.path(),
         &[("implementation", "Code"), ("report", "Report")],
     );
-    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
-    let _reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+    let (worker, _reviewer) = claim_pair_and_approve_run_started(dir.path());
     let invalid = [
         serde_json::json!([]),
         serde_json::json!([
@@ -2290,7 +2310,7 @@ fn checkpoint_manifest_must_exactly_cover_canonical_scope() {
             "worker",
             "worker-1",
             &worker,
-            2,
+            4,
             &format!("invalid-checkpoint-{index}.json"),
             checkpoint_submission("checkpoint-a", manifest),
         )
@@ -2308,8 +2328,7 @@ fn checkpoint_digest_is_deterministic_and_scope_stamped() {
             dir.path(),
             &[("implementation", "Code"), ("report", "Report")],
         );
-        let worker = claim_role(dir.path(), "worker", "worker-1", 0);
-        let _reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+        let (worker, _reviewer) = claim_pair_and_approve_run_started(dir.path());
         let manifest = if dir.path() == first.path() {
             serde_json::json!([
                 {"id": " report ", "artifacts": [{"kind": " file ", "value": " report.md "}]},
@@ -2326,7 +2345,7 @@ fn checkpoint_digest_is_deterministic_and_scope_stamped() {
             "worker",
             "worker-1",
             &worker,
-            2,
+            4,
             "checkpoint.json",
             checkpoint_submission(" checkpoint-a ", manifest),
         )
@@ -2351,14 +2370,13 @@ fn checkpoint_digest_is_deterministic_and_scope_stamped() {
 fn checkpoint_review_binds_all_coordinates_and_identity_history() {
     let dir = tempfile::tempdir().unwrap();
     init_pair(dir.path());
-    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
-    let reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+    let (worker, reviewer) = claim_pair_and_approve_run_started(dir.path());
     apply_action(
         dir.path(),
         "worker",
         "worker-1",
         &worker,
-        2,
+        4,
         "checkpoint.json",
         checkpoint_submission(
             "checkpoint-a",
@@ -2375,27 +2393,39 @@ fn checkpoint_review_binds_all_coordinates_and_identity_history() {
         serde_json::json!({"checkpoint_identity": "checkpoint-a", "manifest_digest": binding["manifest_digest"], "scope_revision": 1}),
     ].into_iter().enumerate() {
         apply_action(
-            dir.path(), "reviewer", "reviewer-1", &reviewer, 3,
+            dir.path(), "reviewer", "reviewer-1", &reviewer, 5,
             &format!("stale-review-{index}.json"),
             review_action("changes_requested", &stale, serde_json::json!(["fix it"])),
         ).failure().stderr(predicate::str::contains(r#""error":"stale_review""#));
     }
+    approve_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker),
+        ("reviewer", "reviewer-1", &reviewer),
+        "checkpoint-a",
+    );
     apply_action(
         dir.path(),
         "reviewer",
         "reviewer-1",
         &reviewer,
-        3,
+        7,
         "changes.json",
         review_action("changes_requested", &binding, serde_json::json!(["fix it"])),
     )
     .success();
+    approve_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker),
+        ("reviewer", "reviewer-1", &reviewer),
+        "checkpoint-a-revision",
+    );
     apply_action(
         dir.path(),
         "worker",
         "worker-1",
         &worker,
-        4,
+        10,
         "duplicate.json",
         checkpoint_submission(
             "checkpoint-a",
@@ -2420,14 +2450,13 @@ fn checkpoint_review_binds_all_coordinates_and_identity_history() {
 fn scope_checkpoint_identity_history_on_disk_remains_authoritative() {
     let dir = tempfile::tempdir().unwrap();
     init_pair(dir.path());
-    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
-    let reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+    let (worker, reviewer) = claim_pair_and_approve_run_started(dir.path());
     apply_action(
         dir.path(),
         "worker",
         "worker-1",
         &worker,
-        2,
+        4,
         "checkpoint.json",
         checkpoint_submission(
             "checkpoint-a",
@@ -2442,7 +2471,7 @@ fn scope_checkpoint_identity_history_on_disk_remains_authoritative() {
         "reviewer",
         "reviewer-1",
         &reviewer,
-        3,
+        5,
         "human.json",
         serde_json::json!({
             "type": "request_human_decision", "question": "Replace scope?",
@@ -2456,7 +2485,7 @@ fn scope_checkpoint_identity_history_on_disk_remains_authoritative() {
         "reviewer",
         "reviewer-1",
         &reviewer,
-        4,
+        6,
         "amend.json",
         serde_json::json!({
             "type": "resume_human_decision", "answer": "yes",
@@ -2467,6 +2496,12 @@ fn scope_checkpoint_identity_history_on_disk_remains_authoritative() {
         }),
     )
     .success();
+    approve_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker),
+        ("reviewer", "reviewer-1", &reviewer),
+        "scope-history",
+    );
     let baton_path = dir.path().join("baton.json");
     let mut baton: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&baton_path).unwrap()).unwrap();
@@ -2478,7 +2513,7 @@ fn scope_checkpoint_identity_history_on_disk_remains_authoritative() {
         "worker",
         "worker-1",
         &worker,
-        5,
+        9,
         "duplicate.json",
         checkpoint_submission(
             "checkpoint-a",
@@ -2495,14 +2530,13 @@ fn scope_checkpoint_identity_history_on_disk_remains_authoritative() {
 fn scope_amendment_replaces_scope_and_pending_handoff() {
     let dir = tempfile::tempdir().unwrap();
     init_pair(dir.path());
-    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
-    let reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+    let (worker, reviewer) = claim_pair_and_approve_run_started(dir.path());
     apply_action(
         dir.path(),
         "worker",
         "worker-1",
         &worker,
-        2,
+        4,
         "checkpoint.json",
         checkpoint_submission(
             "checkpoint-a",
@@ -2517,7 +2551,7 @@ fn scope_amendment_replaces_scope_and_pending_handoff() {
         "worker",
         "worker-1",
         &worker,
-        3,
+        5,
         "supersede.json",
         serde_json::json!({"type": "request_checkpoint_supersession", "reason": "scope changed"}),
     )
@@ -2527,7 +2561,7 @@ fn scope_amendment_replaces_scope_and_pending_handoff() {
         "reviewer",
         "reviewer-1",
         &reviewer,
-        4,
+        6,
         "human.json",
         serde_json::json!({
             "type": "request_human_decision", "question": "Expand scope?",
@@ -2541,7 +2575,7 @@ fn scope_amendment_replaces_scope_and_pending_handoff() {
         "reviewer",
         "reviewer-1",
         &reviewer,
-        5,
+        7,
         "amend.json",
         serde_json::json!({
             "type": "resume_human_decision", "answer": "Include both",
@@ -2578,18 +2612,24 @@ fn scope_amendment_replaces_scope_and_pending_handoff() {
     );
     assert_eq!(
         baton["publication_binding"]["obligation"]["handoff_revision"],
-        6
+        8
     );
     assert_eq!(
         baton["publication_binding"]["obligation"]["scope_revision"],
         1
+    );
+    approve_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker),
+        ("reviewer", "reviewer-1", &reviewer),
+        "scope-amended",
     );
     apply_action(
         dir.path(),
         "worker",
         "worker-1",
         &worker,
-        6,
+        10,
         "duplicate-after-scope.json",
         checkpoint_submission(
             "checkpoint-a",
@@ -2607,14 +2647,13 @@ fn scope_amendment_replaces_scope_and_pending_handoff() {
 fn supersession_request_blocks_approval_and_acceptance_reopens_revision() {
     let dir = tempfile::tempdir().unwrap();
     init_pair(dir.path());
-    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
-    let reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+    let (worker, reviewer) = claim_pair_and_approve_run_started(dir.path());
     apply_action(
         dir.path(),
         "worker",
         "worker-1",
         &worker,
-        2,
+        4,
         "checkpoint.json",
         checkpoint_submission(
             "checkpoint-a",
@@ -2630,7 +2669,7 @@ fn supersession_request_blocks_approval_and_acceptance_reopens_revision() {
         "worker",
         "worker-1",
         &worker,
-        3,
+        5,
         "blank.json",
         serde_json::json!({"type": "request_checkpoint_supersession", "reason": " "}),
     )
@@ -2641,17 +2680,23 @@ fn supersession_request_blocks_approval_and_acceptance_reopens_revision() {
         "worker",
         "worker-1",
         &worker,
-        3,
+        5,
         "request.json",
         serde_json::json!({"type": "request_checkpoint_supersession", "reason": "new evidence"}),
     )
     .success();
+    approve_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker),
+        ("reviewer", "reviewer-1", &reviewer),
+        "supersession-pending",
+    );
     apply_action(
         dir.path(),
         "reviewer",
         "reviewer-1",
         &reviewer,
-        4,
+        8,
         "blocked.json",
         review_action("approved", &binding, serde_json::json!([])),
     )
@@ -2664,7 +2709,7 @@ fn supersession_request_blocks_approval_and_acceptance_reopens_revision() {
         "reviewer",
         "reviewer-1",
         &reviewer,
-        4,
+        8,
         "accept.json",
         serde_json::json!({"type": "accept_checkpoint_supersession"}),
     )
@@ -2694,14 +2739,13 @@ fn supersession_request_blocks_approval_and_acceptance_reopens_revision() {
 fn checkpoint_supersession_cas_races_are_fail_closed() {
     let dir = tempfile::tempdir().unwrap();
     init_pair(dir.path());
-    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
-    let reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+    let (worker, reviewer) = claim_pair_and_approve_run_started(dir.path());
     apply_action(
         dir.path(),
         "worker",
         "worker-1",
         &worker,
-        2,
+        4,
         "checkpoint.json",
         checkpoint_submission(
             "checkpoint-a",
@@ -2712,12 +2756,18 @@ fn checkpoint_supersession_cas_races_are_fail_closed() {
     )
     .success();
     let binding = checkpoint_binding(dir.path());
+    approve_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker),
+        ("reviewer", "reviewer-1", &reviewer),
+        "race-approval",
+    );
     apply_action(
         dir.path(),
         "reviewer",
         "reviewer-1",
         &reviewer,
-        3,
+        7,
         "approve-first.json",
         review_action("approved", &binding, serde_json::json!([])),
     )
@@ -2727,7 +2777,7 @@ fn checkpoint_supersession_cas_races_are_fail_closed() {
         "worker",
         "worker-1",
         &worker,
-        3,
+        7,
         "stale-request.json",
         serde_json::json!({"type": "request_checkpoint_supersession", "reason": "too late"}),
     )
@@ -2738,7 +2788,7 @@ fn checkpoint_supersession_cas_races_are_fail_closed() {
         "worker",
         "worker-1",
         &worker,
-        4,
+        8,
         "withdraw.json",
         serde_json::json!({"type": "withdraw_approval", "reason": "new evidence"}),
     )
@@ -2746,14 +2796,13 @@ fn checkpoint_supersession_cas_races_are_fail_closed() {
 
     let second = tempfile::tempdir().unwrap();
     init_pair(second.path());
-    let worker = claim_role(second.path(), "worker", "worker-1", 0);
-    let reviewer = claim_role(second.path(), "reviewer", "reviewer-1", 1);
+    let (worker, reviewer) = claim_pair_and_approve_run_started(second.path());
     apply_action(
         second.path(),
         "worker",
         "worker-1",
         &worker,
-        2,
+        4,
         "checkpoint.json",
         checkpoint_submission(
             "checkpoint-a",
@@ -2769,7 +2818,7 @@ fn checkpoint_supersession_cas_races_are_fail_closed() {
         "worker",
         "worker-1",
         &worker,
-        3,
+        5,
         "request-first.json",
         serde_json::json!({"type": "request_checkpoint_supersession", "reason": "new evidence"}),
     )
@@ -2779,18 +2828,24 @@ fn checkpoint_supersession_cas_races_are_fail_closed() {
         "reviewer",
         "reviewer-1",
         &reviewer,
-        3,
+        5,
         "stale-approval.json",
         review_action("approved", &binding, serde_json::json!([])),
     )
     .failure()
     .stderr(predicate::str::contains(r#""error":"revision_conflict""#));
+    approve_current_explainer(
+        second.path(),
+        ("worker", "worker-1", &worker),
+        ("reviewer", "reviewer-1", &reviewer),
+        "race-pending",
+    );
     apply_action(
         second.path(),
         "reviewer",
         "reviewer-1",
         &reviewer,
-        4,
+        8,
         "blocked-approval.json",
         review_action("approved", &binding, serde_json::json!([])),
     )
@@ -2804,14 +2859,13 @@ fn checkpoint_supersession_cas_races_are_fail_closed() {
 fn supersession_approval_withdrawal_reopens_revision_and_replaces_handoff() {
     let dir = tempfile::tempdir().unwrap();
     init_pair(dir.path());
-    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
-    let reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+    let (worker, reviewer) = claim_pair_and_approve_run_started(dir.path());
     apply_action(
         dir.path(),
         "worker",
         "worker-1",
         &worker,
-        2,
+        4,
         "checkpoint.json",
         checkpoint_submission(
             "checkpoint-a",
@@ -2822,12 +2876,18 @@ fn supersession_approval_withdrawal_reopens_revision_and_replaces_handoff() {
     )
     .success();
     let binding = checkpoint_binding(dir.path());
+    approve_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker),
+        ("reviewer", "reviewer-1", &reviewer),
+        "withdraw-approval",
+    );
     apply_action(
         dir.path(),
         "reviewer",
         "reviewer-1",
         &reviewer,
-        3,
+        7,
         "approve.json",
         review_action("approved", &binding, serde_json::json!([])),
     )
@@ -2837,7 +2897,7 @@ fn supersession_approval_withdrawal_reopens_revision_and_replaces_handoff() {
         "worker",
         "worker-1",
         &worker,
-        4,
+        8,
         "blank.json",
         serde_json::json!({"type": "withdraw_approval", "reason": " "}),
     )
@@ -2848,7 +2908,7 @@ fn supersession_approval_withdrawal_reopens_revision_and_replaces_handoff() {
         "worker",
         "worker-1",
         &worker,
-        4,
+        8,
         "withdraw.json",
         serde_json::json!({"type": "withdraw_approval", "reason": "new deliverable"}),
     )
@@ -2934,14 +2994,14 @@ fn store_edge_rejects_a_truncated_installed_head_without_mutation() {
         "worker",
         "worker-1",
         &worker,
-        5,
+        7,
         "mutation.json",
         explainer_publication_action(
             &current_obligation(dir.path()),
             &"e".repeat(64),
-            "site-fixture",
+            "site-run-a",
             "edge-truncated",
-            "https://sites.openai.test/site-fixture/edge-truncated",
+            "https://sites.openai.test/site-run-a/edge-truncated",
         ),
     )
     .failure()
@@ -2949,7 +3009,7 @@ fn store_edge_rejects_a_truncated_installed_head_without_mutation() {
     assert_eq!(std::fs::read(&baton_path).unwrap(), before);
     assert!(!dir
         .path()
-        .join("history/00000000000000000006.json")
+        .join("history/00000000000000000008.json")
         .exists());
 }
 
@@ -2974,14 +3034,14 @@ fn store_edge_rejects_scope_rollback_without_mutation() {
         "worker",
         "worker-1",
         &worker,
-        5,
+        7,
         "mutation.json",
         explainer_publication_action(
             &current_obligation(dir.path()),
             &"e".repeat(64),
-            "site-fixture",
+            "site-run-a",
             "edge-scope",
-            "https://sites.openai.test/site-fixture/edge-scope",
+            "https://sites.openai.test/site-run-a/edge-scope",
         ),
     )
     .failure()
@@ -2999,12 +3059,12 @@ fn store_edge_direct_cas_cannot_replace_checkpoint_history() {
     next.revision += 1;
     next.checkpoint_history[0].manifest_digest = "0".repeat(64);
 
-    let error = channel.compare_and_swap(5, &next).unwrap_err();
+    let error = channel.compare_and_swap(7, &next).unwrap_err();
     assert!(matches!(error, StoreError::InvalidHistory));
     assert_eq!(channel.read().unwrap(), current);
     assert!(!dir
         .path()
-        .join("history/00000000000000000006.json")
+        .join("history/00000000000000000008.json")
         .exists());
 }
 
@@ -3023,7 +3083,7 @@ fn store_edge_recovery_rejects_non_monotonic_v2_history() {
         .obligation
         .scope_revision = 0;
     std::fs::write(
-        dir.path().join("history/00000000000000000006.json"),
+        dir.path().join("history/00000000000000000008.json"),
         serde_json::to_vec_pretty(&bad).unwrap(),
     )
     .unwrap();
@@ -3035,14 +3095,14 @@ fn store_edge_recovery_rejects_non_monotonic_v2_history() {
             "--run-dir",
             dir.path().to_str().unwrap(),
             "--from-revision",
-            "6",
+            "8",
         ])
         .assert()
         .failure()
         .stderr(predicate::str::contains(r#""error":"invalid_history""#));
     assert!(!dir
         .path()
-        .join("history/00000000000000000007.json")
+        .join("history/00000000000000000009.json")
         .exists());
 }
 
@@ -3052,21 +3112,21 @@ fn store_edge_missing_expected_history_is_typed_and_non_mutating() {
     let (worker, _) = setup_scope_amended_checkpoint(dir.path());
     let baton_path = dir.path().join("baton.json");
     let before = std::fs::read(&baton_path).unwrap();
-    std::fs::remove_file(dir.path().join("history/00000000000000000005.json")).unwrap();
+    std::fs::remove_file(dir.path().join("history/00000000000000000007.json")).unwrap();
 
     apply_action(
         dir.path(),
         "worker",
         "worker-1",
         &worker,
-        5,
+        7,
         "mutation.json",
         explainer_publication_action(
             &current_obligation(dir.path()),
             &"e".repeat(64),
-            "site-fixture",
+            "site-run-a",
             "edge-missing",
-            "https://sites.openai.test/site-fixture/edge-missing",
+            "https://sites.openai.test/site-run-a/edge-missing",
         ),
     )
     .failure()
@@ -3074,7 +3134,7 @@ fn store_edge_missing_expected_history_is_typed_and_non_mutating() {
     assert_eq!(std::fs::read(&baton_path).unwrap(), before);
     assert!(!dir
         .path()
-        .join("history/00000000000000000006.json")
+        .join("history/00000000000000000008.json")
         .exists());
 }
 
@@ -3087,7 +3147,7 @@ fn supersession_changes_requested_resolves_the_pending_request() {
         "worker",
         "worker-1",
         &worker,
-        3,
+        5,
         "supersede.json",
         serde_json::json!({
             "type": "request_checkpoint_supersession", "reason": "new evidence"
@@ -3095,12 +3155,19 @@ fn supersession_changes_requested_resolves_the_pending_request() {
     )
     .success();
 
+    approve_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker),
+        ("reviewer", "reviewer-1", &reviewer),
+        "supersession-changes",
+    );
+
     apply_action(
         dir.path(),
         "reviewer",
         "reviewer-1",
         &reviewer,
-        4,
+        8,
         "changes.json",
         review_action(
             "changes_requested",
@@ -3120,13 +3187,19 @@ fn supersession_changes_requested_resolves_the_pending_request() {
 #[test]
 fn store_rejects_approved_review_with_blocking_findings() {
     let dir = tempfile::tempdir().unwrap();
-    let (_, reviewer, binding) = setup_reviewing_checkpoint(dir.path());
+    let (worker, reviewer, binding) = setup_reviewing_checkpoint(dir.path());
+    approve_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker),
+        ("reviewer", "reviewer-1", &reviewer),
+        "approved-review-validation",
+    );
     apply_action(
         dir.path(),
         "reviewer",
         "reviewer-1",
         &reviewer,
-        3,
+        7,
         "approve.json",
         review_action("approved", &binding, serde_json::json!([])),
     )
@@ -3148,17 +3221,28 @@ fn store_rejects_approved_review_with_blocking_findings() {
 fn supersession_finalize_rejects_approved_review_with_pending_request() {
     let dir = tempfile::tempdir().unwrap();
     let (worker, reviewer, binding) = setup_reviewing_checkpoint(dir.path());
+    approve_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker),
+        ("reviewer", "reviewer-1", &reviewer),
+        "pending-finalize-review",
+    );
     apply_action(
         dir.path(),
         "reviewer",
         "reviewer-1",
         &reviewer,
-        3,
+        7,
         "approve.json",
         review_action("approved", &binding, serde_json::json!([])),
     )
     .success();
-    satisfy_current_gate_fixture(dir.path(), 4);
+    approve_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker),
+        ("reviewer", "reviewer-1", &reviewer),
+        "pending-finalize-gate",
+    );
     let baton_path = dir.path().join("baton.json");
     let mut baton: serde_json::Value =
         serde_json::from_slice(&std::fs::read(&baton_path).unwrap()).unwrap();
@@ -3172,7 +3256,7 @@ fn supersession_finalize_rejects_approved_review_with_pending_request() {
         "worker",
         "worker-1",
         &worker,
-        4,
+        10,
         "finalize.json",
         serde_json::json!({"type": "finalize"}),
     )
@@ -3684,6 +3768,237 @@ fn publication_store_rejects_moved_receipts_and_site_identity_rewrites() {
         .unwrap_err();
     assert!(matches!(error, StoreError::InvalidHistory));
     assert_eq!(channel.read().unwrap(), current);
+}
+
+#[test]
+fn publication_history_edge_rejects_unjustified_obligation_and_dual_receipt_write() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    claim_role(dir.path(), "worker", "worker-1", 0);
+    claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+    let channel = RunChannel::open(dir.path());
+    let current = channel.read().unwrap();
+
+    let mut unjustified = serde_json::to_value(current.clone()).unwrap();
+    unjustified["revision"] = serde_json::json!(3);
+    unjustified["publication_binding"] = serde_json::json!({
+        "obligation": {
+            "handoff_revision": 3, "kind": "scope_amended", "scope_revision": 0
+        },
+        "deployment": null,
+        "review": null
+    });
+    let unjustified: RunBaton = serde_json::from_value(unjustified).unwrap();
+    assert!(matches!(
+        channel.compare_and_swap(2, &unjustified),
+        Err(StoreError::InvalidHistory)
+    ));
+
+    let mut dual = serde_json::to_value(current.clone()).unwrap();
+    dual["revision"] = serde_json::json!(3);
+    dual["publication_binding"] = approved_publication_binding(
+        dual["publication_binding"]["obligation"].clone(),
+        "site-run-a",
+        "deployment-dual",
+    );
+    let dual: RunBaton = serde_json::from_value(dual).unwrap();
+    assert!(matches!(
+        channel.compare_and_swap(2, &dual),
+        Err(StoreError::InvalidHistory)
+    ));
+    assert_eq!(channel.read().unwrap(), current);
+}
+
+#[test]
+fn publication_recovery_rejects_an_illegal_v2_successor_edge() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    claim_role(dir.path(), "worker", "worker-1", 0);
+    claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+    let channel = RunChannel::open(dir.path());
+    let current = channel.read().unwrap();
+    let mut illegal = serde_json::to_value(current).unwrap();
+    illegal["revision"] = serde_json::json!(3);
+    illegal["publication_binding"] = serde_json::json!({
+        "obligation": {
+            "handoff_revision": 3, "kind": "scope_amended", "scope_revision": 0
+        },
+        "deployment": null,
+        "review": null
+    });
+    std::fs::write(
+        dir.path().join("history/00000000000000000003.json"),
+        serde_json::to_vec_pretty(&illegal).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(dir.path().join("baton.json"), b"corrupt\n").unwrap();
+
+    command()
+        .args([
+            "recover",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--from-revision",
+            "3",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(r#""error":"invalid_history""#));
+    assert!(!dir
+        .path()
+        .join("history/00000000000000000004.json")
+        .exists());
+}
+
+#[test]
+fn publication_old_checkpoint_approval_cannot_finalize_the_current_checkpoint() {
+    let dir = tempfile::tempdir().unwrap();
+    init_pair(dir.path());
+    let worker = claim_role(dir.path(), "worker", "worker-1", 0);
+    let reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
+    approve_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker),
+        ("reviewer", "reviewer-1", &reviewer),
+        "deployment-1",
+    );
+    apply_action_raw(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        4,
+        "checkpoint-old.json",
+        checkpoint_submission(
+            "checkpoint-old",
+            serde_json::json!([
+                {"id": "implementation", "artifacts": [{"kind": "commit", "value": "old"}]}
+            ]),
+        ),
+    )
+    .success();
+    let old_checkpoint = checkpoint_binding(dir.path());
+    approve_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker),
+        ("reviewer", "reviewer-1", &reviewer),
+        "deployment-2",
+    );
+    apply_action_raw(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        7,
+        "changes-old.json",
+        review_action(
+            "changes_requested",
+            &old_checkpoint,
+            serde_json::json!(["Revise it"]),
+        ),
+    )
+    .success();
+    approve_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker),
+        ("reviewer", "reviewer-1", &reviewer),
+        "deployment-old-approved",
+    );
+    let old_approved_binding = read_baton(dir.path())["publication_binding"].clone();
+    apply_action_raw(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        10,
+        "checkpoint-current.json",
+        checkpoint_submission(
+            "checkpoint-current",
+            serde_json::json!([
+                {"id": "implementation", "artifacts": [{"kind": "commit", "value": "current"}]}
+            ]),
+        ),
+    )
+    .success();
+    let current_checkpoint = checkpoint_binding(dir.path());
+    approve_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker),
+        ("reviewer", "reviewer-1", &reviewer),
+        "deployment-current-review",
+    );
+    apply_action_raw(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        13,
+        "approve-current.json",
+        review_action("approved", &current_checkpoint, serde_json::json!([])),
+    )
+    .success();
+
+    let baton_path = dir.path().join("baton.json");
+    let mut attacked = read_baton(dir.path());
+    attacked["publication_binding"] = old_approved_binding;
+    let bytes = serde_json::to_vec_pretty(&attacked).unwrap();
+    std::fs::write(&baton_path, &bytes).unwrap();
+    std::fs::write(dir.path().join("history/00000000000000000014.json"), bytes).unwrap();
+    apply_action_raw(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        14,
+        "finalize-with-old-explainer.json",
+        serde_json::json!({"type": "finalize"}),
+    )
+    .failure()
+    .stderr(predicate::str::contains(r#""error":"publication_stale""#));
+    assert_eq!(read_baton(dir.path())["status"], "finalizing");
+}
+
+#[test]
+fn publication_schema_decode_preserves_v1_default_and_rejects_v2_numeric_key() {
+    let legacy = tempfile::tempdir().unwrap();
+    write_legacy_run(legacy.path(), "working", "worker", serde_json::Value::Null);
+    for path in [
+        legacy.path().join("baton.json"),
+        legacy.path().join("history/00000000000000000000.json"),
+    ] {
+        let mut value: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        value.as_object_mut().unwrap().remove("publication");
+        std::fs::write(path, serde_json::to_vec_pretty(&value).unwrap()).unwrap();
+    }
+    let output = command()
+        .args(["read", "--run-dir", legacy.path().to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let decoded: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(decoded["publication"]["required"], true);
+    assert_eq!(decoded["publication"]["desired_revision"], 0);
+    assert!(decoded["publication"]["published_revision"].is_null());
+
+    let v2 = tempfile::tempdir().unwrap();
+    init_pair(v2.path());
+    let baton_path = v2.path().join("baton.json");
+    let mut baton = read_baton(v2.path());
+    baton["publication"] = serde_json::json!({
+        "required": false, "desired_revision": 0,
+        "published_revision": null, "refs": []
+    });
+    std::fs::write(&baton_path, serde_json::to_vec_pretty(&baton).unwrap()).unwrap();
+    command()
+        .args(["read", "--run-dir", v2.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(r#""error":"invalid_baton""#));
 }
 
 #[test]

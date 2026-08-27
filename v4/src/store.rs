@@ -12,8 +12,10 @@ use uuid::Uuid;
 
 use crate::model::{
     checkpoint_manifest_digest, create_handoff_obligation, normalize_deliverables,
-    normalize_participants, Checkpoint, DeliverableRequirement, HandoffKind, LegacyPublication,
-    MigrationProvenance, PublicationPolicy, RecoveryProvenance, RunBaton, Status, LEGACY_SCHEMA,
+    normalize_participants, valid_exact_reference, valid_sha256, Assignee, Checkpoint,
+    DeliverableRequirement, HandoffKind, LegacyPublication, MigrationProvenance,
+    PublicationBinding, PublicationPolicy, RecoveryProvenance, RunBaton, Status, EXPLAINER_ACCESS,
+    EXPLAINER_CHANNEL, EXPLAINER_PUBLISHER_HARNESS, EXPLAINER_REVIEWER_HARNESS, LEGACY_SCHEMA,
     SCHEMA,
 };
 
@@ -324,7 +326,7 @@ pub fn migrate_legacy_baton(current: &RunBaton) -> Result<RunBaton, StoreError> 
     next.checkpoint_history.clear();
     next.review = None;
     next.pending_checkpoint_supersession = None;
-    next.publication = LegacyPublication::default();
+    next.publication = None;
     next.publication_policy = Some(PublicationPolicy::fixed());
     next.publication_binding = Some(create_handoff_obligation(
         HandoffKind::ProtocolUpgraded,
@@ -344,9 +346,25 @@ pub fn migrate_legacy_baton(current: &RunBaton) -> Result<RunBaton, StoreError> 
 }
 
 fn decode_baton(bytes: &[u8]) -> Result<RunBaton, StoreError> {
-    let envelope: SchemaEnvelope = serde_json::from_slice(bytes)?;
+    let value: serde_json::Value = serde_json::from_slice(bytes)?;
+    let envelope: SchemaEnvelope = serde_json::from_value(value.clone())?;
     validate_supported_schema(&envelope.schema)?;
-    let baton: RunBaton = serde_json::from_slice(bytes)?;
+    let publication_present = value
+        .as_object()
+        .is_some_and(|object| object.contains_key("publication"));
+    let mut baton: RunBaton = serde_json::from_value(value)?;
+    match envelope.schema.as_str() {
+        LEGACY_SCHEMA if !publication_present => {
+            baton.publication = Some(LegacyPublication::default());
+        }
+        LEGACY_SCHEMA if baton.publication.is_none() => {
+            return Err(StoreError::InvalidBaton(envelope.schema));
+        }
+        SCHEMA if publication_present => {
+            return Err(StoreError::InvalidBaton(envelope.schema));
+        }
+        _ => {}
+    }
     validate_baton(&baton)?;
     Ok(baton)
 }
@@ -361,6 +379,7 @@ fn validate_baton(baton: &RunBaton) -> Result<(), StoreError> {
             || !baton.checkpoint_history.is_empty()
             || baton.pending_checkpoint_supersession.is_some()
             || baton.migration.is_some()
+            || baton.publication.is_none()
         {
             return Err(StoreError::InvalidBaton(baton.schema.clone()));
         }
@@ -385,7 +404,7 @@ fn validate_baton(baton: &RunBaton) -> Result<(), StoreError> {
         )
         || normalized_deliverables != baton.scope_deliverables
         || baton.publication_policy.as_ref() != Some(&PublicationPolicy::fixed())
-        || !baton.publication.is_empty()
+        || baton.publication.is_some()
         || binding.obligation.scope_revision != baton.scope_revision
         || binding.obligation.handoff_revision > baton.revision
         || binding
@@ -482,9 +501,9 @@ fn valid_publication_binding(binding: &crate::model::PublicationBinding) -> bool
         || !valid_exact_reference(&deployment.site_id)
         || !valid_exact_reference(&deployment.site_version)
         || !valid_exact_reference(&deployment.url)
-        || deployment.channel != "codex_sites"
-        || deployment.access != "owner_only"
-        || deployment.publisher_harness != "Codex"
+        || deployment.channel != EXPLAINER_CHANNEL
+        || deployment.access != EXPLAINER_ACCESS
+        || deployment.publisher_harness != EXPLAINER_PUBLISHER_HARNESS
     {
         return false;
     }
@@ -500,7 +519,7 @@ fn valid_publication_binding(binding: &crate::model::PublicationBinding) -> bool
         && review.site_id == deployment.site_id
         && review.site_version == deployment.site_version
         && review.url == deployment.url
-        && review.reviewer_harness == "Claude"
+        && review.reviewer_harness == EXPLAINER_REVIEWER_HARNESS
         && match review.verdict.as_str() {
             "approved" => review.findings.is_empty(),
             "changes_requested" => !review.findings.is_empty() && findings_are_normalized,
@@ -551,17 +570,6 @@ fn valid_checkpoint(checkpoint: &Checkpoint, baton: &RunBaton) -> bool {
     }) && submitted == required
 }
 
-fn valid_sha256(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-}
-
-fn valid_exact_reference(value: &str) -> bool {
-    !value.is_empty() && value.trim() == value
-}
-
 fn validate_migration_edge(current: &RunBaton, next: &RunBaton) -> Result<(), StoreError> {
     if migrate_legacy_baton(current)? == *next {
         Ok(())
@@ -575,29 +583,282 @@ fn validate_history_edge(current: &RunBaton, next: &RunBaton) -> Result<(), Stor
         return Err(StoreError::InvalidHistory);
     }
     match (current.schema.as_str(), next.schema.as_str()) {
-        (SCHEMA, SCHEMA)
-            if next.scope_revision >= current.scope_revision
-                && next
-                    .checkpoint_history
-                    .starts_with(&current.checkpoint_history)
-                && current
-                    .publication_binding
-                    .as_ref()
-                    .and_then(|binding| binding.site_id.as_ref())
-                    .is_none_or(|site_id| {
-                        next.publication_binding
-                            .as_ref()
-                            .and_then(|binding| binding.site_id.as_ref())
-                            == Some(site_id)
-                    }) =>
-        {
-            Ok(())
-        }
+        (SCHEMA, SCHEMA) if valid_v2_history_edge(current, next) => Ok(()),
         (SCHEMA, SCHEMA) => Err(StoreError::InvalidHistory),
         (LEGACY_SCHEMA, LEGACY_SCHEMA) => Ok(()),
         (LEGACY_SCHEMA, SCHEMA) => validate_migration_edge(current, next),
         _ => Err(StoreError::InvalidSchemaTransition),
     }
+}
+
+fn valid_v2_history_edge(current: &RunBaton, next: &RunBaton) -> bool {
+    next.scope_revision >= current.scope_revision
+        && next
+            .checkpoint_history
+            .starts_with(&current.checkpoint_history)
+        && valid_publication_edge(current, next)
+}
+
+fn valid_publication_edge(current: &RunBaton, next: &RunBaton) -> bool {
+    let (Some(current_binding), Some(next_binding)) = (
+        current.publication_binding.as_ref(),
+        next.publication_binding.as_ref(),
+    ) else {
+        return false;
+    };
+    if current_binding
+        .site_id
+        .as_ref()
+        .is_some_and(|site_id| next_binding.site_id.as_ref() != Some(site_id))
+    {
+        return false;
+    }
+    if current_binding.obligation != next_binding.obligation {
+        return current_binding.site_id == next_binding.site_id
+            && next_binding.deployment.is_none()
+            && next_binding.review.is_none()
+            && valid_new_obligation(current, next, next_binding);
+    }
+    if current_binding == next_binding {
+        return true;
+    }
+    if !only_publication_changed(current, next) {
+        return false;
+    }
+    if current_binding.deployment != next_binding.deployment {
+        return next_binding.deployment.is_some() && next_binding.review.is_none();
+    }
+    current_binding.site_id == next_binding.site_id
+        && current_binding.review != next_binding.review
+        && next_binding.review.is_some()
+}
+
+fn only_publication_changed(current: &RunBaton, next: &RunBaton) -> bool {
+    let mut normalized = next.clone();
+    normalized.revision = current.revision;
+    normalized.publication_binding = current.publication_binding.clone();
+    normalized == *current
+}
+
+fn valid_new_obligation(current: &RunBaton, next: &RunBaton, binding: &PublicationBinding) -> bool {
+    if binding.obligation.handoff_revision != next.revision {
+        return false;
+    }
+    match binding.obligation.kind {
+        HandoffKind::WorkerToReviewer => valid_worker_to_reviewer(current, next, binding),
+        HandoffKind::ReviewerToWorker => valid_reviewer_to_worker(current, next, binding),
+        HandoffKind::ScopeAmended => valid_scope_amended(current, next, binding),
+        HandoffKind::CheckpointSuperseded => valid_checkpoint_superseded(current, next, binding),
+        HandoffKind::ApprovalWithdrawn => valid_approval_withdrawn(current, next, binding),
+        HandoffKind::RunStarted | HandoffKind::ProtocolUpgraded => false,
+    }
+}
+
+fn valid_worker_to_reviewer(
+    current: &RunBaton,
+    next: &RunBaton,
+    binding: &PublicationBinding,
+) -> bool {
+    let Some(checkpoint) = next.checkpoint.as_ref() else {
+        return false;
+    };
+    let checkpoint = checkpoint.binding();
+    if !current
+        .publication_binding
+        .as_ref()
+        .is_some_and(|current_binding| approved_publication_gate(current_binding, None))
+        || !matches!(current.status, Status::Working | Status::Revising)
+        || current.assignee != Assignee::Worker
+        || next.status != Status::Reviewing
+        || next.assignee != Assignee::Reviewer
+        || next.scope_revision != current.scope_revision
+        || binding.obligation.checkpoint.as_ref() != Some(&checkpoint)
+        || next.checkpoint_history.len() != current.checkpoint_history.len() + 1
+        || next.checkpoint_history.last() != Some(&checkpoint)
+    {
+        return false;
+    }
+    let mut expected = current.clone();
+    expected.revision = next.revision;
+    expected.status = Status::Reviewing;
+    expected.assignee = Assignee::Reviewer;
+    expected.checkpoint = next.checkpoint.clone();
+    expected.checkpoint_history = next.checkpoint_history.clone();
+    expected.review = None;
+    expected.pending_checkpoint_supersession = None;
+    expected.publication_binding = next.publication_binding.clone();
+    expected == *next
+}
+
+fn valid_reviewer_to_worker(
+    current: &RunBaton,
+    next: &RunBaton,
+    binding: &PublicationBinding,
+) -> bool {
+    let (Some(checkpoint), Some(review)) = (current.checkpoint.as_ref(), next.review.as_ref())
+    else {
+        return false;
+    };
+    let checkpoint = checkpoint.binding();
+    let expected_gate = Some((&HandoffKind::WorkerToReviewer, &checkpoint));
+    let valid_verdict = match review.verdict.as_str() {
+        "changes_requested" => next.status == Status::Revising,
+        "approved" => {
+            next.status == Status::Finalizing && current.pending_checkpoint_supersession.is_none()
+        }
+        _ => false,
+    };
+    if !current
+        .publication_binding
+        .as_ref()
+        .is_some_and(|current_binding| approved_publication_gate(current_binding, expected_gate))
+        || current.status != Status::Reviewing
+        || current.assignee != Assignee::Reviewer
+        || next.assignee != Assignee::Worker
+        || !valid_verdict
+        || next.scope_revision != current.scope_revision
+        || next.checkpoint != current.checkpoint
+        || next.checkpoint_history != current.checkpoint_history
+        || review.binding() != checkpoint
+        || binding.obligation.checkpoint.as_ref() != Some(&checkpoint)
+    {
+        return false;
+    }
+    let mut expected = current.clone();
+    expected.revision = next.revision;
+    expected.status = next.status.clone();
+    expected.assignee = Assignee::Worker;
+    expected.review = next.review.clone();
+    expected.pending_checkpoint_supersession = None;
+    expected.publication_binding = next.publication_binding.clone();
+    expected == *next
+}
+
+fn valid_scope_amended(current: &RunBaton, next: &RunBaton, binding: &PublicationBinding) -> bool {
+    let (Some(current_decision), Some(next_decision)) = (
+        current.human_decision.as_ref(),
+        next.human_decision.as_ref(),
+    ) else {
+        return false;
+    };
+    let mut expected_decision = current_decision.clone();
+    expected_decision.answer = next_decision.answer.clone();
+    let valid_scope = valid_exact_reference(&next.objective.summary)
+        && next.objective.refs.iter().all(|reference| {
+            valid_exact_reference(&reference.kind) && valid_exact_reference(&reference.value)
+        })
+        && next.task.as_ref().is_none_or(|task| {
+            task.summary == next.objective.summary
+                && task
+                    .reference
+                    .as_ref()
+                    .is_none_or(|reference| valid_exact_reference(reference))
+        });
+    if current.status != Status::HumanDecision
+        || current.assignee != Assignee::Human
+        || current_decision.answer.is_some()
+        || !next_decision
+            .answer
+            .as_ref()
+            .is_some_and(|answer| valid_exact_reference(answer))
+        || expected_decision != *next_decision
+        || !valid_scope
+        || next.scope_revision != current.scope_revision + 1
+        || next.status != Status::Revising
+        || next.assignee != Assignee::Worker
+        || binding.obligation.checkpoint.is_some()
+        || current.task.is_none() != next.task.is_none()
+    {
+        return false;
+    }
+    let mut expected = current.clone();
+    expected.revision = next.revision;
+    expected.objective = next.objective.clone();
+    expected.task = next.task.clone();
+    expected.scope_revision = next.scope_revision;
+    expected.scope_deliverables = next.scope_deliverables.clone();
+    expected.checkpoint = None;
+    expected.review = None;
+    expected.pending_checkpoint_supersession = None;
+    expected.status = Status::Revising;
+    expected.assignee = Assignee::Worker;
+    expected.publication_binding = next.publication_binding.clone();
+    expected.human_decision = next.human_decision.clone();
+    expected == *next
+}
+
+fn valid_checkpoint_superseded(
+    current: &RunBaton,
+    next: &RunBaton,
+    binding: &PublicationBinding,
+) -> bool {
+    let (Some(checkpoint), Some(pending)) = (
+        current.checkpoint.as_ref(),
+        current.pending_checkpoint_supersession.as_ref(),
+    ) else {
+        return false;
+    };
+    let checkpoint = checkpoint.binding();
+    if current.status != Status::Reviewing
+        || current.assignee != Assignee::Reviewer
+        || pending.checkpoint != checkpoint
+        || next.status != Status::Revising
+        || next.assignee != Assignee::Worker
+        || next.scope_revision != current.scope_revision
+        || binding.obligation.checkpoint.as_ref() != Some(&checkpoint)
+    {
+        return false;
+    }
+    expected_checkpoint_clearing_transition(current, next)
+}
+
+fn valid_approval_withdrawn(
+    current: &RunBaton,
+    next: &RunBaton,
+    binding: &PublicationBinding,
+) -> bool {
+    let (Some(checkpoint), Some(review)) = (current.checkpoint.as_ref(), current.review.as_ref())
+    else {
+        return false;
+    };
+    let checkpoint = checkpoint.binding();
+    if current.status != Status::Finalizing
+        || current.assignee != Assignee::Worker
+        || review.verdict != "approved"
+        || review.binding() != checkpoint
+        || next.status != Status::Revising
+        || next.assignee != Assignee::Worker
+        || next.scope_revision != current.scope_revision
+        || binding.obligation.checkpoint.as_ref() != Some(&checkpoint)
+    {
+        return false;
+    }
+    expected_checkpoint_clearing_transition(current, next)
+}
+
+fn expected_checkpoint_clearing_transition(current: &RunBaton, next: &RunBaton) -> bool {
+    let mut expected = current.clone();
+    expected.revision = next.revision;
+    expected.status = Status::Revising;
+    expected.assignee = Assignee::Worker;
+    expected.checkpoint = None;
+    expected.review = None;
+    expected.pending_checkpoint_supersession = None;
+    expected.publication_binding = next.publication_binding.clone();
+    expected == *next
+}
+
+fn approved_publication_gate(
+    binding: &PublicationBinding,
+    expected: Option<(&HandoffKind, &crate::model::CheckpointBinding)>,
+) -> bool {
+    expected.is_none_or(|(kind, checkpoint)| {
+        &binding.obligation.kind == kind
+            && binding.obligation.checkpoint.as_ref() == Some(checkpoint)
+    }) && binding
+        .review
+        .as_ref()
+        .is_some_and(|review| review.verdict == "approved" && review.findings.is_empty())
 }
 
 fn validate_supported_schema(schema: &str) -> Result<(), StoreError> {

@@ -7,9 +7,11 @@ use crate::{
     claim::{self, ClaimError, Role},
     model::{
         checkpoint_manifest_digest, create_bound_handoff_obligation, normalize_deliverables,
-        Assignee, Checkpoint, CheckpointBinding, CheckpointSubmission, CheckpointSupersession,
-        HandoffKind, HumanDecision, PublicationDeployment, PublicationReview, ReviewReceipt,
-        RunBaton, Status, TerminalProvenance,
+        valid_exact_reference, valid_sha256, Assignee, Checkpoint, CheckpointBinding,
+        CheckpointSubmission, CheckpointSupersession, HandoffKind, HumanDecision,
+        PublicationDeployment, PublicationReview, ReviewReceipt, RunBaton, Status,
+        TerminalProvenance, EXPLAINER_ACCESS, EXPLAINER_CHANNEL, EXPLAINER_PUBLISHER_HARNESS,
+        EXPLAINER_REVIEWER_HARNESS,
     },
     store::{require_current_schema, RunChannel, StoreError},
 };
@@ -88,7 +90,7 @@ pub fn apply(
             if !matches!(baton.status, Status::Working | Status::Revising) {
                 return Err(TransitionError::IllegalState);
             }
-            require_publication_gate(&baton)?;
+            require_publication_gate(&baton, None)?;
             let checkpoint = normalize_checkpoint(checkpoint, &baton)?;
             if channel.checkpoint_identity_seen(&checkpoint.identity, expected_revision)?
                 || baton
@@ -126,7 +128,6 @@ pub fn apply(
             if baton.status != Status::Reviewing {
                 return Err(TransitionError::IllegalState);
             }
-            require_publication_gate(&baton)?;
             let checkpoint = baton
                 .checkpoint
                 .as_ref()
@@ -139,6 +140,10 @@ pub fn apply(
             if checkpoint.binding() != submitted_binding {
                 return Err(TransitionError::StaleReview);
             }
+            require_publication_gate(
+                &baton,
+                Some((&HandoffKind::WorkerToReviewer, &submitted_binding)),
+            )?;
             let findings = findings
                 .into_iter()
                 .map(|finding| finding.trim().to_owned())
@@ -196,7 +201,11 @@ pub fn apply(
             if review.verdict != "approved" || review.binding() != checkpoint.binding() {
                 return Err(TransitionError::StaleReview);
             }
-            require_publication_gate(&baton)?;
+            let checkpoint_binding = checkpoint.binding();
+            require_publication_gate(
+                &baton,
+                Some((&HandoffKind::ReviewerToWorker, &checkpoint_binding)),
+            )?;
             baton.status = Status::Done;
             baton.assignee = Assignee::None;
             baton.terminal = Some(TerminalProvenance {
@@ -365,7 +374,7 @@ pub fn apply(
             channel,
             access,
         } => {
-            if caller_harness(&baton, role) != "Codex" {
+            if caller_harness(&baton, role) != EXPLAINER_PUBLISHER_HARNESS {
                 return Err(TransitionError::WrongPublisherHarness);
             }
             let binding = baton
@@ -379,8 +388,8 @@ pub fn apply(
                 || !valid_exact_reference(&site_id)
                 || !valid_exact_reference(&site_version)
                 || !valid_exact_reference(&url)
-                || channel != "codex_sites"
-                || access != "owner_only"
+                || channel != EXPLAINER_CHANNEL
+                || access != EXPLAINER_ACCESS
             {
                 return Err(TransitionError::InvalidExplainerPublication);
             }
@@ -400,7 +409,7 @@ pub fn apply(
                 url,
                 channel,
                 access,
-                publisher_harness: "Codex".to_owned(),
+                publisher_harness: EXPLAINER_PUBLISHER_HARNESS.to_owned(),
             });
             binding.review = None;
         }
@@ -413,7 +422,7 @@ pub fn apply(
             verdict,
             findings,
         } => {
-            if caller_harness(&baton, role) != "Claude" {
+            if caller_harness(&baton, role) != EXPLAINER_REVIEWER_HARNESS {
                 return Err(TransitionError::WrongReviewerHarness);
             }
             let binding = baton
@@ -459,7 +468,7 @@ pub fn apply(
                 url,
                 verdict: verdict.to_owned(),
                 findings,
-                reviewer_harness: "Claude".to_owned(),
+                reviewer_harness: EXPLAINER_REVIEWER_HARNESS.to_owned(),
             });
         }
         Action::Abandon { reason } => {
@@ -616,7 +625,10 @@ fn replace_handoff_obligation(
     baton.publication_binding = Some(binding);
 }
 
-fn require_publication_gate(baton: &RunBaton) -> Result<(), TransitionError> {
+fn require_publication_gate(
+    baton: &RunBaton,
+    expected: Option<(&HandoffKind, &CheckpointBinding)>,
+) -> Result<(), TransitionError> {
     let binding = baton
         .publication_binding
         .as_ref()
@@ -629,7 +641,10 @@ fn require_publication_gate(baton: &RunBaton) -> Result<(), TransitionError> {
         .review
         .as_ref()
         .ok_or(TransitionError::PublicationStale)?;
-    if binding.site_id.as_ref() != Some(&deployment.site_id)
+    if expected.is_some_and(|(kind, checkpoint)| {
+        &binding.obligation.kind != kind
+            || binding.obligation.checkpoint.as_ref() != Some(checkpoint)
+    }) || binding.site_id.as_ref() != Some(&deployment.site_id)
         || deployment.obligation != binding.obligation
         || review.obligation != binding.obligation
         || review.source_digest != deployment.source_digest
@@ -638,10 +653,10 @@ fn require_publication_gate(baton: &RunBaton) -> Result<(), TransitionError> {
         || review.url != deployment.url
         || review.verdict != "approved"
         || !review.findings.is_empty()
-        || deployment.channel != "codex_sites"
-        || deployment.access != "owner_only"
-        || deployment.publisher_harness != "Codex"
-        || review.reviewer_harness != "Claude"
+        || deployment.channel != EXPLAINER_CHANNEL
+        || deployment.access != EXPLAINER_ACCESS
+        || deployment.publisher_harness != EXPLAINER_PUBLISHER_HARNESS
+        || review.reviewer_harness != EXPLAINER_REVIEWER_HARNESS
     {
         return Err(TransitionError::PublicationStale);
     }
@@ -653,17 +668,6 @@ fn caller_harness(baton: &RunBaton, role: Role) -> &str {
         Role::Worker => &baton.participants.worker.harness,
         Role::Reviewer => &baton.participants.reviewer.harness,
     }
-}
-
-fn valid_sha256(value: &str) -> bool {
-    value.len() == 64
-        && value
-            .bytes()
-            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
-}
-
-fn valid_exact_reference(value: &str) -> bool {
-    !value.is_empty() && value.trim() == value
 }
 
 fn require_owner(

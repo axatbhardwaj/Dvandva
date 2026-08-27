@@ -6,6 +6,10 @@ use thiserror::Error;
 pub const LEGACY_SCHEMA: &str = "dvandva.run.v1";
 pub const SCHEMA: &str = "dvandva.run.v2";
 pub const ROLE_API: u32 = 2;
+pub const EXPLAINER_PUBLISHER_HARNESS: &str = "Codex";
+pub const EXPLAINER_REVIEWER_HARNESS: &str = "Claude";
+pub const EXPLAINER_CHANNEL: &str = "codex_sites";
+pub const EXPLAINER_ACCESS: &str = "owner_only";
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ModelError {
@@ -151,13 +155,24 @@ pub struct CheckpointSupersession {
     pub checkpoint: CheckpointBinding,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LegacyPublication {
     pub required: bool,
     pub desired_revision: u64,
     pub published_revision: Option<u64>,
     #[serde(default)]
     pub refs: Vec<ExternalRef>,
+}
+
+impl Default for LegacyPublication {
+    fn default() -> Self {
+        Self {
+            required: true,
+            desired_revision: 0,
+            published_revision: None,
+            refs: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -171,10 +186,10 @@ pub struct PublicationPolicy {
 impl PublicationPolicy {
     pub fn fixed() -> Self {
         Self {
-            publisher_harness: "Codex".to_owned(),
-            channel: "codex_sites".to_owned(),
-            access: "owner_only".to_owned(),
-            reviewer_harness: "Claude".to_owned(),
+            publisher_harness: EXPLAINER_PUBLISHER_HARNESS.to_owned(),
+            channel: EXPLAINER_CHANNEL.to_owned(),
+            access: EXPLAINER_ACCESS.to_owned(),
+            reviewer_harness: EXPLAINER_REVIEWER_HARNESS.to_owned(),
         }
     }
 }
@@ -320,8 +335,8 @@ pub struct RunBaton {
     pub review: Option<ReviewReceipt>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pending_checkpoint_supersession: Option<CheckpointSupersession>,
-    #[serde(default, skip_serializing_if = "LegacyPublication::is_empty")]
-    pub publication: LegacyPublication,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub publication: Option<LegacyPublication>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub publication_policy: Option<PublicationPolicy>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -373,7 +388,7 @@ impl RunBaton {
             checkpoint_history: Vec::new(),
             review: None,
             pending_checkpoint_supersession: None,
-            publication: LegacyPublication::default(),
+            publication: None,
             publication_policy: Some(PublicationPolicy::fixed()),
             publication_binding: Some(create_handoff_obligation(HandoffKind::RunStarted, 0, 0)),
             human_decision: None,
@@ -406,10 +421,15 @@ pub fn create_bound_handoff_obligation(
     binding
 }
 
-impl LegacyPublication {
-    pub fn is_empty(&self) -> bool {
-        self == &Self::default()
-    }
+pub fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+pub fn valid_exact_reference(value: &str) -> bool {
+    !value.is_empty() && value.trim() == value
 }
 
 pub fn checkpoint_manifest_digest(checkpoint: &Checkpoint) -> String {
