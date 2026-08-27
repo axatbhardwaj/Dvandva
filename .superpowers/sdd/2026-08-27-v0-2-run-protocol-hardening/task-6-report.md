@@ -91,8 +91,83 @@ path), so the required `bash -n` fallback was used.
 
 ## Concerns
 
-No blocking concern. `publish = false` is authoritative Cargo release metadata;
-the installer records and reports it alongside the validated checksummed kernel.
-The binary probe itself has no publishability field, so runtime validation is
-limited to package name, exact version, schema/API, readable schemas, and
-migration capability.
+No blocking concern. The checksummed candidate now authenticates `publish:
+false` through its typed probe contract as well as retaining `publish = false`
+in Cargo metadata.
+
+## Review fix round 1
+
+### Additional RED evidence
+
+1. The focused kernel probe test failed before the metadata change:
+
+   ```text
+   assertion failed: left Null, right false
+   test result: FAILED. 0 passed; 1 failed
+   ```
+
+2. Both facade and installer accepted an exit-zero probe with wrong top-level
+   types when all expected strings appeared in a nested decoy:
+
+   ```text
+   expected command to fail: ... dvandva-role.sh probe
+   expected command to fail: ... decoy-probe ... update --version 0.2.0
+   ```
+
+3. The installer accepted a checksummed exit-zero candidate reporting
+   `publish: true`:
+
+   ```text
+   expected command to fail: ... wrong-publish ... update --version 0.2.0
+   ```
+
+4. A pre-existing unowned `0.2.0` directory was accepted:
+
+   ```text
+   expected command to fail: ... update --version 0.2.0
+   ```
+
+5. A deterministic update against pre-fix commit `01f5636` made the data root
+   non-writable at manifest creation. The command failed but had already split
+   installation state:
+
+   ```text
+   status=1 current=0.2.0 promoted=true manifest_preserved=true
+   ```
+
+6. Release packaging exposed its stale test fixture after the kernel bump:
+
+   ```text
+   package-skills-release: version_mismatch tag=skills-v0.1.1 source=0.2.0
+   ```
+
+### Fixes and GREEN evidence
+
+- Probe JSON is decoded with Python using duplicate-key rejection. Facades and
+  setup require the exact top-level key set, exact types and values, canonical
+  `[v2, v1]` read-schema order, the exact migration capability object,
+  `compatible: true`, and `publish: false`. Both explicitly require Python 3.
+- Installation manifests are opened without following the final symlink,
+  duplicate-safe decoded, and accepted only as an exact legacy-v1 or current-v2
+  owned shape. Version directories, owner markers, binaries, data roots, bin
+  roots, and lock files reject symlinks. Owner marker bytes must exactly equal
+  `dvandva-skill-v1\n`.
+- Every operation uses a persistent sibling Linux `flock`. Manifest/current
+  replacements are prepared under the lock, candidate promotion uses `mv -T`,
+  and manifest then current commit as a rollback-capable pair. Verified rollback
+  removes only a version promoted by that invocation. Uncertain rollback keeps
+  the candidate and transaction evidence instead of deleting a referenced
+  binary.
+- Tests cover pre-promotion permission failure, deterministic post-manifest
+  current-commit failure, byte-identical manifest restoration, fresh-candidate
+  cleanup, pre-existing candidate retention, managed-parent symlinks, owner
+  marker symlink/wrong bytes, malformed/foreign manifest decoys, and a bounded
+  externally-held lock.
+- Hosted verify checkout now uses `fetch-depth: 0`, and the setup suite requires
+  `refs/tags/skills-v0.1.1` before building the truthful old fixture.
+- Both terminal role waits now assert checkpoint-B identity, manifest digest,
+  and scope revision and compare the complete checkpoint snapshots.
+- Fresh final verification: four shell suites passed (`role-skills`,
+  `setup-dvandva`, `two-role-canary`, `package-release`); focused `skill_flow`
+  passed 5/5; all-targets passed 156/156; fmt and clippy with denied warnings
+  passed. Shell syntax, facade byte equality, and diff checks also passed.
