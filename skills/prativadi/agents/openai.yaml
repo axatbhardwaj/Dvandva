@@ -1,0 +1,6 @@
+interface:
+  display_name: "Dvandva Prativadi"
+  short_description: "Adversarially review a paired Dvandva run"
+  default_prompt: "Use $prativadi to join and review the current Dvandva run."
+policy:
+  allow_implicit_invocation: true
