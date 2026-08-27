@@ -825,7 +825,7 @@ fn migration_integrity_direct_cas_rejects_terminal_and_live_claim_sources() {
         assert!(
             matches!(
                 channel.compare_and_swap(0, &forged),
-                Err(StoreError::InvalidSchemaTransition | StoreError::InvalidHistory)
+                Err(StoreError::MigrationRequired)
             ),
             "illegal migration source {source_kind} was accepted"
         );
@@ -969,7 +969,7 @@ fn migration_integrity_generic_cas_rejects_even_an_eligible_crossing() {
     let next = migrate_legacy_baton(&source).unwrap();
     assert!(matches!(
         channel.compare_and_swap(0, &next),
-        Err(StoreError::InvalidSchemaTransition)
+        Err(StoreError::MigrationRequired)
     ));
     assert_eq!(channel.read().unwrap(), source);
     assert!(!dir

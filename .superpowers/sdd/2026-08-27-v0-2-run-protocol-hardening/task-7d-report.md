@@ -27,6 +27,17 @@ test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 86 filtered out
 The command exited 101. The failure is the intended illegal v1 successor, not
 a fixture, compilation, or setup error.
 
+The existing eligible-crossing regression was also tightened to the public
+error contract and failed before the production edit:
+
+```text
+$ cargo test --manifest-path v4/Cargo.toml --test run_channel migration_integrity_generic_cas_rejects_even_an_eligible_crossing -- --exact
+running 1 test
+test migration_integrity_generic_cas_rejects_even_an_eligible_crossing ... FAILED
+assertion failed: matches!(channel.compare_and_swap(0, &next), Err(StoreError::MigrationRequired))
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 86 filtered out
+```
+
 ## GREEN evidence
 
 Pending the minimal store fence.
