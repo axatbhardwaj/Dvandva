@@ -26,6 +26,43 @@ make_release() {
   (cd "$directory" && sha256sum "$asset" >SHA256SUMS)
 }
 
+make_adversarial_release() {
+  local directory="$1" kind="$2"
+  mkdir -p "$directory"
+  {
+    printf '#!/usr/bin/env bash\nkind=%q\n' "$kind"
+    cat <<'ADVERSARIAL_KERNEL'
+set -euo pipefail
+valid_probe='{"package":"dvandva-v4","version":"0.2.0","publish":false,"write_schema":"dvandva.run.v2","read_schemas":["dvandva.run.v2","dvandva.run.v1"],"role_api":2,"capabilities":{"upgrade_from_v1":true},"compatible":true}'
+if test "${1:-}" = "--version"; then
+  case "$kind" in
+    version-nul) printf 'dvandva-v4 0.2.0\0\n' ;;
+    version-invalid-utf8) printf 'dvandva-v4 0.2.0\377\n' ;;
+    version-oversize) printf 'dvandva-v4 0.2.0'; head -c 70000 /dev/zero | tr '\0' x ;;
+    version-extra-newline) printf 'dvandva-v4 0.2.0\n\n' ;;
+    version-nonzero) printf 'dvandva-v4 0.2.0\n'; exit 7 ;;
+    *) printf 'dvandva-v4 0.2.0\n' ;;
+  esac
+  exit 0
+fi
+if test "${1:-}" = "probe"; then
+  case "$kind" in
+    probe-nul) printf '%s\0\n' "$valid_probe" ;;
+    probe-invalid-utf8) printf '%s\377\n' "$valid_probe" ;;
+    probe-oversize) printf '%s' "$valid_probe"; head -c 70000 /dev/zero | tr '\0' ' ' ;;
+    probe-extra-newline) printf '%s\n\n' "$valid_probe" ;;
+    probe-nonzero) printf '%s\n' "$valid_probe"; exit 7 ;;
+    *) printf '%s\n' "$valid_probe" ;;
+  esac
+  exit 0
+fi
+exit 99
+ADVERSARIAL_KERNEL
+  } >"$directory/$asset"
+  chmod 755 "$directory/$asset"
+  (cd "$directory" && sha256sum "$asset" >SHA256SUMS)
+}
+
 old_release="$test_root/release-0.1.1"
 new_release="$test_root/release-0.2.0"
 make_release "$old_release" "$old_binary"
@@ -46,6 +83,87 @@ expect_failure() {
   fi
   grep -Fq "$pattern" <<<"$output"
 }
+
+adversarial_handshake_case() (
+  local kind="$1" expected_error="$2" case_root="$test_root/handshake-$1"
+  export XDG_DATA_HOME="$case_root/data"
+  export XDG_STATE_HOME="$case_root/state"
+  local release="$case_root/release"
+  local temporary_root="$case_root/tmp"
+  mkdir -p "$temporary_root"
+  make_adversarial_release "$release" "$kind"
+
+  expect_failure "$expected_error" env TMPDIR="$temporary_root" \
+    DVANDVA_RELEASE_DIR="$release" bash "$installer" install --version 0.2.0
+  test ! -e "$XDG_DATA_HOME/dvandva"
+  test -z "$(find "$temporary_root" -mindepth 1 -print)"
+
+  # A rejected first attempt must not make the invocation-created root look
+  # foreign to a valid retry.
+  TMPDIR="$temporary_root" DVANDVA_RELEASE_DIR="$new_release" \
+    bash "$installer" install --version 0.2.0 >/dev/null
+  test "$(readlink "$XDG_DATA_HOME/dvandva/bin/current")" = '0.2.0'
+)
+
+for handshake_kind in \
+  version-nul version-invalid-utf8 version-oversize version-extra-newline \
+  version-nonzero; do
+  adversarial_handshake_case "$handshake_kind" version_mismatch
+done
+for handshake_kind in \
+  probe-nul probe-invalid-utf8 probe-oversize probe-extra-newline probe-nonzero; do
+  adversarial_handshake_case "$handshake_kind" probe_mismatch
+done
+
+purge_path_safety_case() (
+  local kind="$1" case_root="$test_root/purge-$1"
+  export XDG_DATA_HOME="$case_root/data"
+  export XDG_STATE_HOME="$case_root/state"
+  DVANDVA_RELEASE_DIR="$new_release" bash "$installer" \
+    install --version 0.2.0 >/dev/null
+  local case_data="$XDG_DATA_HOME/dvandva"
+  local external="$case_root/external"
+  mkdir -p "$external"
+  printf 'foreign state\n' >"$external/foreign"
+
+  case "$kind" in
+    state-root-symlink)
+      mkdir -p "$XDG_STATE_HOME"
+      ln -s "$external" "$XDG_STATE_HOME/dvandva"
+      ;;
+    state-root-file)
+      mkdir -p "$XDG_STATE_HOME"
+      printf 'foreign root\n' >"$XDG_STATE_HOME/dvandva"
+      ;;
+    runs-symlink)
+      mkdir -p "$XDG_STATE_HOME/dvandva"
+      ln -s "$external" "$XDG_STATE_HOME/dvandva/runs"
+      ;;
+    runs-file)
+      mkdir -p "$XDG_STATE_HOME/dvandva"
+      printf 'foreign runs\n' >"$XDG_STATE_HOME/dvandva/runs"
+      ;;
+  esac
+
+  expect_failure 'refusing unsafe' bash "$installer" uninstall --version 0.2.0 \
+    --purge-runs --yes-purge-runs
+  # Purge validation happens before uninstall: the owned installation and all
+  # foreign state remain byte-for-byte present.
+  test -f "$case_data/installation.json"
+  test "$(readlink "$case_data/bin/current")" = '0.2.0'
+  test "$(cat "$external/foreign")" = 'foreign state'
+  case "$kind" in
+    state-root-symlink) test -L "$XDG_STATE_HOME/dvandva" ;;
+    state-root-file) test "$(cat "$XDG_STATE_HOME/dvandva")" = 'foreign root' ;;
+    runs-symlink) test -L "$XDG_STATE_HOME/dvandva/runs" ;;
+    runs-file) test "$(cat "$XDG_STATE_HOME/dvandva/runs")" = 'foreign runs' ;;
+  esac
+)
+
+purge_path_safety_case state-root-symlink
+purge_path_safety_case state-root-file
+purge_path_safety_case runs-symlink
+purge_path_safety_case runs-file
 
 test -n "$(git -C "$repo_root" rev-parse --verify refs/tags/skills-v0.1.1)"
 

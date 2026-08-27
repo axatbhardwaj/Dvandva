@@ -22,6 +22,9 @@ old_manifest_present=false
 old_current_present=false
 old_current_target=""
 preserve_transaction=false
+candidate_capture=""
+created_data_root=false
+created_bin_root=false
 
 cleanup() {
   local status=$?
@@ -37,6 +40,15 @@ cleanup() {
   fi
   if test -n "$transaction_dir" && ! $preserve_transaction; then
     rm -rf -- "$transaction_dir" || true
+  fi
+  if test -n "$candidate_capture"; then
+    rm -rf -- "$candidate_capture" || true
+  fi
+  if $created_bin_root; then
+    rmdir -- "$bin_root" 2>/dev/null || true
+  fi
+  if $created_data_root; then
+    rmdir -- "$data_root" 2>/dev/null || true
   fi
   exit "$status"
 }
@@ -266,28 +278,56 @@ print(digest)
 
 validate_candidate() {
   local candidate="$1"
-  local reported_version probe_output
+  local version_file probe_file candidate_status capture_status
+  local -a pipeline_status
   command -v python3 >/dev/null 2>&1 || {
     printf 'setup-dvandva: python3 is required to validate release metadata\n' >&2
     exit 1
   }
-  reported_version="$("$candidate" --version 2>/dev/null)" || {
+  candidate_capture="$(mktemp -d)"
+  version_file="$candidate_capture/version.raw"
+  probe_file="$candidate_capture/probe.raw"
+
+  set +e
+  "$candidate" --version 2>/dev/null | head -c 65537 >"$version_file"
+  pipeline_status=("${PIPESTATUS[@]}")
+  set -e
+  candidate_status=${pipeline_status[0]}
+  capture_status=${pipeline_status[1]}
+  if test "$candidate_status" -ne 0 || test "$capture_status" -ne 0; then
     printf 'setup-dvandva: version_mismatch expected=%s reported=unavailable\n' "$version" >&2
     exit 1
-  }
-  test "$reported_version" = "dvandva-v4 $version" || {
-    printf 'setup-dvandva: version_mismatch expected=%s reported=%s\n' \
-      "$version" "$reported_version" >&2
+  fi
+  python3 -c '
+import pathlib, sys
+raw = pathlib.Path(sys.argv[1]).read_bytes()
+try:
+    raw.decode("utf-8")
+except UnicodeDecodeError:
+    raise SystemExit(1)
+expected = ("dvandva-v4 " + sys.argv[2]).encode()
+valid = len(raw) <= 65536 and b"\0" not in raw and raw in (expected, expected + b"\n")
+raise SystemExit(0 if valid else 1)
+' "$version_file" "$version" || {
+    printf 'setup-dvandva: version_mismatch expected=%s reported=invalid\n' \
+      "$version" >&2
     exit 1
   }
-  probe_output="$("$candidate" probe --expected-schema "$schema" \
-    --expected-role-api "$role_api" 2>/dev/null)" || {
+
+  set +e
+  "$candidate" probe --expected-schema "$schema" \
+    --expected-role-api "$role_api" 2>/dev/null | head -c 65537 >"$probe_file"
+  pipeline_status=("${PIPESTATUS[@]}")
+  set -e
+  candidate_status=${pipeline_status[0]}
+  capture_status=${pipeline_status[1]}
+  if test "$candidate_status" -ne 0 || test "$capture_status" -ne 0; then
     printf 'setup-dvandva: probe_mismatch expected_schema=%s expected_role_api=%s\n' \
       "$schema" "$role_api" >&2
     exit 1
-  }
+  fi
   python3 -c '
-import json, sys
+import json, pathlib, sys
 def unique(pairs):
     result = {}
     for key, value in pairs:
@@ -296,7 +336,18 @@ def unique(pairs):
         result[key] = value
     return result
 try:
-    probe = json.load(sys.stdin, object_pairs_hook=unique)
+    raw = pathlib.Path(sys.argv[1]).read_bytes()
+    if len(raw) > 65536 or b"\0" in raw:
+        raise ValueError("invalid raw probe")
+    text = raw.decode("utf-8")
+    if text.endswith("\n"):
+        text = text[:-1]
+    if text.endswith("\n"):
+        raise ValueError("extra newline")
+    decoder = json.JSONDecoder(object_pairs_hook=unique)
+    probe, end = decoder.raw_decode(text)
+    if end != len(text):
+        raise ValueError("trailing bytes")
 except (json.JSONDecodeError, UnicodeDecodeError, ValueError, TypeError):
     raise SystemExit(1)
 capabilities = probe.get("capabilities") if type(probe) is dict else None
@@ -304,7 +355,7 @@ valid = (
     type(probe) is dict
     and set(probe) == {"package", "version", "publish", "write_schema", "read_schemas", "role_api", "capabilities", "compatible"}
     and probe.get("package") == "dvandva-v4"
-    and probe.get("version") == sys.argv[1]
+    and probe.get("version") == sys.argv[2]
     and probe.get("publish") is False
     and probe.get("write_schema") == "dvandva.run.v2"
     and probe.get("read_schemas") == ["dvandva.run.v2", "dvandva.run.v1"]
@@ -314,11 +365,13 @@ valid = (
     and probe.get("compatible") is True
 )
 raise SystemExit(0 if valid else 1)
-' "$version" <<<"$probe_output" || {
+' "$probe_file" "$version" || {
       printf 'setup-dvandva: probe_mismatch expected_schema=%s expected_role_api=%s\n' \
         "$schema" "$role_api" >&2
       exit 1
     }
+  rm -rf -- "$candidate_capture"
+  candidate_capture=""
 }
 
 owner_marker_matches() {
@@ -523,6 +576,12 @@ install_release() {
     exit 1
   fi
 
+  if ! test -e "$data_root" && ! test -L "$data_root"; then
+    created_data_root=true
+  fi
+  if ! test -e "$bin_root" && ! test -L "$bin_root"; then
+    created_bin_root=true
+  fi
   mkdir -p "$bin_root"
   if test -e "$version_dir" || test -L "$version_dir"; then
     validate_existing_version "$digest"
@@ -548,6 +607,8 @@ install_release() {
   transaction_active=false
   promoted_install=""
   promoted_install_identity=""
+  created_data_root=false
+  created_bin_root=false
   printf 'setup-dvandva: installed version=%s write_schema=%s role_api=%s read_schemas=%s upgrade_from_v1=%s publish=false sha256=%s binary=%s\n' \
     "$version" "$schema" "$role_api" "$read_schemas" "$upgrade_from_v1" "$digest" "$binary" || true
 }
@@ -580,6 +641,20 @@ uninstall_owned() {
   if $purge_runs && ! $confirm_purge; then
     printf 'setup-dvandva: --purge-runs requires --yes-purge-runs\n' >&2
     exit 2
+  fi
+  if $purge_runs; then
+    if test -e "$state_root" || test -L "$state_root"; then
+      test -d "$state_root" && ! test -L "$state_root" || {
+        printf 'setup-dvandva: refusing unsafe state root at %s\n' "$state_root" >&2
+        exit 1
+      }
+    fi
+    if test -e "$state_root/runs" || test -L "$state_root/runs"; then
+      test -d "$state_root/runs" && ! test -L "$state_root/runs" || {
+        printf 'setup-dvandva: refusing unsafe runs path at %s\n' "$state_root/runs" >&2
+        exit 1
+      }
+    fi
   fi
   local current_target
   current_target="$(readlink "$bin_root/current" 2>/dev/null || true)"
