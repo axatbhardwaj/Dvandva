@@ -96,6 +96,46 @@ After tightening the terminal comparison to encoded checkpoint bytes, the
 focused canary and `bash -n` were rerun at `507ce9f53fdfc10487a36fff9028b3c843680450`;
 both exited 0.
 
+### Controller full matrix
+
+The controller pinned
+`a1f0d293e072bdcdf98e887300d0bdc20fdde35a`, verified its merge base was
+`4e502529b73d7cd6b2f5eb819b67275d4b8a7da3`, and confirmed the HEAD stayed
+unchanged through the complete run.
+
+```text
+cargo fmt --manifest-path v4/Cargo.toml -- --check: exit 0
+cargo clippy --locked --manifest-path v4/Cargo.toml --all-targets -- -D warnings: exit 0
+cargo test --locked --manifest-path v4/Cargo.toml --all-targets: 172 passed, 0 failed across 8 executable targets
+cargo run --quiet --locked --manifest-path v4/Cargo.toml -- probe --expected-schema dvandva.run.v2 --expected-role-api 2: exact compatible v2/API2 private-release probe, exit 0
+cargo test --locked --manifest-path rust/Cargo.toml --workspace: 1,740 passed, 0 failed across 38 executable targets plus one zero-test doc target
+bash tests/skills/role-skills.sh: role skill wrappers: ok
+bash tests/skills/setup-dvandva.sh: setup-dvandva installer tests: ok
+bash tests/skills/package-release.sh: skills release packaging: ok
+bash tests/skills/two-role-canary.sh: two-role skill canary: ok
+```
+
+Shell syntax passed for all eight changed active shell files. Duplicate-safe
+`ruamel.yaml` 0.18.16 parsing verified all-branch push and pull-request
+verification, `skills-v*` tag gating, inherited read-only verification
+permissions, and the write-scoped release job. The first controller-only YAML
+assertion incorrectly expected the push branch list to be `main`; source and
+the committed package test require `"**"`. The corrected structural check
+passed without a product change.
+
+`shellcheck`, `actionlint`, `yamllint`, `yq`, and PyYAML remain unavailable and
+were not claimed as run. `git diff --check 4e502529...HEAD`, the no-diff gate
+for `rust/` and `plugins/dvandva/`, crate `publish = false`, the no-`cargo
+publish` release check, and clean-worktree check passed. `gh stack view`
+reported the current local branch directly above `origin/main`.
+
+Archive hashes remained exact:
+
+```text
+README retired-v3 suffix: 83182b2773ae4c52a71c2568cb856770b4269d1cdeb47bd92fb400fa4807629a
+historical two-mode body: 12d51f85fc0ec5e945e99122f465ee5dcad205604993eeb7cb1340f65acdf6b8
+```
+
 ## Trust and side-effect boundary
 
 The canary validates authenticated participant ownership and structurally
