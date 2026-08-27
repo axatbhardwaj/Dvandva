@@ -84,7 +84,8 @@ run_casting() {
   local label="$1" worker="$2" reviewer="$3" worker_harness="$4" reviewer_harness="$5"
   local worker_session="$label-worker" reviewer_session="$label-reviewer"
   local objective="Implement $label" task="TASK-$label" site_id="site-$label"
-  local peer_for_worker peer_for_reviewer started joined run_id run_dir checkpoint_a checkpoint_b digest_a digest_b
+  local peer_for_worker peer_for_reviewer started joined run_id run_dir checkpoint_a checkpoint_b
+  local digest_a digest_b reviewing_a reviewing_b terminal worker_wait reviewer_wait
   case "$worker_harness" in codex) peer_for_worker=claude ;; claude) peer_for_worker=codex ;; esac
   case "$reviewer_harness" in codex) peer_for_reviewer=claude ;; claude) peer_for_reviewer=codex ;; esac
 
@@ -136,8 +137,19 @@ run_casting() {
     "\"site_id\": \"$site_id\""
   grep -Rq '"publisher_harness": "Codex"' "$run_dir/history"
   grep -Rq '"reviewer_harness": "Claude"' "$run_dir/history"
-  bash "$worker" wait "$worker_session" "$run_dir" 16 500 | grep -Fq '"status": "done"'
-  bash "$reviewer" wait "$reviewer_session" "$run_dir" 16 500 | grep -Fq '"status": "done"'
+  worker_wait="$(bash "$worker" wait "$worker_session" "$run_dir" 16 500)"
+  reviewer_wait="$(bash "$reviewer" wait "$reviewer_session" "$run_dir" 16 500)"
+  python3 -c '
+import json, sys
+worker, reviewer = (json.loads(value) for value in sys.stdin.read().split("\n---\n"))
+expected = {"identity": sys.argv[1], "manifest_digest": sys.argv[2], "scope_revision": 0}
+assert worker["status"] == reviewer["status"] == "done"
+assert {key: worker["checkpoint"][key] for key in expected} == expected
+assert {key: reviewer["checkpoint"][key] for key in expected} == expected
+assert worker["checkpoint"] == reviewer["checkpoint"]
+' "$checkpoint_b" "$digest_b" <<<"$worker_wait
+---
+$reviewer_wait"
 }
 
 # Normal semantic casting: Codex vadi publishes, Claude prativadi reviews.
