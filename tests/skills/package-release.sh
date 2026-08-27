@@ -240,6 +240,9 @@ case "$(basename -- "$checksum_staging")" in
   .checksum-output.tmp.*) ;;
   *) fail 'checksum staging directory did not use the hidden output prefix' ;;
 esac
+test "$checksum_staging" != "$checksum_output" || \
+  fail 'checksum ran in the final output path'
+test ! -e "$checksum_staging" || fail 'checksum staging directory was not cleaned'
 
 collision_bin="$test_root/collision-bin"
 mkdir "$collision_bin"
