@@ -4,6 +4,7 @@
 
 - Starting HEAD: `5c483198d79c7619eaf7739c8b7ab7da630b2f4d`
 - Replay commit: `8181f2e37bd752e26b53aa5049c94d5d544f41e4`
+- Exact-byte assertion commit: `507ce9f53fdfc10487a36fff9028b3c843680450`
 - Changed executable: `tests/skills/two-role-canary.sh`
 - Production/kernel/docs changes: none
 
@@ -91,6 +92,9 @@ exit 0
 
 The focused canary executed three complete temporary run pairs: the preserved
 normal casting, the preserved reverse casting, and the incident replay.
+After tightening the terminal comparison to encoded checkpoint bytes, the
+focused canary and `bash -n` were rerun at `507ce9f53fdfc10487a36fff9028b3c843680450`;
+both exited 0.
 
 ## Trust and side-effect boundary
 
