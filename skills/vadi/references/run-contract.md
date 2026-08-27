@@ -46,7 +46,7 @@ publication/review capability; it is never an ordinary wake or action.
 
 ## Checkpoint and worker mutations
 
-For every mutation, the role writes its JSON action to a private temporary file
+For every `apply` action, the role writes its JSON to a private temporary file
 with mode 0600, passes its path as `ACTION_FILE`, and deletes it after `apply`.
 
 A checkpoint contains one complete deliverable manifest. It covers the

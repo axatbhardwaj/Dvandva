@@ -70,6 +70,7 @@ if test "${1:-}" = "probe"; then
     probe_nul) printf '%s\0\n' "$valid_probe" ;;
     probe_invalid_utf8) printf '%s\377\n' "$valid_probe" ;;
     probe_oversized) printf '%s' "$valid_probe"; head -c 20000 /dev/zero | tr '\0' ' ' ;;
+    probe_extra_newline) printf '%s\n\n' "$valid_probe" ;;
     probe_nonzero) printf '%s\n' "$valid_probe"; exit 9 ;;
     *) printf '%s\n' "$valid_probe" ;;
   esac
@@ -82,7 +83,7 @@ for facade in "$vadi" "$prativadi"; do
   for mode in \
     version_nul version_invalid_utf8 version_oversized \
     version_extra_newline version_nonzero \
-    probe_nul probe_invalid_utf8 probe_oversized probe_nonzero
+    probe_nul probe_invalid_utf8 probe_oversized probe_extra_newline probe_nonzero
   do
     expect_failure 'incompatible kernel' env DVANDVA_FAKE_MODE="$mode" \
       bash "$facade" probe
@@ -163,8 +164,11 @@ bash "$vadi" heartbeat codex-session "$run_dir" 3 | grep -Fq '"revision":4'
 bash "$vadi" wait codex-session "$run_dir" 4 50 | grep -Fq '"revision": 4'
 
 action="$test_root/human.json"
-printf '%s\n' '{"type":"request_human_decision","question":"Confirm scope","evidence":["scope changed"],"options":["yes","no"]}' >"$action"
+(umask 077; printf '%s\n' '{"type":"request_human_decision","question":"Confirm scope","evidence":["scope changed"],"options":["yes","no"]}' >"$action")
+test "$(stat -c '%a' "$action")" = 600
 bash "$vadi" apply codex-session "$run_dir" 4 "$action" | grep -Fq '"status": "human_decision"'
+rm -f -- "$action"
+test ! -e "$action"
 
 # Explicit upgrade is followed by an explicit reclaim and a normal v2 read.
 legacy_dir="$XDG_STATE_HOME/dvandva/runs/legacy-run"

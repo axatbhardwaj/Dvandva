@@ -48,7 +48,7 @@ publication/review capability; it is never an ordinary wake or action.
 
 ## Checkpoint and review bindings
 
-For every mutation, the role writes its JSON action to a private temporary file
+For every `apply` action, the role writes its JSON to a private temporary file
 with mode 0600, passes its path as `ACTION_FILE`, and deletes it after `apply`.
 
 Review only when `advisory_actions` includes `review_checkpoint`. Materialize

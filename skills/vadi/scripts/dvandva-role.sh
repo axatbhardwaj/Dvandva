@@ -98,7 +98,13 @@ try:
     raw = Path(sys.argv[2]).read_bytes()
     if len(raw) > int(sys.argv[3]) or b"\0" in raw:
         raise ValueError("invalid raw probe")
-    probe = json.loads(raw.decode("utf-8", errors="strict"), object_pairs_hook=unique)
+    text = raw.decode("utf-8", errors="strict")
+    if text.endswith("\n"):
+        text = text[:-1]
+    decoder = json.JSONDecoder(object_pairs_hook=unique)
+    probe, end = decoder.raw_decode(text)
+    if end != len(text):
+        raise ValueError("trailing probe bytes")
 except (json.JSONDecodeError, UnicodeDecodeError, ValueError, TypeError):
     raise SystemExit(1)
 capabilities = probe.get("capabilities") if type(probe) is dict else None
