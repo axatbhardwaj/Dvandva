@@ -4,7 +4,6 @@ use std::{
 };
 
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 use uuid::Uuid;
@@ -18,11 +17,10 @@ use crate::{
     },
     identity::{self, IdentityError},
     model::{
-        create_handoff_obligation, normalize_participants, DeliverableRequirement, HandoffKind,
-        MigrationProvenance, ModelError, Publication, PublicationPolicy, RunBaton, Status,
-        TaskIdentity, LEGACY_SCHEMA, SCHEMA,
+        normalize_participants, DeliverableRequirement, ModelError, RunBaton, Status, TaskIdentity,
+        LEGACY_SCHEMA,
     },
-    store::{require_current_schema, RunChannel, StoreError},
+    store::{migrate_legacy_baton, require_current_schema, RunChannel, StoreError},
     transition::{self, TransitionError},
     wait::{self, WaitError},
 };
@@ -59,8 +57,16 @@ pub enum UpgradeError {
     Terminal,
     #[error("same-role claim is busy in another live session")]
     Busy,
+    #[error(transparent)]
+    Credential(#[from] CredentialError),
+    #[error(transparent)]
+    Claim(#[from] ClaimError),
+    #[error("upgrade session id must not be blank")]
+    InvalidSession,
+    #[error("legacy objective must not be blank")]
+    InvalidObjective,
     #[error("upgrade caller does not match the stored participant topology")]
-    InvalidCaller,
+    InvalidTopology,
     #[error("upgrade requires a v1 baton")]
     InvalidSchema,
     #[error("invalid stored lease timestamp")]
@@ -130,6 +136,20 @@ fn start_with_retries(
         request.objective,
         request.task_reference,
     )?;
+    let normalized = match request.role {
+        Role::Worker => normalize_participants(
+            request.current_harness.to_owned(),
+            request.peer_harness.to_owned(),
+        ),
+        Role::Reviewer => normalize_participants(
+            request.peer_harness.to_owned(),
+            request.current_harness.to_owned(),
+        ),
+    }?;
+    let participant_harness = match request.role {
+        Role::Worker => normalized.0.as_str(),
+        Role::Reviewer => normalized.1.as_str(),
+    };
     credential::path(
         request.credentials_root,
         request.session_id,
@@ -145,7 +165,7 @@ fn start_with_retries(
     let query = DiscoveryQuery {
         repository_id: &workspace_identity.repository_id,
         role: request.role,
-        participant_harness: request.current_harness,
+        participant_harness,
         task_reference: request.task_reference,
         run_id: request.run_id,
         session_id: Some(request.session_id),
@@ -471,10 +491,14 @@ pub fn claim(
     expected_revision: u64,
 ) -> Result<RoleClaimResult, RoleSessionError> {
     let channel = RunChannel::open(run_dir);
+    let initial = channel.read()?;
+    require_current_schema(&initial)?;
+    let credential_lock =
+        credential::lock_for_claim(credentials_root, session_id, &initial.run_id, role)?;
     let baton = channel.read()?;
     require_current_schema(&baton)?;
     let canonical_run = std::fs::canonicalize(run_dir).map_err(StoreError::Io)?;
-    credential::prepare_for_claim(credentials_root, session_id, &baton, role)?;
+    credential_lock.prepare(&baton)?;
     let grant = claim::claim(&channel, role, session_id, lease_seconds, expected_revision)?;
     let credential = Credential {
         run_dir: canonical_run,
@@ -484,7 +508,7 @@ pub fn claim(
         epoch: grant.epoch,
         token: grant.token,
     };
-    let credential = credential::store(credentials_root, &credential)?;
+    let credential = credential_lock.store(&credential)?;
     Ok(RoleClaimResult {
         revision: grant.revision,
         epoch: grant.epoch,
@@ -501,10 +525,14 @@ pub fn reclaim(
     expected_revision: u64,
 ) -> Result<RoleClaimResult, RoleSessionError> {
     let channel = RunChannel::open(run_dir);
+    let initial = channel.read()?;
+    require_current_schema(&initial)?;
+    let credential_lock =
+        credential::lock_for_claim(credentials_root, session_id, &initial.run_id, role)?;
     let baton = channel.read()?;
     require_current_schema(&baton)?;
     let canonical_run = std::fs::canonicalize(run_dir).map_err(StoreError::Io)?;
-    credential::prepare_for_claim(credentials_root, session_id, &baton, role)?;
+    credential_lock.prepare(&baton)?;
     let grant = claim::reclaim(&channel, role, session_id, lease_seconds, expected_revision)?;
     let credential = Credential {
         run_dir: canonical_run,
@@ -514,7 +542,7 @@ pub fn reclaim(
         epoch: grant.epoch,
         token: grant.token,
     };
-    let credential = credential::store(credentials_root, &credential)?;
+    let credential = credential_lock.store(&credential)?;
     Ok(RoleClaimResult {
         revision: grant.revision,
         epoch: grant.epoch,
@@ -524,6 +552,7 @@ pub fn reclaim(
 
 pub fn upgrade(
     run_dir: &Path,
+    credentials_root: &Path,
     role: Role,
     session_id: &str,
     current_harness: &str,
@@ -531,10 +560,10 @@ pub fn upgrade(
     expected_revision: u64,
 ) -> Result<RunBaton, UpgradeError> {
     if session_id.trim().is_empty() {
-        return Err(UpgradeError::InvalidCaller);
+        return Err(UpgradeError::InvalidSession);
     }
     let channel = RunChannel::open(run_dir);
-    let mut baton = channel.read()?;
+    let baton = channel.read()?;
     if baton.revision != expected_revision {
         return Err(StoreError::RevisionConflict {
             expected: expected_revision,
@@ -546,7 +575,7 @@ pub fn upgrade(
         return Err(UpgradeError::InvalidSchema);
     }
     if baton.objective.summary.trim().is_empty() {
-        return Err(UpgradeError::InvalidCaller);
+        return Err(UpgradeError::InvalidObjective);
     }
     if matches!(baton.status, Status::Done | Status::Abandoned) {
         return Err(UpgradeError::Terminal);
@@ -558,14 +587,14 @@ pub fn upgrade(
             normalize_participants(peer_harness.to_owned(), current_harness.to_owned())
         }
     }
-    .map_err(|_| UpgradeError::InvalidCaller)?;
+    .map_err(|_| UpgradeError::InvalidTopology)?;
     let stored = normalize_participants(
         baton.participants.worker.harness.clone(),
         baton.participants.reviewer.harness.clone(),
     )
-    .map_err(|_| UpgradeError::InvalidCaller)?;
+    .map_err(|_| UpgradeError::InvalidTopology)?;
     if requested != stored {
-        return Err(UpgradeError::InvalidCaller);
+        return Err(UpgradeError::InvalidTopology);
     }
     let current = match role {
         Role::Worker => &baton.participants.worker,
@@ -574,46 +603,26 @@ pub fn upgrade(
     if let Some(claim) = current.claim.as_ref() {
         let expires = OffsetDateTime::parse(&claim.lease_expires_at, &Rfc3339)
             .map_err(|_| UpgradeError::InvalidTimestamp)?;
-        if expires > OffsetDateTime::now_utc() && claim.session_id != session_id {
-            return Err(UpgradeError::Busy);
+        if expires > OffsetDateTime::now_utc() {
+            if claim.session_id != session_id {
+                return Err(UpgradeError::Busy);
+            }
+            let credential = credential::load(credentials_root, session_id, &baton.run_id, role)?;
+            let credential_run =
+                std::fs::canonicalize(&credential.run_dir).map_err(StoreError::Io)?;
+            let requested_run = std::fs::canonicalize(run_dir).map_err(StoreError::Io)?;
+            if credential_run != requested_run {
+                return Err(CredentialError::Mismatch.into());
+            }
+            claim::verify_v1_upgrade(
+                &baton,
+                role,
+                session_id,
+                credential.epoch,
+                &credential.token,
+            )?;
         }
     }
-
-    let legacy_checkpoint = baton.checkpoint.clone();
-    let legacy_state_digest = Sha256::digest(serde_json::to_vec(&baton).expect("baton serializes"))
-        .iter()
-        .map(|byte| format!("{byte:02x}"))
-        .collect();
-    baton.schema = SCHEMA.to_owned();
-    baton.participants.worker.harness = stored.0;
-    baton.participants.reviewer.harness = stored.1;
-    baton.participants.worker.claim = None;
-    baton.participants.reviewer.claim = None;
-    baton.status = Status::Revising;
-    baton.assignee = crate::model::Assignee::Worker;
-    baton.scope_revision = 0;
-    baton.scope_deliverables = vec![DeliverableRequirement {
-        id: "legacy_objective".to_owned(),
-        description: baton.objective.summary.trim().to_owned(),
-    }];
-    baton.checkpoint = None;
-    baton.review = None;
-    baton.publication = Publication::default();
-    baton.publication_policy = Some(PublicationPolicy::fixed());
-    baton.publication_binding = Some(create_handoff_obligation(
-        HandoffKind::ProtocolUpgraded,
-        expected_revision + 1,
-        0,
-    ));
-    baton.human_decision = None;
-    baton.terminal = None;
-    baton.recovery = None;
-    baton.migration = Some(MigrationProvenance {
-        from_schema: LEGACY_SCHEMA.to_owned(),
-        from_revision: expected_revision,
-        legacy_state_digest,
-        legacy_checkpoint,
-    });
-    baton.revision += 1;
-    Ok(channel.compare_and_swap(expected_revision, &baton)?)
+    let next = migrate_legacy_baton(&baton)?;
+    Ok(channel.compare_and_swap(expected_revision, &next)?)
 }

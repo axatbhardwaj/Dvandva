@@ -88,6 +88,8 @@ fn stale_migration_credential_cannot_authorize_but_can_be_replaced_after_upgrade
             "claude",
             "--expected-revision",
             "0",
+            "--credentials-root",
+            credentials.to_str().unwrap(),
         ])
         .assert()
         .success();
@@ -136,4 +138,97 @@ fn stale_migration_credential_cannot_authorize_but_can_be_replaced_after_upgrade
         serde_json::from_slice(&std::fs::read(credential_path).unwrap()).unwrap();
     assert_ne!(replacement.token, "stale-token");
     assert_eq!(replacement.epoch, 1);
+}
+
+#[test]
+fn same_session_claim_race_cannot_delete_the_winning_credential() {
+    const ATTEMPTS: usize = 16;
+    let root = tempfile::tempdir().unwrap();
+    let run_dir = root.path().join("run");
+    let credentials = root.path().join("credentials");
+    let baton = dvandva_v4::model::RunBaton::new(
+        "race-run",
+        "Keep the winner credential",
+        "codex",
+        "claude",
+        vec![dvandva_v4::model::DeliverableRequirement {
+            id: "implementation".to_owned(),
+            description: "Keep the winner credential".to_owned(),
+        }],
+    )
+    .unwrap();
+    dvandva_v4::store::RunChannel::open(&run_dir)
+        .create(&baton)
+        .unwrap();
+    let stale = credential::Credential {
+        run_dir: std::fs::canonicalize(&run_dir).unwrap(),
+        run_id: "race-run".to_owned(),
+        role: Role::Worker,
+        session_id: "same-session".to_owned(),
+        epoch: 99,
+        token: "stale".to_owned(),
+    };
+    credential::store(&credentials, &stale).unwrap();
+
+    let barrier = Arc::new(Barrier::new(ATTEMPTS));
+    let threads = (0..ATTEMPTS)
+        .map(|_| {
+            let barrier = Arc::clone(&barrier);
+            let run_dir = run_dir.clone();
+            let credentials = credentials.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                command()
+                    .args([
+                        "role",
+                        "claim",
+                        "--api",
+                        "2",
+                        "--run-dir",
+                        run_dir.to_str().unwrap(),
+                        "--role",
+                        "worker",
+                        "--session-id",
+                        "same-session",
+                        "--lease-seconds",
+                        "300",
+                        "--expected-revision",
+                        "0",
+                        "--credentials-root",
+                        credentials.to_str().unwrap(),
+                    ])
+                    .output()
+                    .unwrap()
+            })
+        })
+        .collect::<Vec<_>>();
+    let outputs = threads
+        .into_iter()
+        .map(|thread| thread.join().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        outputs
+            .iter()
+            .filter(|output| output.status.success())
+            .count(),
+        1
+    );
+
+    command()
+        .args([
+            "role",
+            "read",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "same-session",
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
 }

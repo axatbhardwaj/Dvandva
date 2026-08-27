@@ -146,6 +146,30 @@ pub fn verify(
     Ok(())
 }
 
+pub fn verify_v1_upgrade(
+    baton: &RunBaton,
+    role: Role,
+    session_id: &str,
+    epoch: u64,
+    token: &str,
+) -> Result<(), ClaimError> {
+    if baton.schema != crate::model::LEGACY_SCHEMA {
+        return Err(StoreError::InvalidSchemaTransition.into());
+    }
+    let claim = participant(baton, role)
+        .claim
+        .as_ref()
+        .ok_or(ClaimError::Missing)?;
+    if claim.session_id != session_id
+        || claim.epoch != epoch
+        || claim.token_digest != digest(token)
+        || parse_timestamp(&claim.lease_expires_at)? <= OffsetDateTime::now_utc()
+    {
+        return Err(ClaimError::Fenced);
+    }
+    Ok(())
+}
+
 pub fn renewal_lease(baton: &RunBaton, role: Role) -> Result<Option<u64>, ClaimError> {
     require_current_schema(baton)?;
     let claim = participant(baton, role)

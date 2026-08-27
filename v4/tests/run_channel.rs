@@ -1,6 +1,7 @@
 use assert_cmd::Command;
 use dvandva_v4::model::{DeliverableRequirement, RunBaton};
 use predicates::prelude::*;
+use sha2::{Digest, Sha256};
 
 fn command() -> Command {
     Command::new(env!("CARGO_BIN_EXE_dvandva-v4"))
@@ -236,6 +237,15 @@ fn migration_probe_reports_epoch_and_rejects_mismatched_expectations() {
 fn migration_upgrade_is_one_way_and_clears_active_legacy_state() {
     let dir = tempfile::tempdir().unwrap();
     let original = write_legacy_run(dir.path(), "reviewing", "reviewer", serde_json::Value::Null);
+    let legacy: RunBaton = serde_json::from_slice(&original).unwrap();
+    let expected_digest = format!("{:x}", Sha256::digest(serde_json::to_vec(&legacy).unwrap()));
+    let mut changed = legacy.clone();
+    changed.objective.summary.push('!');
+    let changed_digest = format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(&changed).unwrap())
+    );
+    let credentials = dir.path().join("credentials");
 
     command()
         .args([
@@ -255,6 +265,8 @@ fn migration_upgrade_is_one_way_and_clears_active_legacy_state() {
             "claude",
             "--expected-revision",
             "0",
+            "--credentials-root",
+            credentials.to_str().unwrap(),
         ])
         .assert()
         .success();
@@ -299,13 +311,140 @@ fn migration_upgrade_is_one_way_and_clears_active_legacy_state() {
         baton["migration"]["legacy_checkpoint"]["identity"],
         "sha256:legacy"
     );
-    assert_eq!(
-        baton["migration"]["legacy_state_digest"]
-            .as_str()
-            .unwrap()
-            .len(),
-        64
+    assert_eq!(baton["migration"]["legacy_state_digest"], expected_digest);
+    assert_ne!(expected_digest, changed_digest);
+}
+
+#[test]
+fn epoch_validation_rejects_malformed_v2_and_relabelled_v1() {
+    for mutation in ["missing_scope", "relabelled_v1"] {
+        let dir = tempfile::tempdir().unwrap();
+        let legacy = write_legacy_run(dir.path(), "working", "worker", serde_json::Value::Null);
+        let mut value: serde_json::Value = serde_json::from_slice(&legacy).unwrap();
+        value["schema"] = serde_json::json!("dvandva.run.v2");
+        if mutation == "missing_scope" {
+            value["publication_policy"] = serde_json::json!({
+                "publisher_harness": "Codex", "channel": "codex_sites",
+                "access": "owner_only", "reviewer_harness": "Claude"
+            });
+        }
+        std::fs::write(
+            dir.path().join("baton.json"),
+            serde_json::to_vec_pretty(&value).unwrap(),
+        )
+        .unwrap();
+        command()
+            .args(["read", "--run-dir", dir.path().to_str().unwrap()])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("invalid_baton"));
+    }
+}
+
+#[test]
+fn epoch_validation_rejects_unknown_schema_before_full_decoding() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path()).unwrap();
+    std::fs::write(
+        dir.path().join("baton.json"),
+        br#"{"schema":"dvandva.run.v99","structurally":"unrelated"}"#,
+    )
+    .unwrap();
+
+    command()
+        .args(["read", "--run-dir", dir.path().to_str().unwrap()])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unsupported_schema"));
+}
+
+#[test]
+fn epoch_validation_fences_create_and_binds_the_v1_to_v2_crossing() {
+    let invalid_create = tempfile::tempdir().unwrap();
+    let mut malformed = RunBaton::new(
+        "bad-v2",
+        "Ship",
+        "codex",
+        "claude",
+        vec![DeliverableRequirement {
+            id: "implementation".to_owned(),
+            description: "Ship".to_owned(),
+        }],
+    )
+    .unwrap();
+    malformed.scope_deliverables.clear();
+    assert!(dvandva_v4::store::RunChannel::open(invalid_create.path())
+        .create(&malformed)
+        .is_err());
+
+    let crossing = tempfile::tempdir().unwrap();
+    let legacy_bytes = write_legacy_run(
+        crossing.path(),
+        "working",
+        "worker",
+        serde_json::Value::Null,
     );
+    let legacy: RunBaton = serde_json::from_slice(&legacy_bytes).unwrap();
+    let mut arbitrary = RunBaton::new(
+        legacy.run_id.clone(),
+        legacy.objective.summary.clone(),
+        "codex",
+        "claude",
+        vec![DeliverableRequirement {
+            id: "legacy_objective".to_owned(),
+            description: legacy.objective.summary.clone(),
+        }],
+    )
+    .unwrap();
+    arbitrary.workspace = legacy.workspace.clone();
+    arbitrary.task = legacy.task.clone();
+    arbitrary.revision = 1;
+    assert!(dvandva_v4::store::RunChannel::open(crossing.path())
+        .compare_and_swap(0, &arbitrary)
+        .is_err());
+}
+
+#[test]
+fn epoch_validation_rejects_an_arbitrary_crossing_in_recovery_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let legacy_bytes = write_legacy_run(dir.path(), "working", "worker", serde_json::Value::Null);
+    let legacy: RunBaton = serde_json::from_slice(&legacy_bytes).unwrap();
+    let mut arbitrary = RunBaton::new(
+        legacy.run_id.clone(),
+        legacy.objective.summary.clone(),
+        "codex",
+        "claude",
+        vec![DeliverableRequirement {
+            id: "legacy_objective".to_owned(),
+            description: legacy.objective.summary,
+        }],
+    )
+    .unwrap();
+    arbitrary.workspace = legacy.workspace;
+    arbitrary.task = legacy.task;
+    arbitrary.revision = 1;
+    std::fs::write(
+        dir.path().join("history/00000000000000000001.json"),
+        serde_json::to_vec_pretty(&arbitrary).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        dir.path().join("baton.json"),
+        serde_json::to_vec_pretty(&arbitrary).unwrap(),
+    )
+    .unwrap();
+
+    command()
+        .args([
+            "recover",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--from-revision",
+            "1",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid_history"));
 }
 
 #[test]
@@ -330,6 +469,8 @@ fn migration_upgrade_rejects_terminal_busy_and_invalid_topology() {
             "claude",
             "--expected-revision",
             "0",
+            "--credentials-root",
+            terminal.path().join("credentials").to_str().unwrap(),
         ])
         .assert()
         .failure()
@@ -363,6 +504,8 @@ fn migration_upgrade_rejects_terminal_busy_and_invalid_topology() {
             "claude",
             "--expected-revision",
             "0",
+            "--credentials-root",
+            busy.path().join("credentials").to_str().unwrap(),
         ])
         .assert()
         .failure()
@@ -388,6 +531,8 @@ fn migration_upgrade_rejects_terminal_busy_and_invalid_topology() {
             "cursor",
             "--expected-revision",
             "0",
+            "--credentials-root",
+            invalid.path().join("credentials").to_str().unwrap(),
         ])
         .assert()
         .failure()
@@ -428,6 +573,8 @@ fn migration_recovery_uses_only_the_exact_validated_v2_history_head() {
             "claude",
             "--expected-revision",
             "0",
+            "--credentials-root",
+            dir.path().join("credentials").to_str().unwrap(),
         ])
         .assert()
         .success();
@@ -508,6 +655,8 @@ fn migration_history_rejects_v2_downgrades_and_multiple_crossings() {
             "claude",
             "--expected-revision",
             "0",
+            "--credentials-root",
+            dir.path().join("credentials").to_str().unwrap(),
         ])
         .assert()
         .success();

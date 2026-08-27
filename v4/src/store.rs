@@ -5,10 +5,16 @@ use std::{
 };
 
 use fs2::FileExt;
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::model::{RecoveryProvenance, RunBaton, Status, LEGACY_SCHEMA, SCHEMA};
+use crate::model::{
+    create_handoff_obligation, normalize_deliverables, normalize_participants,
+    DeliverableRequirement, HandoffKind, MigrationProvenance, Publication, PublicationPolicy,
+    RecoveryProvenance, RunBaton, Status, LEGACY_SCHEMA, SCHEMA,
+};
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -32,6 +38,13 @@ pub enum StoreError {
     MigrationRequired,
     #[error("schema transition is not monotonic")]
     InvalidSchemaTransition,
+    #[error("baton violates the {0} schema invariants")]
+    InvalidBaton(String),
+}
+
+#[derive(Deserialize)]
+struct SchemaEnvelope {
+    schema: String,
 }
 
 #[derive(Debug, Clone)]
@@ -47,7 +60,15 @@ impl RunChannel {
     }
 
     pub fn create(&self, initial: &RunBaton) -> Result<RunBaton, StoreError> {
-        if initial.schema != SCHEMA {
+        validate_baton(initial)?;
+        if initial.schema != SCHEMA
+            || initial.revision != 0
+            || initial.migration.is_some()
+            || initial.participants.worker.claim.is_some()
+            || initial.participants.reviewer.claim.is_some()
+            || initial.publication_binding
+                != Some(create_handoff_obligation(HandoffKind::RunStarted, 0, 0))
+        {
             return Err(StoreError::InvalidSchemaTransition);
         }
         fs::create_dir_all(&self.directory)?;
@@ -66,9 +87,7 @@ impl RunChannel {
         if !path.exists() {
             return Err(StoreError::RunMissing);
         }
-        let baton: RunBaton = serde_json::from_slice(&fs::read(path)?)?;
-        validate_supported_schema(&baton.schema)?;
-        Ok(baton)
+        decode_baton(&fs::read(path)?)
     }
 
     pub fn directory(&self) -> &Path {
@@ -94,10 +113,11 @@ impl RunChannel {
                     actual: next.revision,
                 });
             }
-            let valid_schema_edge = current.schema == next.schema
-                || (current.schema == LEGACY_SCHEMA && next.schema == SCHEMA);
-            if !valid_schema_edge {
-                return Err(StoreError::InvalidSchemaTransition);
+            validate_baton(next)?;
+            match (current.schema.as_str(), next.schema.as_str()) {
+                (left, right) if left == right => {}
+                (LEGACY_SCHEMA, SCHEMA) => validate_migration_edge(&current, next)?,
+                _ => return Err(StoreError::InvalidSchemaTransition),
             }
             self.write_history(next)?;
             self.install(next)?;
@@ -127,27 +147,31 @@ impl RunChannel {
             let mut run_id = None;
             let mut selected = None;
             let mut terminal_head = false;
-            let mut previous_schema: Option<String> = None;
+            let mut previous: Option<RunBaton> = None;
             let mut crossed = false;
             for revision in 0..=high {
                 let path = history_dir.join(format!("{revision:020}.json"));
-                let baton: RunBaton = serde_json::from_slice(&fs::read(path)?)?;
-                validate_supported_schema(&baton.schema).map_err(|_| StoreError::InvalidHistory)?;
+                let baton =
+                    decode_baton(&fs::read(path)?).map_err(|_| StoreError::InvalidHistory)?;
                 if baton.revision != revision {
                     return Err(StoreError::InvalidHistory);
                 }
-                if let Some(previous) = previous_schema.as_deref() {
-                    match (previous, baton.schema.as_str()) {
+                if let Some(previous_baton) = previous.as_ref() {
+                    match (previous_baton.schema.as_str(), baton.schema.as_str()) {
                         (SCHEMA, LEGACY_SCHEMA) => return Err(StoreError::InvalidHistory),
                         (LEGACY_SCHEMA, SCHEMA) if crossed => {
                             return Err(StoreError::InvalidHistory)
                         }
-                        (LEGACY_SCHEMA, SCHEMA) => crossed = true,
+                        (LEGACY_SCHEMA, SCHEMA) => {
+                            validate_migration_edge(previous_baton, &baton)
+                                .map_err(|_| StoreError::InvalidHistory)?;
+                            crossed = true;
+                        }
                         (left, right) if left != right => return Err(StoreError::InvalidHistory),
                         _ => {}
                     }
                 }
-                previous_schema = Some(baton.schema.clone());
+                previous = Some(baton.clone());
                 match &run_id {
                     Some(expected) if expected != &baton.run_id => {
                         return Err(StoreError::InvalidHistory)
@@ -176,6 +200,7 @@ impl RunChannel {
                 from_revision,
                 previous_high_revision: high,
             });
+            validate_baton(&recovered)?;
             self.write_history(&recovered)?;
             self.install(&recovered)?;
             Ok(recovered)
@@ -237,6 +262,124 @@ pub fn require_current_schema(baton: &RunBaton) -> Result<(), StoreError> {
         SCHEMA => Ok(()),
         LEGACY_SCHEMA => Err(StoreError::MigrationRequired),
         other => Err(StoreError::UnsupportedSchema(other.to_owned())),
+    }
+}
+
+pub fn migrate_legacy_baton(current: &RunBaton) -> Result<RunBaton, StoreError> {
+    validate_baton(current)?;
+    if current.schema != LEGACY_SCHEMA || current.objective.summary.trim().is_empty() {
+        return Err(StoreError::InvalidSchemaTransition);
+    }
+    let (worker, reviewer) = normalize_participants(
+        current.participants.worker.harness.clone(),
+        current.participants.reviewer.harness.clone(),
+    )
+    .map_err(|_| StoreError::InvalidSchemaTransition)?;
+    let mut next = current.clone();
+    let legacy_state_digest = format!(
+        "{:x}",
+        Sha256::digest(serde_json::to_vec(current).expect("baton serializes"))
+    );
+    next.schema = SCHEMA.to_owned();
+    next.participants.worker.harness = worker;
+    next.participants.reviewer.harness = reviewer;
+    next.participants.worker.claim = None;
+    next.participants.reviewer.claim = None;
+    next.status = Status::Revising;
+    next.assignee = crate::model::Assignee::Worker;
+    next.revision += 1;
+    next.scope_revision = 0;
+    next.scope_deliverables = vec![DeliverableRequirement {
+        id: "legacy_objective".to_owned(),
+        description: current.objective.summary.trim().to_owned(),
+    }];
+    next.checkpoint = None;
+    next.review = None;
+    next.publication = Publication::default();
+    next.publication_policy = Some(PublicationPolicy::fixed());
+    next.publication_binding = Some(create_handoff_obligation(
+        HandoffKind::ProtocolUpgraded,
+        next.revision,
+        0,
+    ));
+    next.human_decision = None;
+    next.terminal = None;
+    next.recovery = None;
+    next.migration = Some(MigrationProvenance {
+        from_schema: LEGACY_SCHEMA.to_owned(),
+        from_revision: current.revision,
+        legacy_state_digest,
+        legacy_checkpoint: current.checkpoint.clone(),
+    });
+    Ok(next)
+}
+
+fn decode_baton(bytes: &[u8]) -> Result<RunBaton, StoreError> {
+    let envelope: SchemaEnvelope = serde_json::from_slice(bytes)?;
+    validate_supported_schema(&envelope.schema)?;
+    let baton: RunBaton = serde_json::from_slice(bytes)?;
+    validate_baton(&baton)?;
+    Ok(baton)
+}
+
+fn validate_baton(baton: &RunBaton) -> Result<(), StoreError> {
+    validate_supported_schema(&baton.schema)?;
+    if baton.schema == LEGACY_SCHEMA {
+        if baton.scope_revision != 0
+            || !baton.scope_deliverables.is_empty()
+            || baton.publication_policy.is_some()
+            || baton.publication_binding.is_some()
+            || baton.migration.is_some()
+        {
+            return Err(StoreError::InvalidBaton(baton.schema.clone()));
+        }
+        return Ok(());
+    }
+
+    let normalized_participants = normalize_participants(
+        baton.participants.worker.harness.clone(),
+        baton.participants.reviewer.harness.clone(),
+    )
+    .map_err(|_| StoreError::InvalidBaton(baton.schema.clone()))?;
+    let normalized_deliverables = normalize_deliverables(baton.scope_deliverables.clone())
+        .map_err(|_| StoreError::InvalidBaton(baton.schema.clone()))?;
+    let binding = baton
+        .publication_binding
+        .as_ref()
+        .ok_or_else(|| StoreError::InvalidBaton(baton.schema.clone()))?;
+    if normalized_participants
+        != (
+            baton.participants.worker.harness.clone(),
+            baton.participants.reviewer.harness.clone(),
+        )
+        || normalized_deliverables != baton.scope_deliverables
+        || baton.publication_policy.as_ref() != Some(&PublicationPolicy::fixed())
+        || !baton.publication.required
+        || binding.obligation.scope_revision != baton.scope_revision
+        || binding.obligation.handoff_revision > baton.revision
+    {
+        return Err(StoreError::InvalidBaton(baton.schema.clone()));
+    }
+    if let Some(migration) = baton.migration.as_ref() {
+        if migration.from_schema != LEGACY_SCHEMA
+            || migration.from_revision >= baton.revision
+            || migration.legacy_state_digest.len() != 64
+            || !migration
+                .legacy_state_digest
+                .bytes()
+                .all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err(StoreError::InvalidBaton(baton.schema.clone()));
+        }
+    }
+    Ok(())
+}
+
+fn validate_migration_edge(current: &RunBaton, next: &RunBaton) -> Result<(), StoreError> {
+    if migrate_legacy_baton(current)? == *next {
+        Ok(())
+    } else {
+        Err(StoreError::InvalidSchemaTransition)
     }
 }
 

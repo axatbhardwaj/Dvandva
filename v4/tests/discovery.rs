@@ -211,6 +211,8 @@ fn an_expired_reviewer_claim_is_reclaimable() {
             summary: "Implement".to_owned(),
         },
     );
+    let channel = RunChannel::open(run_dir);
+    channel.create(&baton).unwrap();
     baton.participants.reviewer.claim = Some(ParticipantClaim {
         session_id: "gone-reviewer".to_owned(),
         epoch: 3,
@@ -218,7 +220,8 @@ fn an_expired_reviewer_claim_is_reclaimable() {
         lease_expires_at: "2000-01-01T00:00:00Z".to_owned(),
         lease_seconds: 300,
     });
-    RunChannel::open(run_dir).create(&baton).unwrap();
+    baton.revision = 1;
+    channel.compare_and_swap(0, &baton).unwrap();
 
     let outcome = discover(root.path(), Some("DEF-123"));
     assert_eq!(outcome["outcome"], "match");

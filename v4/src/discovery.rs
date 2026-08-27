@@ -203,6 +203,7 @@ fn candidate(
         || workspace.repository_id != query.repository_id
         || !participant
             .harness
+            .trim()
             .eq_ignore_ascii_case(query.participant_harness)
     {
         return Ok(None);

@@ -325,6 +325,8 @@ enum RoleCommand {
         peer_harness: String,
         #[arg(long)]
         expected_revision: u64,
+        #[arg(long)]
+        credentials_root: PathBuf,
     },
 }
 
@@ -633,10 +635,12 @@ pub fn run() -> Result<(), CliError> {
                 current_harness,
                 peer_harness,
                 expected_revision,
+                credentials_root,
             } => {
                 require_role_api(api)?;
                 let baton = role_session::upgrade(
                     &run_dir,
+                    &credentials_root,
                     role,
                     &session_id,
                     &current_harness,
@@ -856,6 +860,7 @@ fn store_error_code(error: &StoreError) -> &'static str {
         StoreError::UnsupportedSchema(_) => "unsupported_schema",
         StoreError::MigrationRequired => "migration_required",
         StoreError::InvalidSchemaTransition => "invalid_schema_transition",
+        StoreError::InvalidBaton(_) => "invalid_baton",
     }
 }
 
@@ -864,7 +869,11 @@ fn upgrade_error_code(error: &UpgradeError) -> &'static str {
         UpgradeError::Store(error) => store_error_code(error),
         UpgradeError::Terminal => "terminal_state",
         UpgradeError::Busy => "busy",
-        UpgradeError::InvalidCaller => "invalid_participants",
+        UpgradeError::Credential(_) => "credential_error",
+        UpgradeError::Claim(error) => claim_error_code(error),
+        UpgradeError::InvalidSession => "invalid_session",
+        UpgradeError::InvalidObjective => "invalid_objective",
+        UpgradeError::InvalidTopology => "invalid_participants",
         UpgradeError::InvalidSchema => "invalid_schema_transition",
         UpgradeError::InvalidTimestamp => "invalid_baton",
     }
