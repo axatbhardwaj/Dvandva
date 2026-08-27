@@ -33,8 +33,46 @@ The failure is the intended missing-task behavior, not fixture or command setup.
 
 ## GREEN evidence
 
-Pending.
+Commits before this report update:
+
+- `f506a69` `test(v4): cover task identity after legacy upgrade`
+- `ecdaad4` `fix(v4): preserve amended task identity after upgrade`
+
+Fresh verification after the production fix:
+
+```text
+$ cargo test --manifest-path v4/Cargo.toml --test run_channel scope_amendment
+test result: ok. 3 passed; 0 failed; 0 ignored; 0 measured; 83 filtered out
+
+$ cargo test --manifest-path v4/Cargo.toml --all-targets
+lib:          6 passed
+credential:   3 passed
+discovery:   26 passed
+identity:     4 passed
+role_session: 34 passed
+run_channel: 86 passed
+skill_flow:  12 passed
+total:       171 passed; 0 failed
+
+$ cargo fmt --manifest-path v4/Cargo.toml -- --check
+exit 0
+
+$ cargo clippy --manifest-path v4/Cargo.toml --all-targets -- -D warnings
+Finished `dev` profile; exit 0
+
+$ git diff --check
+exit 0
+```
+
+The focused regression also deletes the installed head and invokes `recover`
+from revision 4, forcing the channel to replay and validate the immutable
+taskless-v1 to v2 to scope-amended history before the reopened read succeeds.
 
 ## Residual risk
 
-Pending final verification.
+No known correctness gap remains in this slice. The history edge must infer the
+approved action from committed state, so it permits `None -> Some(task)` only
+when the new task has a non-null exact reference. A second regression proves a
+null task reference keeps an upgraded taskless run taskless; existing coverage
+continues to prove that a taskful run may clear its reference without losing its
+task summary.
