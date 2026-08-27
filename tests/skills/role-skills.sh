@@ -37,6 +37,14 @@ worker="$(bash "$vadi" start codex-session codex claude "$workspace" \
 grep -Fq '"disposition": "created"' <<<"$worker"
 run_id="$(sed -n 's/.*"run_id": "\([^"]*\)".*/\1/p' <<<"$worker")"
 run_dir="$XDG_STATE_HOME/dvandva/runs/$run_id"
+grep -Fq '"lease_seconds": 1800' "$run_dir/baton.json"
+
+if bash "$vadi" start invalid codex gpt-5.6-sol "$workspace" \
+  'Implement DEF-999' DEF-999 >"$test_root/invalid.out" 2>"$test_root/invalid.err"; then
+  printf 'same-family alias unexpectedly accepted\n' >&2
+  exit 1
+fi
+grep -Fq 'harness families must be exactly codex and claude' "$test_root/invalid.err"
 
 reviewer="$(bash "$prativadi" start claude-session claude codex "$workspace" \
   'Implement DEF-123' DEF-123 --wait)"

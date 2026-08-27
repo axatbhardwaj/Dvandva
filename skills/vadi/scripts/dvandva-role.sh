@@ -59,7 +59,7 @@ session_id() {
 
 start_role() {
   test "$#" -ge 5 || {
-    printf 'usage: dvandva-role.sh start SESSION HARNESS PEER WORKSPACE OBJECTIVE [TASK] [--wait|--new-run]\n' >&2
+    printf 'usage: dvandva-role.sh start SESSION HARNESS PEER WORKSPACE OBJECTIVE [TASK] [--wait|--new-run|--run-id ID]\n' >&2
     exit 2
   }
   local session="$1"
@@ -68,13 +68,29 @@ start_role() {
   local workspace="$4"
   local objective="$5"
   shift 5
+  case "$harness:$peer" in
+    codex:claude|claude:codex) ;;
+    *)
+      printf 'dvandva-role: harness families must be exactly codex and claude\n' >&2
+      exit 2
+      ;;
+  esac
   local task=""
   local wait_flag=""
   local new_flag=""
+  local selected_run=""
   while (($#)); do
     case "$1" in
       --wait) wait_flag="--wait" ;;
       --new-run) new_flag="--new-run" ;;
+      --run-id)
+        selected_run="${2:-}"
+        test -n "$selected_run" || {
+          printf 'dvandva-role: --run-id requires a value\n' >&2
+          exit 2
+        }
+        shift
+        ;;
       *)
         if test -n "$task"; then
           printf 'dvandva-role: unexpected start argument: %s\n' "$1" >&2
@@ -95,6 +111,8 @@ start_role() {
     --current-harness "$harness"
     --peer-harness "$peer"
     --objective "$objective"
+    --lease-seconds "${DVANDVA_LEASE_SECONDS:-1800}"
+    --timeout-ms "${DVANDVA_WAIT_TIMEOUT_MS:-300000}"
   )
   if test -n "$task"; then
     args+=(--task-reference "$task")
@@ -104,6 +122,13 @@ start_role() {
   fi
   if test -n "$new_flag"; then
     args+=("$new_flag")
+  fi
+  if test -n "$selected_run"; then
+    test -z "$new_flag" || {
+      printf 'dvandva-role: --run-id and --new-run are mutually exclusive\n' >&2
+      exit 2
+    }
+    args+=(--run-id "$selected_run")
   fi
   "$binary" "${args[@]}"
 }
@@ -154,6 +179,19 @@ run_dir_command() {
         --after-revision "$1" \
         --timeout-ms "$timeout"
       ;;
+    heartbeat)
+      test "$#" -eq 1 || {
+        printf 'usage: dvandva-role.sh heartbeat SESSION RUN_DIR REVISION\n' >&2
+        exit 2
+      }
+      "$binary" role heartbeat \
+        --run-dir "$run_dir" \
+        --role "$role" \
+        --session-id "$session" \
+        --lease-seconds "${DVANDVA_LEASE_SECONDS:-1800}" \
+        --expected-revision "$1" \
+        --credentials-root "$credentials_root"
+      ;;
   esac
 }
 
@@ -169,12 +207,12 @@ case "$operation" in
     require_kernel
     start_role "$@"
     ;;
-  read|apply|wait)
+  read|apply|wait|heartbeat)
     require_kernel
     run_dir_command "$operation" "$@"
     ;;
   *)
-    printf 'usage: dvandva-role.sh {session-id|probe|start|read|apply|wait} ...\n' >&2
+    printf 'usage: dvandva-role.sh {session-id|probe|start|read|apply|wait|heartbeat} ...\n' >&2
     exit 2
     ;;
 esac
