@@ -436,3 +436,85 @@ Final logs:
   compatibility tests remain green.
 
 No known blocker or residual concern remains.
+
+## Fix round 4: created snapshot claim linearization
+
+Implementation commit: `9a299e8` (`fix(v4): linearize created role snapshots`).
+
+### Strict TDD RED evidence
+
+The two deterministic post-worker-claim regressions were changed or written
+and run against `acb68dd` before the production fix.
+
+```bash
+cargo test --manifest-path v4/Cargo.toml --lib created_start_
+# 2 run: 0 passed, 2 failed
+# The created response returned mutable head revisions 2 (post-claim reviewer
+# claim) and 3 (post-claim scope amendment), not worker-claim revision 1.
+```
+
+Preserved log:
+
+- `/tmp/dvandva-task5-fix4-created-red.log`
+
+### GREEN evidence
+
+```bash
+cargo test --manifest-path v4/Cargo.toml --lib
+# 6 passed, 0 failed
+
+cargo test --manifest-path v4/Cargo.toml --test role_session exact_discovery -- --test-threads=1
+# 6 passed, 0 failed, 20 filtered out
+
+cargo test --manifest-path v4/Cargo.toml --test role_session snapshot -- --test-threads=1
+# 9 passed, 0 failed, 22 filtered out
+
+cargo test --manifest-path v4/Cargo.toml --test role_session migration -- --test-threads=1
+# 9 passed, 0 failed, 22 filtered out
+
+cargo test --manifest-path v4/Cargo.toml --test skill_flow
+# 5 passed, 0 failed
+
+cargo test --manifest-path v4/Cargo.toml --all-targets
+# 150 integration tests and 6 unit tests passed, 0 failed
+
+cargo fmt --manifest-path v4/Cargo.toml -- --check
+# exit 0
+
+cargo clippy --manifest-path v4/Cargo.toml --all-targets -- -D warnings
+# exit 0
+
+git diff --check
+# exit 0
+```
+
+Final logs:
+
+- `/tmp/dvandva-task5-fix4-unit-green.log`
+- `/tmp/dvandva-task5-fix4-discovery-green.log`
+- `/tmp/dvandva-task5-fix4-snapshot-green.log`
+- `/tmp/dvandva-task5-fix4-migration-green.log`
+- `/tmp/dvandva-task5-fix4-skill-flow-green.log`
+- `/tmp/dvandva-task5-fix4-full-green.log`
+- `/tmp/dvandva-task5-fix4-fmt-green.log`
+- `/tmp/dvandva-task5-fix4-clippy-green.log`
+- `/tmp/dvandva-task5-fix4-diff-check.log`
+
+### Self-review and concerns
+
+- Created start now uses the same verified committed-grant completion helper as
+  claim and reclaim. It no longer rereads the mutable current head after its
+  worker claim.
+- A post-worker-claim scope amendment leaves the created response at committed
+  revision 1 and canonical scope A while the authoritative head proceeds to
+  revision 3 and scope B. The exact peer prompt remains derived from the
+  committed response.
+- A post-worker-claim reviewer claim leaves the created response at committed
+  revision 1 while the head proceeds to revision 2; there is one run and both
+  current private credentials remain valid.
+- A pre-worker-claim reviewer race remains on the same run and is included in
+  the worker claim's committed revision 2 snapshot.
+- Public JSON compatibility, credential verification, and raw-token privacy are
+  unchanged. The owned/resumed revision-bound path is also unchanged.
+
+No known blocker or residual concern remains.
