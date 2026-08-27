@@ -57,6 +57,22 @@ apply_action() {
   rm -f -- "$action"
 }
 
+apply_action_error() {
+  local facade="$1" session="$2" run_dir="$3" revision="$4" name="$5" payload="$6"
+  local action_dir="$test_root/actions" action status
+  mkdir -p "$action_dir"
+  chmod 700 "$action_dir"
+  action="$action_dir/$name.json"
+  printf '%s\n' "$payload" >"$action"
+  chmod 600 "$action"
+  set +e
+  bash "$facade" apply "$session" "$run_dir" "$revision" "$action" 2>&1
+  status=$?
+  set -e
+  rm -f -- "$action"
+  return "$status"
+}
+
 obligation_json() {
   python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["publication_binding"]["obligation"],separators=(",",":")))' "$1/baton.json"
 }
@@ -152,6 +168,151 @@ assert worker["checkpoint"] == reviewer["checkpoint"]
 $reviewer_wait"
 }
 
+run_supersession_incident() {
+  local worker="$HOME/.agents/skills/vadi/scripts/dvandva-role.sh"
+  local reviewer="$HOME/.claude/skills/prativadi/scripts/dvandva-role.sh"
+  local worker_session="incident-worker" reviewer_session="incident-reviewer"
+  local objective="Review architecture and module reuse" task="TASK-incident"
+  local site_id="site-incident" started mismatch joined run_id run_dir revision
+  local checkpoint_a="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  local checkpoint_b="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  local reviewing_a reviewing_b digest_a digest_b request accepted terminal
+  local failure_output failure_status worker_wait reviewer_wait
+
+  started="$(bash "$worker" start "$worker_session" codex claude "$workspace" \
+    "$objective" "$task" \
+    --required-deliverable review-package="Complete review package")"
+  run_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])' \
+    <<<"$started")"
+  run_dir="$XDG_STATE_HOME/dvandva/runs/$run_id"
+  python3 -c '
+import json, sys
+started = json.load(sys.stdin)
+run_id = sys.argv[1]
+assert started["revision"] == 1
+assert started["participants"]["worker"]["harness"] == "Codex"
+assert started["participants"]["reviewer"]["harness"] == "Claude"
+assert started["peer_prompt"] == f"Act as prativadi and join Dvandva run {run_id}."
+' "$run_id" <<<"$started"
+
+  mismatch="$(bash "$reviewer" start "$reviewer_session" claude codex \
+    "$workspace" "Conflicting review scope" "TASK-other" \
+    --required-deliverable review-package="Different package" --run-id "$run_id")"
+  python3 -c '
+import json, sys
+mismatch = json.load(sys.stdin)
+assert mismatch["outcome"] == "scope_mismatch"
+assert mismatch["candidates"][0]["run_id"] == sys.argv[1]
+' "$run_id" <<<"$mismatch"
+  revision="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["revision"])' \
+    "$run_dir/baton.json")"
+  test "$revision" = 1
+
+  joined="$(bash "$reviewer" start "$reviewer_session" claude codex \
+    "$workspace" --run-id "$run_id")"
+  python3 -c 'import json,sys; joined=json.load(sys.stdin); assert joined["run_id"] == sys.argv[1] and joined["revision"] == 2' \
+    "$run_id" <<<"$joined"
+  approve_explainer "$worker" "$worker_session" "$reviewer" \
+    "$reviewer_session" "$run_dir" 2 "$site_id" incident-1
+
+  reviewing_a="$(apply_action "$worker" "$worker_session" "$run_dir" 4 incident-a \
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"git\",\"identity\":\"$checkpoint_a\",\"deliverables\":[{\"id\":\"review-package\",\"artifacts\":[{\"kind\":\"file\",\"value\":\"review.md\"}]}],\"verification\":[\"review.md checked\"]}}")"
+  digest_a="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' \
+    <<<"$reviewing_a")"
+  approve_explainer "$worker" "$worker_session" "$reviewer" \
+    "$reviewer_session" "$run_dir" 5 "$site_id" incident-2
+
+  request="$(apply_action "$worker" "$worker_session" "$run_dir" 7 incident-request \
+    '{"type":"request_checkpoint_supersession","reason":"Required reuse analysis is absent"}')"
+  python3 -c 'import json,sys; baton=json.load(sys.stdin); assert baton["revision"] == 8 and baton["pending_checkpoint_supersession"]["reason"] == "Required reuse analysis is absent"' \
+    <<<"$request"
+
+  set +e
+  failure_output="$(apply_action_error "$reviewer" "$reviewer_session" "$run_dir" 7 \
+    incident-stale-approval \
+    "{\"type\":\"record_review\",\"verdict\":\"approved\",\"checkpoint_identity\":\"$checkpoint_a\",\"manifest_digest\":\"$digest_a\",\"scope_revision\":0,\"findings\":[]}")"
+  failure_status=$?
+  set -e
+  test "$failure_status" -ne 0
+  grep -Fq '"error":"revision_conflict"' <<<"$failure_output"
+
+  set +e
+  failure_output="$(apply_action_error "$reviewer" "$reviewer_session" "$run_dir" 8 \
+    incident-blocked-approval \
+    "{\"type\":\"record_review\",\"verdict\":\"approved\",\"checkpoint_identity\":\"$checkpoint_a\",\"manifest_digest\":\"$digest_a\",\"scope_revision\":0,\"findings\":[]}")"
+  failure_status=$?
+  set -e
+  test "$failure_status" -ne 0
+  grep -Fq '"error":"supersession_pending"' <<<"$failure_output"
+
+  accepted="$(apply_action "$reviewer" "$reviewer_session" "$run_dir" 8 \
+    incident-accept '{"type":"accept_checkpoint_supersession"}')"
+  python3 -c 'import json,sys; baton=json.load(sys.stdin); assert baton["revision"] == 9 and baton["status"] == "revising" and baton["assignee"] == "worker"' \
+    <<<"$accepted"
+  approve_explainer "$worker" "$worker_session" "$reviewer" \
+    "$reviewer_session" "$run_dir" 9 "$site_id" incident-3
+
+  reviewing_b="$(apply_action "$worker" "$worker_session" "$run_dir" 11 incident-b \
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"git\",\"identity\":\"$checkpoint_b\",\"deliverables\":[{\"id\":\"review-package\",\"artifacts\":[{\"kind\":\"file\",\"value\":\"review.md\"},{\"kind\":\"file\",\"value\":\"reuse-analysis.md\"}]}],\"verification\":[\"review.md checked\",\"reuse-analysis.md checked\"]}}")"
+  digest_b="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' \
+    <<<"$reviewing_b")"
+  approve_explainer "$worker" "$worker_session" "$reviewer" \
+    "$reviewer_session" "$run_dir" 12 "$site_id" incident-4
+  apply_action "$reviewer" "$reviewer_session" "$run_dir" 14 incident-approve-b \
+    "{\"type\":\"record_review\",\"verdict\":\"approved\",\"checkpoint_identity\":\"$checkpoint_b\",\"manifest_digest\":\"$digest_b\",\"scope_revision\":0,\"findings\":[]}" >/dev/null
+  approve_explainer "$worker" "$worker_session" "$reviewer" \
+    "$reviewer_session" "$run_dir" 15 "$site_id" incident-5
+  terminal="$(apply_action "$worker" "$worker_session" "$run_dir" 17 \
+    incident-finalize '{"type":"finalize"}')"
+
+  python3 - "$run_dir" "$site_id" "$checkpoint_b" "$digest_b" <<'PY'
+import json, pathlib, sys
+run_dir, site_id, checkpoint, digest = sys.argv[1:]
+receipts = []
+seen = set()
+for path in sorted(pathlib.Path(run_dir, "history").glob("*.json")):
+    baton = json.loads(path.read_text())
+    binding = baton.get("publication_binding") or {}
+    obligation = binding.get("obligation") or {}
+    review = binding.get("review")
+    deployment = binding.get("deployment")
+    handoff = obligation.get("handoff_revision")
+    if review is not None and deployment is not None and handoff not in seen:
+        seen.add(handoff)
+        receipts.append((obligation, deployment, review))
+assert [entry[0]["kind"] for entry in receipts] == [
+    "run_started", "worker_to_reviewer", "checkpoint_superseded",
+    "worker_to_reviewer", "reviewer_to_worker",
+]
+assert {entry[1]["site_id"] for entry in receipts} == {site_id}
+assert [entry[1]["site_version"] for entry in receipts] == [f"incident-{n}" for n in range(1, 6)]
+assert len({entry[1]["site_version"] for entry in receipts}) == 5
+assert all(entry[1]["publisher_harness"] == "Codex" for entry in receipts)
+assert all(entry[2]["reviewer_harness"] == "Claude" for entry in receipts)
+baton = json.loads(pathlib.Path(run_dir, "baton.json").read_text())
+expected = {"identity": checkpoint, "manifest_digest": digest, "scope_revision": 0}
+assert {key: baton["checkpoint"][key] for key in expected} == expected
+assert baton["review"]["checkpoint_identity"] == checkpoint
+assert baton["review"]["manifest_digest"] == digest
+assert baton["review"]["scope_revision"] == 0
+assert baton["terminal"] == {"outcome": "done", "reason": None}
+assert baton["revision"] == 18 and baton["status"] == "done"
+PY
+
+  worker_wait="$(bash "$worker" wait "$worker_session" "$run_dir" 17 500)"
+  reviewer_wait="$(bash "$reviewer" wait "$reviewer_session" "$run_dir" 17 500)"
+  python3 -c '
+import json, sys
+terminal, worker, reviewer = (json.loads(value) for value in sys.stdin.read().split("\n---\n"))
+assert worker["checkpoint"] == reviewer["checkpoint"] == terminal["checkpoint"]
+assert worker["terminal"] == reviewer["terminal"] == {"outcome": "done", "reason": None}
+' <<<"$terminal
+---
+$worker_wait
+---
+$reviewer_wait"
+}
+
 # Normal semantic casting: Codex vadi publishes, Claude prativadi reviews.
 run_casting normal \
   "$HOME/.agents/skills/vadi/scripts/dvandva-role.sh" \
@@ -161,6 +322,9 @@ run_casting normal \
 run_casting reverse \
   "$HOME/.claude/skills/vadi/scripts/dvandva-role.sh" \
   "$HOME/.agents/skills/prativadi/scripts/dvandva-role.sh" claude codex
+
+# Original incident: exact scope mismatch, checkpoint supersession, and exact-B completion.
+run_supersession_incident
 
 test ! -e "$test_root/peer-launched"
 printf 'two-role skill canary: ok\n'
