@@ -10,57 +10,59 @@ One worker Role Session and one reviewer Role Session from different harness
 families. Semantic roles do not determine harness-specific publication duty.
 
 **Role Session**:
-One independently started harness session holding a fenced, time-bounded
-participant claim. Neither session launches or invokes the other.
+One independently started harness session participating as worker or reviewer.
+Neither session launches or invokes the other.
 
 **Run Channel**:
-The isolated authority and history namespace for one Run Pair. Separate runs
-never share a channel.
+The isolated coordination context belonging to one Run Pair.
 
 **Coordination Kernel**:
-The authority for claims, transitions, bindings, recovery, and legal role
-actions. It is distinct from a harness launcher, model router, or goal manager.
+The authority that determines which role actions and state changes are valid.
+It is distinct from a harness launcher, model router, or goal manager.
 
 **Baton**:
-The single `dvandva.run.v2` state for one Run Pair. V1 Baton state is legacy
-input accepted only by the dedicated one-way upgrade.
+The authoritative evolving record of one Run Pair.
 
 **Canonical Scope**:
-The Baton-owned objective, references, task identity, scope revision, and
-non-empty set of required deliverables. Exact-run selection cannot amend it.
+The agreed objective, references, task identity, and required deliverables for
+one run.
 
 **Checkpoint Manifest**:
 The complete set of immutable deliverable references and verification evidence
 covering every required deliverable in Canonical Scope exactly once.
 
 **Checkpoint Binding**:
-The checkpoint identity, kernel-derived manifest digest, and scope revision
-that together identify the exact object reviewed and approved.
+The exact immutable checkpoint to which findings or approval apply.
 
 **Checkpoint Supersession**:
 A pending request to replace the current immutable checkpoint after new work is
-found during review. Approval Withdrawal is the corresponding finalizing path.
+found during review.
+
+**Approval Withdrawal**:
+Retraction of approval after new required work makes the approved checkpoint
+incomplete.
+
+**Protocol Upgrade**:
+One-way adoption of a newer run contract while retaining the prior run as
+provenance.
 
 **Handoff**:
 An assignee change whose publication obligation binds the current scope and,
 when present, the current Checkpoint Binding.
 
 **Publication Gate**:
-The fixed requirement that the Codex harness deploy one stable owner-only Codex
-Site per run and the Claude harness review the exact current deployment.
+The requirement that the current explainer deployment and its independent
+review describe the same Handoff before the run advances.
 
 **External Reference**:
-A typed coordinate asserted by a participant for a Git object, artifact, or
-Site deployment. The kernel binds its structure but does not resolve every
-external system.
+A stable identity for a deliverable or deployment outside the Baton.
 
 **Human Decision**:
 An explicit pause containing one unresolved question, evidence, options,
 designated contact, and exact resume target.
 
 **Participant Claim**:
-A role/session binding protected by an expiring lease, epoch, and secret-token
-digest. Replacement fences the earlier credential.
+A Role Session's exclusive authority to act for one semantic role.
 
 **Harness Goal**:
 User-owned prompt context outside Dvandva state. A role neither creates nor

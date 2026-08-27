@@ -18,8 +18,8 @@
 - Semantic roles submit and review only complete checkpoint bindings. Use
   checkpoint supersession or approval withdrawal for newly discovered work.
 - At every handoff, the Codex harness updates the run's owner-only Codex Sites
-  explainer and the Claude harness reviews that exact deployment, regardless of
-  which harness is vadi. Keep its plan/TODO list current.
+  explainer, including its plan/TODO list. The Claude harness reviews that exact
+  deployment, regardless of which harness is vadi.
 - Harness goals are user-owned prompt context. Leave goals untouched throughout
   role activation, handoff, Human Decision, and terminal completion.
 
