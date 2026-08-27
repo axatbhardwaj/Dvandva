@@ -134,6 +134,12 @@ pub fn discover(
         }
         let run_dir = entry.path();
         if !entry.file_type()?.is_dir() {
+            if query.run_id.is_some() {
+                corrupt.push(CorruptCandidate {
+                    run_dir,
+                    error: "named run entry is not a directory".to_owned(),
+                });
+            }
             continue;
         }
         match RunChannel::open(&run_dir).read() {
@@ -146,7 +152,14 @@ pub fn discover(
                 Ok(None) => {}
                 Err(error) => corrupt.push(CorruptCandidate { run_dir, error }),
             },
-            Err(crate::store::StoreError::RunMissing) => {}
+            Err(crate::store::StoreError::RunMissing) => {
+                if query.run_id.is_some() {
+                    corrupt.push(CorruptCandidate {
+                        run_dir,
+                        error: "named run directory has no Baton head".to_owned(),
+                    });
+                }
+            }
             Err(error) => corrupt.push(CorruptCandidate {
                 run_dir,
                 error: error.to_string(),
@@ -221,6 +234,12 @@ fn candidate(
     if !matches!(baton.schema.as_str(), SCHEMA | LEGACY_SCHEMA) {
         return Err("unsupported baton schema".to_owned());
     }
+    if query
+        .run_id
+        .is_some_and(|expected| baton.run_id != expected)
+    {
+        return Err("baton run id does not match its named directory".to_owned());
+    }
     if baton.schema == SCHEMA && matches!(baton.status, Status::Done | Status::Abandoned) {
         return Ok(None);
     }
@@ -236,12 +255,6 @@ fn candidate(
         Role::Worker => &baton.participants.worker,
         Role::Reviewer => &baton.participants.reviewer,
     };
-    if query
-        .run_id
-        .is_some_and(|expected| baton.run_id != expected)
-    {
-        return Err("baton run id does not match its named directory".to_owned());
-    }
     if workspace.repository_id != query.repository_id
         || !participant
             .harness
@@ -329,7 +342,14 @@ fn outcome(
     let (outcome, candidates) = if !corrupt.is_empty() {
         (DiscoveryKind::Corrupt, candidates)
     } else if !upgrades.is_empty() {
-        (DiscoveryKind::UpgradeRequired, upgrades)
+        let mut plausible = candidates;
+        plausible.extend(upgrades);
+        plausible.sort_by(|left, right| left.run_id.cmp(&right.run_id));
+        if plausible.len() == 1 {
+            (DiscoveryKind::UpgradeRequired, plausible)
+        } else {
+            (DiscoveryKind::Ambiguous, plausible)
+        }
     } else if candidates.is_empty() && !task_mismatches.is_empty() {
         (DiscoveryKind::TaskMismatch, task_mismatches)
     } else {

@@ -463,6 +463,98 @@ fn exact_discovery_treats_named_run_identity_mismatch_as_corrupt() {
 }
 
 #[test]
+fn broad_discovery_is_ambiguous_for_multiple_or_mixed_upgrade_candidates() {
+    for mixed in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        write_legacy_run(root.path(), "legacy-a");
+        if mixed {
+            create_run(
+                root.path(),
+                "current-b",
+                REPOSITORY_ID,
+                Some("DEF-123"),
+                "claude",
+            );
+        } else {
+            write_legacy_run(root.path(), "legacy-b");
+        }
+
+        let output = command()
+            .args([
+                "discover",
+                "--runs-dir",
+                root.path().to_str().unwrap(),
+                "--repository-id",
+                REPOSITORY_ID,
+                "--reviewer-harness",
+                "codex",
+                "--role",
+                "worker",
+                "--task-reference",
+                "DEF-123",
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let outcome: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(outcome["outcome"], "ambiguous");
+        assert_eq!(outcome["candidates"].as_array().unwrap().len(), 2);
+    }
+}
+
+#[test]
+fn exact_named_non_directory_missing_head_and_terminal_identity_mismatch_are_corrupt() {
+    let root = tempfile::tempdir().unwrap();
+    std::fs::write(root.path().join("named-file"), b"not a run").unwrap();
+    std::fs::create_dir(root.path().join("missing-head")).unwrap();
+
+    let terminal = create_run(
+        root.path(),
+        "stored-terminal",
+        REPOSITORY_ID,
+        Some("DEF-123"),
+        "claude",
+    );
+    let channel = RunChannel::open(&terminal);
+    let grant = claim::claim(&channel, Role::Worker, "worker", 300, 0).unwrap();
+    transition::apply(
+        &channel,
+        Role::Worker,
+        "worker",
+        &grant.token,
+        1,
+        Action::Abandon {
+            reason: "terminal fixture".to_owned(),
+        },
+    )
+    .unwrap();
+    std::fs::rename(&terminal, root.path().join("named-terminal")).unwrap();
+
+    for run_id in ["named-file", "missing-head", "named-terminal"] {
+        let output = command()
+            .args([
+                "discover",
+                "--runs-dir",
+                root.path().to_str().unwrap(),
+                "--repository-id",
+                REPOSITORY_ID,
+                "--reviewer-harness",
+                "codex",
+                "--role",
+                "worker",
+                "--run-id",
+                run_id,
+            ])
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let outcome: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(outcome["outcome"], "corrupt", "{run_id}");
+        assert_eq!(outcome["corrupt"].as_array().unwrap().len(), 1);
+    }
+}
+
+#[test]
 fn a_live_reviewer_claim_is_not_joinable() {
     let root = tempfile::tempdir().unwrap();
     let run_dir = create_run(
