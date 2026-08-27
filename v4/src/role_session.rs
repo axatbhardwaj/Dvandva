@@ -93,6 +93,8 @@ pub struct UpgradeRequiredRole {
     pub next_actions: [&'static str; 1],
     pub actionable: bool,
     pub objective: crate::model::Objective,
+    pub task_reference: Option<String>,
+    pub task_summary: String,
     pub scope_revision: u64,
     pub scope_deliverables: Vec<DeliverableRequirement>,
     pub status: Status,
@@ -157,6 +159,11 @@ fn start_with_retries(
         request.objective_refs,
         request.task_reference,
     )?;
+    if request.run_id.is_none() && request.objective.is_none() {
+        return Err(RoleSessionError::Invalid(
+            "non-exact role start requires an objective".to_owned(),
+        ));
+    }
     let normalized = match request.role {
         Role::Worker => normalize_participants(
             request.current_harness.to_owned(),
@@ -192,21 +199,6 @@ fn start_with_retries(
         session_id: Some(request.session_id),
     };
     let mut outcome = discovery::discover(request.runs_dir, query)?;
-    if request.run_id.is_some()
-        && matches!(outcome.outcome, DiscoveryKind::Match | DiscoveryKind::Busy)
-        && !scope_matches(&outcome.candidates[0], &request)
-    {
-        outcome.outcome = DiscoveryKind::ScopeMismatch;
-        outcome.next_action = Some("retry_with_canonical_scope");
-        outcome.requested_scope = Some(RequestedScope {
-            objective_summary: request.objective.map(|value| value.trim().to_owned()),
-            objective_refs: (!request.objective_refs.is_empty())
-                .then(|| request.objective_refs.to_vec()),
-            task_reference: request.task_reference.map(|value| value.trim().to_owned()),
-            required_deliverables: (!request.required_deliverables.is_empty())
-                .then(|| request.required_deliverables.to_vec()),
-        });
-    }
     if request.new_run && request.run_id.is_none() {
         if request.role != Role::Worker {
             return Err(RoleSessionError::Invalid(
@@ -217,6 +209,8 @@ fn start_with_retries(
             outcome.outcome = DiscoveryKind::None;
             outcome.candidates.clear();
         }
+    } else {
+        classify_scope_mismatch(&mut outcome, &request);
     }
     if outcome.outcome == DiscoveryKind::None && request.role == Role::Reviewer && request.wait {
         outcome = discovery::wait_for_match(
@@ -226,6 +220,7 @@ fn start_with_retries(
             request.timeout,
             true,
         )?;
+        classify_scope_mismatch(&mut outcome, &request);
     }
     match outcome.outcome {
         DiscoveryKind::Match => {
@@ -251,6 +246,8 @@ fn start_with_retries(
                 next_actions: ["upgrade_protocol"],
                 actionable: true,
                 objective: candidate.objective,
+                task_reference: candidate.task_reference,
+                task_summary: candidate.task_summary,
                 scope_revision: candidate.scope_revision,
                 scope_deliverables: candidate.scope_deliverables,
                 status: candidate.status,
@@ -417,6 +414,28 @@ fn scope_matches(
             .is_none_or(|value| candidate.task_reference.as_deref() == Some(value.trim()))
         && (request.required_deliverables.is_empty()
             || candidate.scope_deliverables == request.required_deliverables)
+}
+
+fn classify_scope_mismatch(outcome: &mut DiscoveryOutcome, request: &RoleStartRequest<'_>) {
+    let comparable = matches!(
+        outcome.outcome,
+        DiscoveryKind::Match
+            | DiscoveryKind::Busy
+            | DiscoveryKind::UpgradeRequired
+            | DiscoveryKind::TaskMismatch
+    ) && outcome.candidates.len() == 1;
+    if comparable && !scope_matches(&outcome.candidates[0], request) {
+        outcome.outcome = DiscoveryKind::ScopeMismatch;
+        outcome.next_action = Some("retry_with_canonical_scope");
+        outcome.requested_scope = Some(RequestedScope {
+            objective_summary: request.objective.map(|value| value.trim().to_owned()),
+            objective_refs: (!request.objective_refs.is_empty())
+                .then(|| request.objective_refs.to_vec()),
+            task_reference: request.task_reference.map(|value| value.trim().to_owned()),
+            required_deliverables: (!request.required_deliverables.is_empty())
+                .then(|| request.required_deliverables.to_vec()),
+        });
+    }
 }
 
 fn validate_start(

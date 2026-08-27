@@ -8,6 +8,68 @@ fn command() -> Command {
     Command::new(env!("CARGO_BIN_EXE_dvandva-v4"))
 }
 
+fn initialize_workspace(root: &std::path::Path, origin: &str) -> std::path::PathBuf {
+    let workspace = root.join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    for args in [
+        vec!["init", "--quiet"],
+        vec!["remote", "add", "origin", origin],
+    ] {
+        assert!(std::process::Command::new("git")
+            .arg("-C")
+            .arg(&workspace)
+            .args(args)
+            .status()
+            .unwrap()
+            .success());
+    }
+    workspace
+}
+
+fn create_worker_run(
+    workspace: &std::path::Path,
+    runs: &std::path::Path,
+    credentials: &std::path::Path,
+    objective: &str,
+    task_reference: &str,
+) -> serde_json::Value {
+    let output = command()
+        .args([
+            "role",
+            "start",
+            "--api",
+            "2",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-session",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--objective",
+            objective,
+            "--task-reference",
+            task_reference,
+            "--required-deliverable",
+            "implementation=Canonical implementation",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    serde_json::from_slice(&output.stdout).unwrap()
+}
+
 fn write_legacy_run(run_dir: &std::path::Path) {
     std::fs::create_dir_all(run_dir.join("history")).unwrap();
     let baton = serde_json::json!({
@@ -163,6 +225,9 @@ fn migration_exact_v1_start_returns_upgrade_metadata_without_a_credential() {
     let runs = root.path().join("runs");
     let run_dir = runs.join("legacy-run");
     write_legacy_run(&run_dir);
+    let corrupt = runs.join("unrelated-corrupt");
+    std::fs::create_dir_all(&corrupt).unwrap();
+    std::fs::write(corrupt.join("baton.json"), b"not json").unwrap();
     let credentials = root.path().join("credentials");
 
     let output = command()
@@ -204,8 +269,122 @@ fn migration_exact_v1_start_returns_upgrade_metadata_without_a_credential() {
     assert_eq!(result["run_id"], "legacy-run");
     assert_eq!(result["from_schema"], "dvandva.run.v1");
     assert_eq!(result["next_action"], "upgrade_protocol");
+    assert_eq!(result["task_reference"], "DEF-123");
+    assert_eq!(result["task_summary"], "Migrate safely");
     assert!(result.get("credential").is_none());
     assert!(!credentials.exists());
+}
+
+#[test]
+fn migration_exact_v1_scope_mismatch_precedes_upgrade() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = initialize_workspace(root.path(), "https://example.com/team/project.git");
+    let runs = root.path().join("runs");
+    let run_dir = runs.join("legacy-run");
+    write_legacy_run(&run_dir);
+    let corrupt = runs.join("unrelated-corrupt");
+    std::fs::create_dir_all(&corrupt).unwrap();
+    std::fs::write(corrupt.join("baton.json"), b"not json").unwrap();
+    let credentials = root.path().join("credentials");
+
+    let mismatches = [
+        vec!["--objective", "Different objective"],
+        vec!["--objective-ref", "ticket=https://tracker.test/DEF-999"],
+        vec!["--task-reference", "DEF-999"],
+        vec!["--required-deliverable", "implementation=New output"],
+    ];
+    for (index, mismatch) in mismatches.into_iter().enumerate() {
+        let mut process = std::process::Command::new(env!("CARGO_BIN_EXE_dvandva-v4"));
+        process
+            .args([
+                "role",
+                "start",
+                "--api",
+                "2",
+                "--workspace",
+                workspace.to_str().unwrap(),
+                "--runs-dir",
+                runs.to_str().unwrap(),
+                "--credentials-root",
+                credentials.to_str().unwrap(),
+                "--role",
+                "worker",
+                "--session-id",
+                &format!("worker-{index}"),
+                "--current-harness",
+                "codex",
+                "--peer-harness",
+                "claude",
+                "--run-id",
+                "legacy-run",
+            ])
+            .args(mismatch);
+        let output = process.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(result["outcome"], "scope_mismatch");
+        assert_eq!(result["candidates"][0]["task_reference"], "DEF-123");
+        assert!(result.get("requested_scope").is_some());
+    }
+    let installed: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(run_dir.join("baton.json")).unwrap()).unwrap();
+    assert_eq!(installed["revision"], 0);
+    assert!(!credentials.exists());
+}
+
+#[test]
+fn migration_exact_v1_accepts_the_deterministic_default_scope() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = initialize_workspace(root.path(), "https://example.com/team/project.git");
+    let runs = root.path().join("runs");
+    write_legacy_run(&runs.join("legacy-run"));
+    let output = command()
+        .args([
+            "role",
+            "start",
+            "--api",
+            "2",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            root.path().join("credentials").to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--run-id",
+            "legacy-run",
+            "--objective",
+            "Migrate safely",
+            "--task-reference",
+            "DEF-123",
+            "--required-deliverable",
+            "legacy_objective=Migrate safely",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["outcome"], "upgrade_required");
+    assert_eq!(result["scope_deliverables"][0]["id"], "legacy_objective");
+    assert_eq!(
+        result["scope_deliverables"][0]["description"],
+        "Migrate safely"
+    );
 }
 
 #[test]
@@ -1329,6 +1508,275 @@ fn worker_start_creates_claims_and_idempotently_resumes_one_run() {
     assert_eq!(separate["disposition"], "created");
     assert_ne!(separate["run_id"], run_id);
     assert_eq!(std::fs::read_dir(&runs).unwrap().count(), 2);
+}
+
+#[test]
+fn snapshot_non_exact_start_requires_objective_before_discovery() {
+    let root = tempfile::tempdir().unwrap();
+    let output = command()
+        .args([
+            "role",
+            "start",
+            "--api",
+            "2",
+            "--workspace",
+            root.path().join("missing-workspace").to_str().unwrap(),
+            "--runs-dir",
+            root.path().join("runs").to_str().unwrap(),
+            "--credentials-root",
+            root.path().join("credentials").to_str().unwrap(),
+            "--role",
+            "reviewer",
+            "--session-id",
+            "reviewer",
+            "--current-harness",
+            "claude",
+            "--peer-harness",
+            "codex",
+            "--wait",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let error: serde_json::Value = serde_json::from_slice(&output.stderr).unwrap();
+    assert_eq!(error["error"], "invalid_input");
+    assert!(error["message"].as_str().unwrap().contains("objective"));
+    assert!(!root.path().join("runs").exists());
+    assert!(!root.path().join("credentials").exists());
+}
+
+#[test]
+fn snapshot_broad_scope_mismatch_does_not_claim_immediate_match() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = initialize_workspace(root.path(), "git@github.com:axatbhardwaj/Dvandva.git");
+    let runs = root.path().join("runs");
+    let credentials = root.path().join("credentials");
+    let created = create_worker_run(
+        &workspace,
+        &runs,
+        &credentials,
+        "Canonical objective",
+        "DEF-123",
+    );
+    let run_id = created["run_id"].as_str().unwrap();
+
+    let mismatches = [
+        vec![
+            "--objective",
+            "Different objective",
+            "--task-reference",
+            "DEF-123",
+        ],
+        vec![
+            "--objective",
+            "Canonical objective",
+            "--objective-ref",
+            "ticket=https://tracker.test/OTHER",
+            "--task-reference",
+            "DEF-123",
+        ],
+        vec![
+            "--objective",
+            "Canonical objective",
+            "--task-reference",
+            "DEF-999",
+        ],
+        vec![
+            "--objective",
+            "Canonical objective",
+            "--task-reference",
+            "DEF-123",
+            "--required-deliverable",
+            "implementation=Different output",
+        ],
+    ];
+    for (index, coordinates) in mismatches.into_iter().enumerate() {
+        let mut process = std::process::Command::new(env!("CARGO_BIN_EXE_dvandva-v4"));
+        process
+            .args([
+                "role",
+                "start",
+                "--api",
+                "2",
+                "--workspace",
+                workspace.to_str().unwrap(),
+                "--runs-dir",
+                runs.to_str().unwrap(),
+                "--credentials-root",
+                credentials.to_str().unwrap(),
+                "--role",
+                "reviewer",
+                "--session-id",
+                &format!("reviewer-{index}"),
+                "--current-harness",
+                "claude",
+                "--peer-harness",
+                "codex",
+            ])
+            .args(coordinates);
+        let output = process.output().unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let mismatch: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(mismatch["outcome"], "scope_mismatch");
+        assert_eq!(mismatch["candidates"][0]["run_id"], run_id);
+        assert!(mismatch.get("requested_scope").is_some());
+    }
+    let installed: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(runs.join(run_id).join("baton.json")).unwrap())
+            .unwrap();
+    assert_eq!(installed["revision"], 1);
+    assert!(installed["participants"]["reviewer"]["claim"].is_null());
+    assert!(!credentials.join("reviewer-0").exists());
+
+    let separate = command()
+        .args([
+            "role",
+            "start",
+            "--api",
+            "2",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "separate-worker",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--objective",
+            "Separate objective",
+            "--task-reference",
+            "DEF-123",
+            "--required-deliverable",
+            "implementation=Separate implementation",
+            "--new-run",
+        ])
+        .output()
+        .unwrap();
+    assert!(separate.status.success());
+    let separate: serde_json::Value = serde_json::from_slice(&separate.stdout).unwrap();
+    assert_eq!(separate["disposition"], "created");
+    assert_ne!(separate["run_id"], run_id);
+    assert_eq!(std::fs::read_dir(&runs).unwrap().count(), 2);
+}
+
+#[test]
+fn snapshot_broad_scope_mismatch_after_wait_does_not_claim() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = initialize_workspace(root.path(), "git@github.com:axatbhardwaj/Dvandva.git");
+    let runs = root.path().join("runs");
+    let credentials = root.path().join("credentials");
+    let waiter = std::process::Command::new(env!("CARGO_BIN_EXE_dvandva-v4"))
+        .args([
+            "role",
+            "start",
+            "--api",
+            "2",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "reviewer",
+            "--session-id",
+            "reviewer",
+            "--current-harness",
+            "claude",
+            "--peer-harness",
+            "codex",
+            "--objective",
+            "Requested objective",
+            "--task-reference",
+            "DEF-123",
+            "--wait",
+            "--poll-interval-ms",
+            "25",
+            "--timeout-ms",
+            "3000",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let created = create_worker_run(
+        &workspace,
+        &runs,
+        &credentials,
+        "Canonical objective",
+        "DEF-123",
+    );
+    let output = waiter.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mismatch: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(mismatch["outcome"], "scope_mismatch");
+    let run_id = created["run_id"].as_str().unwrap();
+    let installed: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(runs.join(run_id).join("baton.json")).unwrap())
+            .unwrap();
+    assert_eq!(installed["revision"], 1);
+    assert!(installed["participants"]["reviewer"]["claim"].is_null());
+}
+
+#[test]
+fn snapshot_exact_start_ignores_unrelated_corrupt_sibling() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = initialize_workspace(root.path(), "git@github.com:axatbhardwaj/Dvandva.git");
+    let runs = root.path().join("runs");
+    let credentials = root.path().join("credentials");
+    let created = create_worker_run(&workspace, &runs, &credentials, "Objective", "DEF-123");
+    let corrupt = runs.join("unrelated-corrupt");
+    std::fs::create_dir_all(&corrupt).unwrap();
+    std::fs::write(corrupt.join("baton.json"), b"not json").unwrap();
+
+    let output = command()
+        .args([
+            "role",
+            "start",
+            "--api",
+            "2",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "reviewer",
+            "--session-id",
+            "reviewer",
+            "--current-harness",
+            "claude",
+            "--peer-harness",
+            "codex",
+            "--run-id",
+            created["run_id"].as_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let joined: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(joined["outcome"], "started");
+    assert_eq!(joined["run_id"], created["run_id"]);
 }
 
 #[test]
