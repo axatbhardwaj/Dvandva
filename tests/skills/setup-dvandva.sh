@@ -76,9 +76,12 @@ expect_failure 'installation_manifest_missing' bash "$installer" doctor --versio
 reset_xdg preserve
 bash "$installer" install --version 0.1.0 >/dev/null
 touch "$XDG_STATE_HOME/dvandva/runs/keep-me"
+mkdir -p "$XDG_DATA_HOME/dvandva/bin/foreign"
+touch "$XDG_DATA_HOME/dvandva/bin/foreign/unowned"
 bash "$installer" uninstall --version 0.1.0 | grep -q 'preserved_runs=true'
 test -f "$XDG_STATE_HOME/dvandva/runs/keep-me"
-test ! -e "$XDG_DATA_HOME/dvandva/bin"
+test -f "$XDG_DATA_HOME/dvandva/bin/foreign/unowned"
+test ! -e "$XDG_DATA_HOME/dvandva/bin/0.1.0"
 
 reset_xdg purge
 bash "$installer" install --version 0.1.0 >/dev/null
@@ -94,5 +97,15 @@ touch "$XDG_DATA_HOME/dvandva/foreign"
 expect_failure 'refusing unowned data' bash "$installer" install --version 0.1.0
 test -f "$XDG_DATA_HOME/dvandva/foreign"
 expect_failure 'refusing uninstall without owned manifest' bash "$installer" uninstall --version 0.1.0
+
+reset_xdg unsupported_arch
+fakebin="$test_root/fakebin"
+mkdir -p "$fakebin"
+printf '%s\n' '#!/usr/bin/env bash' \
+  'if test "${1:-}" = "-s"; then printf "Linux\n"; else printf "aarch64\n"; fi' \
+  >"$fakebin/uname"
+chmod +x "$fakebin/uname"
+expect_failure 'unsupported architecture' env PATH="$fakebin:$PATH" \
+  bash "$installer" install --version 0.1.0
 
 printf 'setup-dvandva installer tests: ok\n'

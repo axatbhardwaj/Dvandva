@@ -75,7 +75,6 @@ asset_for_host() {
   }
   case "$(uname -m)" in
     x86_64) printf 'dvandva-kernel-linux-x86_64\n' ;;
-    aarch64|arm64) printf 'dvandva-kernel-linux-aarch64\n' ;;
     *)
       printf 'setup-dvandva: unsupported architecture: %s\n' "$(uname -m)" >&2
       exit 1
@@ -148,6 +147,8 @@ install_release() {
     local staged="$bin_root/.$version.$$.tmp"
     mkdir "$staged"
     install -m 755 "$download_dir/$asset" "$staged/dvandva-kernel"
+    printf '%s\n' "$owner" >"$staged/.owner"
+    chmod 600 "$staged/.owner"
     "$staged/dvandva-kernel" probe --expected-schema "$schema" | grep -Fq '"compatible": true'
     mv -- "$staged" "$version_dir"
   fi
@@ -207,7 +208,20 @@ uninstall_owned() {
     printf 'setup-dvandva: --purge-runs requires --yes-purge-runs\n' >&2
     exit 2
   fi
-  rm -rf -- "$bin_root"
+  local current_target
+  current_target="$(readlink "$bin_root/current" 2>/dev/null || true)"
+  if test -n "$current_target" \
+    && test -f "$bin_root/$current_target/.owner" \
+    && grep -Fxq "$owner" "$bin_root/$current_target/.owner"; then
+    rm -f -- "$bin_root/current"
+  fi
+  local version_path
+  for version_path in "$bin_root"/*; do
+    if test -f "$version_path/.owner" && grep -Fxq "$owner" "$version_path/.owner"; then
+      rm -rf -- "$version_path"
+    fi
+  done
+  rmdir -- "$bin_root" 2>/dev/null || true
   rm -f -- "$manifest"
   if $purge_runs; then
     rm -rf -- "$state_root/runs"
