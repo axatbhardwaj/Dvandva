@@ -59,7 +59,7 @@ if test "${1:-}" = "--version"; then
     valid|probe_*) printf 'dvandva-v4 0.2.0\n' ;;
     version_nul) printf 'dvandva-v4 0.2.0\0\n' ;;
     version_invalid_utf8) printf 'dvandva-v4 0.2.0\377\n' ;;
-    version_oversized) printf 'dvandva-v4 0.2.0'; head -c 20000 /dev/zero | tr '\0' '\n' ;;
+    version_oversized) printf 'dvandva-v4 0.2.0'; head -c 300 /dev/zero | tr '\0' x ;;
     version_extra_newline) printf 'dvandva-v4 0.2.0\n\n' ;;
     version_nonzero) printf 'dvandva-v4 0.2.0\n'; exit 7 ;;
   esac
@@ -69,8 +69,9 @@ if test "${1:-}" = "probe"; then
   case "${DVANDVA_FAKE_MODE:-valid}" in
     probe_nul) printf '%s\0\n' "$valid_probe" ;;
     probe_invalid_utf8) printf '%s\377\n' "$valid_probe" ;;
-    probe_oversized) printf '%s' "$valid_probe"; head -c 20000 /dev/zero | tr '\0' ' ' ;;
+    probe_oversized) printf '{'; head -c 17000 /dev/zero | tr '\0' ' '; printf '%s' "${valid_probe:1}" ;;
     probe_extra_newline) printf '%s\n\n' "$valid_probe" ;;
+    probe_trailing_space) printf '%s ' "$valid_probe" ;;
     probe_nonzero) printf '%s\n' "$valid_probe"; exit 9 ;;
     *) printf '%s\n' "$valid_probe" ;;
   esac
@@ -83,7 +84,8 @@ for facade in "$vadi" "$prativadi"; do
   for mode in \
     version_nul version_invalid_utf8 version_oversized \
     version_extra_newline version_nonzero \
-    probe_nul probe_invalid_utf8 probe_oversized probe_extra_newline probe_nonzero
+    probe_nul probe_invalid_utf8 probe_oversized probe_extra_newline \
+    probe_trailing_space probe_nonzero
   do
     expect_failure 'incompatible kernel' env DVANDVA_FAKE_MODE="$mode" \
       bash "$facade" probe

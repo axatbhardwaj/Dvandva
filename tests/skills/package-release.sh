@@ -240,7 +240,7 @@ printf '%s\n' \
   '    exact) printf "dvandva-v4 0.2.0" ;;' \
   '    nul) printf "dvandva-v4 0.2.0\\0\\n" ;;' \
   '    invalid_utf8) printf "dvandva-v4 0.2.0\\377\\n" ;;' \
-  '    oversized) printf "dvandva-v4 0.2.0"; head -c 20000 /dev/zero | tr "\\0" "\\n" ;;' \
+  '    oversized) printf "dvandva-v4 0.2.0"; head -c 300 /dev/zero | tr "\\0" x ;;' \
   '    extra_newline) printf "dvandva-v4 0.2.0\\n\\n" ;;' \
   '    crlf) printf "dvandva-v4 0.2.0\\r\\n" ;;' \
   '    nonzero) printf "dvandva-v4 0.2.0\\n"; exit 7 ;;' \
@@ -254,7 +254,9 @@ printf '%s\n' \
   "  root_duplicate) printf '%s\\n' '{\"package\":\"wrong\",\"package\":\"dvandva-v4\",\"version\":\"0.2.0\",\"publish\":false,\"write_schema\":\"dvandva.run.v2\",\"read_schemas\":[\"dvandva.run.v2\",\"dvandva.run.v1\"],\"role_api\":2,\"capabilities\":{\"upgrade_from_v1\":true},\"compatible\":true}' ;;" \
   "  nested_duplicate) printf '%s\\n' '{\"package\":\"dvandva-v4\",\"version\":\"0.2.0\",\"publish\":false,\"write_schema\":\"dvandva.run.v2\",\"read_schemas\":[\"dvandva.run.v2\",\"dvandva.run.v1\"],\"role_api\":2,\"capabilities\":{\"upgrade_from_v1\":false,\"upgrade_from_v1\":true},\"compatible\":true}' ;;" \
   "  nul) printf '%s\\0' '$valid_probe' ;;" \
-  "  oversized) printf '%s' '$valid_probe'; head -c 20000 /dev/zero | tr '\\0' ' ' ;;" \
+  "  oversized) printf '{'; head -c 17000 /dev/zero | tr '\\0' ' '; printf '%s' '${valid_probe:1}' ;;" \
+  "  extra_newline) printf '%s\\n\\n' '$valid_probe' ;;" \
+  "  trailing_space) printf '%s ' '$valid_probe' ;;" \
   "  invalid_utf8) printf '%s\\377' '$valid_probe' ;;" \
   "  malformed_json) printf '%s' '{' ;;" \
   '  *) exit 2 ;;' \
@@ -360,6 +362,8 @@ expect_rejected_probe root-duplicate root_duplicate probe_mismatch
 expect_rejected_probe nested-duplicate nested_duplicate probe_mismatch
 expect_rejected_probe nul-bearing nul probe_mismatch
 expect_rejected_probe oversized oversized probe_too_large
+expect_rejected_probe extra-newline extra_newline probe_mismatch
+expect_rejected_probe trailing-space trailing_space probe_mismatch
 expect_rejected_probe invalid-utf8 invalid_utf8 probe_mismatch
 expect_rejected_probe malformed-json malformed_json probe_mismatch
 

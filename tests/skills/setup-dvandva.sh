@@ -38,7 +38,7 @@ if test "${1:-}" = "--version"; then
   case "$kind" in
     version-nul) printf 'dvandva-v4 0.2.0\0\n' ;;
     version-invalid-utf8) printf 'dvandva-v4 0.2.0\377\n' ;;
-    version-oversize) printf 'dvandva-v4 0.2.0'; head -c 70000 /dev/zero | tr '\0' x ;;
+    version-oversize) printf 'dvandva-v4 0.2.0'; head -c 300 /dev/zero | tr '\0' x ;;
     version-extra-newline) printf 'dvandva-v4 0.2.0\n\n' ;;
     version-nonzero) printf 'dvandva-v4 0.2.0\n'; exit 7 ;;
     *) printf 'dvandva-v4 0.2.0\n' ;;
@@ -49,8 +49,9 @@ if test "${1:-}" = "probe"; then
   case "$kind" in
     probe-nul) printf '%s\0\n' "$valid_probe" ;;
     probe-invalid-utf8) printf '%s\377\n' "$valid_probe" ;;
-    probe-oversize) printf '%s' "$valid_probe"; head -c 70000 /dev/zero | tr '\0' ' ' ;;
+    probe-oversize) printf '{'; head -c 17000 /dev/zero | tr '\0' ' '; printf '%s' "${valid_probe:1}" ;;
     probe-extra-newline) printf '%s\n\n' "$valid_probe" ;;
+    probe-trailing-space) printf '%s ' "$valid_probe" ;;
     probe-nonzero) printf '%s\n' "$valid_probe"; exit 7 ;;
     *) printf '%s\n' "$valid_probe" ;;
   esac
@@ -111,7 +112,8 @@ for handshake_kind in \
   adversarial_handshake_case "$handshake_kind" version_mismatch
 done
 for handshake_kind in \
-  probe-nul probe-invalid-utf8 probe-oversize probe-extra-newline probe-nonzero; do
+  probe-nul probe-invalid-utf8 probe-oversize probe-extra-newline \
+  probe-trailing-space probe-nonzero; do
   adversarial_handshake_case "$handshake_kind" probe_mismatch
 done
 

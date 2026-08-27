@@ -7,6 +7,8 @@ role_api="2"
 read_schemas="dvandva.run.v2,dvandva.run.v1"
 upgrade_from_v1="true"
 default_version="0.2.0"
+version_max_bytes=256
+probe_max_bytes=16384
 operation="${1:-}"
 shift || true
 version="${DVANDVA_VERSION:-$default_version}"
@@ -289,7 +291,8 @@ validate_candidate() {
   probe_file="$candidate_capture/probe.raw"
 
   set +e
-  "$candidate" --version 2>/dev/null | head -c 65537 >"$version_file"
+  "$candidate" --version 2>/dev/null | \
+    head -c "$((version_max_bytes + 1))" >"$version_file"
   pipeline_status=("${PIPESTATUS[@]}")
   set -e
   candidate_status=${pipeline_status[0]}
@@ -306,9 +309,9 @@ try:
 except UnicodeDecodeError:
     raise SystemExit(1)
 expected = ("dvandva-v4 " + sys.argv[2]).encode()
-valid = len(raw) <= 65536 and b"\0" not in raw and raw in (expected, expected + b"\n")
+valid = len(raw) <= int(sys.argv[3]) and b"\0" not in raw and raw in (expected, expected + b"\n")
 raise SystemExit(0 if valid else 1)
-' "$version_file" "$version" || {
+' "$version_file" "$version" "$version_max_bytes" || {
     printf 'setup-dvandva: version_mismatch expected=%s reported=invalid\n' \
       "$version" >&2
     exit 1
@@ -316,7 +319,8 @@ raise SystemExit(0 if valid else 1)
 
   set +e
   "$candidate" probe --expected-schema "$schema" \
-    --expected-role-api "$role_api" 2>/dev/null | head -c 65537 >"$probe_file"
+    --expected-role-api "$role_api" 2>/dev/null | \
+    head -c "$((probe_max_bytes + 1))" >"$probe_file"
   pipeline_status=("${PIPESTATUS[@]}")
   set -e
   candidate_status=${pipeline_status[0]}
@@ -337,7 +341,7 @@ def unique(pairs):
     return result
 try:
     raw = pathlib.Path(sys.argv[1]).read_bytes()
-    if len(raw) > 65536 or b"\0" in raw:
+    if len(raw) > int(sys.argv[3]) or b"\0" in raw:
         raise ValueError("invalid raw probe")
     text = raw.decode("utf-8")
     if text.endswith("\n"):
@@ -365,7 +369,7 @@ valid = (
     and probe.get("compatible") is True
 )
 raise SystemExit(0 if valid else 1)
-' "$probe_file" "$version" || {
+' "$probe_file" "$version" "$probe_max_bytes" || {
       printf 'setup-dvandva: probe_mismatch expected_schema=%s expected_role_api=%s\n' \
         "$schema" "$role_api" >&2
       exit 1
