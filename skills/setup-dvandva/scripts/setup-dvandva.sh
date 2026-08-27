@@ -19,6 +19,8 @@ transaction_active=false
 promoted_install=""
 old_manifest_present=false
 old_current_present=false
+old_current_target=""
+preserve_transaction=false
 
 cleanup() {
   local status=$?
@@ -32,7 +34,7 @@ cleanup() {
   if test -n "$staged_install"; then
     rm -rf -- "$staged_install" || true
   fi
-  if test -n "$transaction_dir"; then
+  if test -n "$transaction_dir" && ! $preserve_transaction; then
     rm -rf -- "$transaction_dir" || true
   fi
   exit "$status"
@@ -106,10 +108,25 @@ acquire_install_lock() {
   }
 }
 
+validate_managed_paths() {
+  if test -e "$data_root" || test -L "$data_root"; then
+    test -d "$data_root" && ! test -L "$data_root" || {
+      printf 'setup-dvandva: refusing unsafe data root at %s\n' "$data_root" >&2
+      exit 1
+    }
+  fi
+  if test -e "$bin_root" || test -L "$bin_root"; then
+    test -d "$bin_root" && ! test -L "$bin_root" || {
+      printf 'setup-dvandva: refusing unsafe bin root at %s\n' "$bin_root" >&2
+      exit 1
+    }
+  fi
+}
+
 manifest_owned() {
   test -f "$manifest" && ! test -L "$manifest" &&
     python3 -c '
-import json, os, stat, sys
+import json, os, re, stat, sys
 def unique(pairs):
     result = {}
     for key, value in pairs:
@@ -123,7 +140,26 @@ try:
         raise ValueError("not regular")
     with os.fdopen(fd, encoding="utf-8") as handle:
         value = json.load(handle, object_pairs_hook=unique)
-    valid = type(value) is dict and value.get("owner") == sys.argv[2]
+    keys = set(value) if type(value) is dict else set()
+    common = (
+        type(value) is dict
+        and value.get("owner") == sys.argv[2]
+        and type(value.get("version")) is str
+        and re.fullmatch(r"[0-9]+(?:\.[0-9]+)+", value["version"])
+        and value.get("asset") == "dvandva-kernel-linux-x86_64"
+        and type(value.get("sha256")) is str
+        and re.fullmatch(r"[0-9a-f]{64}", value["sha256"])
+    )
+    legacy = keys == {"owner", "version", "schema", "asset", "sha256"} and value.get("schema") == "dvandva.run.v1"
+    current = (
+        keys == {"owner", "version", "write_schema", "read_schemas", "role_api", "upgrade_from_v1", "publish", "asset", "sha256"}
+        and value.get("write_schema") == "dvandva.run.v2"
+        and value.get("read_schemas") == ["dvandva.run.v2", "dvandva.run.v1"]
+        and type(value.get("role_api")) is int and value["role_api"] == 2
+        and value.get("upgrade_from_v1") is True
+        and value.get("publish") is False
+    )
+    valid = common and (legacy or current)
 except (OSError, UnicodeError, ValueError, TypeError, json.JSONDecodeError):
     valid = False
 raise SystemExit(0 if valid else 1)
@@ -286,11 +322,24 @@ raise SystemExit(0 if valid else 1)
     }
 }
 
+owner_marker_matches() {
+  local path="$1"
+  python3 -c '
+import os, stat, sys
+try:
+    fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NOFOLLOW)
+    valid = stat.S_ISREG(os.fstat(fd).st_mode) and os.read(fd, 4096) == (sys.argv[2] + "\n").encode()
+    os.close(fd)
+except OSError:
+    valid = False
+raise SystemExit(0 if valid else 1)
+' "$path" "$owner" 2>/dev/null
+}
+
 validate_existing_version() {
   local digest="$1" owner_file="$version_dir/.owner"
   test -d "$version_dir" && ! test -L "$version_dir" &&
-    test -f "$owner_file" && ! test -L "$owner_file" &&
-    test "$(cat "$owner_file")" = "$owner" &&
+    owner_marker_matches "$owner_file" &&
     test -f "$binary" && ! test -L "$binary" && test -x "$binary" &&
     test "$(sha256sum "$binary" | cut -d' ' -f1)" = "$digest" || {
       printf 'setup-dvandva: unsafe existing version %s\n' "$version" >&2
@@ -302,27 +351,43 @@ validate_existing_version() {
 owned_version_path() {
   local path="$1" owner_file="$1/.owner"
   test -d "$path" && ! test -L "$path" &&
-    test -f "$owner_file" && ! test -L "$owner_file" &&
-    test "$(cat "$owner_file")" = "$owner"
+    owner_marker_matches "$owner_file"
 }
 
 rollback_transaction() {
-  local failed=false
+  local current_restored=false manifest_restored=false
   if $old_current_present; then
-    mv -fT -- "$transaction_dir/old-current" "$bin_root/current" || failed=true
+    if ln -s "$old_current_target" "$transaction_dir/restore-current" &&
+      mv -fT -- "$transaction_dir/restore-current" "$bin_root/current" &&
+      test "$(readlink "$bin_root/current" 2>/dev/null)" = "$old_current_target"; then
+      current_restored=true
+    fi
   else
-    rm -f -- "$bin_root/current" || failed=true
+    if rm -f -- "$bin_root/current" && ! test -e "$bin_root/current" && ! test -L "$bin_root/current"; then
+      current_restored=true
+    fi
   fi
   if $old_manifest_present; then
-    mv -fT -- "$transaction_dir/old-manifest" "$manifest" || failed=true
+    if cp -p -- "$transaction_dir/old-manifest" "$transaction_dir/restore-manifest" &&
+      mv -fT -- "$transaction_dir/restore-manifest" "$manifest" &&
+      cmp -s "$transaction_dir/old-manifest" "$manifest"; then
+      manifest_restored=true
+    fi
   else
-    rm -f -- "$manifest" || failed=true
+    if rm -f -- "$manifest" && ! test -e "$manifest" && ! test -L "$manifest"; then
+      manifest_restored=true
+    fi
   fi
-  if test -n "$promoted_install"; then
-    rm -rf -- "$promoted_install" || failed=true
+  if $current_restored && $manifest_restored; then
+    if test -n "$promoted_install"; then
+      rm -rf -- "$promoted_install" || return 1
+    fi
     promoted_install=""
+    return 0
   fi
-  ! $failed
+  preserve_transaction=true
+  printf 'setup-dvandva: rollback_uncertain evidence=%s\n' "$transaction_dir" >&2
+  return 1
 }
 
 prepare_transaction() {
@@ -344,13 +409,11 @@ prepare_transaction() {
       printf 'setup-dvandva: refusing unsafe current path\n' >&2
       exit 1
     }
-    local old_target
-    old_target="$(readlink "$bin_root/current")"
-    test -n "$old_target" || {
+    old_current_target="$(readlink "$bin_root/current")"
+    test -n "$old_current_target" || {
       printf 'setup-dvandva: refusing unsafe current path\n' >&2
       exit 1
     }
-    ln -s "$old_target" "$transaction_dir/old-current"
     old_current_present=true
   fi
   write_manifest_to "$transaction_dir/new-manifest" "$digest" "$asset"
@@ -473,6 +536,7 @@ esac
 
 require_runtime
 acquire_install_lock
+validate_managed_paths
 case "$operation" in
   install|update) install_release ;;
   doctor) doctor ;;

@@ -167,6 +167,17 @@ path_safety_case() (
       printf 'dvandva-skill-v1\n' >"$candidate/.owner"
       ln -s "$new_binary" "$candidate/dvandva-kernel"
       ;;
+    owner-symlink)
+      mkdir "$candidate"
+      cp "$new_binary" "$candidate/dvandva-kernel"
+      printf 'dvandva-skill-v1\n' >"$case_bin/owner-target"
+      ln -s ../owner-target "$candidate/.owner"
+      ;;
+    owner-wrong-bytes)
+      mkdir "$candidate"
+      cp "$new_binary" "$candidate/dvandva-kernel"
+      printf 'dvandva-skill-v1\n\n' >"$candidate/.owner"
+      ;;
   esac
   expect_failure 'unsafe existing version' env DVANDVA_RELEASE_DIR="$new_release" \
     bash "$installer" update --version 0.2.0
@@ -176,6 +187,30 @@ path_safety_case() (
 path_safety_case unowned
 path_safety_case directory-symlink
 path_safety_case binary-symlink
+path_safety_case owner-symlink
+path_safety_case owner-wrong-bytes
+
+# Managed parent directories may not redirect writes through symlinks.
+(
+  export XDG_DATA_HOME="$test_root/data-root-symlink/data"
+  export XDG_STATE_HOME="$test_root/data-root-symlink/state"
+  mkdir -p "$XDG_DATA_HOME" "$test_root/data-root-symlink/target"
+  ln -s "$test_root/data-root-symlink/target" "$XDG_DATA_HOME/dvandva"
+  expect_failure 'unsafe data root' env DVANDVA_RELEASE_DIR="$new_release" \
+    bash "$installer" install --version 0.2.0
+  test -z "$(find "$test_root/data-root-symlink/target" -mindepth 1 -print)"
+)
+(
+  export XDG_DATA_HOME="$test_root/bin-root-symlink/data"
+  export XDG_STATE_HOME="$test_root/bin-root-symlink/state"
+  DVANDVA_RELEASE_DIR="$old_release" bash "$old_installer" \
+    install --version 0.1.1 >/dev/null
+  mv "$XDG_DATA_HOME/dvandva/bin" "$XDG_DATA_HOME/dvandva/bin-real"
+  ln -s bin-real "$XDG_DATA_HOME/dvandva/bin"
+  expect_failure 'unsafe bin root' env DVANDVA_RELEASE_DIR="$new_release" \
+    bash "$installer" update --version 0.2.0
+  test "$(readlink "$XDG_DATA_HOME/dvandva/bin/current")" = '0.1.1'
+)
 
 # A manifest-preparation failure cannot promote a candidate or split current/manifest.
 (
@@ -225,6 +260,9 @@ cat >"$XDG_DATA_HOME/dvandva/installation.json" <<'MANIFEST_DECOY'
   "decoy": {"owner": "dvandva-skill-v1"}
 }
 MANIFEST_DECOY
+expect_failure 'installation_manifest_missing' bash "$installer" doctor --version 0.2.0
+printf '%s\n' '{"owner":"dvandva-skill-v1"}' \
+  >"$XDG_DATA_HOME/dvandva/installation.json"
 expect_failure 'installation_manifest_missing' bash "$installer" doctor --version 0.2.0
 cp "$test_root/manifest.good" "$XDG_DATA_HOME/dvandva/installation.json"
 
@@ -297,16 +335,22 @@ chmod 755 "$concurrent_release/$asset"
 (cd "$concurrent_release" && sha256sum "$asset" >SHA256SUMS)
 concurrent_data="$test_root/concurrent/data"
 concurrent_state="$test_root/concurrent/state"
+mkdir -p "$concurrent_data"
+exec 8>>"$concurrent_data/.dvandva-install.lock"
+flock -x 8
 env XDG_DATA_HOME="$concurrent_data" XDG_STATE_HOME="$concurrent_state" \
   DVANDVA_RELEASE_DIR="$concurrent_release" bash "$installer" install --version 0.2.0 \
   >"$test_root/concurrent-a.out" 2>&1 &
 first_pid=$!
+sleep 1
+kill -0 "$first_pid"
+test ! -e "$concurrent_data/dvandva"
+flock -u 8
+exec 8>&-
+wait "$first_pid"
 env XDG_DATA_HOME="$concurrent_data" XDG_STATE_HOME="$concurrent_state" \
   DVANDVA_RELEASE_DIR="$concurrent_release" bash "$installer" install --version 0.2.0 \
-  >"$test_root/concurrent-b.out" 2>&1 &
-second_pid=$!
-wait "$first_pid"
-wait "$second_pid"
+  >"$test_root/concurrent-b.out" 2>&1
 test "$(readlink "$concurrent_data/dvandva/bin/current")" = '0.2.0'
 test "$(find "$concurrent_data/dvandva/bin/0.2.0" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" = \
   '.owner dvandva-kernel '
