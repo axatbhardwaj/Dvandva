@@ -22,11 +22,15 @@ mkdir -p "$HOME"
 npx --yes skills add "$repo_root" --copy --global \
   --agent claude-code codex --skill setup-dvandva vadi prativadi -y >/dev/null
 bash "$HOME/.agents/skills/setup-dvandva/scripts/setup-dvandva.sh" \
-  install --version 0.1.1 >/dev/null
+  install --version 0.2.0 >/dev/null
 
-vadi="$HOME/.agents/skills/vadi/scripts/dvandva-role.sh"
-prativadi="$HOME/.claude/skills/prativadi/scripts/dvandva-role.sh"
-test "$vadi" != "$prativadi"
+for role in vadi prativadi; do
+  cmp "$repo_root/skills/$role/scripts/dvandva-role.sh" \
+    "$HOME/.agents/skills/$role/scripts/dvandva-role.sh"
+  cmp "$repo_root/skills/$role/scripts/dvandva-role.sh" \
+    "$HOME/.claude/skills/$role/scripts/dvandva-role.sh"
+done
+
 workspace="$test_root/workspace"
 mkdir -p "$workspace"
 git -C "$workspace" init --quiet
@@ -37,122 +41,114 @@ mkdir -p "$fakebin"
 for peer in claude codex; do
   printf '#!/usr/bin/env bash\ntouch "%s"\nexit 99\n' "$test_root/peer-launched" \
     >"$fakebin/$peer"
-  chmod +x "$fakebin/$peer"
+  chmod 755 "$fakebin/$peer"
 done
 export PATH="$fakebin:$PATH"
 
-reviewer_a_out="$test_root/reviewer-a.out"
-reviewer_b_out="$test_root/reviewer-b.out"
-bash "$prativadi" start reviewer-a claude codex "$workspace" \
-  'Implement DEF-123' DEF-123 --wait >"$reviewer_a_out" 2>"$test_root/reviewer-a.err" &
-reviewer_a_pid=$!
-bash "$prativadi" start reviewer-b claude codex "$workspace" \
-  'Implement DEF-123' DEF-123 --wait >"$reviewer_b_out" 2>"$test_root/reviewer-b.err" &
-reviewer_b_pid=$!
-
-worker="$(bash "$vadi" start worker-a codex claude "$workspace" \
-  'Implement DEF-123' DEF-123)"
-wait "$reviewer_a_pid"
-wait "$reviewer_b_pid"
-
-started_count="$(grep -l '"outcome": "started"' "$reviewer_a_out" "$reviewer_b_out" | wc -l)"
-test "$started_count" = "1"
-none_count="$(grep -l '"outcome": "none"' "$reviewer_a_out" "$reviewer_b_out" | wc -l)"
-test "$none_count" = "1"
-if grep -Fq '"outcome": "started"' "$reviewer_a_out"; then
-  reviewer_session="reviewer-a"
-  reviewer_out="$reviewer_a_out"
-else
-  reviewer_session="reviewer-b"
-  reviewer_out="$reviewer_b_out"
-fi
-
-run_id="$(sed -n 's/.*"run_id": "\([^"]*\)".*/\1/p' <<<"$worker")"
-run_dir="$XDG_STATE_HOME/dvandva/runs/$run_id"
-grep -Fq "\"run_id\": \"$run_id\"" "$reviewer_out"
-
 apply_action() {
-  local facade="$1"
-  local session="$2"
-  local directory="$3"
-  local revision="$4"
-  local name="$5"
-  local payload="$6"
-  local action_dir="$test_root/actions"
+  local facade="$1" session="$2" run_dir="$3" revision="$4" name="$5" payload="$6"
+  local action_dir="$test_root/actions" action
   mkdir -p "$action_dir"
   chmod 700 "$action_dir"
-  local action="$action_dir/$name.json"
+  action="$action_dir/$name.json"
   printf '%s\n' "$payload" >"$action"
   chmod 600 "$action"
-  local status=0
-  bash "$facade" apply "$session" "$directory" "$revision" "$action" || status=$?
+  bash "$facade" apply "$session" "$run_dir" "$revision" "$action"
   rm -f -- "$action"
-  return "$status"
 }
 
-apply_action "$vadi" worker-a "$run_dir" 2 publication-required \
-  '{"type":"record_publication","required":true,"desired_revision":2,"published_revision":null,"refs":[]}' \
-  >/dev/null
-apply_action "$vadi" worker-a "$run_dir" 3 checkpoint-a \
-  '{"type":"submit_checkpoint","checkpoint":{"kind":"git","identity":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","verification":["cargo test"]}}' \
-  >/dev/null
-apply_action "$prativadi" "$reviewer_session" "$run_dir" 4 changes \
-  '{"type":"record_review","verdict":"changes_requested","checkpoint_identity":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","findings":["Add the missing contention test"]}' \
-  >/dev/null
-apply_action "$vadi" worker-a "$run_dir" 5 checkpoint-b \
-  '{"type":"submit_checkpoint","checkpoint":{"kind":"git","identity":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","verification":["cargo test","contention test"]}}' \
-  >/dev/null
-apply_action "$prativadi" "$reviewer_session" "$run_dir" 6 approve \
-  '{"type":"record_review","verdict":"approved","checkpoint_identity":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","findings":[]}' \
-  >/dev/null
+obligation_json() {
+  python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["publication_binding"]["obligation"],separators=(",",":")))' "$1/baton.json"
+}
 
-if apply_action "$vadi" worker-a "$run_dir" 7 premature-finalize \
-  '{"type":"finalize"}' >"$test_root/premature.out" 2>"$test_root/premature.err"; then
-  printf 'finalization unexpectedly bypassed publication\n' >&2
-  exit 1
-fi
-grep -Fq 'publication_stale' "$test_root/premature.err"
+approve_explainer() {
+  local publisher="$1" publisher_session="$2" reviewer="$3" reviewer_session="$4"
+  local run_dir="$5" revision="$6" site_id="$7" site_version="$8"
+  local obligation source_digest url published deployment reviewed
+  obligation="$(obligation_json "$run_dir")"
+  source_digest="$(printf '%064d' "$revision")"
+  url="https://sites.openai.test/$site_id/$site_version"
+  published="$(apply_action "$publisher" "$publisher_session" "$run_dir" "$revision" \
+    "publish-$site_version" \
+    "{\"type\":\"record_explainer_publication\",\"obligation\":$obligation,\"source_digest\":\"$source_digest\",\"site_id\":\"$site_id\",\"site_version\":\"$site_version\",\"url\":\"$url\",\"channel\":\"codex_sites\",\"access\":\"owner_only\"}")"
+  python3 -c 'import json,sys; assert json.load(sys.stdin)["publication_binding"]["deployment"]["publisher_harness"] == "Codex"' <<<"$published"
+  deployment="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["publication_binding"]["deployment"],separators=(",",":")))' <<<"$published")"
+  reviewed="$(apply_action "$reviewer" "$reviewer_session" "$run_dir" "$((revision + 1))" \
+    "review-$site_version" \
+    "{\"type\":\"record_explainer_review\",\"obligation\":$obligation,\"source_digest\":\"$source_digest\",\"site_id\":\"$site_id\",\"site_version\":\"$site_version\",\"url\":\"$url\",\"verdict\":\"approved\",\"findings\":[]}")"
+  python3 -c 'import json,sys; binding=json.load(sys.stdin)["publication_binding"]; review=binding["review"]; deployment=binding["deployment"]; assert review["reviewer_harness"] == "Claude"; assert all(review[key] == deployment[key] for key in ["source_digest","site_id","site_version","url"])' <<<"$reviewed"
+  test -n "$deployment"
+}
 
-apply_action "$vadi" worker-a "$run_dir" 7 publication-synced \
-  '{"type":"record_publication","required":true,"desired_revision":7,"published_revision":7,"refs":[{"kind":"explainer","value":"https://example.test/def-123"}]}' \
-  >/dev/null
-terminal="$(apply_action "$vadi" worker-a "$run_dir" 8 finalize '{"type":"finalize"}')"
-grep -Fq '"status": "done"' <<<"$terminal"
-bash "$vadi" wait worker-a "$run_dir" 8 500 | grep -F '"status": "done"' >/dev/null
-bash "$prativadi" wait "$reviewer_session" "$run_dir" 8 500 |
-  grep -F '"status": "done"' >/dev/null
+run_casting() {
+  local label="$1" worker="$2" reviewer="$3" worker_harness="$4" reviewer_harness="$5"
+  local worker_session="$label-worker" reviewer_session="$label-reviewer"
+  local objective="Implement $label" task="TASK-$label" site_id="site-$label"
+  local peer_for_worker peer_for_reviewer started joined run_id run_dir checkpoint_a checkpoint_b digest_a digest_b
+  case "$worker_harness" in codex) peer_for_worker=claude ;; claude) peer_for_worker=codex ;; esac
+  case "$reviewer_harness" in codex) peer_for_reviewer=claude ;; claude) peer_for_reviewer=codex ;; esac
 
-for credential in \
-  "$XDG_STATE_HOME/dvandva/credentials/worker-a/$run_id/worker.json" \
-  "$XDG_STATE_HOME/dvandva/credentials/$reviewer_session/$run_id/reviewer.json"; do
-  test "$(stat -c '%a' "$credential")" = "600"
-  token="$(sed -n 's/.*"token": "\([^"]*\)".*/\1/p' "$credential")"
-  test -n "$token"
-  ! grep -R -Fq -- "$token" "$run_dir" "$test_root"/*.out "$test_root"/*.err
-done
+  started="$(bash "$worker" start "$worker_session" "$worker_harness" "$peer_for_worker" \
+    "$workspace" "$objective" "$task" --required-deliverable implementation="$objective")"
+  run_id="$(sed -n 's/.*"run_id": "\([^"]*\)".*/\1/p' <<<"$started")"
+  run_dir="$XDG_STATE_HOME/dvandva/runs/$run_id"
+  joined="$(bash "$reviewer" start "$reviewer_session" "$reviewer_harness" \
+    "$peer_for_reviewer" "$workspace" --run-id "$run_id")"
+  grep -Fq "\"run_id\": \"$run_id\"" <<<"$joined"
 
-reverse_worker="$(bash "$vadi" start worker-b claude codex "$workspace" \
-  'Implement DEF-456' DEF-456)"
-reverse_run_id="$(sed -n 's/.*"run_id": "\([^"]*\)".*/\1/p' <<<"$reverse_worker")"
-reverse_run_dir="$XDG_STATE_HOME/dvandva/runs/$reverse_run_id"
-reverse_reviewer="$(bash "$prativadi" start reviewer-c codex claude "$workspace" \
-  'Implement DEF-456' DEF-456)"
-grep -Fq "\"run_id\": \"$reverse_run_id\"" <<<"$reverse_reviewer"
+  local publisher publisher_session explainer_reviewer explainer_reviewer_session
+  if test "$worker_harness" = codex; then
+    publisher="$worker"; publisher_session="$worker_session"
+    explainer_reviewer="$reviewer"; explainer_reviewer_session="$reviewer_session"
+  else
+    publisher="$reviewer"; publisher_session="$reviewer_session"
+    explainer_reviewer="$worker"; explainer_reviewer_session="$worker_session"
+  fi
 
-apply_action "$vadi" worker-b "$reverse_run_dir" 2 reverse-publication-required \
-  '{"type":"record_publication","required":true,"desired_revision":2,"published_revision":null,"refs":[]}' \
-  >/dev/null
-apply_action "$vadi" worker-b "$reverse_run_dir" 3 reverse-checkpoint \
-  '{"type":"submit_checkpoint","checkpoint":{"kind":"git","identity":"cccccccccccccccccccccccccccccccccccccccc","verification":["test"]}}' \
-  >/dev/null
-apply_action "$prativadi" reviewer-c "$reverse_run_dir" 4 reverse-approve \
-  '{"type":"record_review","verdict":"approved","checkpoint_identity":"cccccccccccccccccccccccccccccccccccccccc","findings":[]}' \
-  >/dev/null
-apply_action "$vadi" worker-b "$reverse_run_dir" 5 reverse-publication \
-  '{"type":"record_publication","required":true,"desired_revision":5,"published_revision":5,"refs":[{"kind":"explainer","value":"https://example.test/def-456"}]}' \
-  >/dev/null
-apply_action "$vadi" worker-b "$reverse_run_dir" 6 reverse-finalize \
-  '{"type":"finalize"}' | grep -F '"status": "done"' >/dev/null
+  approve_explainer "$publisher" "$publisher_session" "$explainer_reviewer" \
+    "$explainer_reviewer_session" "$run_dir" 2 "$site_id" deployment-1
+  checkpoint_a="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa${label: -1}"
+  checkpoint_b="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb${label: -1}"
+  reviewing_a="$(apply_action "$worker" "$worker_session" "$run_dir" 4 checkpoint-a-$label \
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"git\",\"identity\":\"$checkpoint_a\",\"deliverables\":[{\"id\":\"implementation\",\"artifacts\":[{\"kind\":\"commit\",\"value\":\"$checkpoint_a\"}]}],\"verification\":[\"cargo test\"]}}")"
+  digest_a="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' <<<"$reviewing_a")"
+  approve_explainer "$publisher" "$publisher_session" "$explainer_reviewer" \
+    "$explainer_reviewer_session" "$run_dir" 5 "$site_id" deployment-2
+  apply_action "$reviewer" "$reviewer_session" "$run_dir" 7 changes-$label \
+    "{\"type\":\"record_review\",\"verdict\":\"changes_requested\",\"checkpoint_identity\":\"$checkpoint_a\",\"manifest_digest\":\"$digest_a\",\"scope_revision\":0,\"findings\":[\"Add contention coverage\"]}" >/dev/null
+  approve_explainer "$publisher" "$publisher_session" "$explainer_reviewer" \
+    "$explainer_reviewer_session" "$run_dir" 8 "$site_id" deployment-3
+  reviewing_b="$(apply_action "$worker" "$worker_session" "$run_dir" 10 checkpoint-b-$label \
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"git\",\"identity\":\"$checkpoint_b\",\"deliverables\":[{\"id\":\"implementation\",\"artifacts\":[{\"kind\":\"commit\",\"value\":\"$checkpoint_b\"}]}],\"verification\":[\"cargo test\",\"contention test\"]}}")"
+  digest_b="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' <<<"$reviewing_b")"
+  approve_explainer "$publisher" "$publisher_session" "$explainer_reviewer" \
+    "$explainer_reviewer_session" "$run_dir" 11 "$site_id" deployment-4
+  apply_action "$reviewer" "$reviewer_session" "$run_dir" 13 approve-$label \
+    "{\"type\":\"record_review\",\"verdict\":\"approved\",\"checkpoint_identity\":\"$checkpoint_b\",\"manifest_digest\":\"$digest_b\",\"scope_revision\":0,\"findings\":[]}" >/dev/null
+  approve_explainer "$publisher" "$publisher_session" "$explainer_reviewer" \
+    "$explainer_reviewer_session" "$run_dir" 14 "$site_id" deployment-5
+  terminal="$(apply_action "$worker" "$worker_session" "$run_dir" 16 finalize-$label \
+    '{"type":"finalize"}')"
+  grep -Fq '"status": "done"' <<<"$terminal"
+  grep -Fq "\"identity\": \"$checkpoint_b\"" <<<"$terminal"
+
+  test "$(grep -Rho '"site_id": "[^"]*"' "$run_dir" | sort -u)" = \
+    "\"site_id\": \"$site_id\""
+  grep -Rq '"publisher_harness": "Codex"' "$run_dir/history"
+  grep -Rq '"reviewer_harness": "Claude"' "$run_dir/history"
+  bash "$worker" wait "$worker_session" "$run_dir" 16 500 | grep -Fq '"status": "done"'
+  bash "$reviewer" wait "$reviewer_session" "$run_dir" 16 500 | grep -Fq '"status": "done"'
+}
+
+# Normal semantic casting: Codex vadi publishes, Claude prativadi reviews.
+run_casting normal \
+  "$HOME/.agents/skills/vadi/scripts/dvandva-role.sh" \
+  "$HOME/.claude/skills/prativadi/scripts/dvandva-role.sh" codex claude
+
+# Reverse semantic casting: Claude vadi works/reviews the Site; Codex prativadi publishes.
+run_casting reverse \
+  "$HOME/.claude/skills/vadi/scripts/dvandva-role.sh" \
+  "$HOME/.agents/skills/prativadi/scripts/dvandva-role.sh" claude codex
 
 test ! -e "$test_root/peer-launched"
 printf 'two-role skill canary: ok\n'

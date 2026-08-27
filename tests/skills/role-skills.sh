@@ -5,7 +5,13 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 test_root="$(mktemp -d)"
 trap 'rm -rf -- "$test_root"' EXIT
 
+mkdir -p "$test_root/old"
+git -C "$repo_root" archive skills-v0.1.1 v4 skills/vadi | tar -x -C "$test_root/old"
+CARGO_TARGET_DIR="$test_root/old-target" cargo build --quiet --locked \
+  --manifest-path "$test_root/old/v4/Cargo.toml"
 cargo build --quiet --locked --manifest-path "$repo_root/v4/Cargo.toml"
+old_binary="$test_root/old-target/debug/dvandva-v4"
+test "$($old_binary --version)" = 'dvandva-v4 0.1.1'
 export XDG_DATA_HOME="$test_root/data"
 export XDG_STATE_HOME="$test_root/state"
 binary="$XDG_DATA_HOME/dvandva/bin/current/dvandva-kernel"
@@ -44,42 +50,16 @@ grep -Fq '"upgrade_from_v1": true' <<<"$probe"
 
 # A truthful v1/API-1 kernel must be rejected before the facade reaches a role command.
 mv "$binary" "$binary.new"
-cat >"$binary" <<'OLD_KERNEL'
-#!/usr/bin/env bash
-if test "${1:-}" = "--version"; then
-  printf 'dvandva-v4 0.1.1\n'
-  exit 0
-fi
-if test "${1:-}" = "probe"; then
-  printf '{"package":"dvandva-v4","version":"0.1.1","write_schema":"dvandva.run.v1","read_schemas":["dvandva.run.v1"],"role_api":1,"capabilities":{"upgrade_from_v1":false},"compatible":false}\n'
-  exit 1
-fi
-printf 'role-called\n' >>"${OLD_KERNEL_LOG:?}"
-exit 99
-OLD_KERNEL
-chmod 755 "$binary"
-export OLD_KERNEL_LOG="$test_root/old-kernel.log"
+cp "$old_binary" "$binary"
 expect_failure 'incompatible kernel' bash "$vadi" start old codex claude "$workspace" \
   'Must not mutate' DEF-OLD --required-deliverable implementation=old
-test ! -e "$OLD_KERNEL_LOG"
 test ! -e "$XDG_STATE_HOME/dvandva/runs"
 mv "$binary.new" "$binary"
 
-# A truthful old facade asks for v1/API 1 and the v0.2 kernel rejects it before mutation.
-old_facade="$test_root/dvandva-role-v0.1.1.sh"
-cat >"$old_facade" <<'OLD_FACADE'
-#!/usr/bin/env bash
-set -euo pipefail
-binary="${XDG_DATA_HOME:?}/dvandva/bin/current/dvandva-kernel"
-"$binary" probe --expected-schema dvandva.run.v1 --expected-role-api 1 >/dev/null
-"$binary" role start --api 1 "$@"
-OLD_FACADE
-chmod 755 "$old_facade"
-expect_failure 'kernel compatibility mismatch' bash "$old_facade" \
-  --workspace "$workspace" --runs-dir "$XDG_STATE_HOME/dvandva/runs" \
-  --credentials-root "$XDG_STATE_HOME/dvandva/credentials" --role worker \
-  --session-id old --current-harness codex --peer-harness claude \
-  --objective old --required-deliverable implementation=old
+# The released 0.1.1 facade also fails its v1 handshake against the new kernel.
+old_facade="$test_root/old/skills/vadi/scripts/dvandva-role.sh"
+expect_failure 'incompatible kernel' bash "$old_facade" start old codex claude \
+  "$workspace" 'Must not mutate' DEF-OLD --new-run
 test ! -e "$XDG_STATE_HOME/dvandva/runs"
 
 export DVANDVA_LEASE_SECONDS=1
