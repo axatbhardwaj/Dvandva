@@ -1,0 +1,6 @@
+interface:
+  display_name: "Setup Dvandva"
+  short_description: "Manage the private Dvandva v4 kernel"
+  default_prompt: "Use $setup-dvandva to install the released Dvandva v4 kernel."
+policy:
+  allow_implicit_invocation: false
