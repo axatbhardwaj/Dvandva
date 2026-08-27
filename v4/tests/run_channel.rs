@@ -1,4 +1,5 @@
 use assert_cmd::Command;
+use dvandva_v4::model::RunBaton;
 use predicates::prelude::*;
 
 fn command() -> Command {
@@ -119,6 +120,13 @@ fn init_creates_a_run_centric_baton() {
     assert_eq!(baton["assignee"], "worker");
     assert_eq!(baton["participants"]["worker"]["harness"], "codex");
     assert_eq!(baton["participants"]["reviewer"]["harness"], "claude");
+}
+
+#[test]
+fn new_runs_require_a_synchronized_publication() {
+    let baton = RunBaton::new("run-publication", "Implement DEF-123", "codex", "claude");
+    assert!(baton.publication.required);
+    assert_eq!(baton.publication.published_revision, None);
 }
 
 #[test]
@@ -895,6 +903,21 @@ fn complete_review_fix_loop_reaches_done() {
         "worker-1",
         &worker_token,
         "6",
+        write_action(
+            dir.path(),
+            "publication.json",
+            serde_json::json!({
+                "type": "record_publication", "required": true,
+                "desired_revision": 6, "published_revision": 6,
+                "refs": [{"kind": "explainer", "value": "https://example.test/run-a"}]
+            }),
+        ),
+    );
+    apply(
+        "worker",
+        "worker-1",
+        &worker_token,
+        "7",
         write_action(
             dir.path(),
             "finalize.json",

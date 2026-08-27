@@ -469,3 +469,62 @@ fn explicit_run_id_resolves_an_ambiguous_role_start() {
         .stdout(predicate::str::contains(r#""outcome": "started""#))
         .stdout(predicate::str::contains(first_run));
 }
+
+#[test]
+fn a_live_worker_run_blocks_silent_duplicate_creation() {
+    let root = tempfile::tempdir().unwrap();
+    let workspace = root.path().join("workspace");
+    let runs = root.path().join("state/runs");
+    let credentials = root.path().join("state/credentials");
+    std::fs::create_dir(&workspace).unwrap();
+    git(&workspace, &["init", "--quiet"]);
+    git(
+        &workspace,
+        &[
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:axatbhardwaj/Dvandva.git",
+        ],
+    );
+    let first = start_role(
+        &workspace,
+        &runs,
+        &credentials,
+        "worker",
+        "worker-a",
+        "codex",
+        "claude",
+    );
+
+    let second = command()
+        .args([
+            "role",
+            "start",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-b",
+            "--current-harness",
+            "codex",
+            "--peer-harness",
+            "claude",
+            "--objective",
+            "Implement DEF-123",
+            "--task-reference",
+            "DEF-123",
+        ])
+        .output()
+        .unwrap();
+    assert!(second.status.success());
+    let result: serde_json::Value = serde_json::from_slice(&second.stdout).unwrap();
+    assert_eq!(result["outcome"], "busy");
+    assert_eq!(result["candidates"][0]["run_id"], first["run_id"]);
+    assert_eq!(std::fs::read_dir(&runs).unwrap().count(), 1);
+}

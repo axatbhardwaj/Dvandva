@@ -243,6 +243,11 @@ fn start_candidate(
             let path = credential::path(credentials_root, session_id, &candidate.run_id, role)?;
             ("resumed", baton.revision, path)
         }
+        ClaimState::Busy => {
+            return Err(RoleSessionError::Invalid(
+                "selected run is owned by another live session".to_owned(),
+            ));
+        }
     };
     Ok(RoleStartResult::Started(StartedRole {
         outcome: "started",

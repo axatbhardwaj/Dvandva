@@ -1,7 +1,7 @@
 use std::{
     fs::{self, File, OpenOptions},
     io::Write,
-    os::unix::fs::{OpenOptionsExt, PermissionsExt},
+    os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt},
     path::{Path, PathBuf},
 };
 
@@ -23,6 +23,8 @@ pub enum CredentialError {
     Missing,
     #[error("credential file is not private")]
     UnsafeFile,
+    #[error("credential path is not owned by the current user")]
+    UnsafeOwner,
     #[error("credential identity does not match the requested role session")]
     Mismatch,
     #[error("credential I/O error: {0}")]
@@ -133,6 +135,7 @@ pub fn load(
     {
         return Err(CredentialError::UnsafeFile);
     }
+    ensure_current_owner(&metadata)?;
     let credential: Credential = serde_json::from_slice(&fs::read(target)?)?;
     if credential.session_id != session_id || credential.run_id != run_id || credential.role != role
     {
@@ -150,6 +153,7 @@ fn ensure_private_dir(path: &Path) -> Result<(), CredentialError> {
             if metadata.permissions().mode() & 0o077 != 0 {
                 return Err(CredentialError::UnsafeDirectory);
             }
+            ensure_current_owner(&metadata)?;
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             fs::create_dir(path)?;
@@ -158,6 +162,15 @@ fn ensure_private_dir(path: &Path) -> Result<(), CredentialError> {
             File::open(parent)?.sync_all()?;
         }
         Err(error) => return Err(error.into()),
+    }
+    Ok(())
+}
+
+fn ensure_current_owner(metadata: &fs::Metadata) -> Result<(), CredentialError> {
+    // SAFETY: geteuid has no preconditions and does not dereference pointers.
+    let current_uid = unsafe { libc::geteuid() };
+    if metadata.uid() != current_uid {
+        return Err(CredentialError::UnsafeOwner);
     }
     Ok(())
 }

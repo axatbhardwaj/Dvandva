@@ -217,6 +217,7 @@ dependencies = [
  "assert_cmd",
  "clap",
  "fs2",
+ "libc",
  "notify",
  "predicates",
  "serde",

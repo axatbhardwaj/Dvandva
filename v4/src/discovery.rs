@@ -36,6 +36,7 @@ pub struct DiscoveryQuery<'a> {
 #[serde(rename_all = "snake_case")]
 pub enum DiscoveryKind {
     Match,
+    Busy,
     None,
     Ambiguous,
     Corrupt,
@@ -58,6 +59,7 @@ pub enum ClaimState {
     Unclaimed,
     Expired,
     Owned,
+    Busy,
 }
 
 #[derive(Debug, Serialize)]
@@ -205,6 +207,8 @@ fn candidate(
                 .is_some_and(|session_id| claim.session_id == session_id)
             {
                 ClaimState::Owned
+            } else if query.role == Role::Worker {
+                ClaimState::Busy
             } else {
                 return Ok(None);
             }
@@ -227,6 +231,7 @@ fn outcome(candidates: Vec<RunCandidate>, corrupt: Vec<CorruptCandidate>) -> Dis
     } else {
         match candidates.len() {
             0 => DiscoveryKind::None,
+            1 if candidates[0].claim_state == ClaimState::Busy => DiscoveryKind::Busy,
             1 => DiscoveryKind::Match,
             _ => DiscoveryKind::Ambiguous,
         }

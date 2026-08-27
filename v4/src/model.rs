@@ -172,7 +172,7 @@ impl RunBaton {
             checkpoint: None,
             review: None,
             publication: Publication {
-                required: false,
+                required: true,
                 desired_revision: 0,
                 published_revision: None,
                 refs: Vec::new(),
