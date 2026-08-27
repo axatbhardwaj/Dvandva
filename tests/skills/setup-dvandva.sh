@@ -318,6 +318,82 @@ rollback_case() (
 rollback_case fresh
 rollback_case preexisting
 
+# If promoted cleanup fails, retain transaction evidence and say rollback is uncertain.
+rollback_cleanup_bin="$test_root/rollback-cleanup-bin"
+mkdir -p "$rollback_cleanup_bin"
+cp "$rollback_bin/mv" "$rollback_cleanup_bin/mv"
+cat >"$rollback_cleanup_bin/rm" <<'FAIL_PROMOTED_RM'
+#!/usr/bin/env bash
+set -euo pipefail
+for argument in "$@"; do
+  if test "$argument" = "${PROMOTED_REMOVE_TARGET:?}"; then
+    printf 'injected promoted cleanup failure\n' >&2
+    exit 1
+  fi
+done
+exec /usr/bin/rm "$@"
+FAIL_PROMOTED_RM
+chmod 755 "$rollback_cleanup_bin/rm"
+(
+  export XDG_DATA_HOME="$test_root/rollback-cleanup/data"
+  export XDG_STATE_HOME="$test_root/rollback-cleanup/state"
+  DVANDVA_RELEASE_DIR="$old_release" bash "$old_installer" \
+    install --version 0.1.1 >/dev/null
+  case_data="$XDG_DATA_HOME/dvandva"
+  cp "$case_data/installation.json" "$test_root/rollback-cleanup.manifest"
+  if env PATH="$rollback_cleanup_bin:$PATH" \
+    MV_FAIL_MARKER="$test_root/rollback-cleanup.mv-failed" \
+    PROMOTED_REMOVE_TARGET="$case_data/bin/0.2.0" \
+    DVANDVA_RELEASE_DIR="$new_release" bash "$installer" \
+    update --version 0.2.0 >"$test_root/rollback-cleanup.out" 2>&1; then
+    printf 'promoted cleanup failure unexpectedly installed the update\n' >&2
+    exit 1
+  fi
+  test "$(readlink "$case_data/bin/current")" = '0.1.1'
+  cmp "$test_root/rollback-cleanup.manifest" "$case_data/installation.json"
+  test -d "$case_data/bin/0.2.0"
+  grep -Fq 'rollback_uncertain evidence=' "$test_root/rollback-cleanup.out"
+  mapfile -t transaction_evidence < <(
+    find "$case_data" -maxdepth 1 -type d -name '.install-txn.*' -print
+  )
+  test "${#transaction_evidence[@]}" -eq 1
+  test -f "${transaction_evidence[0]}/old-manifest"
+  test -z "$(find "$case_data/bin" -maxdepth 1 -name '.0.2.0.*.tmp' -print)"
+)
+
+# A signal delivered immediately after promotion still removes the fresh version.
+promotion_term_bin="$test_root/promotion-term-bin"
+mkdir -p "$promotion_term_bin"
+cat >"$promotion_term_bin/mv" <<'TERM_AFTER_PROMOTION'
+#!/usr/bin/env bash
+set -euo pipefail
+last="${!#}"
+/usr/bin/mv "$@"
+if test "$last" = "${PROMOTION_TARGET:?}"; then
+  kill -TERM "$PPID"
+fi
+TERM_AFTER_PROMOTION
+chmod 755 "$promotion_term_bin/mv"
+(
+  export XDG_DATA_HOME="$test_root/promotion-term/data"
+  export XDG_STATE_HOME="$test_root/promotion-term/state"
+  DVANDVA_RELEASE_DIR="$old_release" bash "$old_installer" \
+    install --version 0.1.1 >/dev/null
+  case_data="$XDG_DATA_HOME/dvandva"
+  cp "$case_data/installation.json" "$test_root/promotion-term.manifest"
+  if env PATH="$promotion_term_bin:$PATH" \
+    PROMOTION_TARGET="$case_data/bin/0.2.0" \
+    DVANDVA_RELEASE_DIR="$new_release" bash "$installer" \
+    update --version 0.2.0 >"$test_root/promotion-term.out" 2>&1; then
+    printf 'TERM after promotion unexpectedly installed the update\n' >&2
+    exit 1
+  fi
+  test "$(readlink "$case_data/bin/current")" = '0.1.1'
+  cmp "$test_root/promotion-term.manifest" "$case_data/installation.json"
+  test ! -e "$case_data/bin/0.2.0"
+  test -z "$(find "$case_data" \( -name '*.tmp' -o -name '.install-txn.*' \) -print)"
+)
+
 # Concurrent installers serialize: both succeed and no staging directory nests.
 concurrent_release="$test_root/concurrent-release"
 mkdir -p "$concurrent_release"

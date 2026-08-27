@@ -17,6 +17,7 @@ staged_install=""
 transaction_dir=""
 transaction_active=false
 promoted_install=""
+promoted_install_identity=""
 old_manifest_present=false
 old_current_present=false
 old_current_target=""
@@ -354,6 +355,24 @@ owned_version_path() {
     owner_marker_matches "$owner_file"
 }
 
+remove_promoted_install() {
+  if ! test -e "$promoted_install" && ! test -L "$promoted_install"; then
+    return 0
+  fi
+  test -d "$promoted_install" && ! test -L "$promoted_install" || return 1
+  test -n "$promoted_install_identity" || return 1
+  test "$(stat -c '%d:%i' -- "$promoted_install" 2>/dev/null)" = \
+    "$promoted_install_identity" || return 1
+  rm -rf -- "$promoted_install" &&
+    ! test -e "$promoted_install" && ! test -L "$promoted_install"
+}
+
+rollback_uncertain() {
+  preserve_transaction=true
+  printf 'setup-dvandva: rollback_uncertain evidence=%s\n' "$transaction_dir" >&2
+  return 1
+}
+
 rollback_transaction() {
   local current_restored=false manifest_restored=false
   if $old_current_present; then
@@ -380,14 +399,18 @@ rollback_transaction() {
   fi
   if $current_restored && $manifest_restored; then
     if test -n "$promoted_install"; then
-      rm -rf -- "$promoted_install" || return 1
+      preserve_transaction=true
+      if ! remove_promoted_install; then
+        rollback_uncertain
+        return 1
+      fi
+      preserve_transaction=false
     fi
     promoted_install=""
+    promoted_install_identity=""
     return 0
   fi
-  preserve_transaction=true
-  printf 'setup-dvandva: rollback_uncertain evidence=%s\n' "$transaction_dir" >&2
-  return 1
+  rollback_uncertain
 }
 
 prepare_transaction() {
@@ -461,14 +484,16 @@ install_release() {
 
   prepare_transaction "$digest" "$asset"
   if test -n "$staged_install"; then
+    promoted_install_identity="$(stat -c '%d:%i' -- "$staged_install")"
+    promoted_install="$version_dir"
     mv -T -- "$staged_install" "$version_dir"
     staged_install=""
-    promoted_install="$version_dir"
   fi
   mv -fT -- "$transaction_dir/new-manifest" "$manifest"
   mv -fT -- "$transaction_dir/new-current" "$bin_root/current"
   transaction_active=false
   promoted_install=""
+  promoted_install_identity=""
   printf 'setup-dvandva: installed version=%s write_schema=%s role_api=%s read_schemas=%s upgrade_from_v1=%s publish=false sha256=%s binary=%s\n' \
     "$version" "$schema" "$role_api" "$read_schemas" "$upgrade_from_v1" "$digest" "$binary" || true
 }
