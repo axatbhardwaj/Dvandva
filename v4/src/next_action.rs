@@ -131,6 +131,8 @@ fn result(
                 | "report_progress"
                 | "request_checkpoint_supersession"
                 | "withdraw_approval"
+                // Optional: the run never waits on a human-facing rendering.
+                | "publish_explainer"
         )
     });
     NextActions {
@@ -164,12 +166,17 @@ fn publication_needs_artifact(baton: &RunBaton) -> bool {
 }
 
 /// Recording the optional human-facing Site is possible only once the bytes it
-/// renders are staged and digest-bound.
+/// renders are staged, and only while those bytes are not already rendered.
+/// Advertising it unconditionally kept the publisher permanently awake.
 fn publication_can_publish_site(baton: &RunBaton) -> bool {
-    baton
-        .publication_binding
-        .as_ref()
-        .is_some_and(|binding| binding.artifact.is_some())
+    baton.publication_binding.as_ref().is_some_and(|binding| {
+        binding.artifact.as_ref().is_some_and(|artifact| {
+            binding.deployment.as_ref().is_none_or(|deployment| {
+                deployment.source_digest != artifact.source_digest
+                    || deployment.obligation != binding.obligation
+            })
+        })
+    })
 }
 
 fn publication_needs_review(baton: &RunBaton) -> bool {

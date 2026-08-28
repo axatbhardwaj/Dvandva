@@ -1,3 +1,4 @@
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::{
     fs::{self, File, OpenOptions},
     io::Write,
@@ -71,7 +72,7 @@ impl RunChannel {
         if !valid_v2_creation_root(initial) {
             return Err(StoreError::InvalidSchemaTransition);
         }
-        fs::create_dir_all(&self.directory)?;
+        create_private_dir(&self.directory)?;
         self.with_lock(|| {
             if self.baton_path().exists() {
                 return Err(StoreError::RunExists);
@@ -420,6 +421,7 @@ impl RunChannel {
         let mut file = OpenOptions::new()
             .create_new(true)
             .write(true)
+            .mode(0o600)
             .open(&temporary)?;
         file.write_all(&bytes)?;
         file.write_all(b"\n")?;
@@ -431,7 +433,7 @@ impl RunChannel {
 
     fn write_history(&self, baton: &RunBaton) -> Result<(), StoreError> {
         let directory = self.directory.join("history");
-        fs::create_dir_all(&directory)?;
+        create_private_dir(&directory)?;
         let path = directory.join(format!("{:020}.json", baton.revision));
         let temporary = directory.join(format!(".{:020}.{}.tmp", baton.revision, Uuid::new_v4()));
         let bytes = serde_json::to_vec_pretty(baton)?;
@@ -439,6 +441,7 @@ impl RunChannel {
             let mut file = OpenOptions::new()
                 .create_new(true)
                 .write(true)
+                .mode(0o600)
                 .open(&temporary)?;
             file.write_all(&bytes)?;
             file.write_all(b"\n")?;
@@ -837,7 +840,7 @@ fn valid_checkpoint(checkpoint: &Checkpoint, baton: &RunBaton) -> bool {
         return false;
     }
     if !checkpoint.deliverables.iter().all(|deliverable| {
-        crate::model::valid_checkpoint_shape(
+        crate::model::valid_stored_checkpoint_shape(
             &checkpoint.kind,
             &checkpoint.identity,
             &deliverable.artifacts,
@@ -1538,6 +1541,14 @@ fn validate_supported_schema(schema: &str) -> Result<(), StoreError> {
     } else {
         Err(StoreError::UnsupportedSchema(schema.to_owned()))
     }
+}
+
+/// Run state is private regardless of the caller's umask: `access: run_private`
+/// is a promise about the bytes on disk, not about how a process happened to be
+/// invoked. Existing directories are tightened too.
+pub(crate) fn create_private_dir(path: &Path) -> Result<(), std::io::Error> {
+    fs::create_dir_all(path)?;
+    fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
 }
 
 fn sync_directory(path: &Path) -> Result<(), std::io::Error> {

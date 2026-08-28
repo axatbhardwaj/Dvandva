@@ -515,8 +515,26 @@ pub const CHECKPOINT_KIND_GIT: &str = "git";
 /// of from a git object.
 pub const CHECKPOINT_KIND_ANALYSIS: &str = "analysis";
 
+/// Whether a checkpoint already on disk is acceptable to read. Kernels before
+/// 0.3.0 accepted any non-blank kind, so persisted checkpoints may carry one
+/// this kernel does not model. Rejecting those on read would strand every run
+/// created by an earlier kernel, so an unknown kind loads unchanged; only the
+/// kinds this kernel issues are held to their immutability rules.
+pub fn valid_stored_checkpoint_shape(
+    kind: &str,
+    identity: &str,
+    artifacts: &[ExternalRef],
+) -> bool {
+    match kind {
+        CHECKPOINT_KIND_GIT | CHECKPOINT_KIND_ANALYSIS => {
+            valid_checkpoint_shape(kind, identity, artifacts)
+        }
+        _ => true,
+    }
+}
+
 /// Whether `kind`/`identity`/`artifacts` form an immutable checkpoint manifest
-/// for a checkpoint of this kind.
+/// for a checkpoint of this kind. Applied to new submissions only.
 pub fn valid_checkpoint_shape(kind: &str, identity: &str, artifacts: &[ExternalRef]) -> bool {
     match kind {
         CHECKPOINT_KIND_GIT => {

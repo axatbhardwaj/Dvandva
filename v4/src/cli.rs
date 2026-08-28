@@ -1044,6 +1044,7 @@ fn transition_error_code(error: &TransitionError) -> &'static str {
         TransitionError::ExplainerNotStaged => "explainer_not_staged",
         TransitionError::InvalidProgress => "invalid_progress",
         TransitionError::InvalidCheckpointArtifact => "invalid_checkpoint_artifact",
+        TransitionError::ExplainerBytesMissing => "explainer_bytes_missing",
     }
 }
 

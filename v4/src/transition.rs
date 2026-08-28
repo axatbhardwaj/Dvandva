@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 
 use sha2::Digest;
+use std::os::unix::fs::PermissionsExt;
 
 use thiserror::Error;
 
@@ -71,6 +72,8 @@ pub enum TransitionError {
     InvalidProgress,
     #[error("checkpoint artifacts are not immutable for this checkpoint kind")]
     InvalidCheckpointArtifact,
+    #[error("staged explainer bytes are missing or no longer match their digest")]
+    ExplainerBytesMissing,
 }
 
 /// Actions that carry their own idempotency token, or that only report
@@ -235,6 +238,12 @@ fn apply_locked(
                 baton,
                 Some((&HandoffKind::ReviewerToWorker, &checkpoint_binding)),
             )?;
+            let artifact = baton
+                .publication_binding
+                .as_ref()
+                .and_then(|binding| binding.artifact.as_ref())
+                .ok_or(TransitionError::ExplainerNotStaged)?;
+            require_staged_bytes_intact(channel.directory(), artifact)?;
             baton.status = Status::Done;
             baton.assignee = Assignee::None;
             baton.terminal = Some(TerminalProvenance {
@@ -491,6 +500,7 @@ fn apply_locked(
             {
                 return Err(TransitionError::StalePublicationBinding);
             }
+            require_staged_bytes_intact(channel.directory(), artifact)?;
             let findings = findings
                 .into_iter()
                 .map(|finding| finding.trim().to_owned())
@@ -715,6 +725,23 @@ fn require_publication_gate(
     Ok(())
 }
 
+/// Re-hash the staged bytes named by an approved artifact. Baton metadata alone
+/// cannot prove the file still holds what the reviewer read, so deletion or
+/// tampering after approval must not be able to reach a terminal state.
+fn require_staged_bytes_intact(
+    run_dir: &std::path::Path,
+    artifact: &ExplainerArtifact,
+) -> Result<(), TransitionError> {
+    let bytes = std::fs::read(run_dir.join(&artifact.path))
+        .map_err(|_| TransitionError::ExplainerBytesMissing)?;
+    if bytes.len() as u64 != artifact.byte_length
+        || format!("{:x}", sha2::Sha256::digest(&bytes)) != artifact.source_digest
+    {
+        return Err(TransitionError::ExplainerBytesMissing);
+    }
+    Ok(())
+}
+
 pub(crate) fn effective_policy(baton: &RunBaton) -> PublicationPolicy {
     baton
         .publication_policy
@@ -762,12 +789,20 @@ fn stage_explainer_bytes(
         return Err(TransitionError::InvalidExplainerSource);
     }
     let source_digest = format!("{:x}", sha2::Sha256::digest(&bytes));
+    // `access: run_private` is a promise about the bytes on disk, so the modes
+    // are set explicitly rather than inherited from the caller's umask.
     let directory = run_dir.join(EXPLAINER_ARTIFACT_DIR);
-    std::fs::create_dir_all(&directory).map_err(StoreError::Io)?;
+    crate::store::create_private_dir(&directory).map_err(StoreError::Io)?;
     let destination = run_dir.join(explainer_artifact_path(&source_digest));
-    if !destination.exists() {
+    // Content addressing only holds if the existing file really is those bytes;
+    // a tampered or truncated file is replaced rather than trusted.
+    let reusable = std::fs::read(&destination)
+        .is_ok_and(|existing| format!("{:x}", sha2::Sha256::digest(&existing)) == source_digest);
+    if !reusable {
         let temporary = directory.join(format!(".{source_digest}.{}.tmp", uuid::Uuid::new_v4()));
         std::fs::write(&temporary, &bytes).map_err(StoreError::Io)?;
+        std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o600))
+            .map_err(StoreError::Io)?;
         std::fs::rename(&temporary, &destination).map_err(StoreError::Io)?;
     }
     Ok((source_digest, bytes.len() as u64))
