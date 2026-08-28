@@ -173,6 +173,30 @@ impl Fixture {
         command
     }
 
+    /// Stage the bytes behind an analysis deliverable and return their digest,
+    /// so the manifest cites something the reviewer can materialize.
+    fn stage_analysis(&self, label: &str) -> String {
+        let source = self._root.path().join(format!("analysis-{label}.md"));
+        let bytes = format!("# {label}\nanalysis deliverable\n").into_bytes();
+        std::fs::write(&source, &bytes).unwrap();
+        // `staged_analysis` is a sorted set, so the digest is computed here
+        // rather than read back positionally.
+        let digest = format!("{:x}", Sha256::digest(&bytes));
+        let staged = self.apply(
+            "worker",
+            self.revision(),
+            serde_json::json!({
+                "type": "stage_analysis",
+                "source_path": source.to_str().unwrap()
+            }),
+        );
+        assert!(staged["staged_analysis"]
+            .as_array()
+            .unwrap()
+            .contains(&serde_json::json!(digest)));
+        digest
+    }
+
     /// The publisher stages bytes and the reviewer approves exactly those bytes.
     fn approve_explainer(&self, label: &str) {
         let baton = self.read("worker");
@@ -466,16 +490,17 @@ fn a_checkpoint_is_submittable_before_any_explainer_exists() {
         .unwrap()
         .contains(&serde_json::json!("submit_checkpoint")));
 
+    let digest = fixture.stage_analysis("early");
     let submitted = fixture.apply(
         "worker",
-        baton["revision"].as_u64().unwrap(),
+        fixture.revision(),
         serde_json::json!({
             "type": "submit_checkpoint",
             "checkpoint": {
                 "kind": "analysis",
-                "identity": "a".repeat(64),
+                "identity": digest,
                 "deliverables": [
-                    {"id": "kernel", "artifacts": [{"kind": "analysis_digest", "value": "b".repeat(64)}]}
+                    {"id": "kernel", "artifacts": [{"kind": "analysis_digest", "value": digest}]}
                 ],
                 "verification": ["cargo test --offline: 177 passed"]
             }
@@ -491,7 +516,7 @@ fn a_checkpoint_is_submittable_before_any_explainer_exists() {
         serde_json::json!({
             "type": "record_review",
             "verdict": "approved",
-            "checkpoint_identity": "a".repeat(64),
+            "checkpoint_identity": digest,
             "manifest_digest": submitted["checkpoint"]["manifest_digest"],
             "scope_revision": 0,
             "findings": []
@@ -579,17 +604,17 @@ fn two_independent_harnesses_reach_a_terminal_state_without_invoking_each_other(
     assert_eq!(started["participants"]["worker"]["harness"], "Claude");
     assert_eq!(started["participants"]["reviewer"]["harness"], "Codex");
 
-    let identity = "c".repeat(64);
+    let identity = fixture.stage_analysis("lifecycle");
     let submitted = fixture.apply(
         "worker",
-        started["revision"].as_u64().unwrap(),
+        fixture.revision(),
         serde_json::json!({
             "type": "submit_checkpoint",
             "checkpoint": {
                 "kind": "analysis",
                 "identity": identity,
                 "deliverables": [
-                    {"id": "kernel", "artifacts": [{"kind": "analysis_digest", "value": "d".repeat(64)}]}
+                    {"id": "kernel", "artifacts": [{"kind": "analysis_digest", "value": identity}]}
                 ],
                 "verification": ["cargo test --offline"]
             }

@@ -205,6 +205,10 @@ fn normalize_documented_action(template: &str) -> serde_json::Value {
             "/nonexistent/explainer.html",
         )
         .replace(
+            "<absolute path to the analysis bytes>",
+            "/nonexistent/analysis.md",
+        )
+        .replace(
             r#""<snapshot.publication_binding.obligation>""#,
             &serde_json::to_string(&obligation).unwrap(),
         )
@@ -276,6 +280,7 @@ fn every_documented_role_action_deserializes_against_the_v2_schema() {
                 "request_checkpoint_supersession",
                 "request_human_decision",
                 "resume_human_decision",
+                "stage_analysis",
                 "stage_explainer",
                 "submit_checkpoint",
                 "withdraw_approval",

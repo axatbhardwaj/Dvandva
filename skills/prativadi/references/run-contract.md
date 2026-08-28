@@ -67,7 +67,10 @@ with mode 0600, passes its path as `ACTION_FILE`, and deletes it after `apply`.
 
 Review only when `advisory_actions` includes `review_checkpoint`. Materialize
 the exact immutable checkpoint, whose complete deliverable manifest covers the
-canonical deliverable IDs exactly once. Never review branch `HEAD` or the
+canonical deliverable IDs exactly once. A `git` checkpoint materializes from its
+commit object names; an `analysis` checkpoint materializes through
+`dvandva-role.sh analysis SESSION RUN_DIR DIGEST`, which verifies each cited
+digest against the staged bytes before returning them. Never review branch `HEAD` or the
 vadi's mutable worktree. Do not apply worker-owned `submit_checkpoint`,
 `request_checkpoint_supersession`, `withdraw_approval`, or `finalize` actions.
 

@@ -669,6 +669,7 @@ fn valid_v2_creation_root(baton: &RunBaton) -> bool {
         && baton.participants.worker.claim.is_none()
         && baton.participants.reviewer.claim.is_none()
         && baton.scope_revision == 0
+        && baton.staged_analysis.is_empty()
         && baton.checkpoint.is_none()
         && baton.checkpoint_history.is_empty()
         && baton.review.is_none()
@@ -945,6 +946,7 @@ fn valid_v2_edge_kind(current: &RunBaton, next: &RunBaton) -> bool {
         return valid_publication_receipt_edge(current, next, current_binding, next_binding);
     }
     valid_claim_edge(current, next)
+        || valid_staged_analysis_edge(current, next)
         || valid_progress_edge(current, next)
         || valid_human_decision_request_edge(current, next)
         || valid_plain_human_decision_resume_edge(current, next)
@@ -1036,6 +1038,32 @@ fn valid_claim_edge(current: &RunBaton, next: &RunBaton) -> bool {
             expected.participants.reviewer.claim = next.participants.reviewer.claim.clone();
         })
     }
+}
+
+/// Staging analysis bytes appends one content digest and changes nothing else.
+/// Digests are only ever added, so a manifest that cited one stays materializable.
+fn valid_staged_analysis_edge(current: &RunBaton, next: &RunBaton) -> bool {
+    if is_terminal(current) || next.staged_analysis.len() != current.staged_analysis.len() + 1 {
+        return false;
+    }
+    if !next
+        .staged_analysis
+        .windows(2)
+        .all(|pair| pair[0] < pair[1])
+        || !next
+            .staged_analysis
+            .iter()
+            .all(|digest| valid_sha256(digest))
+        || !current
+            .staged_analysis
+            .iter()
+            .all(|digest| next.staged_analysis.contains(digest))
+    {
+        return false;
+    }
+    only_fields_changed(current, next, |expected| {
+        expected.staged_analysis = next.staged_analysis.clone();
+    })
 }
 
 /// A liveness write: one participant updates its own reported phase and, when it

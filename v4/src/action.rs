@@ -75,6 +75,11 @@ pub enum Action {
         #[serde(default)]
         findings: Vec<String>,
     },
+    /// Stage the bytes behind an `analysis` checkpoint artifact so the reviewer
+    /// can materialize exactly what the manifest cites.
+    StageAnalysis {
+        source_path: PathBuf,
+    },
     /// Publish a liveness/progress signal and renew this role's own lease.
     ReportProgress {
         phase: ProgressPhase,

@@ -74,9 +74,20 @@ commit:
 {"type":"submit_checkpoint","checkpoint":{"kind":"git","identity":"<full-length commit object name>","deliverables":[{"id":"<canonical ID>","artifacts":[{"kind":"commit","value":"<full-length commit object name>"}]}],"verification":["<exact command and result>"]}}
 ```
 
+An `analysis` checkpoint may only cite digests this run has staged, so the
+reviewer can materialize exactly what the manifest names. Stage the bytes first
+with `stage_analysis`, then cite the digests it records:
+
+```json
+{"type":"stage_analysis","source_path":"<absolute path to the analysis bytes>"}
+```
+
 ```json
 {"type":"submit_checkpoint","checkpoint":{"kind":"analysis","identity":"<sha256 of the analysis>","deliverables":[{"id":"<canonical ID>","artifacts":[{"kind":"analysis_digest","value":"<sha256 of the artifact>"}]}],"verification":["<exact command and result>"]}}
 ```
+
+Read staged analysis bytes back with `dvandva-role.sh analysis SESSION RUN_DIR
+DIGEST`, which verifies the digest before returning them.
 
 Checkpoint submission never waits on the explainer. Only `finalize` is gated.
 

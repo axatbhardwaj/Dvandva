@@ -245,6 +245,7 @@ do
     'upgrade SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION' \
     'repair-policy SESSION RUN_DIR EXPECTED_REVISION' \
     'explainer SESSION RUN_DIR' \
+    'analysis SESSION RUN_DIR DIGEST' \
     'claim SESSION RUN_DIR EXPECTED_REVISION' \
     'reclaim SESSION RUN_DIR EXPECTED_REVISION' \
     'exact `start --run-id` automatically reclaims' \

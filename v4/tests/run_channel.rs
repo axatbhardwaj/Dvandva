@@ -68,12 +68,14 @@ fn digest_of(value: &str) -> String {
     format!("{:x}", Sha256::digest(value.as_bytes()))
 }
 
-/// Map a readable test label onto a valid sha256 coordinate, preserving any
-/// surrounding whitespace so the kernel's trimming stays under test.
+/// Map a readable test label onto a valid full-length git object name,
+/// preserving any surrounding whitespace so the kernel's trimming stays under
+/// test. These tests exercise checkpoint mechanics generally, so they use the
+/// `git` kind; `analysis` staging is covered where it is the subject.
 fn checkpoint_identity(label: &str) -> String {
     let leading = &label[..label.len() - label.trim_start().len()];
     let trailing = &label[label.trim_end().len()..];
-    format!("{leading}{}{trailing}", digest_of(label.trim()))
+    format!("{leading}{}{trailing}", &digest_of(label.trim())[..40])
 }
 
 fn checkpoint_submission(identity: &str, deliverables: serde_json::Value) -> serde_json::Value {
@@ -93,7 +95,7 @@ fn checkpoint_submission(identity: &str, deliverables: serde_json::Value) -> ser
                     let value = artifact["value"].as_str().unwrap_or_default();
                     serde_json::json!({
                         "kind": if kind.trim().is_empty() { kind.to_owned() }
-                                else { "analysis_digest".to_owned() },
+                                else { "commit".to_owned() },
                         "value": if value.trim().is_empty() { value.to_owned() }
                                  else { checkpoint_identity(value) }
                     })
@@ -105,7 +107,7 @@ fn checkpoint_submission(identity: &str, deliverables: serde_json::Value) -> ser
     serde_json::json!({
         "type": "submit_checkpoint",
         "checkpoint": {
-            "kind": "analysis",
+            "kind": "git",
             "identity": checkpoint_identity(identity),
             "deliverables": deliverables,
             "verification": ["tests passed"]
@@ -3140,7 +3142,7 @@ fn checkpoint_digest_is_deterministic_and_scope_stamped() {
     let digest = first["checkpoint"]["manifest_digest"].as_str().unwrap();
     assert_eq!(
         digest,
-        "67d908b2651b8bc97c46bf853848400533255b93b95f7c2b26837e4008373cf9"
+        "4cd988afb352a6f2ac66212d8b322b90bbcab934126221ed42f739218f5b55b8"
     );
 }
 

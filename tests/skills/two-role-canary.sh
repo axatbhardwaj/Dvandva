@@ -73,6 +73,28 @@ apply_action_error() {
   return "$status"
 }
 
+rev() {
+  python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["revision"])' "$1/baton.json"
+}
+
+# Stage the bytes behind an analysis deliverable and echo their digest, so the
+# manifest cites something the reviewer can materialize.
+stage_analysis() {
+  local facade="$1" session="$2" run_dir="$3" label="$4" source staged
+  source="$test_root/analysis-$label.md"
+  printf '# %s\nanalysis deliverable\n' "$label" >"$source"
+  local digest
+  # staged_analysis is a sorted set, so the digest is computed here rather than
+  # read back positionally.
+  digest="$(sha256sum "$source" | cut -d' ' -f1)"
+  staged="$(apply_action "$facade" "$session" "$run_dir" "$(rev "$run_dir")" \
+    "stage-analysis-$label" \
+    "{\"type\":\"stage_analysis\",\"source_path\":\"$source\"}")"
+  python3 -c 'import json,sys; assert sys.argv[1] in json.load(sys.stdin)["staged_analysis"]' \
+    "$digest" <<<"$staged"
+  printf '%s\n' "$digest"
+}
+
 obligation_json() {
   python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["publication_binding"]["obligation"],separators=(",",":")))' "$1/baton.json"
 }
@@ -203,11 +225,7 @@ run_supersession_incident() {
   local worker_session="incident-worker" reviewer_session="incident-reviewer"
   local objective="Review architecture and module reuse" task="TASK-incident"
   local site_id="site-incident" started mismatch joined run_id run_dir revision
-  local checkpoint_a
-  checkpoint_a="$(printf 'a%.0s' $(seq 64))"
-  local checkpoint_b checkpoint_b_extra
-  checkpoint_b="$(printf 'b%.0s' $(seq 64))"
-  checkpoint_b_extra="$(printf 'c%.0s' $(seq 64))"
+  local checkpoint_a checkpoint_b checkpoint_b_extra
   local reviewing_a reviewing_b digest_a digest_b request accepted terminal
   local failure_output failure_status worker_wait reviewer_wait
 
@@ -247,20 +265,21 @@ assert mismatch["candidates"][0]["run_id"] == sys.argv[1]
   approve_explainer "$worker" "$worker_session" "$reviewer" \
     "$reviewer_session" "$run_dir" 2 "$site_id" incident-1
 
-  reviewing_a="$(apply_action "$worker" "$worker_session" "$run_dir" 4 incident-a \
+  checkpoint_a="$(stage_analysis "$worker" "$worker_session" "$run_dir" review)"
+  reviewing_a="$(apply_action "$worker" "$worker_session" "$run_dir" "$(rev "$run_dir")" incident-a \
     "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$checkpoint_a\",\"deliverables\":[{\"id\":\"review-package\",\"artifacts\":[{\"kind\":\"analysis_digest\",\"value\":\"$checkpoint_a\"}]}],\"verification\":[\"review.md checked\"]}}")"
   digest_a="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' \
     <<<"$reviewing_a")"
   approve_explainer "$worker" "$worker_session" "$reviewer" \
-    "$reviewer_session" "$run_dir" 5 "$site_id" incident-2
+    "$reviewer_session" "$run_dir" "$(rev "$run_dir")" "$site_id" incident-2
 
-  request="$(apply_action "$worker" "$worker_session" "$run_dir" 7 incident-request \
+  request="$(apply_action "$worker" "$worker_session" "$run_dir" "$(rev "$run_dir")" incident-request \
     '{"type":"request_checkpoint_supersession","reason":"Required reuse analysis is absent"}')"
-  python3 -c 'import json,sys; baton=json.load(sys.stdin); assert baton["revision"] == 8 and baton["pending_checkpoint_supersession"]["reason"] == "Required reuse analysis is absent"' \
+  python3 -c 'import json,sys; baton=json.load(sys.stdin); assert baton["pending_checkpoint_supersession"]["reason"] == "Required reuse analysis is absent"' \
     <<<"$request"
 
   set +e
-  failure_output="$(apply_action_error "$reviewer" "$reviewer_session" "$run_dir" 7 \
+  failure_output="$(apply_action_error "$reviewer" "$reviewer_session" "$run_dir" "$(( $(rev "$run_dir") - 1 ))" \
     incident-stale-approval \
     "{\"type\":\"record_review\",\"verdict\":\"approved\",\"checkpoint_identity\":\"$checkpoint_a\",\"manifest_digest\":\"$digest_a\",\"scope_revision\":0,\"findings\":[]}")"
   failure_status=$?
@@ -269,7 +288,7 @@ assert mismatch["candidates"][0]["run_id"] == sys.argv[1]
   grep -Fq '"error":"revision_conflict"' <<<"$failure_output"
 
   set +e
-  failure_output="$(apply_action_error "$reviewer" "$reviewer_session" "$run_dir" 8 \
+  failure_output="$(apply_action_error "$reviewer" "$reviewer_session" "$run_dir" "$(rev "$run_dir")" \
     incident-blocked-approval \
     "{\"type\":\"record_review\",\"verdict\":\"approved\",\"checkpoint_identity\":\"$checkpoint_a\",\"manifest_digest\":\"$digest_a\",\"scope_revision\":0,\"findings\":[]}")"
   failure_status=$?
@@ -277,24 +296,26 @@ assert mismatch["candidates"][0]["run_id"] == sys.argv[1]
   test "$failure_status" -ne 0
   grep -Fq '"error":"supersession_pending"' <<<"$failure_output"
 
-  accepted="$(apply_action "$reviewer" "$reviewer_session" "$run_dir" 8 \
+  accepted="$(apply_action "$reviewer" "$reviewer_session" "$run_dir" "$(rev "$run_dir")" \
     incident-accept '{"type":"accept_checkpoint_supersession"}')"
-  python3 -c 'import json,sys; baton=json.load(sys.stdin); assert baton["revision"] == 9 and baton["status"] == "revising" and baton["assignee"] == "worker"' \
+  python3 -c 'import json,sys; baton=json.load(sys.stdin); assert baton["status"] == "revising" and baton["assignee"] == "worker"' \
     <<<"$accepted"
   approve_explainer "$worker" "$worker_session" "$reviewer" \
-    "$reviewer_session" "$run_dir" 9 "$site_id" incident-3
+    "$reviewer_session" "$run_dir" "$(rev "$run_dir")" "$site_id" incident-3
 
-  reviewing_b="$(apply_action "$worker" "$worker_session" "$run_dir" 11 incident-b \
+  checkpoint_b="$(stage_analysis "$worker" "$worker_session" "$run_dir" reuse)"
+  checkpoint_b_extra="$(stage_analysis "$worker" "$worker_session" "$run_dir" reuse-extra)"
+  reviewing_b="$(apply_action "$worker" "$worker_session" "$run_dir" "$(rev "$run_dir")" incident-b \
     "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$checkpoint_b\",\"deliverables\":[{\"id\":\"review-package\",\"artifacts\":[{\"kind\":\"analysis_digest\",\"value\":\"$checkpoint_b\"},{\"kind\":\"analysis_digest\",\"value\":\"$checkpoint_b_extra\"}]}],\"verification\":[\"review.md checked\",\"reuse-analysis.md checked\"]}}")"
   digest_b="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' \
     <<<"$reviewing_b")"
   approve_explainer "$worker" "$worker_session" "$reviewer" \
-    "$reviewer_session" "$run_dir" 12 "$site_id" incident-4
-  apply_action "$reviewer" "$reviewer_session" "$run_dir" 14 incident-approve-b \
+    "$reviewer_session" "$run_dir" "$(rev "$run_dir")" "$site_id" incident-4
+  apply_action "$reviewer" "$reviewer_session" "$run_dir" "$(rev "$run_dir")" incident-approve-b \
     "{\"type\":\"record_review\",\"verdict\":\"approved\",\"checkpoint_identity\":\"$checkpoint_b\",\"manifest_digest\":\"$digest_b\",\"scope_revision\":0,\"findings\":[]}" >/dev/null
   approve_explainer "$worker" "$worker_session" "$reviewer" \
-    "$reviewer_session" "$run_dir" 15 "$site_id" incident-5
-  terminal="$(apply_action "$worker" "$worker_session" "$run_dir" 17 \
+    "$reviewer_session" "$run_dir" "$(rev "$run_dir")" "$site_id" incident-5
+  terminal="$(apply_action "$worker" "$worker_session" "$run_dir" "$(rev "$run_dir")" \
     incident-finalize '{"type":"finalize"}')"
 
   python3 - "$run_dir" "$site_id" "$checkpoint_b" "$digest_b" <<'PY'
@@ -334,7 +355,7 @@ assert baton["review"]["checkpoint_identity"] == checkpoint
 assert baton["review"]["manifest_digest"] == digest
 assert baton["review"]["scope_revision"] == 0
 assert baton["terminal"] == {"outcome": "done", "reason": None}
-assert baton["revision"] == 18 and baton["status"] == "done"
+assert baton["status"] == "done"
 PY
 
   worker_wait="$(bash "$worker" wait "$worker_session" "$run_dir" 17 500)"

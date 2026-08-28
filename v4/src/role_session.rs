@@ -892,6 +892,49 @@ pub fn read_explainer(
     })
 }
 
+/// Materialize the bytes behind an `analysis` checkpoint artifact, verifying the
+/// digest, so a reviewer reads exactly what the manifest cites.
+pub fn read_analysis(
+    run_dir: &Path,
+    credentials_root: &Path,
+    role: Role,
+    session_id: &str,
+    digest: &str,
+) -> Result<StagedAnalysisContents, RoleSessionError> {
+    let snapshot = read(run_dir, credentials_root, role, session_id)?;
+    if !snapshot.baton.staged_analysis.iter().any(|d| d == digest) {
+        return Err(RoleSessionError::Invalid(
+            "that digest is not staged for this run".to_owned(),
+        ));
+    }
+    let path = snapshot
+        .run_dir
+        .join(crate::model::analysis_artifact_path(digest));
+    let bytes = std::fs::read(&path).map_err(StoreError::Io)?;
+    if format!("{:x}", sha2::Sha256::digest(&bytes)) != digest {
+        return Err(RoleSessionError::Invalid(
+            "staged analysis bytes do not match their recorded digest".to_owned(),
+        ));
+    }
+    let contents = String::from_utf8(bytes.clone()).ok();
+    Ok(StagedAnalysisContents {
+        digest: digest.to_owned(),
+        path,
+        byte_length: bytes.len() as u64,
+        contents,
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct StagedAnalysisContents {
+    pub digest: String,
+    pub path: PathBuf,
+    pub byte_length: u64,
+    /// Absent when the staged bytes are not valid UTF-8; the path is still exact.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contents: Option<String>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct StagedExplainerContents {
     #[serde(skip_serializing_if = "Option::is_none")]

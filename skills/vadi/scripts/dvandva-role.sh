@@ -315,6 +315,13 @@ run_dir_command() {
       test "$#" -eq 0
       "$binary" role explainer "${common[@]}"
       ;;
+    analysis)
+      test "$#" -eq 1 || {
+        printf 'usage: dvandva-role.sh analysis SESSION RUN_DIR DIGEST\n' >&2
+        exit 2
+      }
+      "$binary" role analysis "${common[@]}" --digest "$1"
+      ;;
     repair-policy)
       test "$#" -eq 1 || {
         printf 'usage: dvandva-role.sh repair-policy SESSION RUN_DIR REVISION\n' >&2
@@ -352,7 +359,7 @@ case "$operation" in
     require_kernel
     start_role "$@"
     ;;
-  read|claim|reclaim|apply|wait|heartbeat|explainer|repair-policy)
+  read|claim|reclaim|apply|wait|heartbeat|explainer|analysis|repair-policy)
     require_kernel
     run_dir_command "$operation" "$@"
     ;;
@@ -361,7 +368,7 @@ case "$operation" in
     upgrade_role "$@"
     ;;
   *)
-    printf 'usage: dvandva-role.sh {session-id|probe|start|read|claim|reclaim|apply|wait|heartbeat|explainer|repair-policy|upgrade} ...\n' >&2
+    printf 'usage: dvandva-role.sh {session-id|probe|start|read|claim|reclaim|apply|wait|heartbeat|explainer|analysis|repair-policy|upgrade} ...\n' >&2
     exit 2
     ;;
 esac

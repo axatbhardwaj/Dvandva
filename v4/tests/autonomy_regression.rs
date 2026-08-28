@@ -2,6 +2,8 @@
 //! when the human is absent, and its routine operations must not look like
 //! crashes to the surrounding harness.
 
+use sha2::Digest;
+
 use dvandva_v4::{
     claim::Role,
     model::{
@@ -374,5 +376,106 @@ fn obligation_bound_writes_replay_cleanly_and_reject_stale_verdicts() {
     assert_eq!(
         head.publication_binding.unwrap().review.unwrap().verdict,
         "changes_requested"
+    );
+}
+
+/// An `analysis` checkpoint has no commit to materialize, so its digests are
+/// only meaningful if the bytes behind them are staged and readable. A manifest
+/// may not cite a digest this run never staged.
+#[test]
+fn an_analysis_checkpoint_must_cite_bytes_the_reviewer_can_materialize() {
+    use dvandva_v4::{action::Action, model::CheckpointSubmission, store::RunChannel, transition};
+
+    let dir = tempfile::tempdir().unwrap();
+    let run_dir = dir.path().join("run-a");
+    let mut created = RunBaton::new(
+        "run-a",
+        "Objective",
+        "claude",
+        "codex",
+        vec![DeliverableRequirement {
+            id: "review".into(),
+            description: "Review package".into(),
+        }],
+    )
+    .unwrap();
+    created.workspace = Some(dvandva_v4::model::WorkspaceIdentity {
+        repository_id: "github.com/axatbhardwaj/dvandva".into(),
+        origin: None,
+        worktree: None,
+    });
+    let channel = RunChannel::open(&run_dir);
+    channel.create(&created).unwrap();
+    let worker =
+        dvandva_v4::claim::claim(&channel, Role::Worker, "claude-session", 1800, 0).unwrap();
+
+    let submit = |identity: &str, digest: &str| Action::SubmitCheckpoint {
+        checkpoint: CheckpointSubmission {
+            kind: "analysis".into(),
+            identity: identity.to_owned(),
+            deliverables: vec![dvandva_v4::model::CheckpointDeliverable {
+                id: "review".into(),
+                artifacts: vec![dvandva_v4::model::ExternalRef {
+                    kind: "analysis_digest".into(),
+                    value: digest.to_owned(),
+                }],
+            }],
+            verification: vec!["read the review".into()],
+        },
+    };
+
+    // Citing an unstaged digest is refused: nothing would be materializable.
+    let unstaged = "b".repeat(64);
+    let refused = transition::apply(
+        &channel,
+        Role::Worker,
+        "claude-session",
+        &worker.token,
+        1,
+        submit(&"a".repeat(64), &unstaged),
+    );
+    assert!(matches!(
+        refused,
+        Err(transition::TransitionError::AnalysisNotStaged)
+    ));
+
+    // Stage the real bytes, then cite their digest.
+    let source = dir.path().join("review.md");
+    std::fs::write(&source, b"# Review\nthe analysis deliverable\n").unwrap();
+    let staged = transition::apply(
+        &channel,
+        Role::Worker,
+        "claude-session",
+        &worker.token,
+        1,
+        Action::StageAnalysis {
+            source_path: source.clone(),
+        },
+    )
+    .unwrap();
+    let digest = staged.staged_analysis.first().unwrap().clone();
+    assert!(run_dir
+        .join(dvandva_v4::model::analysis_artifact_path(&digest))
+        .is_file());
+
+    let submitted = transition::apply(
+        &channel,
+        Role::Worker,
+        "claude-session",
+        &worker.token,
+        2,
+        submit(&digest, &digest),
+    )
+    .unwrap();
+    assert_eq!(submitted.status, Status::Reviewing);
+    assert_eq!(submitted.checkpoint.as_ref().unwrap().kind, "analysis");
+
+    // The bytes really are on disk at the cited digest, and they hash to it.
+    let bytes = std::fs::read(run_dir.join(dvandva_v4::model::analysis_artifact_path(&digest)))
+        .expect("a cited analysis digest must be materializable");
+    assert_eq!(
+        format!("{:x}", sha2::Sha256::digest(&bytes)),
+        digest,
+        "staged analysis bytes must hash to the digest the manifest cites"
     );
 }

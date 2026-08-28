@@ -362,6 +362,21 @@ enum RoleCommand {
         #[arg(long)]
         expected_revision: u64,
     },
+    /// Materialize the bytes behind a staged analysis checkpoint artifact.
+    Analysis {
+        #[arg(long)]
+        api: u32,
+        #[arg(long)]
+        run_dir: PathBuf,
+        #[arg(long)]
+        role: Role,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        credentials_root: PathBuf,
+        #[arg(long)]
+        digest: String,
+    },
     /// Read the digest-bound explainer bytes staged for the current obligation.
     Explainer {
         #[arg(long)]
@@ -755,6 +770,25 @@ pub fn run() -> Result<(), CliError> {
                 println!("{}", serde_json::to_string_pretty(&baton)?);
                 Ok(())
             }
+            RoleCommand::Analysis {
+                api,
+                run_dir,
+                role,
+                session_id,
+                credentials_root,
+                digest,
+            } => {
+                require_role_api(api)?;
+                let staged = role_session::read_analysis(
+                    &run_dir,
+                    &credentials_root,
+                    role,
+                    &session_id,
+                    &digest,
+                )?;
+                println!("{}", serde_json::to_string_pretty(&staged)?);
+                Ok(())
+            }
             RoleCommand::Explainer {
                 api,
                 run_dir,
@@ -1044,6 +1078,7 @@ fn transition_error_code(error: &TransitionError) -> &'static str {
         TransitionError::InvalidProgress => "invalid_progress",
         TransitionError::InvalidCheckpointArtifact => "invalid_checkpoint_artifact",
         TransitionError::ExplainerBytesMissing => "explainer_bytes_missing",
+        TransitionError::AnalysisNotStaged => "analysis_not_staged",
     }
 }
 

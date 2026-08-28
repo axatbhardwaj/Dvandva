@@ -17,6 +17,7 @@ pub const EXPLAINER_ACCESS: &str = "run_private";
 pub const LEGACY_EXPLAINER_CHANNEL: &str = "codex_sites";
 pub const LEGACY_EXPLAINER_ACCESS: &str = "owner_only";
 pub const EXPLAINER_ARTIFACT_DIR: &str = "explainer";
+pub const ANALYSIS_ARTIFACT_DIR: &str = "analysis";
 pub const EXPLAINER_MEDIA_TYPE: &str = "text/html";
 pub const MAX_EXPLAINER_BYTES: u64 = 8 * 1024 * 1024;
 
@@ -333,6 +334,13 @@ pub fn explainer_artifact_path(source_digest: &str) -> String {
     format!("{EXPLAINER_ARTIFACT_DIR}/{source_digest}.html")
 }
 
+/// Content-addressed location for a staged analysis deliverable. An `analysis`
+/// checkpoint names digests, and a reviewer has to be able to materialize the
+/// exact bytes behind each one.
+pub fn analysis_artifact_path(digest: &str) -> String {
+    format!("{ANALYSIS_ARTIFACT_DIR}/{digest}")
+}
+
 pub fn create_handoff_obligation(
     kind: HandoffKind,
     handoff_revision: u64,
@@ -415,6 +423,11 @@ pub struct RunBaton {
     pub scope_revision: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scope_deliverables: Vec<DeliverableRequirement>,
+    /// sha256 digests of analysis bytes staged under `analysis/`, sorted and
+    /// unique. An `analysis` checkpoint may only cite digests listed here, so
+    /// every non-git deliverable is materializable by the reviewer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub staged_analysis: Vec<String>,
     pub checkpoint: Option<Checkpoint>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub checkpoint_history: Vec<CheckpointBinding>,
@@ -472,6 +485,7 @@ impl RunBaton {
             revision: 0,
             scope_revision: 0,
             scope_deliverables,
+            staged_analysis: Vec::new(),
             checkpoint: None,
             checkpoint_history: Vec::new(),
             review: None,

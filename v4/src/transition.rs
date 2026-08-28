@@ -74,6 +74,8 @@ pub enum TransitionError {
     InvalidCheckpointArtifact,
     #[error("staged explainer bytes are missing or no longer match their digest")]
     ExplainerBytesMissing,
+    #[error("analysis checkpoint cites a digest that has not been staged for this run")]
+    AnalysisNotStaged,
 }
 
 /// Actions that carry their own idempotency token, or that only report
@@ -541,6 +543,21 @@ fn apply_locked(
                 reviewer_harness,
             });
         }
+        Action::StageAnalysis { source_path } => {
+            require_owner(baton, role, Role::Worker, Assignee::Worker)?;
+            if !matches!(baton.status, Status::Working | Status::Revising) {
+                return Err(TransitionError::IllegalState);
+            }
+            let digest = stage_content_addressed(
+                channel.directory(),
+                &source_path,
+                crate::model::ANALYSIS_ARTIFACT_DIR,
+                crate::model::analysis_artifact_path,
+            )?;
+            if let Err(index) = baton.staged_analysis.binary_search(&digest) {
+                baton.staged_analysis.insert(index, digest);
+            }
+        }
         Action::ReportProgress { phase, detail } => {
             let detail = match detail {
                 Some(detail) if detail.trim().is_empty() => {
@@ -602,6 +619,16 @@ fn normalize_checkpoint(
         }
         if !crate::model::valid_checkpoint_shape(&kind, &identity, &deliverable.artifacts) {
             return Err(TransitionError::InvalidCheckpointArtifact);
+        }
+        // An analysis deliverable is only reviewable if its bytes are actually
+        // present, so a manifest may only cite digests this run has staged.
+        if kind == crate::model::CHECKPOINT_KIND_ANALYSIS
+            && !deliverable
+                .artifacts
+                .iter()
+                .all(|artifact| baton.staged_analysis.contains(&artifact.value))
+        {
+            return Err(TransitionError::AnalysisNotStaged);
         }
         deliverable
             .artifacts
@@ -789,6 +816,39 @@ fn require_reviewer(baton: &RunBaton, role: Role) -> Result<(), TransitionError>
 /// run directory and return their digest and length. Content addressing makes
 /// re-staging identical bytes a no-op and keeps every prior obligation's bytes
 /// readable for audit.
+/// Copy caller-supplied bytes into a content-addressed, mode-restricted file
+/// under the run directory and return their digest.
+fn stage_content_addressed(
+    run_dir: &std::path::Path,
+    source_path: &std::path::Path,
+    directory_name: &str,
+    relative: impl Fn(&str) -> String,
+) -> Result<String, TransitionError> {
+    let metadata =
+        std::fs::metadata(source_path).map_err(|_| TransitionError::InvalidExplainerSource)?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_EXPLAINER_BYTES {
+        return Err(TransitionError::InvalidExplainerSource);
+    }
+    let bytes = std::fs::read(source_path).map_err(|_| TransitionError::InvalidExplainerSource)?;
+    if bytes.is_empty() || bytes.len() as u64 > MAX_EXPLAINER_BYTES {
+        return Err(TransitionError::InvalidExplainerSource);
+    }
+    let digest = format!("{:x}", sha2::Sha256::digest(&bytes));
+    let directory = run_dir.join(directory_name);
+    crate::store::create_private_dir(&directory).map_err(StoreError::Io)?;
+    let destination = run_dir.join(relative(&digest));
+    let reusable = std::fs::read(&destination)
+        .is_ok_and(|existing| format!("{:x}", sha2::Sha256::digest(&existing)) == digest);
+    if !reusable {
+        let temporary = directory.join(format!(".{digest}.{}.tmp", uuid::Uuid::new_v4()));
+        std::fs::write(&temporary, &bytes).map_err(StoreError::Io)?;
+        std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o600))
+            .map_err(StoreError::Io)?;
+        std::fs::rename(&temporary, &destination).map_err(StoreError::Io)?;
+    }
+    Ok(digest)
+}
+
 fn stage_explainer_bytes(
     run_dir: &std::path::Path,
     source_path: &std::path::Path,
