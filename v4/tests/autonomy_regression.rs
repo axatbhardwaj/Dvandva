@@ -218,3 +218,39 @@ fn a_pre_staging_baton_still_loads_and_can_be_repaired() {
     // The stable Site ID survives, so a later rendering keeps one identity.
     assert_eq!(binding.site_id.as_deref(), Some("appgprj_deadbeef"));
 }
+
+/// A worker that has handed a checkpoint to the reviewer must rest. Escape
+/// hatches stay available but are never wake reasons, or the foreground wait
+/// returns immediately and the role spins for the whole review.
+#[test]
+fn escape_hatches_never_make_a_waiting_role_actionable() {
+    let mut reviewing = baton();
+    reviewing.status = Status::Reviewing;
+    reviewing.assignee = Assignee::Reviewer;
+    let worker = next_action::classify(&reviewing, Role::Worker, "Claude");
+    assert!(
+        worker
+            .legal_actions
+            .contains(&"request_checkpoint_supersession"),
+        "the worker must still be able to report newly discovered work"
+    );
+    assert!(
+        !worker.actionable,
+        "a worker awaiting a verdict must rest, not spin"
+    );
+
+    let mut finalizing = baton();
+    finalizing.status = Status::Finalizing;
+    finalizing.assignee = Assignee::Worker;
+    let ungated = next_action::classify(&finalizing, Role::Worker, "Claude");
+    assert!(ungated.legal_actions.contains(&"withdraw_approval"));
+    assert!(!ungated.legal_actions.contains(&"finalize"));
+    assert!(
+        !ungated.actionable,
+        "withdrawal alone is an escape hatch, not work the protocol is waiting on"
+    );
+    assert_eq!(
+        ungated.blocking_reason,
+        Some("finalize awaits current explainer approval")
+    );
+}

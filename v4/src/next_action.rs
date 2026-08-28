@@ -119,9 +119,20 @@ fn result(
         .chain(&legal_actions)
         .copied()
         .collect::<Vec<_>>();
-    let actionable = next_actions
-        .iter()
-        .any(|action| !matches!(*action, "wait" | "stop" | "report_progress"));
+    // A wake reason is an action that advances the run on the current owner's
+    // behalf. Escape hatches and liveness are always available and are never
+    // reasons to wake: counting them makes a foreground wait return instantly
+    // and spin instead of resting.
+    let actionable = next_actions.iter().any(|action| {
+        !matches!(
+            *action,
+            "wait"
+                | "stop"
+                | "report_progress"
+                | "request_checkpoint_supersession"
+                | "withdraw_approval"
+        )
+    });
     NextActions {
         role_state,
         wake_reason,
