@@ -1292,8 +1292,10 @@ fn role_wait_keeps_blocking_when_human_escape_is_the_only_extra_legal_action() {
             "100",
         ])
         .assert()
-        .failure()
-        .stderr(predicates::str::contains(r#""error":"timeout""#));
+        // An expected wait timeout is an ordinary idle outcome, not a failure:
+        // the human escape hatch alone never makes a waiting role actionable.
+        .success()
+        .stdout(predicates::str::contains(r#""wait_outcome": "idle_timeout""#));
 }
 
 #[test]

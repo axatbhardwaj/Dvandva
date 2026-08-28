@@ -24,7 +24,7 @@ use crate::{
     next_action::{self, NextActions},
     store::{require_current_schema, RunChannel, StoreError},
     transition::{self, TransitionError},
-    wait::{self, WaitError},
+    wait::{self, WaitError, WaitOutcome},
 };
 
 #[derive(Debug, Error)]
@@ -139,6 +139,9 @@ pub struct RoleSnapshot {
     pub baton: RunBaton,
     pub run_dir: PathBuf,
     pub peer: PeerStatus,
+    /// Present only on the result of a foreground wait.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wait_outcome: Option<WaitOutcome>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub explainer: Option<StagedExplainer>,
     #[serde(flatten)]
@@ -760,7 +763,7 @@ pub fn wait(
     let baton = channel.read()?;
     require_current_schema(&baton)?;
     let credential = load_for_run(run_dir, credentials_root, role, session_id, &baton.run_id)?;
-    let baton = wait::wait(
+    let (baton, outcome) = wait::wait(
         &channel,
         role,
         session_id,
@@ -769,7 +772,9 @@ pub fn wait(
         poll_interval,
         timeout,
     )?;
-    Ok(snapshot(baton, run_dir, role))
+    let mut snapshot = snapshot(baton, run_dir, role);
+    snapshot.wait_outcome = Some(outcome);
+    Ok(snapshot)
 }
 
 pub fn apply(
@@ -819,6 +824,7 @@ fn snapshot(baton: RunBaton, run_dir: &Path, role: Role) -> RoleSnapshot {
         baton,
         run_dir,
         peer,
+        wait_outcome: None,
         explainer,
         actions,
     }

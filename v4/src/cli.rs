@@ -897,7 +897,7 @@ pub fn run() -> Result<(), CliError> {
             poll_interval_ms,
             timeout_ms,
         } => {
-            let baton = wait::wait(
+            let (baton, outcome) = wait::wait(
                 &RunChannel::open(run_dir),
                 role,
                 &session_id,
@@ -906,7 +906,11 @@ pub fn run() -> Result<(), CliError> {
                 std::time::Duration::from_millis(poll_interval_ms.max(1)),
                 std::time::Duration::from_millis(timeout_ms),
             )?;
-            println!("{}", serde_json::to_string_pretty(&baton)?);
+            let mut rendered = serde_json::to_value(&baton)?;
+            if let Some(object) = rendered.as_object_mut() {
+                object.insert("wait_outcome".to_owned(), serde_json::to_value(outcome)?);
+            }
+            println!("{}", serde_json::to_string_pretty(&rendered)?);
             Ok(())
         }
         Command::Recover {
@@ -1047,7 +1051,6 @@ fn wait_error_code(error: &WaitError) -> &'static str {
     match error {
         WaitError::Store(error) => store_error_code(error),
         WaitError::Claim(_) => "claim_fenced",
-        WaitError::Timeout => "timeout",
     }
 }
 

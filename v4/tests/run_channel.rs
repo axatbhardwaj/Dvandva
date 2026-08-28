@@ -2986,8 +2986,9 @@ fn one_second_wait_renews_at_most_once_before_timeout() {
         waiter.kill().unwrap();
     }
     let output = waiter.wait_with_output().unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    assert!(String::from_utf8_lossy(&output.stderr).contains(r#""error":"timeout""#));
+    // An expected wait timeout is a normal idle outcome, reported on stdout.
+    assert_eq!(output.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&output.stdout).contains(r#""wait_outcome": "idle_timeout""#));
     assert!(
         std::fs::read_dir(dir.path().join("history"))
             .unwrap()
@@ -3033,7 +3034,13 @@ fn failed_history_write_does_not_advance_the_baton() {
 fn interrupted_history_staging_never_exposes_a_partial_revision() {
     let dir = tempfile::tempdir().unwrap();
     let oversized_objective = "x".repeat(8 * 1024);
-    let script = r#"ulimit -f 1; exec "$1" init --run-dir "$2" --run-id run-a --objective "$3" --worker codex --reviewer claude --repository-id github.com/axatbhardwaj/dvandva --required-deliverable implementation=output"#;
+    // `ulimit -f 1` truncates the staging write partway through, which is the
+    // failure under test. Ignoring SIGXFSZ — a disposition that survives exec —
+    // turns that into an EFBIG write error instead of an abnormal termination,
+    // so the host produces neither a core dump nor a desktop crash notification
+    // while the interrupted write is still exercised. `ulimit -c 0` is belt and
+    // braces for hosts that deliver the signal anyway.
+    let script = r#"ulimit -c 0; trap '' XFSZ; ulimit -f 1; exec "$1" init --run-dir "$2" --run-id run-a --objective "$3" --worker codex --reviewer claude --repository-id github.com/axatbhardwaj/dvandva --required-deliverable implementation=output"#;
     let output = std::process::Command::new("sh")
         .args([
             "-c",
@@ -3046,11 +3053,20 @@ fn interrupted_history_staging_never_exposes_a_partial_revision() {
         .output()
         .unwrap();
 
+    // The write was interrupted, and the failure was reported rather than
+    // dumped: no fatal signal, so no core dump and no crash notification.
     assert!(!output.status.success());
+    assert_eq!(
+        std::os::unix::process::ExitStatusExt::signal(&output.status),
+        None,
+        "an intentional failure injection must not terminate the host abnormally"
+    );
     assert!(!dir
         .path()
         .join("history/00000000000000000000.json")
         .exists());
+    // Nothing partial was left behind for the next mutation to trip over.
+    assert!(!dir.path().join("baton.json").exists());
 }
 
 #[test]
