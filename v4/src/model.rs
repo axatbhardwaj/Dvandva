@@ -323,6 +323,13 @@ pub struct PublicationBinding {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub site_id: Option<String>,
     pub obligation: HandoffObligation,
+    /// Counts receipts written against the current obligation. Obligation-bound
+    /// writes waive the run-wide revision precondition, so this is what they
+    /// concurrency-check against instead: it advances only on a receipt, so
+    /// unrelated claim and progress edges never invalidate a prepared write,
+    /// while a stale or out-of-order receipt is rejected.
+    #[serde(default)]
+    pub receipt_seq: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub artifact: Option<ExplainerArtifact>,
     pub deployment: Option<PublicationDeployment>,
@@ -359,6 +366,7 @@ pub fn create_handoff_obligation(
 ) -> PublicationBinding {
     PublicationBinding {
         site_id: None,
+        receipt_seq: 0,
         obligation: HandoffObligation {
             handoff_revision,
             kind,

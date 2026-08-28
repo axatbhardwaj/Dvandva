@@ -78,6 +78,10 @@ analysis_identity() {
   python3 -c 'import hashlib,sys; print(hashlib.sha256("\n".join(sorted(set(sys.argv[1:]))).encode()).hexdigest())' "$@"
 }
 
+receipt_seq() {
+  python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["publication_binding"].get("receipt_seq", 0))' "$1/baton.json"
+}
+
 rev() {
   python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["revision"])' "$1/baton.json"
 }
@@ -116,7 +120,7 @@ approve_explainer() {
   printf '<h1>%s %s</h1>\n' "$site_id" "$site_version" >"$source"
   staged="$(apply_action "$publisher" "$publisher_session" "$run_dir" "$revision" \
     "stage-$site_version" \
-    "{\"type\":\"stage_explainer\",\"obligation\":$obligation,\"source_path\":\"$source\"}")"
+    "{\"type\":\"stage_explainer\",\"obligation\":$obligation,\"after_seq\":$(receipt_seq "$run_dir"),\"source_path\":\"$source\"}")"
   python3 -c 'import json,sys; artifact=json.load(sys.stdin)["publication_binding"]["artifact"]; assert artifact["publisher_harness"] == "Codex"; assert artifact["channel"] == "run_artifact"; assert artifact["access"] == "run_private"' <<<"$staged"
   source_digest="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["publication_binding"]["artifact"]["source_digest"])' <<<"$staged")"
 
@@ -127,7 +131,7 @@ approve_explainer() {
 
   reviewed="$(apply_action "$reviewer" "$reviewer_session" "$run_dir" "$((revision + 1))" \
     "review-$site_version" \
-    "{\"type\":\"record_explainer_review\",\"obligation\":$obligation,\"source_digest\":\"$source_digest\",\"verdict\":\"approved\",\"findings\":[]}")"
+    "{\"type\":\"record_explainer_review\",\"obligation\":$obligation,\"after_seq\":$(receipt_seq "$run_dir"),\"source_digest\":\"$source_digest\",\"verdict\":\"approved\",\"findings\":[]}")"
   python3 -c 'import json,sys; binding=json.load(sys.stdin)["publication_binding"]; review=binding["review"]; assert review["reviewer_harness"] == "Claude"; assert review["source_digest"] == binding["artifact"]["source_digest"]' <<<"$reviewed"
   test -n "$source_digest"
 }

@@ -147,15 +147,21 @@ directory, and binds that digest to the obligation. Staging different bytes
 discards any earlier rendering and review of the obligation:
 
 ```json
-{"type":"stage_explainer","obligation":"<snapshot.publication_binding.obligation>","source_path":"<absolute path to the explainer HTML>"}
+{"type":"stage_explainer","obligation":"<snapshot.publication_binding.obligation>","after_seq":<snapshot.publication_binding.receipt_seq>,"source_path":"<absolute path to the explainer HTML>"}
 ```
+
+Every receipt carries `after_seq`, copied from
+`publication_binding.receipt_seq` in the same fresh snapshot. Only receipts
+advance it, so an unrelated peer heartbeat or progress report never invalidates
+a prepared write, while a delayed or out-of-order receipt is refused instead of
+overwriting newer state. Re-applying an identical receipt is a no-op.
 
 For `review_explainer`, read the staged bytes through the facade with
 `dvandva-role.sh explainer`, which verifies the digest for you, then copy the
 same obligation and `publication_binding.artifact.source_digest` unchanged:
 
 ```json
-{"type":"record_explainer_review","obligation":"<snapshot.publication_binding.obligation>","source_digest":"<snapshot.publication_binding.artifact.source_digest>","verdict":"approved","findings":[]}
+{"type":"record_explainer_review","obligation":"<snapshot.publication_binding.obligation>","after_seq":<snapshot.publication_binding.receipt_seq>,"source_digest":"<snapshot.publication_binding.artifact.source_digest>","verdict":"approved","findings":[]}
 ```
 
 `publish_explainer` is optional and never gates the run. It records a
@@ -164,7 +170,7 @@ human-facing Codex Site that renders the already-staged bytes; its
 run and record a new Site version for each deployment:
 
 ```json
-{"type":"record_explainer_publication","obligation":"<snapshot.publication_binding.obligation>","source_digest":"<snapshot.publication_binding.artifact.source_digest>","site_id":"<stable run Site ID>","site_version":"<new version>","url":"<exact deployment URL>","channel":"codex_sites","access":"owner_only"}
+{"type":"record_explainer_publication","obligation":"<snapshot.publication_binding.obligation>","after_seq":<snapshot.publication_binding.receipt_seq>,"source_digest":"<snapshot.publication_binding.artifact.source_digest>","site_id":"<stable run Site ID>","site_version":"<new version>","url":"<exact deployment URL>","channel":"codex_sites","access":"owner_only"}
 ```
 
 Never record a verdict on bytes you did not read. Recording an unread approval,

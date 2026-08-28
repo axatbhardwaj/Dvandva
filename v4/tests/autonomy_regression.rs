@@ -318,6 +318,7 @@ fn obligation_bound_writes_replay_cleanly_and_reject_stale_verdicts() {
         .obligation;
     let stage = || Action::StageExplainer {
         obligation: obligation.clone(),
+        after_seq: None,
         source_path: source.clone(),
     };
 
@@ -355,6 +356,7 @@ fn obligation_bound_writes_replay_cleanly_and_reject_stale_verdicts() {
 
     let review = |verdict, findings: Vec<String>| Action::RecordExplainerReview {
         obligation: obligation.clone(),
+        after_seq: None,
         source_digest: digest.clone(),
         verdict,
         findings,
@@ -756,5 +758,161 @@ fn a_new_claim_epoch_does_not_inherit_the_previous_session_s_progress() {
     assert!(
         after.participants.worker.progress.is_none(),
         "a reclaim must not present the previous session's activity as current"
+    );
+}
+
+/// Obligation-bound writes waive the revision precondition, so they carry a
+/// targeted one instead. Unrelated peer activity must not invalidate a prepared
+/// receipt, but a delayed or out-of-order receipt must not overwrite newer state.
+#[test]
+fn a_receipt_prepared_against_older_state_is_refused_not_applied() {
+    use dvandva_v4::{
+        action::{Action, ReviewVerdict},
+        claim,
+        model::ProgressPhase,
+        store::RunChannel,
+        transition,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let run_dir = dir.path().join("run-a");
+    let mut created = RunBaton::new(
+        "run-a",
+        "Objective",
+        "codex",
+        "claude",
+        vec![DeliverableRequirement {
+            id: "kernel".into(),
+            description: "Fix the kernel".into(),
+        }],
+    )
+    .unwrap();
+    created.workspace = Some(dvandva_v4::model::WorkspaceIdentity {
+        repository_id: "github.com/axatbhardwaj/dvandva".into(),
+        origin: None,
+        worktree: None,
+    });
+    let channel = RunChannel::open(&run_dir);
+    channel.create(&created).unwrap();
+    let worker = claim::claim(&channel, Role::Worker, "codex-session", 1800, 0).unwrap();
+    let reviewer = claim::claim(&channel, Role::Reviewer, "claude-session", 1800, 1).unwrap();
+    let obligation = channel
+        .read()
+        .unwrap()
+        .publication_binding
+        .unwrap()
+        .obligation;
+
+    let stage = |label: &str, after_seq| {
+        let source = dir.path().join(format!("{label}.html"));
+        std::fs::write(&source, format!("<h1>{label}</h1>")).unwrap();
+        Action::StageExplainer {
+            obligation: obligation.clone(),
+            after_seq,
+            source_path: source,
+        }
+    };
+
+    // A receipt prepared at sequence 0 lands.
+    let first = transition::apply(
+        &channel,
+        Role::Worker,
+        "codex-session",
+        &worker.token,
+        2,
+        stage("first", Some(0)),
+    )
+    .unwrap();
+    assert_eq!(first.publication_binding.as_ref().unwrap().receipt_seq, 1);
+
+    // An unrelated progress edge from the peer must not invalidate a receipt
+    // prepared against sequence 1: only receipts advance the sequence.
+    transition::apply(
+        &channel,
+        Role::Reviewer,
+        "claude-session",
+        &reviewer.token,
+        3,
+        Action::ReportProgress {
+            phase: ProgressPhase::Waiting,
+            detail: None,
+        },
+    )
+    .unwrap();
+    let second = transition::apply(
+        &channel,
+        Role::Worker,
+        "codex-session",
+        &worker.token,
+        3,
+        stage("second", Some(1)),
+    )
+    .expect("an unrelated progress edge must not invalidate a prepared receipt");
+    let current_digest = second
+        .publication_binding
+        .as_ref()
+        .unwrap()
+        .artifact
+        .as_ref()
+        .unwrap()
+        .source_digest
+        .clone();
+
+    // A receipt prepared against the superseded state is refused rather than
+    // silently replacing the newer bytes.
+    let delayed = transition::apply(
+        &channel,
+        Role::Worker,
+        "codex-session",
+        &worker.token,
+        4,
+        stage("delayed", Some(1)),
+    );
+    assert!(
+        matches!(
+            delayed,
+            Err(transition::TransitionError::StaleReceiptSequence)
+        ),
+        "a delayed receipt must not overwrite newer staged bytes"
+    );
+    assert_eq!(
+        channel
+            .read()
+            .unwrap()
+            .publication_binding
+            .unwrap()
+            .artifact
+            .unwrap()
+            .source_digest,
+        current_digest
+    );
+
+    // The same rule protects verdicts: a late approval cannot replace a newer
+    // changes_requested, even through a direct compare-and-swap.
+    transition::apply(
+        &channel,
+        Role::Reviewer,
+        "claude-session",
+        &reviewer.token,
+        5,
+        Action::RecordExplainerReview {
+            obligation: obligation.clone(),
+            after_seq: None,
+            source_digest: current_digest.clone(),
+            verdict: ReviewVerdict::ChangesRequested,
+            findings: vec!["rework".into()],
+        },
+    )
+    .unwrap();
+    let head = channel.read().unwrap();
+    let mut forged = head.clone();
+    forged.revision += 1;
+    let binding = forged.publication_binding.as_mut().unwrap();
+    binding.receipt_seq += 1;
+    binding.review.as_mut().unwrap().verdict = "approved".to_owned();
+    binding.review.as_mut().unwrap().findings.clear();
+    assert!(
+        channel.compare_and_swap(head.revision, &forged).is_err(),
+        "a verdict bound to these exact bytes must not be flipped in place"
     );
 }

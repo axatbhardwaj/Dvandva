@@ -55,12 +55,22 @@ pub enum Action {
     /// harnesses can read, and binds the digest to the current obligation.
     StageExplainer {
         obligation: HandoffObligation,
+        /// The `publication_binding.receipt_seq` this write was prepared
+        /// against. Omitted means "whatever is current", which is only safe for
+        /// a first write.
+        #[serde(default)]
+        after_seq: Option<u64>,
         source_path: PathBuf,
     },
     /// Record the optional human-facing Site that renders the staged bytes. Never
     /// gates the run; the digest must match the staged artifact.
     RecordExplainerPublication {
         obligation: HandoffObligation,
+        /// The `publication_binding.receipt_seq` this write was prepared
+        /// against. Omitted means "whatever is current", which is only safe for
+        /// a first write.
+        #[serde(default)]
+        after_seq: Option<u64>,
         source_digest: String,
         site_id: String,
         site_version: String,
@@ -70,6 +80,11 @@ pub enum Action {
     },
     RecordExplainerReview {
         obligation: HandoffObligation,
+        /// The `publication_binding.receipt_seq` this write was prepared
+        /// against. Omitted means "whatever is current", which is only safe for
+        /// a first write.
+        #[serde(default)]
+        after_seq: Option<u64>,
         source_digest: String,
         verdict: ReviewVerdict,
         #[serde(default)]

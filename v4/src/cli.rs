@@ -1089,6 +1089,7 @@ fn transition_error_code(error: &TransitionError) -> &'static str {
         TransitionError::AnalysisNotStaged => "analysis_not_staged",
         TransitionError::AutonomousRecoveryAvailable => "autonomous_recovery_available",
         TransitionError::AnalysisBytesMissing => "analysis_bytes_missing",
+        TransitionError::StaleReceiptSequence => "stale_receipt_sequence",
     }
 }
 

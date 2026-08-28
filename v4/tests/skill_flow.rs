@@ -200,6 +200,7 @@ fn normalize_documented_action(template: &str) -> serde_json::Value {
         }
     });
     let normalized = template
+        .replace("<snapshot.publication_binding.receipt_seq>", "0")
         .replace(
             "<absolute path to the explainer HTML>",
             "/nonexistent/explainer.html",
@@ -667,6 +668,7 @@ impl Flow<'_> {
         std::fs::write(&source, format!("<h1>{site_version}</h1>")).unwrap();
         let mut stage = documented_action("vadi", "stage_explainer");
         stage["obligation"] = obligation.clone();
+        stage["after_seq"] = baton["publication_binding"]["receipt_seq"].clone();
         stage["source_path"] = serde_json::json!(source.to_str().unwrap());
         let staged = self.apply(
             "worker",
@@ -678,6 +680,7 @@ impl Flow<'_> {
         let artifact = staged["publication_binding"]["artifact"].clone();
         let mut review = documented_action("prativadi", "record_explainer_review");
         review["obligation"] = obligation;
+        review["after_seq"] = staged["publication_binding"]["receipt_seq"].clone();
         review["source_digest"] = artifact["source_digest"].clone();
         self.apply(
             "reviewer",

@@ -80,6 +80,8 @@ pub enum TransitionError {
     AutonomousRecoveryAvailable,
     #[error("a cited analysis artifact is missing or no longer matches its digest")]
     AnalysisBytesMissing,
+    #[error("this receipt was prepared against an older state of the obligation")]
+    StaleReceiptSequence,
 }
 
 /// Actions that carry their own idempotency token, or that only report
@@ -418,6 +420,7 @@ fn apply_locked(
         }
         Action::StageExplainer {
             obligation,
+            after_seq,
             source_path,
         } => {
             require_publisher(baton, role)?;
@@ -428,6 +431,7 @@ fn apply_locked(
             if binding.obligation != obligation {
                 return Err(TransitionError::StalePublicationBinding);
             }
+            require_receipt_seq(binding, after_seq)?;
             let (source_digest, byte_length) =
                 stage_explainer_bytes(channel.directory(), &source_path)?;
             let publisher_harness = caller_harness(baton, role).to_owned();
@@ -448,9 +452,11 @@ fn apply_locked(
             // Fresh bytes invalidate any rendering and review of the old bytes.
             binding.deployment = None;
             binding.review = None;
+            binding.receipt_seq += 1;
         }
         Action::RecordExplainerPublication {
             obligation,
+            after_seq,
             source_digest,
             site_id,
             site_version,
@@ -467,6 +473,7 @@ fn apply_locked(
             if binding.obligation != obligation {
                 return Err(TransitionError::StalePublicationBinding);
             }
+            require_receipt_seq(binding, after_seq)?;
             // A Site is a rendering of bytes that already exist locally; it can
             // never be the only copy the reviewer has.
             let artifact = binding
@@ -503,9 +510,11 @@ fn apply_locked(
                 access,
                 publisher_harness,
             });
+            binding.receipt_seq += 1;
         }
         Action::RecordExplainerReview {
             obligation,
+            after_seq,
             source_digest,
             verdict,
             findings,
@@ -526,6 +535,7 @@ fn apply_locked(
             {
                 return Err(TransitionError::StalePublicationBinding);
             }
+            require_receipt_seq(binding, after_seq)?;
             require_staged_bytes_intact(channel.directory(), artifact)?;
             // Ordering: once these exact bytes carry a verdict, a later delivery
             // of a different verdict for the same bytes is stale, not an
@@ -566,6 +576,7 @@ fn apply_locked(
                 findings,
                 reviewer_harness,
             });
+            binding.receipt_seq += 1;
         }
         Action::StageAnalysis { source_path } => {
             require_owner(baton, role, Role::Worker, Assignee::Worker)?;
@@ -841,6 +852,20 @@ fn require_staged_bytes_intact(
         return Err(TransitionError::ExplainerBytesMissing);
     }
     Ok(())
+}
+
+/// Targeted concurrency control for obligation-bound writes: a caller that saw
+/// receipt N may only write receipt N. Claim and progress edges do not advance
+/// this, so unrelated peer activity never invalidates a prepared receipt, while
+/// a delayed or out-of-order one is refused instead of overwriting newer state.
+fn require_receipt_seq(
+    binding: &crate::model::PublicationBinding,
+    after_seq: Option<u64>,
+) -> Result<(), TransitionError> {
+    match after_seq {
+        Some(seq) if seq != binding.receipt_seq => Err(TransitionError::StaleReceiptSequence),
+        _ => Ok(()),
+    }
 }
 
 pub(crate) fn effective_policy(baton: &RunBaton) -> PublicationPolicy {

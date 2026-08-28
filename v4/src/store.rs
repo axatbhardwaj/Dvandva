@@ -241,8 +241,17 @@ impl RunChannel {
             // Exact replay is a no-op. Without a revision precondition, a retried
             // write must not append an identical revision, or an ordinary retry
             // would grow history and could fail its own edge validation.
+            // Replay detection ignores the receipt sequence: re-applying the
+            // same receipt would advance it, but if nothing else differs the
+            // write carries no new information and must not append a revision.
             let mut unchanged = next.clone();
             unchanged.revision = current.revision;
+            if let (Some(binding), Some(current_binding)) = (
+                unchanged.publication_binding.as_mut(),
+                current.publication_binding.as_ref(),
+            ) {
+                binding.receipt_seq = current_binding.receipt_seq;
+            }
             if unchanged == current {
                 return Ok(replayed(current));
             }
@@ -1020,6 +1029,12 @@ fn valid_publication_receipt_edge(
     {
         return false;
     }
+    // Every receipt advances the sequence by exactly one. This is what makes an
+    // out-of-order or replayed receipt detectable at the history layer, so a
+    // direct compare-and-swap cannot install one either.
+    if next_binding.receipt_seq != current_binding.receipt_seq + 1 {
+        return false;
+    }
     if current_binding.artifact != next_binding.artifact {
         // Staging fresh bytes invalidates the rendering and review of the old ones.
         return next_binding.artifact.is_some()
@@ -1028,6 +1043,18 @@ fn valid_publication_receipt_edge(
     }
     if current_binding.deployment != next_binding.deployment {
         return next_binding.deployment.is_some() && current_binding.review == next_binding.review;
+    }
+    // A verdict already bound to these exact bytes is final until the bytes
+    // change: nothing may flip changes_requested to approved in place.
+    if let (Some(current_review), Some(next_review)) = (
+        current_binding.review.as_ref(),
+        next_binding.review.as_ref(),
+    ) {
+        if current_review.source_digest == next_review.source_digest
+            && current_review.verdict != next_review.verdict
+        {
+            return false;
+        }
     }
     current_binding.site_id == next_binding.site_id
         && current_binding.review != next_binding.review
@@ -1388,7 +1415,9 @@ fn is_terminal(baton: &RunBaton) -> bool {
 }
 
 fn valid_new_obligation(current: &RunBaton, next: &RunBaton, binding: &PublicationBinding) -> bool {
-    if binding.obligation.handoff_revision != next.revision {
+    // A fresh obligation starts its receipt sequence over, so a receipt prepared
+    // against the previous obligation cannot be replayed into this one.
+    if binding.obligation.handoff_revision != next.revision || binding.receipt_seq != 0 {
         return false;
     }
     match binding.obligation.kind {
