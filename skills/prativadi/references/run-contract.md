@@ -10,7 +10,9 @@ read  SESSION RUN_DIR
 apply SESSION RUN_DIR EXPECTED_REVISION ACTION_FILE
 wait  SESSION RUN_DIR AFTER_REVISION [TIMEOUT_MS]
 heartbeat SESSION RUN_DIR EXPECTED_REVISION
+explainer SESSION RUN_DIR
 upgrade SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION
+repair-policy SESSION RUN_DIR EXPECTED_REVISION
 claim SESSION RUN_DIR EXPECTED_REVISION
 reclaim SESSION RUN_DIR EXPECTED_REVISION
 ```
@@ -30,6 +32,10 @@ return that choice to the human so vadi/worker can create it.
 Surface `ambiguous`, `busy`, `run_missing`, and `upgrade_required` rather than
 guessing. Surface the start outcome and canonical snapshot before domain-tool
 work.
+
+For `publication_unreadable`, run `repair-policy` with the exact returned run
+directory and revision; it installs the readable channel and clears the current
+obligation's receipts so the publisher restages.
 
 For `upgrade_required`, run `upgrade` with the exact returned run directory,
 harnesses, and revision. Upgrade clears claims: use its returned revision with
@@ -95,33 +101,61 @@ not returned by the Human Decision object and must never be inferred:
 
 ## Explainer obligation
 
-At every semantic handoff, the Codex harness publishes or updates one
-owner-only Codex Site and the Claude harness reviews that exact deployment,
-regardless of semantic casting. The explainer carries this exact content:
+At every semantic handoff, the Codex harness stages the explainer's bytes into
+the run directory and the Claude harness reviews those exact bytes,
+regardless of semantic casting. Staging is first: the gate binds a digest, not a URL.
+The explainer carries this exact content:
 canonical scope, complete manifest, findings and decisions, and a current plan/TODO.
-Reuse one stable Site ID for the run and record a new Site version for each
-obligation.
 
-For `publish_explainer`, copy `publication_binding.obligation` unchanged from
-the fresh snapshot. Preserve `publication_binding.site_id` when non-null; on
-the first deployment, create the run's stable Site ID. Compute the deployed
-source digest and record the new Site version and exact resulting URL:
-
-```json
-{"type":"record_explainer_publication","obligation":"<snapshot.publication_binding.obligation>","source_digest":"<64 lowercase hex>","site_id":"<stable run Site ID>","site_version":"<new version>","url":"<exact deployment URL>","channel":"codex_sites","access":"owner_only"}
-```
-
-For `review_explainer`, copy the same obligation unchanged and copy every
-deployment coordinate from `publication_binding.deployment` in the fresh
-snapshot:
+For `stage_explainer`, write the explainer HTML to a private path and
+copy `publication_binding.obligation` unchanged from the fresh snapshot. The kernel
+hashes the bytes, stores them at `explainer/<source_digest>.html` inside the run
+directory, and binds that digest to the obligation. Staging different bytes
+discards any earlier rendering and review of the obligation:
 
 ```json
-{"type":"record_explainer_review","obligation":"<snapshot.publication_binding.obligation>","source_digest":"<snapshot.publication_binding.deployment.source_digest>","site_id":"<snapshot.publication_binding.deployment.site_id>","site_version":"<snapshot.publication_binding.deployment.site_version>","url":"<snapshot.publication_binding.deployment.url>","verdict":"approved","findings":[]}
+{"type":"stage_explainer","obligation":"<snapshot.publication_binding.obligation>","source_path":"<absolute path to the explainer HTML>"}
 ```
 
-A Claude Artifact, generic publisher, public access, or silent fallback cannot
-satisfy the gate. Missing Sites or exact review capability routes to Human
-Decision and leaves the run blocked.
+For `review_explainer`, read the staged bytes through the facade with
+`dvandva-role.sh explainer`, which verifies the digest for you, then copy the
+same obligation and `publication_binding.artifact.source_digest` unchanged:
+
+```json
+{"type":"record_explainer_review","obligation":"<snapshot.publication_binding.obligation>","source_digest":"<snapshot.publication_binding.artifact.source_digest>","verdict":"approved","findings":[]}
+```
+
+`publish_explainer` is optional and never gates the run. It records a
+human-facing Codex Site that renders the already-staged bytes; its
+`source_digest` must equal the staged digest. Reuse one stable Site ID for the
+run and record a new Site version for each deployment:
+
+```json
+{"type":"record_explainer_publication","obligation":"<snapshot.publication_binding.obligation>","source_digest":"<snapshot.publication_binding.artifact.source_digest>","site_id":"<stable run Site ID>","site_version":"<new version>","url":"<exact deployment URL>","channel":"codex_sites","access":"owner_only"}
+```
+
+Never record a verdict on bytes you did not read. Recording an unread approval,
+or substituting a Claude Artifact, generic publisher, or any other
+silent fallback, cannot satisfy the gate.
+
+A run whose `publication_policy` names a channel the reviewer cannot read is
+refused at `start` with `publication_unreadable`; repair it with `repair-policy`
+rather than working around it.
+
+## Liveness
+
+Before and during long authorized work, publish progress so the peer can tell
+slow from dead. `report_progress` also renews your own lease, and is never a
+reason for the peer to wake:
+
+```json
+{"type":"report_progress","phase":"publishing_explainer","detail":"<current step>"}
+```
+
+Phases are `working`, `publishing_explainer`, `reviewing_explainer`,
+`reviewing_checkpoint`, and `waiting`. Read the peer's phase, claim state, and
+lease expiry from the snapshot's `peer` block; never infer a dead peer from an
+expired lease alone.
 
 ## Run boundaries and handoff
 
