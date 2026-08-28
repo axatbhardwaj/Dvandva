@@ -325,7 +325,10 @@ impl RunChannel {
             // a human decision open that nobody needs to make.
             if next.status == Status::HumanDecision {
                 if let Some(decision) = next.human_decision.as_mut() {
-                    if decision.answer.is_none() {
+                    let parked_by_this = decision.answer.is_none()
+                        && decision.cause
+                            == Some(crate::model::DecisionCause::PublicationUnreadable);
+                    if parked_by_this {
                         decision.answer =
                             Some("resolved autonomously: publication policy repaired".to_owned());
                         next.status = decision.resume_status.clone();
@@ -375,7 +378,7 @@ impl RunChannel {
                 return Err(StoreError::InvalidHistory);
             }
             if let Some(previous_baton) = previous.as_ref() {
-                validate_history_edge(previous_baton, &baton)
+                validate_stored_history_edge(previous_baton, &baton)
                     .map_err(|_| StoreError::InvalidHistory)?;
             }
             match &run_id {
@@ -419,7 +422,7 @@ impl RunChannel {
                     return Err(StoreError::InvalidHistory);
                 }
                 if let Some(previous_baton) = previous.as_ref() {
-                    validate_history_edge(previous_baton, &baton)
+                    validate_stored_history_edge(previous_baton, &baton)
                         .map_err(|_| StoreError::InvalidHistory)?;
                 }
                 previous = Some(baton.clone());
@@ -507,6 +510,7 @@ impl RunChannel {
         lock.lock_exclusive()
             .map_err(StoreError::from)
             .map_err(E::from)?;
+        self.reconcile_interrupted_install().map_err(E::from)?;
         let result = operation();
         FileExt::unlock(&lock)
             .map_err(StoreError::from)
@@ -531,6 +535,28 @@ impl RunChannel {
         fs::rename(&temporary, self.baton_path())?;
         sync_directory(&self.directory)?;
         Ok(())
+    }
+
+    /// A writer that died after linking a revision but before installing the
+    /// head leaves history one ahead of `baton.json`. That revision was fully
+    /// staged and is a valid live edge from the head, so finishing the install
+    /// is the resumption of the same write. Any later mutation does it here,
+    /// under the lock, before acting — no human and no special command needed.
+    fn reconcile_interrupted_install(&self) -> Result<(), StoreError> {
+        // An unreadable or missing head is not this function's problem: the
+        // operation that follows will report it, and recovery in particular
+        // must be able to run over a corrupt head.
+        let Ok(head) = self.read() else {
+            return Ok(());
+        };
+        let ahead = head.revision + 1;
+        let Ok(next) = self.read_history_revision(ahead) else {
+            return Ok(());
+        };
+        if next.revision != ahead || validate_history_edge(&head, &next).is_err() {
+            return Ok(());
+        }
+        self.install(&next)
     }
 
     /// Remove staging temporaries left by writers that died mid-write. Only the
@@ -1032,6 +1058,25 @@ fn validate_migration_edge(current: &RunBaton, next: &RunBaton) -> Result<(), St
     }
 }
 
+thread_local! {
+    /// Set while validating revisions already on disk. Stored history written by
+    /// earlier kernels is read with the rules those kernels had; a live append
+    /// is always held to the current rules, so leniency never becomes a bypass.
+    static VALIDATING_STORED_EDGE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn validating_stored_edge() -> bool {
+    VALIDATING_STORED_EDGE.with(|flag| flag.get())
+}
+
+/// Validate an edge between two revisions already recorded on disk.
+fn validate_stored_history_edge(current: &RunBaton, next: &RunBaton) -> Result<(), StoreError> {
+    VALIDATING_STORED_EDGE.with(|flag| flag.set(true));
+    let result = validate_history_edge(current, next);
+    VALIDATING_STORED_EDGE.with(|flag| flag.set(false));
+    result
+}
+
 fn validate_history_edge(current: &RunBaton, next: &RunBaton) -> Result<(), StoreError> {
     if next.revision != current.revision + 1 || next.run_id != current.run_id {
         return Err(StoreError::InvalidHistory);
@@ -1116,10 +1161,10 @@ fn valid_publication_policy_repair_edge(current: &RunBaton, next: &RunBaton) -> 
         return false;
     }
     let resumed_parked_decision = current.status == Status::HumanDecision
-        && current
-            .human_decision
-            .as_ref()
-            .is_some_and(|decision| decision.answer.is_none())
+        && current.human_decision.as_ref().is_some_and(|decision| {
+            decision.answer.is_none()
+                && decision.cause == Some(crate::model::DecisionCause::PublicationUnreadable)
+        })
         && next.human_decision.as_ref().is_some_and(|decision| {
             decision.answer.is_some()
                 && next.status == decision.resume_status
@@ -1155,7 +1200,9 @@ fn valid_publication_receipt_edge(
     // Revisions written before receipts were sequenced carry 0 on both sides.
     // Those edges stay readable; once a sequence has been recorded the rule is
     // strict, so ordering is guaranteed from the first sequenced receipt on.
-    let legacy_unsequenced = current_binding.receipt_seq == 0 && next_binding.receipt_seq == 0;
+    let legacy_unsequenced = validating_stored_edge()
+        && current_binding.receipt_seq == 0
+        && next_binding.receipt_seq == 0;
     if !legacy_unsequenced && next_binding.receipt_seq != current_binding.receipt_seq + 1 {
         return false;
     }
@@ -1319,6 +1366,16 @@ fn valid_claim_mutation(
             };
             next_start >= current_start && next_start < current_expiry
         }
+        // The same session replacing its own claim with a new epoch: the
+        // recovery for a claim whose credential was lost to a crash. Timing is
+        // irrelevant, because the only party that could act is the one named.
+        Some(current)
+            if next.session_id == current.session_id
+                && current.epoch.checked_add(1) == Some(next.epoch)
+                && next.token_digest != current.token_digest =>
+        {
+            claim_times(current).is_some() && claim_times(next).is_some()
+        }
         Some(current) => {
             let Some((_, current_expiry)) = claim_times(current) else {
                 return false;
@@ -1416,10 +1473,38 @@ fn valid_plain_human_decision_resume_edge(current: &RunBaton, next: &RunBaton) -
     {
         return false;
     }
+    // A live resume is a choice among the options that records itself on the
+    // run. A scope decision cannot resume this way at all — it needs a scope
+    // amendment — and an intent or authority answer must appear as exactly one
+    // new objective reference. Stored history keeps the older, plainer rule.
+    let mut expected_refs = current.objective.refs.clone();
+    if !validating_stored_edge() {
+        let answer = next_decision.answer.as_deref().unwrap_or_default();
+        if !current_decision
+            .options
+            .iter()
+            .any(|option| option == answer)
+        {
+            return false;
+        }
+        match current_decision.kind {
+            crate::model::HumanDecisionKind::Scope => return false,
+            kind => expected_refs.push(crate::model::ExternalRef {
+                kind: kind.reference_kind().to_owned(),
+                value: answer.to_owned(),
+            }),
+        }
+        if next.objective.refs != expected_refs {
+            return false;
+        }
+    } else if next.objective.refs != current.objective.refs {
+        return false;
+    }
     only_fields_changed(current, next, |expected| {
         expected.human_decision = next.human_decision.clone();
         expected.status = next.status.clone();
         expected.assignee = next.assignee.clone();
+        expected.objective.refs = next.objective.refs.clone();
     })
 }
 
@@ -1632,6 +1717,16 @@ fn valid_scope_amended(current: &RunBaton, next: &RunBaton, binding: &Publicatio
     ) else {
         return false;
     };
+    if !validating_stored_edge()
+        && !next_decision.answer.as_deref().is_some_and(|answer| {
+            current_decision
+                .options
+                .iter()
+                .any(|option| option == answer)
+        })
+    {
+        return false;
+    }
     let mut expected_decision = current_decision.clone();
     expected_decision.answer = next_decision.answer.clone();
     let valid_task_presence = match (&current.task, &next.task) {
@@ -1773,7 +1868,21 @@ fn validate_supported_schema(schema: &str) -> Result<(), StoreError> {
 /// no way to trigger it.
 #[cfg(debug_assertions)]
 fn test_failpoint(name: &str) {
-    if std::env::var("DVANDVA_TEST_FAILPOINT").as_deref() == Ok(name) {
+    // `NAME` dies at the first hit; `NAME:N` dies at the Nth hit, so a test can
+    // let creation succeed and interrupt a later mutation in the same process.
+    use std::sync::atomic::{AtomicU32, Ordering};
+    static HITS: AtomicU32 = AtomicU32::new(0);
+    let Ok(spec) = std::env::var("DVANDVA_TEST_FAILPOINT") else {
+        return;
+    };
+    let (wanted, nth) = match spec.split_once(':') {
+        Some((wanted, nth)) => (wanted.to_owned(), nth.parse::<u32>().unwrap_or(1)),
+        None => (spec, 1),
+    };
+    if wanted != name {
+        return;
+    }
+    if HITS.fetch_add(1, Ordering::SeqCst) + 1 == nth {
         unsafe { libc::_exit(137) };
     }
 }
@@ -1862,6 +1971,22 @@ fn openat_nofollow(
         return Err(std::io::Error::last_os_error());
     }
     Ok(unsafe { File::from_raw_fd(fd) })
+}
+
+/// Open `name` as a directory relative to an already-open parent, never
+/// following a symlink, so the result is provably the parent's own child.
+pub fn open_child_dir_nofollow(
+    parent: &File,
+    name: &std::ffi::OsStr,
+) -> Result<File, std::io::Error> {
+    let child = openat_nofollow(parent, name, libc::O_DIRECTORY | libc::O_RDONLY)?;
+    if !child.metadata()?.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a directory",
+        ));
+    }
+    Ok(child)
 }
 
 /// Read a run-private file by walking `relative` beneath `root` one component

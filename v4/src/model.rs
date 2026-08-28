@@ -395,11 +395,35 @@ pub enum HumanDecisionKind {
     Authority,
 }
 
+/// Why the kernel itself parked a run. Only a decision that carries structured
+/// provenance may be answered by the recovery that fixes its cause; a decision
+/// a role asked on its own account is never answered by anything but a human.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DecisionCause {
+    PublicationUnreadable,
+}
+
+impl HumanDecisionKind {
+    /// The objective-reference kind under which a resolved decision is recorded.
+    pub fn reference_kind(self) -> &'static str {
+        match self {
+            HumanDecisionKind::Scope => "scope",
+            HumanDecisionKind::Intent => "intent",
+            HumanDecisionKind::Authority => "authority",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HumanDecision {
     /// Defaults to `scope` so runs created before decisions were typed load.
     #[serde(default = "default_human_decision_kind")]
     pub kind: HumanDecisionKind,
+    /// Present only when the kernel parked the run for a reason it can also
+    /// repair; absent for every decision a role requested.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cause: Option<DecisionCause>,
     pub question: String,
     pub requested_by: String,
     pub evidence: Vec<String>,

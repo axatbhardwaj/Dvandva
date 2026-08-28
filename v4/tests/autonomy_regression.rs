@@ -190,12 +190,15 @@ fn a_pre_staging_baton_still_loads_and_can_be_repaired() {
     let bytes = serde_json::to_vec_pretty(&root).unwrap();
     std::fs::write(run_dir.join("history/00000000000000000000.json"), &bytes).unwrap();
     std::fs::write(run_dir.join("baton.json"), &bytes).unwrap();
+    // A 0.2 kernel wrote its Site receipt without a receipt sequence. That is
+    // stored history now — a live append must advance the sequence — so it is
+    // written to disk the way the old kernel left it, not appended live.
     let channel = RunChannel::open(&run_dir);
     let mut with_site = baton.clone();
     with_site["revision"] = serde_json::json!(1);
-    channel
-        .compare_and_swap(0, &serde_json::from_value(with_site).unwrap())
-        .expect("a 0.2-shaped Site receipt edge must still validate");
+    let bytes = serde_json::to_vec_pretty(&with_site).unwrap();
+    std::fs::write(run_dir.join("history/00000000000000000001.json"), &bytes).unwrap();
+    std::fs::write(run_dir.join("baton.json"), &bytes).unwrap();
 
     // It loads: an unreadable policy must be repairable, not unreachable.
     let loaded = channel.read().expect("a pre-staging baton must still load");
@@ -1084,6 +1087,7 @@ mod round_three {
         parked["assignee"] = serde_json::json!("human");
         parked["human_decision"] = serde_json::json!({
             "kind": "scope",
+            "cause": "publication_unreadable",
             "question": "The Site returns 401. Relay it by hand?",
             "requested_by": "worker",
             "evidence": ["HTTP 401 from the owner-only Site"],
@@ -1334,5 +1338,322 @@ mod round_three {
             store::read_private_file_beneath(&run_dir, &format!("analysis/{digest}")).is_err(),
             "beneath reads must refuse a symlinked intermediate directory"
         );
+    }
+}
+
+/// Round-four findings.
+mod round_four {
+    use super::*;
+    use dvandva_v4::{
+        action::{Action, HumanDecisionRequest},
+        model::{DecisionCause, HumanDecisionKind, WorkspaceIdentity},
+        role_session, store,
+        store::{RunChannel, StoreError},
+        transition,
+    };
+
+    fn created_run(dir: &std::path::Path) -> (RunChannel, std::path::PathBuf) {
+        let run_dir = dir.join("run-a");
+        let mut created = RunBaton::new(
+            "run-a",
+            "Objective",
+            "claude",
+            "codex",
+            vec![DeliverableRequirement {
+                id: "kernel".into(),
+                description: "Fix the kernel".into(),
+            }],
+        )
+        .unwrap();
+        created.workspace = Some(WorkspaceIdentity {
+            repository_id: "github.com/axatbhardwaj/dvandva".into(),
+            origin: None,
+            worktree: None,
+        });
+        let channel = RunChannel::open(&run_dir);
+        channel.create(&created).unwrap();
+        (channel, run_dir)
+    }
+
+    fn worker(dir: &std::path::Path, run_dir: &std::path::Path) -> String {
+        let credentials = dir.join("credentials");
+        role_session::claim(
+            run_dir,
+            &credentials,
+            Role::Worker,
+            "claude-session",
+            1800,
+            0,
+        )
+        .unwrap();
+        dvandva_v4::credential::load(&credentials, "claude-session", "run-a", Role::Worker)
+            .unwrap()
+            .token
+    }
+
+    /// [P1 autonomy] Disguised approval prose cannot be *resolved*. The kernel
+    /// cannot read prose, so the invariant it enforces is structural: a decision
+    /// is answered only by choosing one of its options, a scope decision only
+    /// through a scope amendment, and an intent or authority answer is recorded
+    /// on the objective — a pause that changes nothing cannot be resumed.
+    #[test]
+    fn a_pause_that_would_change_nothing_cannot_be_resolved() {
+        for kind in [
+            HumanDecisionKind::Scope,
+            HumanDecisionKind::Intent,
+            HumanDecisionKind::Authority,
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let (channel, run_dir) = created_run(dir.path());
+            let token = worker(dir.path(), &run_dir);
+            let parked = transition::apply(
+                &channel,
+                Role::Worker,
+                "claude-session",
+                &token,
+                1,
+                Action::RequestHumanDecision(HumanDecisionRequest {
+                    kind,
+                    question: "Please approve the protocol workaround?".into(),
+                    evidence: ["a workaround exists".into()].into(),
+                    options: ["approve".into(), "reject".into()].into(),
+                }),
+            )
+            .unwrap();
+            assert_eq!(parked.status, Status::HumanDecision);
+
+            // Free-form assent is not a choice.
+            let prose = transition::apply(
+                &channel,
+                Role::Worker,
+                "claude-session",
+                &token,
+                2,
+                Action::ResumeHumanDecision {
+                    answer: "yes, go ahead".into(),
+                    scope_amendment: None,
+                },
+            );
+            assert!(
+                matches!(prose, Err(transition::TransitionError::AnswerNotAnOption)),
+                "{kind:?}: free-form assent must be refused"
+            );
+
+            let chosen = transition::apply(
+                &channel,
+                Role::Worker,
+                "claude-session",
+                &token,
+                2,
+                Action::ResumeHumanDecision {
+                    answer: "approve".into(),
+                    scope_amendment: None,
+                },
+            );
+            match kind {
+                HumanDecisionKind::Scope => assert!(
+                    matches!(
+                        chosen,
+                        Err(transition::TransitionError::DecisionWithoutChange)
+                    ),
+                    "a scope decision must not resume without a scope amendment"
+                ),
+                _ => {
+                    let resumed = chosen.expect("an intent/authority choice resumes");
+                    assert_eq!(resumed.status, Status::Working);
+                    let recorded = resumed.objective.refs.last().unwrap();
+                    assert_eq!(recorded.kind, kind.reference_kind());
+                    assert_eq!(recorded.value, "approve");
+                    // The same resolution cannot be replayed through history.
+                    let mut forged = resumed.clone();
+                    forged.revision += 1;
+                    forged.objective.refs.pop();
+                    assert!(channel.compare_and_swap(resumed.revision, &forged).is_err());
+                }
+            }
+        }
+    }
+
+    /// [P1 provenance] Repair answers only a decision the kernel itself parked
+    /// for this reason. A genuine scope question stays parked.
+    #[test]
+    fn repair_leaves_an_unrelated_decision_parked() {
+        let park = |cause: Option<DecisionCause>| {
+            let dir = tempfile::tempdir().unwrap();
+            let (channel, run_dir) = created_run(dir.path());
+            let mut head = serde_json::to_value(channel.read().unwrap()).unwrap();
+            head["publication_policy"]["channel"] = serde_json::json!("codex_sites");
+            head["publication_policy"]["access"] = serde_json::json!("owner_only");
+            // The policy is unreadable from the root, as a 0.2 run would be.
+            for path in [
+                run_dir.join("baton.json"),
+                run_dir.join("history/00000000000000000000.json"),
+            ] {
+                std::fs::write(&path, serde_json::to_vec_pretty(&head).unwrap()).unwrap();
+            }
+            let mut parked = head.clone();
+            parked["revision"] = serde_json::json!(1);
+            parked["status"] = serde_json::json!("human_decision");
+            parked["assignee"] = serde_json::json!("human");
+            parked["human_decision"] = serde_json::json!({
+                "kind": "scope",
+                "cause": cause,
+                "question": "Should the migration guide be in scope?",
+                "requested_by": "worker",
+                "evidence": ["the report names it"],
+                "options": ["include it", "leave it out"],
+                "contact_role": "worker",
+                "resume_status": "working",
+                "resume_assignee": "worker",
+                "answer": null
+            });
+            channel
+                .compare_and_swap(0, &serde_json::from_value(parked).unwrap())
+                .unwrap();
+            let repaired = role_session::repair_publication_policy(
+                &run_dir,
+                &dir.path().join("credentials"),
+                Role::Worker,
+                "claude-session",
+                "claude",
+                "codex",
+                1,
+            )
+            .unwrap();
+            (dir, repaired)
+        };
+
+        let (_keep, unrelated) = park(None);
+        assert_eq!(
+            unrelated.status,
+            Status::HumanDecision,
+            "a role's own scope question stays parked"
+        );
+        assert!(unrelated.human_decision.unwrap().answer.is_none());
+        assert_eq!(
+            unrelated.publication_policy.unwrap(),
+            PublicationPolicy::fixed()
+        );
+
+        let (_keep, caused) = park(Some(DecisionCause::PublicationUnreadable));
+        assert_eq!(
+            caused.status,
+            Status::Working,
+            "the kernel's own park resumes"
+        );
+        assert!(caused.human_decision.unwrap().answer.is_some());
+    }
+
+    /// [P1 ordering] A live append must advance the receipt sequence exactly
+    /// once. Stored history written before sequencing stays readable.
+    #[test]
+    fn a_live_receipt_must_advance_the_sequence_while_stored_history_stays_readable() {
+        let dir = tempfile::tempdir().unwrap();
+        let (channel, run_dir) = created_run(dir.path());
+        let head = channel.read().unwrap();
+        let obligation = head
+            .publication_binding
+            .as_ref()
+            .unwrap()
+            .obligation
+            .clone();
+        let artifact = dvandva_v4::model::ExplainerArtifact {
+            obligation: obligation.clone(),
+            source_digest: "a".repeat(64),
+            path: dvandva_v4::model::explainer_artifact_path(&"a".repeat(64)),
+            media_type: "text/html".into(),
+            byte_length: 1,
+            channel: "run_artifact".into(),
+            access: "run_private".into(),
+            publisher_harness: "Codex".into(),
+        };
+        // A fresh receipt at 0 -> 0 through the raw store is refused live.
+        let mut forged = head.clone();
+        forged.revision += 1;
+        forged.publication_binding.as_mut().unwrap().artifact = Some(artifact.clone());
+        assert!(
+            matches!(
+                channel.compare_and_swap(head.revision, &forged),
+                Err(StoreError::InvalidHistory)
+            ),
+            "a live receipt that does not advance the sequence must be refused"
+        );
+        // Advancing exactly once is accepted; twice is not.
+        forged.publication_binding.as_mut().unwrap().receipt_seq = 2;
+        assert!(channel.compare_and_swap(head.revision, &forged).is_err());
+        forged.publication_binding.as_mut().unwrap().receipt_seq = 1;
+        channel.compare_and_swap(head.revision, &forged).unwrap();
+
+        // Stored history from before sequencing: 0 -> 0 with an artifact is
+        // readable when walked, so an existing run still validates.
+        let stored_dir = tempfile::tempdir().unwrap();
+        let (stored_channel, stored_run) = created_run(stored_dir.path());
+        let root = stored_channel.read().unwrap();
+        let mut legacy = root.clone();
+        legacy.revision = 1;
+        legacy.publication_binding.as_mut().unwrap().artifact = Some(artifact);
+        let bytes = serde_json::to_vec_pretty(&legacy).unwrap();
+        std::fs::write(stored_run.join("history/00000000000000000001.json"), &bytes).unwrap();
+        std::fs::write(stored_run.join("baton.json"), &bytes).unwrap();
+        let recovered = stored_channel
+            .recover(1)
+            .expect("stored pre-sequencing history must still walk");
+        assert_eq!(recovered.revision, 2);
+        let _ = run_dir;
+    }
+
+    /// [P1 GC] The entry moved is the pinned root's own child, and it must be the
+    /// very directory that was locked and revalidated.
+    #[test]
+    fn archiving_refuses_a_same_basename_substitution() {
+        let dir = tempfile::tempdir().unwrap();
+        let runs = dir.path().join("runs");
+        std::fs::create_dir_all(&runs).unwrap();
+        // The live run lives under the runs root as `run-a`.
+        let (_live, _) = {
+            let run_dir = runs.join("run-a");
+            let mut created = RunBaton::new(
+                "run-a",
+                "Objective",
+                "claude",
+                "codex",
+                vec![DeliverableRequirement {
+                    id: "kernel".into(),
+                    description: "Fix the kernel".into(),
+                }],
+            )
+            .unwrap();
+            created.workspace = Some(WorkspaceIdentity {
+                repository_id: "github.com/axatbhardwaj/dvandva".into(),
+                origin: None,
+                worktree: None,
+            });
+            let channel = RunChannel::open(&run_dir);
+            channel.create(&created).unwrap();
+            (channel, run_dir)
+        };
+        // A stale, different directory elsewhere with the same basename.
+        let elsewhere = dir.path().join("elsewhere");
+        let (_stale, stale_dir) = created_run(&elsewhere);
+        let stale_dir = {
+            let renamed = elsewhere.join("run-a");
+            std::fs::rename(&stale_dir, &renamed).unwrap();
+            renamed
+        };
+        let far_past = std::time::SystemTime::now() - std::time::Duration::from_secs(60 * 86_400);
+        let head = std::fs::File::options()
+            .write(true)
+            .open(stale_dir.join("baton.json"))
+            .unwrap();
+        head.set_modified(far_past).unwrap();
+
+        // Archiving the stale path must not move the live `runs/run-a`.
+        let moved = dvandva_v4::discovery::archive_stale_run(&runs, &stale_dir, 14).unwrap();
+        assert!(
+            moved.is_none(),
+            "a same-basename path must not authorize moving the live entry"
+        );
+        assert!(runs.join("run-a").join("baton.json").is_file());
+        let _ = store::open_dir_nofollow(&runs).unwrap();
     }
 }

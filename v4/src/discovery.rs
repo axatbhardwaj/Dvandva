@@ -305,6 +305,24 @@ pub fn archive_stale_run(
         if collectable_idle_days(run_dir, &baton, older_than_days).is_none() {
             return Ok(None);
         }
+        // The entry that will be moved is the pinned root's own child named
+        // `name`. It must be the very directory that was just locked and
+        // revalidated, or a same-basename substitution could archive a
+        // different, live run. Identity is compared immediately before the
+        // move, on open descriptors, so nothing can be swapped in between.
+        use std::os::unix::fs::MetadataExt;
+        let (Ok(locked), Ok(child)) = (
+            crate::store::open_dir_nofollow(run_dir),
+            crate::store::open_child_dir_nofollow(&source_parent, name),
+        ) else {
+            return Ok(None);
+        };
+        let (Ok(locked_meta), Ok(child_meta)) = (locked.metadata(), child.metadata()) else {
+            return Ok(None);
+        };
+        if (locked_meta.dev(), locked_meta.ino()) != (child_meta.dev(), child_meta.ino()) {
+            return Ok(None);
+        }
         Ok(rename_no_replace(&source_parent, name, &archive_fd, name))
     });
     match archived {

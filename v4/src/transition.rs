@@ -82,6 +82,10 @@ pub enum TransitionError {
     AnalysisBytesMissing,
     #[error("this receipt was prepared against an older state of the obligation")]
     StaleReceiptSequence,
+    #[error("a human decision is answered by choosing one of its options")]
+    AnswerNotAnOption,
+    #[error("a scope decision resolves only through a scope amendment; a pause that changes nothing was an approval wait")]
+    DecisionWithoutChange,
 }
 
 /// Actions that carry their own idempotency token, or that only report
@@ -298,6 +302,11 @@ fn apply_locked(
             if publisher_owes_restage {
                 return Err(TransitionError::AutonomousRecoveryAvailable);
             }
+            let options = options
+                .into_iter()
+                .map(|option| option.trim().to_owned())
+                .collect::<Vec<_>>();
+            let distinct = options.iter().collect::<HashSet<_>>().len() == options.len();
             if baton
                 .human_decision
                 .as_ref()
@@ -306,7 +315,8 @@ fn apply_locked(
                 || evidence.is_empty()
                 || evidence.iter().any(|item| item.trim().is_empty())
                 || options.len() < 2
-                || options.iter().any(|option| option.trim().is_empty())
+                || options.iter().any(String::is_empty)
+                || !distinct
             {
                 return Err(TransitionError::InvalidHumanDecision);
             }
@@ -314,6 +324,7 @@ fn apply_locked(
             let resume_assignee = baton.assignee.clone();
             baton.human_decision = Some(HumanDecision {
                 kind,
+                cause: None,
                 question,
                 requested_by: role_name(role).to_owned(),
                 evidence,
@@ -333,7 +344,8 @@ fn apply_locked(
             if baton.status != Status::HumanDecision || answer.trim().is_empty() {
                 return Err(TransitionError::InvalidHumanDecision);
             }
-            let (resume_status, resume_assignee) = {
+            let answer = answer.trim().to_owned();
+            let (kind, resume_status, resume_assignee) = {
                 let decision = baton
                     .human_decision
                     .as_mut()
@@ -341,15 +353,39 @@ fn apply_locked(
                 if decision.contact_role != role_name(role) {
                     return Err(TransitionError::WrongContact);
                 }
-                decision.answer = Some(answer.trim().to_owned());
+                // A decision is a choice among the options that were put to the
+                // human. Free-form prose — "yes", "approved", "go ahead" — is
+                // not a choice unless it was one of the options.
+                if !decision.options.iter().any(|option| option == &answer) {
+                    return Err(TransitionError::AnswerNotAnOption);
+                }
+                decision.answer = Some(answer.clone());
                 (
+                    decision.kind,
                     decision.resume_status.clone(),
                     decision.resume_assignee.clone(),
                 )
             };
+            // A pause that resolves into no change to the run was an approval
+            // wait, whatever it was called. A scope decision resolves only
+            // through a scope amendment; an intent or authority decision is
+            // recorded on the canonical objective, so the run carries what was
+            // decided and cannot be re-asked.
             if let Some(amendment) = scope_amendment {
                 apply_scope_amendment(baton, amendment)?;
             } else {
+                match kind {
+                    crate::model::HumanDecisionKind::Scope => {
+                        return Err(TransitionError::DecisionWithoutChange);
+                    }
+                    crate::model::HumanDecisionKind::Intent
+                    | crate::model::HumanDecisionKind::Authority => {
+                        baton.objective.refs.push(crate::model::ExternalRef {
+                            kind: kind.reference_kind().to_owned(),
+                            value: answer,
+                        });
+                    }
+                }
                 baton.status = resume_status;
                 baton.assignee = resume_assignee;
             }

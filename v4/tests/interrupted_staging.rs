@@ -184,3 +184,117 @@ fn a_leaked_staging_temporary_does_not_wedge_the_next_creation() {
     );
     assert_eq!(inspect(&run_dir).unwrap(), "complete");
 }
+
+/// A role mutation — not only creation — that dies between linking its
+/// revision and installing the head must be recoverable by the role facade
+/// alone: the next exact start finishes the interrupted install and proceeds.
+#[test]
+fn a_crash_during_a_claim_install_is_reconciled_by_the_next_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    for args in [
+        vec!["init", "--quiet"],
+        vec![
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:axatbhardwaj/Dvandva.git",
+        ],
+    ] {
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&workspace)
+            .args(args)
+            .status()
+            .unwrap()
+            .success());
+    }
+    let runs = dir.path().join("runs");
+    let credentials = dir.path().join("credentials");
+    let start = |failpoint: Option<&str>| {
+        let mut command = Command::new(kernel());
+        if let Some(failpoint) = failpoint {
+            command.env("DVANDVA_TEST_FAILPOINT", failpoint);
+        }
+        command
+            .args([
+                "role",
+                "start",
+                "--api",
+                "2",
+                "--workspace",
+                workspace.to_str().unwrap(),
+                "--runs-dir",
+                runs.to_str().unwrap(),
+                "--credentials-root",
+                credentials.to_str().unwrap(),
+                "--role",
+                "worker",
+                "--session-id",
+                "claude-session",
+                "--current-harness",
+                "claude",
+                "--peer-harness",
+                "codex",
+                "--objective",
+                "Interrupt a claim",
+                "--task-reference",
+                "TASK-1",
+                "--required-deliverable",
+                "kernel=Fix the kernel",
+            ])
+            .output()
+            .unwrap()
+    };
+
+    // Creation succeeds, then the worker claim dies mid-install: history is one
+    // revision ahead of the head.
+    // The first head install is creation; the second is the worker claim.
+    let crashed = start(Some("during_head_install:2"));
+    assert_eq!(crashed.status.code(), Some(137));
+    assert_eq!(crashed.status.signal(), None);
+    let run_dir = std::fs::read_dir(&runs)
+        .unwrap()
+        .flatten()
+        .map(|e| e.path())
+        .next()
+        .unwrap();
+    let head: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(run_dir.join("baton.json")).unwrap()).unwrap();
+    assert!(run_dir.join("history/00000000000000000001.json").is_file());
+    assert_eq!(head["revision"], 0, "the head must not have advanced");
+
+    // The next exact start reconciles and proceeds, with no human and no
+    // special command; the interrupted claim is simply resumed.
+    let resumed = start(None);
+    assert!(
+        resumed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resumed.stderr)
+    );
+    let snapshot: serde_json::Value = serde_json::from_slice(&resumed.stdout).unwrap();
+    assert_eq!(snapshot["outcome"], "started");
+    assert!(snapshot["participants"]["worker"]["claim"]["session_id"] == "claude-session");
+    let head: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(run_dir.join("baton.json")).unwrap()).unwrap();
+    let high = std::fs::read_dir(run_dir.join("history"))
+        .unwrap()
+        .flatten()
+        .count() as u64
+        - 1;
+    assert_eq!(
+        head["revision"].as_u64().unwrap(),
+        high,
+        "head and history must agree again"
+    );
+    let leftovers = [run_dir.clone(), run_dir.join("history")]
+        .iter()
+        .flat_map(|d| std::fs::read_dir(d).unwrap().flatten())
+        .filter(|e| {
+            let n = e.file_name().to_string_lossy().into_owned();
+            n.starts_with('.') && n.ends_with(".tmp")
+        })
+        .count();
+    assert_eq!(leftovers, 0);
+}

@@ -2612,7 +2612,7 @@ fn human_decision_resumes_authoritative_pre_request_owner() {
         2,
         "pause.json",
         serde_json::json!({
-            "type": "request_human_decision", "kind": "scope", "question": "Which API should win?",
+            "type": "request_human_decision", "kind": "intent", "question": "Which API should win?",
             "evidence": ["Both variants pass tests"], "options": ["Keep A", "Keep B"]
         }),
     )
@@ -2663,7 +2663,7 @@ fn human_decision_derives_requester_contact_and_authoritative_resume_target() {
         5,
         "pause.json",
         serde_json::json!({
-            "type": "request_human_decision", "kind": "scope",
+            "type": "request_human_decision", "kind": "intent",
             "question": "Should the new requirement enter scope?",
             "evidence": ["The ticket changed during review"],
             "options": ["Amend scope", "Keep current scope"]
@@ -3363,7 +3363,7 @@ fn scope_amendment_replaces_scope_and_pending_handoff() {
         "human.json",
         serde_json::json!({
             "type": "request_human_decision", "kind": "scope", "question": "Expand scope?",
-            "evidence": ["A report is required"], "options": ["yes", "no"]
+            "evidence": ["A report is required"], "options": ["Include both", "Keep current scope"]
         }),
     )
     .success();

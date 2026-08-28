@@ -1094,6 +1094,8 @@ fn transition_error_code(error: &TransitionError) -> &'static str {
         TransitionError::AutonomousRecoveryAvailable => "autonomous_recovery_available",
         TransitionError::AnalysisBytesMissing => "analysis_bytes_missing",
         TransitionError::StaleReceiptSequence => "stale_receipt_sequence",
+        TransitionError::AnswerNotAnOption => "answer_not_an_option",
+        TransitionError::DecisionWithoutChange => "decision_without_change",
     }
 }
 

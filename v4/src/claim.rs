@@ -90,6 +90,35 @@ pub fn reclaim(
     })
 }
 
+/// Replace this session's own live claim with a fresh one. This is the
+/// recovery for an orphaned claim — installed, but whose private credential was
+/// never stored because the process died in between — and it is only ever
+/// offered to the session the claim already names.
+pub fn reclaim_own(
+    channel: &RunChannel,
+    role: Role,
+    session_id: &str,
+    lease_seconds: u64,
+    expected_revision: u64,
+) -> Result<ClaimGrant, ClaimError> {
+    validate_request(session_id, lease_seconds)?;
+    channel.mutate_locked(expected_revision, |baton, now| {
+        reject_terminal(baton)?;
+        let previous = participant(baton, role)
+            .claim
+            .as_ref()
+            .ok_or(ClaimError::Missing)?;
+        if previous.session_id != session_id {
+            return Err(ClaimError::Fenced);
+        }
+        let epoch = previous
+            .epoch
+            .checked_add(1)
+            .ok_or(ClaimError::InvalidLease)?;
+        install_claim(baton, role, session_id, lease_seconds, epoch, now)
+    })
+}
+
 pub fn heartbeat(
     channel: &RunChannel,
     role: Role,

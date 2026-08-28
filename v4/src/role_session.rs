@@ -523,19 +523,44 @@ fn start_candidate(
         ClaimState::Owned => {
             let credential =
                 credential::path(credentials_root, session_id, &candidate.run_id, role)?;
-            let snapshot = read_snapshot_at_revision(
+            match read_snapshot_at_revision(
                 &candidate.run_dir,
                 credentials_root,
                 role,
                 session_id,
                 candidate.revision,
-            )?;
-            Ok(started_role(
-                "resumed",
-                snapshot,
-                credential,
-                role == Role::Worker,
-            ))
+            ) {
+                Ok(snapshot) => Ok(started_role(
+                    "resumed",
+                    snapshot,
+                    credential,
+                    role == Role::Worker,
+                )),
+                // The baton names this session but no credential exists: the
+                // process died after installing the claim and before storing
+                // its token. Nobody else can act on that claim, so the session
+                // replaces it with one it can prove — no human, no recovery
+                // command.
+                Err(RoleSessionError::Credential(CredentialError::Missing)) => {
+                    let grant = reclaim_own(
+                        &candidate.run_dir,
+                        credentials_root,
+                        role,
+                        session_id,
+                        lease_seconds,
+                        candidate.revision,
+                    )?;
+                    finish_candidate_claim(
+                        "reclaimed",
+                        &candidate.run_dir,
+                        credentials_root,
+                        role,
+                        session_id,
+                        grant,
+                    )
+                }
+                Err(error) => Err(error),
+            }
         }
         ClaimState::Busy => Err(RoleSessionError::Invalid(
             "selected run is owned by another live session".to_owned(),
@@ -1132,6 +1157,41 @@ pub fn repair_publication_policy(
         ));
     }
     Ok(channel.repair_publication_policy(expected_revision)?)
+}
+
+fn reclaim_own(
+    run_dir: &Path,
+    credentials_root: &Path,
+    role: Role,
+    session_id: &str,
+    lease_seconds: u64,
+    expected_revision: u64,
+) -> Result<RoleClaimResult, RoleSessionError> {
+    let channel = RunChannel::open(run_dir);
+    let initial = channel.read()?;
+    require_current_schema(&initial)?;
+    let credential_lock =
+        credential::lock_for_claim(credentials_root, session_id, &initial.run_id, role)?;
+    let baton = channel.read()?;
+    require_current_schema(&baton)?;
+    let canonical_run = std::fs::canonicalize(run_dir).map_err(StoreError::Io)?;
+    credential_lock.prepare(&baton)?;
+    let grant = claim::reclaim_own(&channel, role, session_id, lease_seconds, expected_revision)?;
+    let credential = Credential {
+        run_dir: canonical_run,
+        run_id: baton.run_id,
+        role,
+        session_id: session_id.to_owned(),
+        epoch: grant.epoch,
+        token: grant.token,
+    };
+    let credential = credential_lock.store(&credential)?;
+    Ok(RoleClaimResult {
+        revision: grant.revision,
+        epoch: grant.epoch,
+        credential,
+        committed_baton: grant.committed_baton,
+    })
 }
 
 pub fn upgrade(

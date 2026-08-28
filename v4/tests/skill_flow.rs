@@ -86,7 +86,7 @@ fn assert_role_source_contract(role: &str) {
     assert!(source.contains("deletes it after"));
     assert!(!source.contains("ACTION_JSON"));
     assert!(source.contains("Publication never substitutes for supersession or withdrawal."));
-    let allowed_exception = "new human scope or genuine ambiguity about what the human wants";
+    let allowed_exception = "a decision that is the human's alone";
     assert!(
         skill
             .split_whitespace()
@@ -242,6 +242,9 @@ fn normalize_documented_action(template: &str) -> serde_json::Value {
             "https://sites.openai.test/site-run/site-version",
         )
         .replace("<human-approved answer>", "Include report")
+        .replace("<one of the recorded options>", "Include report")
+        .replace("<concrete option A>", "Include report")
+        .replace("<concrete option B>", "Leave it out")
         .replace("<human-approved objective>", "Ship approved scope")
         .replace("<human-approved ref kind>", "issue")
         .replace("<human-approved ref value>", "DEF-456")
