@@ -178,13 +178,13 @@ pub fn discover(
                     }
                 }
                 match candidate(&run_dir, baton, &query) {
-                Ok(Some(CandidateMatch::Exact(candidate))) => candidates.push(candidate),
-                Ok(Some(CandidateMatch::TaskMismatch(candidate))) => {
-                    task_mismatches.push(candidate)
-                }
-                Ok(Some(CandidateMatch::Upgrade(candidate))) => upgrades.push(candidate),
-                Ok(None) => {}
-                Err(error) => corrupt.push(CorruptCandidate { run_dir, error }),
+                    Ok(Some(CandidateMatch::Exact(candidate))) => candidates.push(candidate),
+                    Ok(Some(CandidateMatch::TaskMismatch(candidate))) => {
+                        task_mismatches.push(candidate)
+                    }
+                    Ok(Some(CandidateMatch::Upgrade(candidate))) => upgrades.push(candidate),
+                    Ok(None) => {}
+                    Err(error) => corrupt.push(CorruptCandidate { run_dir, error }),
                 }
             }
             Err(crate::store::StoreError::RunMissing) => {
@@ -218,7 +218,10 @@ pub fn discover(
 
 /// Every unclaimed, non-terminal run idle for at least `older_than_days`,
 /// regardless of repository, role, or objective.
-pub fn stale_runs(runs_dir: &Path, older_than_days: u64) -> Result<Vec<StaleCandidate>, DiscoveryError> {
+pub fn stale_runs(
+    runs_dir: &Path,
+    older_than_days: u64,
+) -> Result<Vec<StaleCandidate>, DiscoveryError> {
     if !runs_dir.exists() {
         return Ok(Vec::new());
     }

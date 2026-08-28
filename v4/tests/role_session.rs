@@ -1295,7 +1295,9 @@ fn role_wait_keeps_blocking_when_human_escape_is_the_only_extra_legal_action() {
         // An expected wait timeout is an ordinary idle outcome, not a failure:
         // the human escape hatch alone never makes a waiting role actionable.
         .success()
-        .stdout(predicates::str::contains(r#""wait_outcome": "idle_timeout""#));
+        .stdout(predicates::str::contains(
+            r#""wait_outcome": "idle_timeout""#,
+        ));
 }
 
 #[test]
@@ -1670,7 +1672,12 @@ fn worker_start_creates_claims_and_idempotently_resumes_one_run() {
     );
     assert_eq!(
         created["next_actions"],
-        serde_json::json!(["work", "submit_checkpoint", "stage_explainer", "report_progress"])
+        serde_json::json!([
+            "work",
+            "submit_checkpoint",
+            "stage_explainer",
+            "report_progress"
+        ])
     );
     // A completed deliverable always has somewhere to land, from revision 1 on.
     assert_eq!(created["blocking_reason"], serde_json::Value::Null);

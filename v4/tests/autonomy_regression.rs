@@ -112,11 +112,7 @@ fn reporting_progress_never_makes_an_idle_role_actionable() {
     );
 
     // The publisher, by contrast, genuinely owes staged bytes and is actionable.
-    idle.publication_binding
-        .as_mut()
-        .unwrap()
-        .obligation
-        .kind = HandoffKind::RunStarted;
+    idle.publication_binding.as_mut().unwrap().obligation.kind = HandoffKind::RunStarted;
     let publisher = next_action::classify(&idle, Role::Reviewer, "Codex");
     assert!(publisher.legal_actions.contains(&"stage_explainer"));
     assert!(publisher.actionable);

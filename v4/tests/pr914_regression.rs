@@ -204,7 +204,10 @@ impl Fixture {
 }
 
 fn uuid() -> String {
-    format!("{:x}", Sha256::digest(format!("{:?}", std::time::Instant::now()).as_bytes()))
+    format!(
+        "{:x}",
+        Sha256::digest(format!("{:?}", std::time::Instant::now()).as_bytes())
+    )
 }
 
 fn session_for(role: &str) -> &'static str {
@@ -561,7 +564,9 @@ fn relayed_explainer_bytes_are_verified_against_the_recorded_digest() {
     read("worker")
         .assert()
         .failure()
-        .stderr(predicates::str::contains("do not match their recorded digest"));
+        .stderr(predicates::str::contains(
+            "do not match their recorded digest",
+        ));
 }
 
 /// Incident regression: the whole lifecycle must reach a terminal state with two

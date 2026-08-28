@@ -4435,7 +4435,16 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
             r#""error":"stale_publication_binding""#,
         ));
     }
-    apply_action(dir.path(), "worker", "worker-1", &worker, 2, "stage.json", stage).success();
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        2,
+        "stage.json",
+        stage,
+    )
+    .success();
     let baton = read_baton(dir.path());
     let artifact = baton["publication_binding"]["artifact"].clone();
     assert_eq!(artifact["obligation"], obligation);
@@ -4443,7 +4452,10 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
     assert_eq!(artifact["channel"], "run_artifact");
     assert_eq!(artifact["access"], "run_private");
     assert_eq!(artifact["publisher_harness"], "Codex");
-    assert!(dir.path().join(format!("explainer/{digest}.html")).is_file());
+    assert!(dir
+        .path()
+        .join(format!("explainer/{digest}.html"))
+        .is_file());
 
     // The Site is an optional rendering: it must name the staged bytes exactly.
     let valid_site = explainer_publication_action(
@@ -4607,7 +4619,10 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
     )
     .success();
     let baton = read_baton(dir.path());
-    assert_eq!(baton["publication_binding"]["review"]["verdict"], "approved");
+    assert_eq!(
+        baton["publication_binding"]["review"]["verdict"],
+        "approved"
+    );
 
     // Restaging different bytes does invalidate both the rendering and the review.
     let (restage, _) = stage_explainer_action(dir.path(), &obligation, "deployment-2");

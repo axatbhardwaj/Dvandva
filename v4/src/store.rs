@@ -957,8 +957,7 @@ fn valid_publication_receipt_edge(
             && next_binding.review.is_none();
     }
     if current_binding.deployment != next_binding.deployment {
-        return next_binding.deployment.is_some()
-            && current_binding.review == next_binding.review;
+        return next_binding.deployment.is_some() && current_binding.review == next_binding.review;
     }
     current_binding.site_id == next_binding.site_id
         && current_binding.review != next_binding.review

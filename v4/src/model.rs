@@ -248,11 +248,10 @@ impl PublicationPolicy {
             (EXPLAINER_CHANNEL, EXPLAINER_ACCESS) => true,
             // An owner-only Site is readable only by the publisher's own owner
             // session, so it works only when publisher and reviewer coincide.
-            (LEGACY_EXPLAINER_CHANNEL, LEGACY_EXPLAINER_ACCESS) => {
-                self.publisher_harness
-                    .trim()
-                    .eq_ignore_ascii_case(self.reviewer_harness.trim())
-            }
+            (LEGACY_EXPLAINER_CHANNEL, LEGACY_EXPLAINER_ACCESS) => self
+                .publisher_harness
+                .trim()
+                .eq_ignore_ascii_case(self.reviewer_harness.trim()),
             _ => false,
         }
     }

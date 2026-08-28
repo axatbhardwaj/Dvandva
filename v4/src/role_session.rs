@@ -421,27 +421,24 @@ fn is_revision_conflict(error: &RoleSessionError) -> bool {
 
 /// Capability preflight: refuse to join a run whose reviewer cannot read the
 /// channel its publisher must use.
-fn publication_preflight(
-    candidate: &crate::discovery::RunCandidate,
-) -> Result<(), RoleStartResult> {
-    let Ok(baton) = RunChannel::open(&candidate.run_dir).read() else {
-        return Ok(());
-    };
+fn publication_preflight(candidate: &crate::discovery::RunCandidate) -> Option<RoleStartResult> {
+    let baton = RunChannel::open(&candidate.run_dir).read().ok()?;
     let policy = baton
         .publication_policy
         .clone()
         .unwrap_or_else(crate::model::PublicationPolicy::fixed);
     if policy.reviewer_can_read() {
-        return Ok(());
+        return None;
     }
-    Err(RoleStartResult::PublicationUnreadable(
+    Some(RoleStartResult::PublicationUnreadable(
         UnreadablePublicationRole {
             outcome: "publication_unreadable",
             run_id: baton.run_id,
             run_dir: candidate.run_dir.clone(),
             revision: baton.revision,
             publication_policy: policy,
-            reason: "the reviewing harness cannot read the publisher's channel at this access level",
+            reason:
+                "the reviewing harness cannot read the publisher's channel at this access level",
             next_action: "repair_publication_policy",
             next_actions: ["repair_publication_policy"],
             actionable: true,
@@ -457,7 +454,7 @@ fn start_candidate(
     lease_seconds: u64,
 ) -> Result<RoleStartResult, RoleSessionError> {
     if !matches!(candidate.status, Status::Done | Status::Abandoned) {
-        if let Err(unreadable) = publication_preflight(&candidate) {
+        if let Some(unreadable) = publication_preflight(&candidate) {
             return Ok(unreadable);
         }
     }

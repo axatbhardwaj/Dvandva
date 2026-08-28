@@ -84,8 +84,7 @@ fn assert_role_source_contract(role: &str) {
     assert!(source.contains("deletes it after"));
     assert!(!source.contains("ACTION_JSON"));
     assert!(source.contains("Publication never substitutes for supersession or withdrawal."));
-    let allowed_exception =
-        "new human scope or genuine ambiguity about what the human wants";
+    let allowed_exception = "new human scope or genuine ambiguity about what the human wants";
     assert!(
         skill
             .split_whitespace()
