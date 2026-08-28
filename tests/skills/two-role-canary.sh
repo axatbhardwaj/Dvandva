@@ -77,23 +77,32 @@ obligation_json() {
   python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["publication_binding"]["obligation"],separators=(",",":")))' "$1/baton.json"
 }
 
+# The publisher stages digest-bound bytes into the run directory, the reviewer
+# reads exactly those bytes back through the facade, then approves them. The
+# Codex Site is an optional rendering and is not exercised here.
 approve_explainer() {
   local publisher="$1" publisher_session="$2" reviewer="$3" reviewer_session="$4"
   local run_dir="$5" revision="$6" site_id="$7" site_version="$8"
-  local obligation source_digest url published deployment reviewed
+  local obligation source staged source_digest relayed reviewed
   obligation="$(obligation_json "$run_dir")"
-  source_digest="$(printf '%064d' "$revision")"
-  url="https://sites.openai.test/$site_id/$site_version"
-  published="$(apply_action "$publisher" "$publisher_session" "$run_dir" "$revision" \
-    "publish-$site_version" \
-    "{\"type\":\"record_explainer_publication\",\"obligation\":$obligation,\"source_digest\":\"$source_digest\",\"site_id\":\"$site_id\",\"site_version\":\"$site_version\",\"url\":\"$url\",\"channel\":\"codex_sites\",\"access\":\"owner_only\"}")"
-  python3 -c 'import json,sys; assert json.load(sys.stdin)["publication_binding"]["deployment"]["publisher_harness"] == "Codex"' <<<"$published"
-  deployment="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["publication_binding"]["deployment"],separators=(",",":")))' <<<"$published")"
+  source="$test_root/explainer-$site_id-$site_version.html"
+  printf '<h1>%s %s</h1>\n' "$site_id" "$site_version" >"$source"
+  staged="$(apply_action "$publisher" "$publisher_session" "$run_dir" "$revision" \
+    "stage-$site_version" \
+    "{\"type\":\"stage_explainer\",\"obligation\":$obligation,\"source_path\":\"$source\"}")"
+  python3 -c 'import json,sys; artifact=json.load(sys.stdin)["publication_binding"]["artifact"]; assert artifact["publisher_harness"] == "Codex"; assert artifact["channel"] == "run_artifact"; assert artifact["access"] == "run_private"' <<<"$staged"
+  source_digest="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["publication_binding"]["artifact"]["source_digest"])' <<<"$staged")"
+
+  # The reviewing harness must be able to read the bytes it is about to approve.
+  relayed="$(bash "$reviewer" explainer "$reviewer_session" "$run_dir")"
+  python3 -c 'import json,sys; staged=json.load(sys.stdin); assert staged["source_digest"] == sys.argv[1]; assert staged["contents"].strip() == sys.argv[2]' <<<"$relayed" \
+    "$source_digest" "$(cat "$source")"
+
   reviewed="$(apply_action "$reviewer" "$reviewer_session" "$run_dir" "$((revision + 1))" \
     "review-$site_version" \
-    "{\"type\":\"record_explainer_review\",\"obligation\":$obligation,\"source_digest\":\"$source_digest\",\"site_id\":\"$site_id\",\"site_version\":\"$site_version\",\"url\":\"$url\",\"verdict\":\"approved\",\"findings\":[]}")"
-  python3 -c 'import json,sys; binding=json.load(sys.stdin)["publication_binding"]; review=binding["review"]; deployment=binding["deployment"]; assert review["reviewer_harness"] == "Claude"; assert all(review[key] == deployment[key] for key in ["source_digest","site_id","site_version","url"])' <<<"$reviewed"
-  test -n "$deployment"
+    "{\"type\":\"record_explainer_review\",\"obligation\":$obligation,\"source_digest\":\"$source_digest\",\"verdict\":\"approved\",\"findings\":[]}")"
+  python3 -c 'import json,sys; binding=json.load(sys.stdin)["publication_binding"]; review=binding["review"]; assert review["reviewer_harness"] == "Claude"; assert review["source_digest"] == binding["artifact"]["source_digest"]' <<<"$reviewed"
+  test -n "$source_digest"
 }
 
 run_casting() {
@@ -124,8 +133,12 @@ run_casting() {
 
   approve_explainer "$publisher" "$publisher_session" "$explainer_reviewer" \
     "$explainer_reviewer_session" "$run_dir" 2 "$site_id" deployment-1
-  checkpoint_a="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa${label: -1}"
-  checkpoint_b="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb${label: -1}"
+  # Git checkpoints bind full-length object names, so the per-casting suffix
+  # has to stay inside the hex alphabet.
+  local nibble
+  case "$label" in normal) nibble=1 ;; reverse) nibble=2 ;; *) nibble=f ;; esac
+  checkpoint_a="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$nibble"
+  checkpoint_b="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb$nibble"
   reviewing_a="$(apply_action "$worker" "$worker_session" "$run_dir" 4 checkpoint-a-$label \
     "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"git\",\"identity\":\"$checkpoint_a\",\"deliverables\":[{\"id\":\"implementation\",\"artifacts\":[{\"kind\":\"commit\",\"value\":\"$checkpoint_a\"}]}],\"verification\":[\"cargo test\"]}}")"
   digest_a="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' <<<"$reviewing_a")"
@@ -149,8 +162,24 @@ run_casting() {
   grep -Fq '"status": "done"' <<<"$terminal"
   grep -Fq "\"identity\": \"$checkpoint_b\"" <<<"$terminal"
 
-  test "$(grep -Rho '"site_id": "[^"]*"' "$run_dir" | sort -u)" = \
-    "\"site_id\": \"$site_id\""
+  # Every staged explainer is content-addressed, and the head's recorded digest
+  # names bytes that are actually on disk and actually hash to it.
+  test "$(ls "$run_dir/explainer" | wc -l)" -ge 1
+  python3 - "$run_dir" <<'CHECK'
+import hashlib, json, sys
+from pathlib import Path
+
+run_dir = Path(sys.argv[1])
+baton = json.loads((run_dir / "baton.json").read_text())
+artifact = baton["publication_binding"]["artifact"]
+bytes_on_disk = (run_dir / artifact["path"]).read_bytes()
+assert hashlib.sha256(bytes_on_disk).hexdigest() == artifact["source_digest"]
+assert len(bytes_on_disk) == artifact["byte_length"]
+for staged in sorted((run_dir / "explainer").iterdir()):
+    actual = hashlib.sha256(staged.read_bytes()).hexdigest()
+    if staged.stem != actual:
+        raise SystemExit(f"staged {staged.name} hashes to {actual}")
+CHECK
   grep -Rq '"publisher_harness": "Codex"' "$run_dir/history"
   grep -Rq '"reviewer_harness": "Claude"' "$run_dir/history"
   worker_wait="$(bash "$worker" wait "$worker_session" "$run_dir" 16 500)"
@@ -174,8 +203,11 @@ run_supersession_incident() {
   local worker_session="incident-worker" reviewer_session="incident-reviewer"
   local objective="Review architecture and module reuse" task="TASK-incident"
   local site_id="site-incident" started mismatch joined run_id run_dir revision
-  local checkpoint_a="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  local checkpoint_b="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  local checkpoint_a
+  checkpoint_a="$(printf 'a%.0s' $(seq 64))"
+  local checkpoint_b checkpoint_b_extra
+  checkpoint_b="$(printf 'b%.0s' $(seq 64))"
+  checkpoint_b_extra="$(printf 'c%.0s' $(seq 64))"
   local reviewing_a reviewing_b digest_a digest_b request accepted terminal
   local failure_output failure_status worker_wait reviewer_wait
 
@@ -216,7 +248,7 @@ assert mismatch["candidates"][0]["run_id"] == sys.argv[1]
     "$reviewer_session" "$run_dir" 2 "$site_id" incident-1
 
   reviewing_a="$(apply_action "$worker" "$worker_session" "$run_dir" 4 incident-a \
-    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"git\",\"identity\":\"$checkpoint_a\",\"deliverables\":[{\"id\":\"review-package\",\"artifacts\":[{\"kind\":\"file\",\"value\":\"review.md\"}]}],\"verification\":[\"review.md checked\"]}}")"
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$checkpoint_a\",\"deliverables\":[{\"id\":\"review-package\",\"artifacts\":[{\"kind\":\"analysis_digest\",\"value\":\"$checkpoint_a\"}]}],\"verification\":[\"review.md checked\"]}}")"
   digest_a="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' \
     <<<"$reviewing_a")"
   approve_explainer "$worker" "$worker_session" "$reviewer" \
@@ -253,7 +285,7 @@ assert mismatch["candidates"][0]["run_id"] == sys.argv[1]
     "$reviewer_session" "$run_dir" 9 "$site_id" incident-3
 
   reviewing_b="$(apply_action "$worker" "$worker_session" "$run_dir" 11 incident-b \
-    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"git\",\"identity\":\"$checkpoint_b\",\"deliverables\":[{\"id\":\"review-package\",\"artifacts\":[{\"kind\":\"file\",\"value\":\"review.md\"},{\"kind\":\"file\",\"value\":\"reuse-analysis.md\"}]}],\"verification\":[\"review.md checked\",\"reuse-analysis.md checked\"]}}")"
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$checkpoint_b\",\"deliverables\":[{\"id\":\"review-package\",\"artifacts\":[{\"kind\":\"analysis_digest\",\"value\":\"$checkpoint_b\"},{\"kind\":\"analysis_digest\",\"value\":\"$checkpoint_b_extra\"}]}],\"verification\":[\"review.md checked\",\"reuse-analysis.md checked\"]}}")"
   digest_b="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' \
     <<<"$reviewing_b")"
   approve_explainer "$worker" "$worker_session" "$reviewer" \
@@ -266,8 +298,8 @@ assert mismatch["candidates"][0]["run_id"] == sys.argv[1]
     incident-finalize '{"type":"finalize"}')"
 
   python3 - "$run_dir" "$site_id" "$checkpoint_b" "$digest_b" <<'PY'
-import json, pathlib, sys
-run_dir, site_id, checkpoint, digest = sys.argv[1:]
+import hashlib, json, pathlib, sys
+run_dir, _site_id, checkpoint, digest = sys.argv[1:]
 receipts = []
 seen = set()
 for path in sorted(pathlib.Path(run_dir, "history").glob("*.json")):
@@ -275,20 +307,26 @@ for path in sorted(pathlib.Path(run_dir, "history").glob("*.json")):
     binding = baton.get("publication_binding") or {}
     obligation = binding.get("obligation") or {}
     review = binding.get("review")
-    deployment = binding.get("deployment")
+    artifact = binding.get("artifact")
     handoff = obligation.get("handoff_revision")
-    if review is not None and deployment is not None and handoff not in seen:
+    if review is not None and artifact is not None and handoff not in seen:
         seen.add(handoff)
-        receipts.append((obligation, deployment, review))
+        receipts.append((obligation, artifact, review))
 assert [entry[0]["kind"] for entry in receipts] == [
     "run_started", "worker_to_reviewer", "checkpoint_superseded",
     "worker_to_reviewer", "reviewer_to_worker",
 ]
-assert {entry[1]["site_id"] for entry in receipts} == {site_id}
-assert [entry[1]["site_version"] for entry in receipts] == [f"incident-{n}" for n in range(1, 6)]
-assert len({entry[1]["site_version"] for entry in receipts}) == 5
+# Each handoff staged its own bytes, each review bound exactly those bytes, and
+# every digest still names readable content on disk.
+assert len({entry[1]["source_digest"] for entry in receipts}) == 5
+assert all(entry[1]["channel"] == "run_artifact" for entry in receipts)
+assert all(entry[1]["access"] == "run_private" for entry in receipts)
 assert all(entry[1]["publisher_harness"] == "Codex" for entry in receipts)
 assert all(entry[2]["reviewer_harness"] == "Claude" for entry in receipts)
+assert all(entry[2]["source_digest"] == entry[1]["source_digest"] for entry in receipts)
+for _, artifact, _ in receipts:
+    staged = pathlib.Path(run_dir, artifact["path"]).read_bytes()
+    assert hashlib.sha256(staged).hexdigest() == artifact["source_digest"]
 baton = json.loads(pathlib.Path(run_dir, "baton.json").read_text())
 expected = {"identity": checkpoint, "manifest_digest": digest, "scope_revision": 0}
 assert {key: baton["checkpoint"][key] for key in expected} == expected

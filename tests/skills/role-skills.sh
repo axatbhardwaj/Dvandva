@@ -235,13 +235,15 @@ do
     'request_checkpoint_supersession' \
     'accept_checkpoint_supersession' \
     'withdraw_approval' \
-    'Codex harness publishes' \
+    'Codex harness stages' \
     'Claude harness reviews' \
     'user-created harness goals remain unchanged' \
     'human starts the peer session' \
     'foreground local wait' \
     'upgrade_required' \
     'upgrade SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION' \
+    'repair-policy SESSION RUN_DIR EXPECTED_REVISION' \
+    'explainer SESSION RUN_DIR' \
     'claim SESSION RUN_DIR EXPECTED_REVISION' \
     'reclaim SESSION RUN_DIR EXPECTED_REVISION' \
     'exact `start --run-id` automatically reclaims' \
@@ -273,17 +275,24 @@ for required in \
   'request_checkpoint_supersession' \
   'accept_checkpoint_supersession' \
   'withdraw_approval' \
-  'Codex harness publishes' \
+  'Codex harness stages' \
   'Claude harness reviews' \
   'regardless of semantic casting' \
+  'the gate binds a digest, not a URL' \
   'canonical scope, complete manifest, findings and decisions, and a current plan/TODO' \
+  'stage_explainer' \
+  'explainer/<source_digest>.html' \
   'stable Site ID' \
   'new Site version' \
-  'owner-only' \
+  'never gates the run' \
+  'Never record a verdict on bytes you did not read' \
   'Claude Artifact' \
   'generic publisher' \
-  'public access' \
   'silent fallback' \
+  'publication_unreadable' \
+  'repair-policy' \
+  'report_progress' \
+  'slow from dead' \
   'user-created harness goals remain unchanged' \
   'human starts the peer session' \
   'explicitly invokes them in this session' \

@@ -63,11 +63,26 @@ are published and reviewed together. Handoffs cover role transfer, run start,
 Protocol Upgrade, scope amendment, accepted Checkpoint Supersession, and
 Approval Withdrawal.
 
+**Explainer Artifact**:
+The explainer's bytes, staged by the publishing harness into the run directory
+at `explainer/<source_digest>.html` and bound by sha256 to one Handoff. Both
+harnesses read it locally, so it is the artifact the Publication Gate binds.
+
 **Publication Gate**:
-The fixed requirement that the Codex harness publishes the Codex Sites
-explainer and the Claude harness reviews that exact deployment for the same
-Handoff before the run advances. These duties do not follow Worker or Reviewer
-casting.
+The requirement that the Codex harness stages the Explainer Artifact and the
+Claude harness reviews those exact bytes for the same Handoff before the run
+finalizes. These duties do not follow Worker or Reviewer casting. A Codex Site
+is an optional rendering of the same bytes and satisfies nothing on its own.
+
+**Publication Policy**:
+The publisher harness, channel, access level, and reviewer harness for a run. A
+policy whose reviewer cannot read its channel is refused at `start`, because it
+can never reach a review.
+
+**Participant Progress**:
+A role's last self-reported phase and time, published with `report_progress`,
+which also renews that role's own lease. It lets a peer distinguish slow work
+from a dead session without inferring liveness from lease expiry.
 
 **External Reference**:
 A stable identity for a deliverable or deployment outside the Baton.

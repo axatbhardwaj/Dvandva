@@ -311,6 +311,18 @@ run_dir_command() {
       "$binary" role heartbeat "${common[@]}" \
         --lease-seconds "${DVANDVA_LEASE_SECONDS:-1800}" --expected-revision "$1"
       ;;
+    explainer)
+      test "$#" -eq 0
+      "$binary" role explainer "${common[@]}"
+      ;;
+    repair-policy)
+      test "$#" -eq 1 || {
+        printf 'usage: dvandva-role.sh repair-policy SESSION RUN_DIR REVISION\n' >&2
+        exit 2
+      }
+      "$binary" role repair-policy --api "$role_api" --run-dir "$run_dir" \
+        --role "$role" --session-id "$session" --expected-revision "$1"
+      ;;
   esac
 }
 
@@ -340,7 +352,7 @@ case "$operation" in
     require_kernel
     start_role "$@"
     ;;
-  read|claim|reclaim|apply|wait|heartbeat)
+  read|claim|reclaim|apply|wait|heartbeat|explainer|repair-policy)
     require_kernel
     run_dir_command "$operation" "$@"
     ;;
@@ -349,7 +361,7 @@ case "$operation" in
     upgrade_role "$@"
     ;;
   *)
-    printf 'usage: dvandva-role.sh {session-id|probe|start|read|claim|reclaim|apply|wait|heartbeat|upgrade} ...\n' >&2
+    printf 'usage: dvandva-role.sh {session-id|probe|start|read|claim|reclaim|apply|wait|heartbeat|explainer|repair-policy|upgrade} ...\n' >&2
     exit 2
     ;;
 esac

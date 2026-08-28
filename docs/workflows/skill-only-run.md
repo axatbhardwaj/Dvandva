@@ -94,16 +94,22 @@ scope amendment can change canonical scope.
 
 ## Published explainer
 
-Every run has one stable owner-only Site in Codex Sites. At each handoff the
-Codex-harness participant publishes the exact pending binding, and the
-Claude-harness participant reviews that exact Site version, regardless of
-vadi/prativadi casting. The explainer carries canonical scope, complete
-manifest, findings and decisions, and a current plan/TODO list.
+At each handoff the Codex-harness participant stages the explainer's bytes into
+the run directory with `stage_explainer`, and the Claude-harness participant
+reads those exact bytes back through `dvandva-role.sh explainer` and reviews
+them, regardless of vadi/prativadi casting. The explainer carries canonical
+scope, complete manifest, findings and decisions, and a current plan/TODO list.
 
-A later deployment invalidates the earlier Claude review. Claude Artifact,
-local HTML, mutable URL, generic hosting, or public access cannot satisfy the
-gate. Sites or review unavailability becomes a Human Decision; it does not
-silently change policy. The page never coordinates wake-up.
+The gate binds a sha256 digest, not a URL, so both harnesses can always reach
+the artifact. Staging different bytes invalidates the earlier review.
+A Codex Sites deployment is an optional human-facing rendering of the
+already-staged bytes; it must name the same digest and never satisfies the gate. Recording an
+unread approval, or substituting a Claude Artifact, mutable URL, or generic
+hosting, cannot satisfy the gate. The page never coordinates wake-up.
+
+Only `finalize` waits on this gate. A finished deliverable can always be
+checkpointed, and the recovery paths — supersession and approval withdrawal —
+are never blocked by it.
 
 After every handoff the assigned-away role foreground-waits and both roles
 refresh the facade snapshot after waking. A role stops only for explicit human
