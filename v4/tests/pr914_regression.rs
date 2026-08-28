@@ -19,12 +19,19 @@ struct Fixture {
     credentials: PathBuf,
     run_dir: PathBuf,
     run_id: String,
+    lease_seconds: u64,
 }
 
 impl Fixture {
     /// A run created the way a vadi session creates one, with the reviewer
     /// joined. Returns the fixture at the revision after both claims.
     fn started(deliverables: &[(&str, &str)]) -> Self {
+        Self::started_with_lease(deliverables, 1800)
+    }
+
+    /// The reviewer takes `lease_seconds`; the worker keeps a long lease so it
+    /// can still observe its peer after the peer's original interval lapses.
+    fn started_with_lease(deliverables: &[(&str, &str)], lease_seconds: u64) -> Self {
         let root = tempfile::tempdir().unwrap();
         let workspace = root.path().join("workspace");
         std::fs::create_dir(&workspace).unwrap();
@@ -87,6 +94,7 @@ impl Fixture {
             credentials,
             run_dir,
             run_id,
+            lease_seconds,
         };
         fixture.join_reviewer();
         fixture
@@ -115,7 +123,7 @@ impl Fixture {
             "--run-id",
             &self.run_id,
             "--lease-seconds",
-            "1800",
+            &self.lease_seconds.to_string(),
         ]));
         assert_eq!(joined["outcome"], "started");
     }
@@ -271,6 +279,21 @@ fn run_json(command: &mut Command) -> serde_json::Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
+/// Return a run to its unclaimed shape, so a start is exercised from the state
+/// a joining session actually meets.
+fn strip_claims(run_dir: &Path) {
+    for name in ["baton.json", "history/00000000000000000000.json"] {
+        let path = run_dir.join(name);
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        let mut baton: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        baton["participants"]["worker"]["claim"] = serde_json::Value::Null;
+        baton["participants"]["reviewer"]["claim"] = serde_json::Value::Null;
+        std::fs::write(&path, serde_json::to_vec_pretty(&baton).unwrap()).unwrap();
+    }
+}
+
 fn rewrite_policy_to_owner_only_site(run_dir: &Path) {
     for name in ["baton.json", "history/00000000000000000000.json"] {
         let path = run_dir.join(name);
@@ -291,6 +314,11 @@ fn rewrite_policy_to_owner_only_site(run_dir: &Path) {
 fn an_unreadable_publication_policy_is_refused_at_start_and_can_be_repaired() {
     let fixture = Fixture::started(&[("kernel", "Fix the kernel")]);
     rewrite_policy_to_owner_only_site(&fixture.run_dir);
+    // The refusal must precede any claim, which is the whole point of a
+    // preflight: the incident discovered the mismatch only after the publisher
+    // had already spent a deployment. Strip both claims so this exercises a
+    // genuinely unclaimed run.
+    strip_claims(&fixture.run_dir);
 
     let refused = run_json(command().args([
         "role",
@@ -318,6 +346,12 @@ fn an_unreadable_publication_policy_is_refused_at_start_and_can_be_repaired() {
     assert_eq!(refused["next_action"], "repair_publication_policy");
     assert_eq!(refused["publication_policy"]["channel"], "codex_sites");
     assert_eq!(refused["publication_policy"]["access"], "owner_only");
+    // Nothing was claimed and no credential was minted by the refused start.
+    let refused_baton: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(fixture.run_dir.join("baton.json")).unwrap())
+            .unwrap();
+    assert!(refused_baton["participants"]["worker"]["claim"].is_null());
+    assert!(refused_baton["participants"]["reviewer"]["claim"].is_null());
 
     let repaired = run_json(command().args([
         "role",
@@ -367,7 +401,10 @@ fn an_unreadable_publication_policy_is_refused_at_start_and_can_be_repaired() {
 /// publisher that takes longer than one lease interval must stay visibly alive.
 #[test]
 fn a_long_publication_keeps_the_claim_live_and_the_phase_visible() {
-    let fixture = Fixture::started(&[("kernel", "Fix the kernel")]);
+    // A short lease, observed after it would have lapsed: the incident's
+    // publisher held a claim for roughly 45 minutes across a Site build without
+    // heartbeating, and the worker read the lapsed lease as a dead session.
+    let fixture = Fixture::started_with_lease(&[("kernel", "Fix the kernel")], 4);
     let before = fixture.read("worker");
     let peer_lease_before = before["peer"]["lease_expires_at"]
         .as_str()
@@ -375,9 +412,20 @@ fn a_long_publication_keeps_the_claim_live_and_the_phase_visible() {
         .to_owned();
     assert!(before["peer"]["progress"].is_null());
 
+    // Report late inside the long work, just before the lease it started with
+    // lapses, which is when a real publisher notices it is still going.
+    let original_expiry = time::OffsetDateTime::parse(
+        before["peer"]["lease_expires_at"].as_str().unwrap(),
+        &time::format_description::well_known::Rfc3339,
+    )
+    .unwrap();
+    let report_at = original_expiry - time::Duration::milliseconds(500);
+    while time::OffsetDateTime::now_utc() < report_at {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
     fixture.apply(
         "reviewer",
-        before["revision"].as_u64().unwrap(),
+        fixture.revision(),
         serde_json::json!({
             "type": "report_progress",
             "phase": "publishing_explainer",
@@ -385,7 +433,22 @@ fn a_long_publication_keeps_the_claim_live_and_the_phase_visible() {
         }),
     );
 
+    // Now let the original interval lapse. The publisher is still working, and
+    // the peer must read it as alive rather than as the dead session the
+    // incident inferred from an expired lease.
+    while time::OffsetDateTime::now_utc() <= original_expiry {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
     let after = fixture.read("worker");
+    let renewed = time::OffsetDateTime::parse(
+        after["peer"]["lease_expires_at"].as_str().unwrap(),
+        &time::format_description::well_known::Rfc3339,
+    )
+    .unwrap();
+    assert!(
+        renewed > original_expiry,
+        "long authorized work must extend the reporting role's own lease"
+    );
     assert_eq!(after["peer"]["role"], "reviewer");
     assert_eq!(after["peer"]["claim_state"], "busy");
     assert_eq!(after["peer"]["progress"]["phase"], "publishing_explainer");
@@ -396,6 +459,10 @@ fn a_long_publication_keeps_the_claim_live_and_the_phase_visible() {
     assert!(
         after["peer"]["lease_expires_at"].as_str().unwrap() > peer_lease_before.as_str(),
         "reporting progress must renew the reporting role's own lease"
+    );
+    assert_eq!(
+        after["peer"]["claim_state"], "busy",
+        "a peer that reported progress must not read as expired"
     );
     // Liveness is always available and is never advised work.
     for role in ["worker", "reviewer"] {
@@ -457,6 +524,83 @@ fn an_obligation_bound_write_survives_an_unrelated_heartbeat() {
     assert_eq!(
         staged["publication_binding"]["artifact"]["source_digest"],
         format!("{:x}", Sha256::digest(b"<h1>explainer</h1>"))
+    );
+
+    // The incident's races were on publication and review records, not staging,
+    // so both must also survive an intervening heartbeat at a stale revision.
+    let digest = staged["publication_binding"]["artifact"]["source_digest"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    run_json(command().args([
+        "role",
+        "heartbeat",
+        "--api",
+        "2",
+        "--run-dir",
+        fixture.run_dir.to_str().unwrap(),
+        "--role",
+        "worker",
+        "--session-id",
+        "claude-session",
+        "--lease-seconds",
+        "1800",
+        "--expected-revision",
+        &fixture.revision().to_string(),
+        "--credentials-root",
+        fixture.credentials.to_str().unwrap(),
+    ]));
+    let published = fixture.apply(
+        "reviewer",
+        prepared_revision,
+        serde_json::json!({
+            "type": "record_explainer_publication",
+            "obligation": obligation,
+            "source_digest": digest,
+            "site_id": "site-run",
+            "site_version": "1",
+            "url": "https://example.chatgpt.site",
+            "channel": "codex_sites",
+            "access": "owner_only"
+        }),
+    );
+    assert_eq!(
+        published["publication_binding"]["deployment"]["source_digest"],
+        digest
+    );
+
+    run_json(command().args([
+        "role",
+        "heartbeat",
+        "--api",
+        "2",
+        "--run-dir",
+        fixture.run_dir.to_str().unwrap(),
+        "--role",
+        "worker",
+        "--session-id",
+        "claude-session",
+        "--lease-seconds",
+        "1800",
+        "--expected-revision",
+        &fixture.revision().to_string(),
+        "--credentials-root",
+        fixture.credentials.to_str().unwrap(),
+    ]));
+    let reviewed = fixture.apply(
+        "worker",
+        prepared_revision,
+        serde_json::json!({
+            "type": "record_explainer_review",
+            "obligation": obligation,
+            "source_digest": digest,
+            "verdict": "approved",
+            "findings": []
+        }),
+    );
+    assert_eq!(
+        reviewed["publication_binding"]["review"]["verdict"],
+        "approved"
     );
 
     // An ordinary semantic mutation still takes its revision precondition.
