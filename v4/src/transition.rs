@@ -779,8 +779,12 @@ fn record_progress(
     phase: ProgressPhase,
     detail: Option<String>,
 ) -> Result<(), TransitionError> {
-    let updated_at = time::OffsetDateTime::now_utc()
-        .format(&time::format_description::well_known::Rfc3339)
+    // One clock reading: the lease invariant is an exact
+    // `started_at + lease_seconds == expires_at`.
+    let now = time::OffsetDateTime::now_utc();
+    let rfc3339 = &time::format_description::well_known::Rfc3339;
+    let updated_at = now
+        .format(rfc3339)
         .map_err(|_| TransitionError::InvalidProgress)?;
     let participant = match role {
         Role::Worker => &mut baton.participants.worker,
@@ -794,10 +798,10 @@ fn record_progress(
     // Reporting progress is also a liveness signal: extend this role's own lease
     // so long authorized work never looks like a dead session.
     if let Some(claim) = participant.claim.as_mut() {
-        let expires = time::OffsetDateTime::now_utc()
+        let expires = now
             .checked_add(time::Duration::seconds(claim.lease_seconds as i64))
             .ok_or(TransitionError::InvalidProgress)?
-            .format(&time::format_description::well_known::Rfc3339)
+            .format(rfc3339)
             .map_err(|_| TransitionError::InvalidProgress)?;
         claim.lease_started_at = Some(updated_at);
         claim.lease_expires_at = expires;

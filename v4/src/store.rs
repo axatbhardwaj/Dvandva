@@ -662,7 +662,10 @@ fn valid_v2_creation_root(baton: &RunBaton) -> bool {
         && baton.review.is_none()
         && baton.pending_checkpoint_supersession.is_none()
         && baton.publication.is_none()
-        && baton.publication_policy.as_ref() == Some(&PublicationPolicy::fixed())
+        && baton
+            .publication_policy
+            .as_ref()
+            .is_some_and(PublicationPolicy::is_recognized)
         && baton.publication_binding
             == Some(create_handoff_obligation(HandoffKind::RunStarted, 0, 0))
         && baton.human_decision.is_none()
