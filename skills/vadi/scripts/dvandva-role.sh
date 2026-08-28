@@ -158,7 +158,7 @@ session_id() {
 
 start_role() {
   test "$#" -ge 4 || {
-    printf 'usage: dvandva-role.sh start SESSION HARNESS PEER WORKSPACE [OBJECTIVE [TASK]] [--objective-ref KIND=VALUE] [--required-deliverable ID=DESCRIPTION] [--wait|--new-run|--run-id ID]\n' >&2
+    printf 'usage: dvandva-role.sh start SESSION HARNESS PEER WORKSPACE [OBJECTIVE [TASK]] [--objective-ref KIND=VALUE] [--required-deliverable ID=DESCRIPTION] [--wait|--new-run|--run-id ID] [--autonomous]\n' >&2
     exit 2
   }
   local session="$1" harness="$2" peer="$3" workspace="$4"
@@ -171,7 +171,7 @@ start_role() {
       ;;
   esac
 
-  local objective="" task="" wait_flag="" new_flag="" selected_run=""
+  local objective="" task="" wait_flag="" new_flag="" selected_run="" interaction="attended"
   local -a objective_refs=() deliverables=()
   if (($#)) && [[ "$1" != --* ]]; then
     objective="$1"
@@ -184,6 +184,7 @@ start_role() {
   while (($#)); do
     case "$1" in
       --wait) wait_flag="--wait" ;;
+      --autonomous) interaction="autonomous" ;;
       --new-run) new_flag="--new-run" ;;
       --run-id)
         selected_run="${2:-}"
@@ -253,6 +254,7 @@ start_role() {
     --lease-seconds "${DVANDVA_LEASE_SECONDS:-1800}"
     --timeout-ms "${DVANDVA_WAIT_TIMEOUT_MS:-300000}"
   )
+  args+=(--interaction "$interaction")
   test -z "$objective" || args+=(--objective "$objective")
   test -z "$task" || args+=(--task-reference "$task")
   local value
@@ -312,6 +314,12 @@ run_dir_command() {
         exit 2
       }
       local after="$1" budget_ms="${2:-540000}" started_ms now_ms chunk_ms output outcome
+      case "$budget_ms" in
+        ''|*[!0-9]*|0)
+          printf 'dvandva-role: poll MAX_MS must be a positive integer\n' >&2
+          exit 2
+          ;;
+      esac
       started_ms="$(date +%s%3N)"
       output=""
       while :; do
@@ -322,6 +330,8 @@ run_dir_command() {
           exit 0
         fi
         test "$chunk_ms" -le "${DVANDVA_POLL_CHUNK_MS:-300000}" || chunk_ms="${DVANDVA_POLL_CHUNK_MS:-300000}"
+        # Each kernel wait is observable, so re-entry is provable, not assumed.
+        test -z "${DVANDVA_POLL_TRACE:-}" || printf 'wait after=%s timeout_ms=%s\n' "$after" "$chunk_ms" >>"$DVANDVA_POLL_TRACE"
         output="$("$binary" role wait "${common[@]}" --after-revision "$after" \
           --timeout-ms "$chunk_ms")" || exit $?
         outcome="$(printf '%s' "$output" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("wait_outcome",""))')"

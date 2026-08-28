@@ -22,7 +22,14 @@ never a downgrade. Setup never migrates runs.
 The Baton owns the objective, references, task identity, `scope_revision`, and
 a non-empty ordered set of required deliverables. Exact-run selection compares
 every supplied coordinate and returns `scope_mismatch` without claiming when
-one differs. Only a resumed Human Decision can amend scope; amendment
+one differs. A Human Decision is one of three kinds — `scope` (what the work
+covers), `intent` (which reading of the request is meant), `authority`
+(permission that is the human's alone) — and never protocol approval: the kernel
+refuses to park while it holds a deterministic recovery, admits a decision only
+with distinct options (and, in an autonomous run, only as a choice among
+concrete scope proposals), refuses to re-ask the decision just answered, and
+resolves a decision only by a chosen option that changes the run. Only a
+resumed Human Decision can amend scope; amendment
 increments `scope_revision` and clears stale checkpoint state.
 
 A checkpoint is complete only when its unique deliverable IDs cover canonical
@@ -40,7 +47,7 @@ working -> reviewing -> finalizing -> done
               v             |
            revising --------+
 
-any active state -> human_decision -> declared active state
+any active state -> human_decision(scope | intent | authority) -> declared active state
 any active state -> abandoned
 ```
 

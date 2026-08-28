@@ -5,7 +5,7 @@ The facade JSON is authoritative. Use only `scripts/dvandva-role.sh`; first
 `session-id --generate` fallback.
 
 ```text
-start SESSION CURRENT_HARNESS PEER_HARNESS WORKSPACE [OBJECTIVE [TASK]] [--objective-ref KIND=VALUE] [--required-deliverable ID=DESCRIPTION] [--wait|--new-run|--run-id ID]
+start SESSION CURRENT_HARNESS PEER_HARNESS WORKSPACE [OBJECTIVE [TASK]] [--objective-ref KIND=VALUE] [--required-deliverable ID=DESCRIPTION] [--wait|--new-run|--run-id ID] [--autonomous]
 read  SESSION RUN_DIR
 apply SESSION RUN_DIR EXPECTED_REVISION ACTION_FILE
 wait  SESSION RUN_DIR AFTER_REVISION [TIMEOUT_MS]
@@ -119,15 +119,21 @@ no approval kind: a protocol-internal problem has a deterministic recovery, and
 the human may be absent.
 
 The options are the decision. The human answers by choosing one of them, and
-the kernel refuses any other answer. A `scope` decision resolves only through a
-scope amendment; an `intent` or `authority` answer is recorded as an objective
+the kernel refuses any other answer. A `scope` decision resolves through the
+chosen `proposals` entry (one concrete scope per option) or an explicit scope
+amendment; an `intent` or `authority` answer is recorded as an objective
 reference of that kind. A pause that would change nothing about the run cannot
-be resolved, which is what makes an approval wait unrepresentable.
+be resolved, and the decision just answered cannot be asked again.
+
+A run started with `--autonomous` admits a decision only as a choice among
+scope proposals, so when the human may be absent there is no admissible shape
+for "please approve": every pause is a set of concrete scopes the kernel
+applies itself.
 
 Use only the minimal request. The kernel derives contact and resume routing:
 
 ```json
-{"type":"request_human_decision","kind":"scope","question":"<one decision>","evidence":["<verified fact>"],"options":["<concrete option A>","<concrete option B>"]}
+{"type":"request_human_decision","kind":"scope","question":"<one decision>","evidence":["<verified fact>"],"options":["<concrete option A>","<concrete option B>"],"proposals":[{"objective":"<scope if A>","objective_refs":[],"task_reference":null,"scope_deliverables":[{"id":"<deliverable ID>","description":"<deliverable description>"}]},{"objective":"<scope if B>","objective_refs":[],"task_reference":null,"scope_deliverables":[{"id":"<deliverable ID>","description":"<deliverable description>"}]}]}
 {"type":"resume_human_decision","answer":"<one of the recorded options>"}
 ```
 

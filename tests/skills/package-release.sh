@@ -630,6 +630,7 @@ assert [step["name"] for step in steps] == [
     "Verify role skills",
     "Verify release packaging",
     "Verify two-role canary",
+    "Verify poll behaviour",
 ]
 runs = "\n".join(step.get("run", "") for step in steps)
 assert "cargo fmt --manifest-path v4/Cargo.toml -- --check" in runs
@@ -641,6 +642,7 @@ assert "bash tests/skills/setup-dvandva.sh" in runs
 assert "bash tests/skills/role-skills.sh" in runs
 assert "bash tests/skills/package-release.sh" in runs
 assert "bash tests/skills/two-role-canary.sh" in runs
+assert "bash tests/skills/poll.sh" in runs
 release_steps = workflow["jobs"]["release"]["steps"]
 assert [step["name"] for step in release_steps] == [
     "Check out the release tag",

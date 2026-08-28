@@ -76,11 +76,29 @@ revision="$(field '["revision"]' <<<"$handed")"
 # 1. Idle re-entry and the MAX_MS budget: with a 300ms kernel chunk and a
 #    1500ms budget, poll re-enters several times and returns idle at the budget.
 before="$(now_ms)"
-idle="$(DVANDVA_POLL_CHUNK_MS=300 DVANDVA_LEASE_SECONDS=4 bash "$vadi" poll worker-session "$run_dir" "$revision" 1500)"
+trace="$test_root/poll.trace"
+idle="$(DVANDVA_POLL_TRACE="$trace" DVANDVA_POLL_CHUNK_MS=300 DVANDVA_LEASE_SECONDS=4 bash "$vadi" poll worker-session "$run_dir" "$revision" 1500)"
 elapsed=$(( $(now_ms) - before ))
 test "$(field '["wait_outcome"]' <<<"$idle")" = idle_timeout
 test "$(field '["actionable"]' <<<"$idle")" = False
 test "$elapsed" -ge 1500 && test "$elapsed" -lt 6000 || { printf 'poll budget not honoured: %sms\n' "$elapsed" >&2; exit 1; }
+# Re-entry is observed, not inferred: several kernel waits within one poll.
+reentries="$(wc -l <"$trace")"
+test "$reentries" -ge 3 || { printf 'poll re-entered only %s times\n' "$reentries" >&2; exit 1; }
+grep -q 'timeout_ms=300' "$trace"
+
+# The budget contract: MAX_MS must be a positive integer.
+for bad in 0 -5 abc; do
+  if bash "$vadi" poll worker-session "$run_dir" "$revision" "$bad" >/dev/null 2>&1; then
+    printf 'poll accepted MAX_MS=%q\n' "$bad" >&2; exit 1
+  fi
+done
+
+# Kernel failures propagate: a run that does not exist is an error, not a wait.
+if out="$(bash "$vadi" poll worker-session "$runs/no-such-run" 0 500 2>&1)"; then
+  printf 'poll on a missing run succeeded\n' >&2; exit 1
+fi
+grep -q '"error"' <<<"$out"
 
 # 2. Lease renewal across the wait: the 4s worker lease survives a 6s poll.
 lease_before="$(field '["participants"]["worker"]["claim"]["lease_expires_at"]' <<<"$idle")"
