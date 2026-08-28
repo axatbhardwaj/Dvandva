@@ -108,7 +108,7 @@ fn an_abruptly_killed_writer_never_exposes_a_partial_revision() {
     // Sanity: the ramp is wide enough to also let creation finish, so the test
     // is exercising the whole window rather than only the earliest instant.
     assert!(
-        completed > 0 || observed.iter().any(|state| *state == "complete"),
+        completed > 0 || observed.contains(&"complete"),
         "the ramp never reached a completed creation, so late writes are untested"
     );
 }

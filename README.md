@@ -35,10 +35,13 @@ Act as prativadi and join Dvandva run <run-id>.
 ```
 
 The vadi submits one complete immutable checkpoint for canonical scope. At
-every handoff, the Codex-harness participant updates one owner-only Codex Sites
-explainer and the Claude-harness participant reviews that exact deployment,
-independent of which harness is vadi. The explainer plan is the live TODO list;
-the Baton remains authoritative.
+every handoff, the Codex-harness participant stages the explainer's bytes into
+the run directory and the Claude-harness participant reads and reviews those
+exact digest-bound bytes, independent of which harness is vadi. A Codex Sites
+deployment is an optional human-facing rendering of the same bytes. Only
+finalization waits on that gate, so a finished deliverable can always be
+checkpointed. The explainer plan is the live TODO list; the Baton remains
+authoritative.
 
 The sessions coordinate only through the local run. Neither harness invokes
 the other, there is no daemon, and user-owned harness goals remain untouched.

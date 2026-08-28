@@ -461,16 +461,14 @@ pub fn run() -> Result<(), CliError> {
         } => {
             let stale = discovery::stale_runs(&runs_dir, older_than_days)?;
             let mut archived = Vec::new();
+            let mut skipped = Vec::new();
             if archive {
-                let destination_root = runs_dir.join(".archived");
-                std::fs::create_dir_all(&destination_root).map_err(StoreError::Io)?;
                 for run in &stale {
-                    let destination = destination_root.join(&run.run_id);
-                    if destination.exists() {
-                        continue;
+                    match discovery::archive_stale_run(&runs_dir, &run.run_dir, older_than_days)? {
+                        Some(destination) => archived.push(destination),
+                        // Came back to life, or the archive root was unsafe.
+                        None => skipped.push(run.run_id.clone()),
                     }
-                    std::fs::rename(&run.run_dir, &destination).map_err(StoreError::Io)?;
-                    archived.push(destination);
                 }
             }
             println!(
@@ -479,6 +477,7 @@ pub fn run() -> Result<(), CliError> {
                     "older_than_days": older_than_days,
                     "stale": stale,
                     "archived": archived,
+                    "skipped": skipped,
                 }))?
             );
             Ok(())

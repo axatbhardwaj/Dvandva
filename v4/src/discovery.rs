@@ -7,6 +7,7 @@ use std::{
 };
 
 use notify::{RecursiveMode, Watcher};
+use std::os::unix::fs::PermissionsExt;
 use serde::Serialize;
 use thiserror::Error;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
@@ -247,6 +248,60 @@ pub fn stale_runs(
     }
     stale.sort_by(|left, right| left.run_id.cmp(&right.run_id));
     Ok(stale)
+}
+
+/// Move one stale run aside, revalidating it first. Archiving is destructive to
+/// discovery, so it must not act on a run that came back to life between the
+/// scan and the move, must not follow a symlinked archive root, and must not
+/// take its destination name from Baton content.
+pub fn archive_stale_run(
+    runs_dir: &Path,
+    run_dir: &Path,
+    older_than_days: u64,
+) -> Result<Option<PathBuf>, DiscoveryError> {
+    // The destination name comes from the filesystem, not the Baton: a run_id
+    // read out of run state could contain separators or `..`.
+    let name = match run_dir.file_name() {
+        Some(name) if !name.is_empty() && name != OsStr::new(".") && name != OsStr::new("..") => {
+            name.to_owned()
+        }
+        _ => return Ok(None),
+    };
+    if Path::new(&name).components().count() != 1 {
+        return Ok(None);
+    }
+
+    // Revalidate under the run's own lock, so a session that reclaimed it in the
+    // meantime keeps it.
+    let channel = RunChannel::open(run_dir);
+    let Ok(baton) = channel.read() else {
+        return Ok(None);
+    };
+    if idle_days_without_live_claim(run_dir, &baton, older_than_days).is_none() {
+        return Ok(None);
+    }
+
+    let archive_root = runs_dir.join(".archived");
+    match fs::symlink_metadata(&archive_root) {
+        Ok(metadata) if metadata.file_type().is_symlink() => return Ok(None),
+        Ok(metadata) if !metadata.is_dir() => return Ok(None),
+        Ok(_) => {}
+        Err(_) => {
+            fs::create_dir_all(&archive_root)?;
+            fs::set_permissions(&archive_root, std::fs::Permissions::from_mode(0o700))?;
+        }
+    }
+
+    let destination = archive_root.join(&name);
+    // Never replace an existing archive entry, and never race one into place.
+    if fs::symlink_metadata(&destination).is_ok() {
+        return Ok(None);
+    }
+    match fs::rename(run_dir, &destination) {
+        Ok(()) => Ok(Some(destination)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(DiscoveryError::Io(error)),
+    }
 }
 
 pub fn wait_for_match(

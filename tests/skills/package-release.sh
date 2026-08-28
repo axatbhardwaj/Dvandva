@@ -826,7 +826,17 @@ require_text 'status: accepted' "$adr"
 require_text 'dvandva.run.v2' "$adr"
 require_text 'role API 2' "$adr"
 require_text 'structural receipts are not provider-signed proof' "$adr"
-require_text 'future protocol epoch' "$adr"
+require_text 'deliberate protocol decision' "$adr"
+require_text 'Superseded in part by' "$adr"
+
+# The publication clause moved; the rest of the epoch must still stand.
+superseding="$repo_root/docs/adr/0004-run-artifact-explainer-channel.md"
+require_text 'status: accepted' "$superseding"
+require_text 'supersedes ADR 0003' "$superseding"
+require_text 'explainer/<source_digest>.html' "$superseding"
+require_text 'optional human-facing rendering' "$superseding"
+require_text 'repair-policy' "$superseding"
+require_text 'dvandva.run.v2' "$superseding"
 
 if test "$failures" -ne 0; then
   printf 'skills release packaging: %s failure(s)\n' "$failures" >&2
