@@ -365,6 +365,8 @@ enum RoleCommand {
         peer_harness: String,
         #[arg(long)]
         expected_revision: u64,
+        #[arg(long)]
+        credentials_root: PathBuf,
     },
     /// Materialize the bytes behind a staged analysis checkpoint artifact.
     Analysis {
@@ -765,10 +767,12 @@ pub fn run() -> Result<(), CliError> {
                 current_harness,
                 peer_harness,
                 expected_revision,
+                credentials_root,
             } => {
                 require_role_api(api)?;
                 let baton = role_session::repair_publication_policy(
                     &run_dir,
+                    &credentials_root,
                     role,
                     &session_id,
                     &current_harness,

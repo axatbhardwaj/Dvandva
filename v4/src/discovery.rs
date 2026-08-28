@@ -283,11 +283,14 @@ pub fn archive_stale_run(
             fs::set_permissions(&archive_root, std::fs::Permissions::from_mode(0o700))?;
         }
     }
-    let archive_fd = match fs::File::open(&archive_root) {
+    // Both directories are opened no-follow and proven to be directories on the
+    // open descriptor itself, so a symlink swapped in between the metadata
+    // check and the open cannot redirect the move.
+    let archive_fd = match crate::store::open_dir_nofollow(&archive_root) {
         Ok(directory) => directory,
         Err(_) => return Ok(None),
     };
-    let source_parent = match fs::File::open(runs_dir) {
+    let source_parent = match crate::store::open_dir_nofollow(runs_dir) {
         Ok(directory) => directory,
         Err(_) => return Ok(None),
     };

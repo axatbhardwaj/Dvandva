@@ -577,12 +577,14 @@ pub fn valid_stored_checkpoint_shape(
     identity: &str,
     artifacts: &[ExternalRef],
 ) -> bool {
-    match kind {
-        CHECKPOINT_KIND_GIT | CHECKPOINT_KIND_ANALYSIS => {
-            valid_checkpoint_shape(kind, identity, artifacts)
-        }
-        _ => true,
-    }
+    // Deliberately permissive. Kernels before 0.3.0 accepted any non-blank
+    // kind and any non-blank artifact coordinates — including `git` with
+    // `identity: "HEAD"` and `analysis` with a free-form identity — and those
+    // runs are still schema v2. Tightening the read path would strand them
+    // while the kernel still advertises v2 and API 2. Immutability is enforced
+    // where it can be without stranding anyone: at submission.
+    let _ = (kind, identity, artifacts);
+    true
 }
 
 /// Whether `kind`/`identity`/`artifacts` form an immutable checkpoint manifest

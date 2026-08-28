@@ -869,7 +869,17 @@ pub fn read_explainer(
     let staged = snapshot
         .explainer
         .ok_or_else(|| RoleSessionError::Invalid("no explainer bytes are staged".to_owned()))?;
-    let bytes = std::fs::read(&staged.path).map_err(StoreError::Io)?;
+    // Read beneath the pinned run root, never following a symlink at any
+    // component, so the bytes handed to the reviewer are the run's own.
+    let relative = snapshot
+        .baton
+        .publication_binding
+        .as_ref()
+        .and_then(|binding| binding.artifact.as_ref())
+        .map(|artifact| artifact.path.clone())
+        .ok_or_else(|| RoleSessionError::Invalid("no explainer bytes are staged".to_owned()))?;
+    let bytes = crate::store::read_private_file_beneath(&snapshot.run_dir, &relative)
+        .map_err(StoreError::Io)?;
     let digest = format!("{:x}", sha2::Sha256::digest(&bytes));
     if digest != staged.source_digest {
         return Err(RoleSessionError::Invalid(
@@ -908,10 +918,10 @@ pub fn read_analysis(
             "that digest is not staged for this run".to_owned(),
         ));
     }
-    let path = snapshot
-        .run_dir
-        .join(crate::model::analysis_artifact_path(digest));
-    let bytes = std::fs::read(&path).map_err(StoreError::Io)?;
+    let relative = crate::model::analysis_artifact_path(digest);
+    let path = snapshot.run_dir.join(&relative);
+    let bytes = crate::store::read_private_file_beneath(&snapshot.run_dir, &relative)
+        .map_err(StoreError::Io)?;
     if format!("{:x}", sha2::Sha256::digest(&bytes)) != digest {
         return Err(RoleSessionError::Invalid(
             "staged analysis bytes do not match their recorded digest".to_owned(),
@@ -1047,6 +1057,7 @@ pub fn reclaim(
 /// publisher restages against the new channel. Never touches semantic scope.
 pub fn repair_publication_policy(
     run_dir: &Path,
+    credentials_root: &Path,
     role: Role,
     session_id: &str,
     current_harness: &str,
@@ -1091,6 +1102,25 @@ pub fn repair_publication_policy(
         return Err(RoleSessionError::Invalid(
             "repair caller does not match the stored participant topology".to_owned(),
         ));
+    }
+    // Topology is only enough for the pre-claim path. If this role currently
+    // holds a live claim, the caller must be that claim's session and prove it
+    // with the private credential; otherwise any local process could repair a
+    // run out from under the session that owns it.
+    let participant = match role {
+        Role::Worker => &baton.participants.worker,
+        Role::Reviewer => &baton.participants.reviewer,
+    };
+    let live_claim = participant.claim.as_ref().is_some_and(|claim| {
+        time::OffsetDateTime::parse(
+            &claim.lease_expires_at,
+            &time::format_description::well_known::Rfc3339,
+        )
+        .is_ok_and(|expiry| expiry > time::OffsetDateTime::now_utc())
+    });
+    if live_claim {
+        let credential = load_for_run(run_dir, credentials_root, role, session_id, &baton.run_id)?;
+        claim::verify(&baton, role, session_id, &credential.token)?;
     }
     let policy = baton
         .publication_policy

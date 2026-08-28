@@ -1633,6 +1633,25 @@ fn apply_action_raw(
     name: &str,
     action: serde_json::Value,
 ) -> assert_cmd::assert::Assert {
+    // Receipts declare the sequence they were prepared against, copied from a
+    // fresh snapshot exactly as a role does. Tests that exercise ordering pass
+    // it explicitly; everything else takes the current value.
+    let mut action = action;
+    let is_receipt = matches!(
+        action["type"].as_str(),
+        Some("stage_explainer" | "record_explainer_publication" | "record_explainer_review")
+    );
+    if is_receipt && action.get("after_seq").is_none() {
+        if let Ok(bytes) = std::fs::read(dir.join("baton.json")) {
+            let head: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+            let seq = head["publication_binding"]["receipt_seq"].clone();
+            action["after_seq"] = if seq.is_null() {
+                serde_json::json!(0)
+            } else {
+                seq
+            };
+        }
+    }
     let path = write_action(dir, name, action);
     command()
         .args([

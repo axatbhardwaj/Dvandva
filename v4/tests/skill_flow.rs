@@ -63,6 +63,8 @@ fn assert_role_source_contract(role: &str) {
         "Who owns the next action",
         "Exact command or prompt",
         "foreground local wait",
+        "Ending the turn is not a wait",
+        "poll  SESSION RUN_DIR AFTER_REVISION [MAX_MS]",
         "upgrade_required",
         "upgrade SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION",
         "repair-policy SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION",
@@ -220,7 +222,10 @@ fn normalize_documented_action(template: &str) -> serde_json::Value {
             "<snapshot.publication_binding.artifact.source_digest>",
             &"a".repeat(64),
         )
-        .replace("<sha256 of the analysis>", &"c".repeat(64))
+        .replace(
+            "<sha256 of the cited digests, sorted, deduplicated, newline-joined>",
+            &"c".repeat(64),
+        )
         .replace("<sha256 of the artifact>", &"d".repeat(64))
         .replace("<full-length commit object name>", &"e".repeat(40))
         .replace("<current step>", "building the explainer")

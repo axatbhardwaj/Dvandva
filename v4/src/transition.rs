@@ -284,6 +284,20 @@ fn apply_locked(
             if !effective_policy(baton).reviewer_can_read() {
                 return Err(TransitionError::AutonomousRecoveryAvailable);
             }
+            // Likewise a changes-requested explainer: the publisher's recovery
+            // is to restage, and asking a human to bless a rewrite instead is
+            // the approval wait the protocol exists to avoid.
+            let publisher_owes_restage = baton
+                .publication_binding
+                .as_ref()
+                .and_then(|binding| binding.review.as_ref())
+                .is_some_and(|review| review.verdict == "changes_requested")
+                && caller_harness(baton, role)
+                    .trim()
+                    .eq_ignore_ascii_case(effective_policy(baton).publisher_harness.trim());
+            if publisher_owes_restage {
+                return Err(TransitionError::AutonomousRecoveryAvailable);
+            }
             if baton
                 .human_decision
                 .as_ref()
@@ -431,6 +445,15 @@ fn apply_locked(
             if binding.obligation != obligation {
                 return Err(TransitionError::StalePublicationBinding);
             }
+            // An exact replay — the same bytes already staged for this
+            // obligation — changes nothing and is a no-op whatever sequence it
+            // was prepared against, so a retried stage never fails as stale.
+            let incoming_digest = source_digest(&source_path)?;
+            if binding.artifact.as_ref().is_some_and(|artifact| {
+                artifact.obligation == obligation && artifact.source_digest == incoming_digest
+            }) {
+                return Ok(());
+            }
             require_receipt_seq(binding, after_seq)?;
             let (source_digest, byte_length) =
                 stage_explainer_bytes(channel.directory(), &source_path)?;
@@ -472,6 +495,18 @@ fn apply_locked(
                 .ok_or(TransitionError::PublicationStale)?;
             if binding.obligation != obligation {
                 return Err(TransitionError::StalePublicationBinding);
+            }
+            // An exact replay of the recorded rendering is a no-op.
+            if binding.deployment.as_ref().is_some_and(|deployment| {
+                deployment.obligation == obligation
+                    && deployment.source_digest == source_digest
+                    && deployment.site_id == site_id
+                    && deployment.site_version == site_version
+                    && deployment.url == url
+                    && deployment.channel == site_channel
+                    && deployment.access == access
+            }) {
+                return Ok(());
             }
             require_receipt_seq(binding, after_seq)?;
             // A Site is a rendering of bytes that already exist locally; it can
@@ -534,6 +569,23 @@ fn apply_locked(
                 || artifact.source_digest != source_digest
             {
                 return Err(TransitionError::StalePublicationBinding);
+            }
+            // An exact replay of the recorded verdict is a no-op.
+            let incoming_findings = findings
+                .iter()
+                .map(|finding| finding.trim().to_owned())
+                .collect::<Vec<_>>();
+            let incoming_verdict = match verdict {
+                ReviewVerdict::Approved => "approved",
+                ReviewVerdict::ChangesRequested => "changes_requested",
+            };
+            if binding.review.as_ref().is_some_and(|review| {
+                review.obligation == obligation
+                    && review.source_digest == source_digest
+                    && review.verdict == incoming_verdict
+                    && review.findings == incoming_findings
+            }) {
+                return Ok(());
             }
             require_receipt_seq(binding, after_seq)?;
             require_staged_bytes_intact(channel.directory(), artifact)?;
@@ -826,8 +878,8 @@ fn require_checkpoint_artifacts_intact(
     }
     for deliverable in &checkpoint.deliverables {
         for artifact in &deliverable.artifacts {
-            let path = run_dir.join(crate::model::analysis_artifact_path(&artifact.value));
-            let bytes = crate::store::read_private_file(&path)
+            let relative = crate::model::analysis_artifact_path(&artifact.value);
+            let bytes = crate::store::read_private_file_beneath(run_dir, &relative)
                 .map_err(|_| TransitionError::AnalysisBytesMissing)?;
             if format!("{:x}", sha2::Sha256::digest(&bytes)) != artifact.value {
                 return Err(TransitionError::AnalysisBytesMissing);
@@ -844,7 +896,7 @@ fn require_staged_bytes_intact(
     run_dir: &std::path::Path,
     artifact: &ExplainerArtifact,
 ) -> Result<(), TransitionError> {
-    let bytes = crate::store::read_private_file(&run_dir.join(&artifact.path))
+    let bytes = crate::store::read_private_file_beneath(run_dir, &artifact.path)
         .map_err(|_| TransitionError::ExplainerBytesMissing)?;
     if bytes.len() as u64 != artifact.byte_length
         || format!("{:x}", sha2::Sha256::digest(&bytes)) != artifact.source_digest
@@ -862,10 +914,25 @@ fn require_receipt_seq(
     binding: &crate::model::PublicationBinding,
     after_seq: Option<u64>,
 ) -> Result<(), TransitionError> {
-    match after_seq {
-        Some(seq) if seq != binding.receipt_seq => Err(TransitionError::StaleReceiptSequence),
-        _ => Ok(()),
+    // An omitted sequence is the released API-2 shape, and is honoured only
+    // where it is unambiguous: as the first receipt of an obligation. Once any
+    // receipt exists, a write must say what it was prepared against, or a
+    // delayed payload could silently regress newer state.
+    let prepared_against = after_seq.unwrap_or(0);
+    if prepared_against != binding.receipt_seq {
+        return Err(TransitionError::StaleReceiptSequence);
     }
+    Ok(())
+}
+
+/// The sha256 of the bytes at `path`, subject to the staging size limits.
+fn source_digest(path: &std::path::Path) -> Result<String, TransitionError> {
+    let metadata = std::fs::metadata(path).map_err(|_| TransitionError::InvalidExplainerSource)?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_EXPLAINER_BYTES {
+        return Err(TransitionError::InvalidExplainerSource);
+    }
+    let bytes = std::fs::read(path).map_err(|_| TransitionError::InvalidExplainerSource)?;
+    Ok(format!("{:x}", sha2::Sha256::digest(&bytes)))
 }
 
 pub(crate) fn effective_policy(baton: &RunBaton) -> PublicationPolicy {
@@ -926,7 +993,7 @@ fn stage_content_addressed(
     // to its name. A symlink, a group-readable file, or tampered content is
     // replaced rather than trusted.
     let reusable = crate::store::is_private_regular_file(&destination)
-        && crate::store::read_private_file(&destination)
+        && crate::store::read_private_file_beneath(run_dir, &relative(&digest))
             .is_ok_and(|existing| format!("{:x}", sha2::Sha256::digest(&existing)) == digest);
     if !reusable && std::fs::symlink_metadata(&destination).is_ok() {
         std::fs::remove_file(&destination).map_err(StoreError::Io)?;

@@ -275,6 +275,7 @@ impl Fixture {
             baton["revision"].as_u64().unwrap(),
             serde_json::json!({
                 "type": "stage_explainer",
+                "after_seq": baton["publication_binding"]["receipt_seq"],
                 "obligation": obligation,
                 "source_path": source.to_str().unwrap()
             }),
@@ -285,6 +286,7 @@ impl Fixture {
             staged["revision"].as_u64().unwrap(),
             serde_json::json!({
                 "type": "record_explainer_review",
+                "after_seq": staged["publication_binding"]["receipt_seq"],
                 "obligation": obligation,
                 "source_digest": digest,
                 "verdict": "approved",
@@ -433,6 +435,8 @@ fn an_unreadable_publication_policy_is_refused_at_start_and_can_be_repaired() {
             peer,
             "--expected-revision",
             &revision.to_string(),
+            "--credentials-root",
+            fixture.credentials.to_str().unwrap(),
         ]);
         command
     };
@@ -583,6 +587,7 @@ fn an_obligation_bound_write_survives_an_unrelated_heartbeat() {
         prepared_revision,
         serde_json::json!({
             "type": "stage_explainer",
+            "after_seq": 0,
             "obligation": obligation,
             "source_path": source.to_str().unwrap()
         }),
@@ -622,6 +627,7 @@ fn an_obligation_bound_write_survives_an_unrelated_heartbeat() {
         prepared_revision,
         serde_json::json!({
             "type": "record_explainer_publication",
+            "after_seq": 1,
             "obligation": obligation,
             "source_digest": digest,
             "site_id": "site-run",
@@ -659,6 +665,7 @@ fn an_obligation_bound_write_survives_an_unrelated_heartbeat() {
         prepared_revision,
         serde_json::json!({
             "type": "record_explainer_review",
+            "after_seq": 2,
             "obligation": obligation,
             "source_digest": digest,
             "verdict": "approved",
@@ -757,6 +764,7 @@ fn relayed_explainer_bytes_are_verified_against_the_recorded_digest() {
         baton["revision"].as_u64().unwrap(),
         serde_json::json!({
             "type": "stage_explainer",
+            "after_seq": 0,
             "obligation": baton["publication_binding"]["obligation"],
             "source_path": source.to_str().unwrap()
         }),

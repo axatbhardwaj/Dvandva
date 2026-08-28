@@ -179,12 +179,25 @@ fn a_pre_staging_baton_still_loads_and_can_be_repaired() {
         "terminal": null,
         "recovery": null
     });
-    let bytes = serde_json::to_vec_pretty(&baton).unwrap();
+    // Revision 0 is a clean creation root; the Site receipt is revision 1, the
+    // way a 0.2 kernel actually wrote it.
+    let mut root = baton.clone();
+    root["publication_binding"] = serde_json::json!({
+        "obligation": {"handoff_revision": 0, "kind": "run_started", "scope_revision": 0},
+        "deployment": null,
+        "review": null
+    });
+    let bytes = serde_json::to_vec_pretty(&root).unwrap();
     std::fs::write(run_dir.join("history/00000000000000000000.json"), &bytes).unwrap();
     std::fs::write(run_dir.join("baton.json"), &bytes).unwrap();
+    let channel = RunChannel::open(&run_dir);
+    let mut with_site = baton.clone();
+    with_site["revision"] = serde_json::json!(1);
+    channel
+        .compare_and_swap(0, &serde_json::from_value(with_site).unwrap())
+        .expect("a 0.2-shaped Site receipt edge must still validate");
 
     // It loads: an unreadable policy must be repairable, not unreachable.
-    let channel = RunChannel::open(&run_dir);
     let loaded = channel.read().expect("a pre-staging baton must still load");
     assert!(loaded
         .publication_binding
@@ -203,19 +216,22 @@ fn a_pre_staging_baton_still_loads_and_can_be_repaired() {
     let actions = next_action::classify(&loaded, Role::Worker, "Claude");
     assert!(actions.legal_actions.contains(&"submit_checkpoint"));
 
+    let credentials = dir.path().join("credentials");
     let repaired = dvandva_v4::role_session::repair_publication_policy(
         &run_dir,
+        &credentials,
         Role::Worker,
         "claude-session",
         "claude",
         "codex",
-        0,
+        1,
     )
     .expect("an unreadable policy must be repairable");
 
     // Repair is scoped: a caller naming the wrong topology is refused.
     assert!(dvandva_v4::role_session::repair_publication_policy(
         &run_dir,
+        &credentials,
         Role::Worker,
         "claude-session",
         "codex",
@@ -354,9 +370,9 @@ fn obligation_bound_writes_replay_cleanly_and_reject_stale_verdicts() {
     assert_eq!(replayed.revision, staged.revision);
     assert_eq!(channel.read().unwrap().revision, staged.revision);
 
-    let review = |verdict, findings: Vec<String>| Action::RecordExplainerReview {
+    let review = |verdict, findings: Vec<String>, after_seq| Action::RecordExplainerReview {
         obligation: obligation.clone(),
-        after_seq: None,
+        after_seq,
         source_digest: digest.clone(),
         verdict,
         findings,
@@ -367,7 +383,11 @@ fn obligation_bound_writes_replay_cleanly_and_reject_stale_verdicts() {
         "claude-session",
         &reviewer.token,
         3,
-        review(ReviewVerdict::ChangesRequested, vec!["rework".into()]),
+        review(
+            ReviewVerdict::ChangesRequested,
+            vec!["rework".into()],
+            Some(1),
+        ),
     )
     .unwrap();
 
@@ -379,7 +399,7 @@ fn obligation_bound_writes_replay_cleanly_and_reject_stale_verdicts() {
         "claude-session",
         &reviewer.token,
         3,
-        review(ReviewVerdict::Approved, Vec::new()),
+        review(ReviewVerdict::Approved, Vec::new(), Some(2)),
     );
     assert!(
         matches!(
@@ -540,8 +560,19 @@ fn a_run_cannot_be_parked_while_the_kernel_can_recover_itself() {
     });
     let channel = RunChannel::open(&run_dir);
     channel.create(&created).unwrap();
+    let credentials = dir.path().join("credentials");
+    dvandva_v4::role_session::claim(
+        &run_dir,
+        &credentials,
+        Role::Worker,
+        "claude-session",
+        1800,
+        0,
+    )
+    .unwrap();
     let worker =
-        dvandva_v4::claim::claim(&channel, Role::Worker, "claude-session", 1800, 0).unwrap();
+        dvandva_v4::credential::load(&credentials, "claude-session", "run-a", Role::Worker)
+            .unwrap();
 
     let escalation = |kind| {
         Action::RequestHumanDecision(HumanDecisionRequest {
@@ -585,6 +616,7 @@ fn a_run_cannot_be_parked_while_the_kernel_can_recover_itself() {
     // refusing to ask what only a human can answer.
     let repaired = dvandva_v4::role_session::repair_publication_policy(
         &run_dir,
+        &credentials,
         Role::Worker,
         "claude-session",
         "claude",
@@ -897,7 +929,7 @@ fn a_receipt_prepared_against_older_state_is_refused_not_applied() {
         5,
         Action::RecordExplainerReview {
             obligation: obligation.clone(),
-            after_seq: None,
+            after_seq: Some(2),
             source_digest: current_digest.clone(),
             verdict: ReviewVerdict::ChangesRequested,
             findings: vec!["rework".into()],
@@ -915,4 +947,392 @@ fn a_receipt_prepared_against_older_state_is_refused_not_applied() {
         channel.compare_and_swap(head.revision, &forged).is_err(),
         "a verdict bound to these exact bytes must not be flipped in place"
     );
+}
+
+/// Round-three findings, each reproduced the way the reviewer reproduced it.
+mod round_three {
+    use super::*;
+    use dvandva_v4::{
+        action::{Action, ReviewVerdict},
+        claim,
+        model::{HumanDecision, HumanDecisionKind, WorkspaceIdentity},
+        role_session, store,
+        store::RunChannel,
+        transition,
+    };
+
+    fn created_run(dir: &std::path::Path, worker: &str, reviewer: &str) -> RunChannel {
+        let run_dir = dir.join("run-a");
+        let mut created = RunBaton::new(
+            "run-a",
+            "Objective",
+            worker,
+            reviewer,
+            vec![DeliverableRequirement {
+                id: "kernel".into(),
+                description: "Fix the kernel".into(),
+            }],
+        )
+        .unwrap();
+        created.workspace = Some(WorkspaceIdentity {
+            repository_id: "github.com/axatbhardwaj/dvandva".into(),
+            origin: None,
+            worktree: None,
+        });
+        let channel = RunChannel::open(&run_dir);
+        channel.create(&created).unwrap();
+        channel
+    }
+
+    /// Rewrite the head and every history revision through `edit`, keeping the
+    /// chain self-consistent, the way a run written by an older kernel looks.
+    fn rewrite_run(run_dir: &std::path::Path, edit: impl Fn(&mut serde_json::Value)) {
+        let mut paths = vec![run_dir.join("baton.json")];
+        paths.extend(
+            std::fs::read_dir(run_dir.join("history"))
+                .unwrap()
+                .flatten()
+                .map(|entry| entry.path())
+                .filter(|path| path.extension().is_some_and(|ext| ext == "json")),
+        );
+        for path in paths {
+            let mut baton: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+            edit(&mut baton);
+            std::fs::write(&path, serde_json::to_vec_pretty(&baton).unwrap()).unwrap();
+        }
+    }
+
+    /// [P0] A tampered earlier revision must not be laundered forward by repair,
+    /// and a role with a live claim can only be repaired by that claim's session.
+    #[test]
+    fn repair_walks_the_whole_chain_and_proves_a_live_claim() {
+        let dir = tempfile::tempdir().unwrap();
+        let channel = created_run(dir.path(), "claude", "codex");
+        let run_dir = dir.path().join("run-a");
+        let credentials = dir.path().join("credentials");
+        // A live worker claim held by the real session.
+        let granted =
+            role_session::claim(&run_dir, &credentials, Role::Worker, "owner", 1800, 0).unwrap();
+        rewrite_run(&run_dir, |baton| {
+            baton["publication_policy"]["channel"] = serde_json::json!("codex_sites");
+            baton["publication_policy"]["access"] = serde_json::json!("owner_only");
+        });
+        let head = channel.read().unwrap();
+        assert_eq!(head.revision, granted.revision);
+
+        // Another session naming the right topology is refused while the claim
+        // is live: it cannot prove it owns the role.
+        let intruder = role_session::repair_publication_policy(
+            &run_dir,
+            &credentials,
+            Role::Worker,
+            "intruder",
+            "claude",
+            "codex",
+            head.revision,
+        );
+        assert!(intruder.is_err(), "a live claim must gate repair");
+
+        // Tamper revision 0 while the head still matches its own file: a
+        // head-only check would miss it; the chain walk must not.
+        let revision_zero = run_dir.join("history/00000000000000000000.json");
+        let mut tampered: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&revision_zero).unwrap()).unwrap();
+        tampered["objective"]["summary"] = serde_json::json!("something else entirely");
+        std::fs::write(
+            &revision_zero,
+            serde_json::to_vec_pretty(&tampered).unwrap(),
+        )
+        .unwrap();
+        let laundered = role_session::repair_publication_policy(
+            &run_dir,
+            &credentials,
+            Role::Worker,
+            "owner",
+            "claude",
+            "codex",
+            head.revision,
+        );
+        assert!(
+            matches!(
+                laundered,
+                Err(role_session::RoleSessionError::Store(
+                    store::StoreError::InvalidHistory
+                ))
+            ),
+            "repair must refuse to build on a tampered chain: {laundered:?}"
+        );
+        assert_eq!(channel.read().unwrap().revision, head.revision);
+    }
+
+    /// [P1 autonomy] A run this exact problem parked resumes when the problem is
+    /// repaired; nobody has to answer a question the repair already answered.
+    #[test]
+    fn repairing_the_condition_that_parked_a_run_resumes_it_without_a_human() {
+        let dir = tempfile::tempdir().unwrap();
+        let channel = created_run(dir.path(), "claude", "codex");
+        let run_dir = dir.path().join("run-a");
+        rewrite_run(&run_dir, |baton| {
+            baton["publication_policy"]["channel"] = serde_json::json!("codex_sites");
+            baton["publication_policy"]["access"] = serde_json::json!("owner_only");
+        });
+        // Park it the way the incident did, as a validated revision.
+        let mut parked = serde_json::to_value(channel.read().unwrap()).unwrap();
+        parked["revision"] = serde_json::json!(1);
+        parked["status"] = serde_json::json!("human_decision");
+        parked["assignee"] = serde_json::json!("human");
+        parked["human_decision"] = serde_json::json!({
+            "kind": "scope",
+            "question": "The Site returns 401. Relay it by hand?",
+            "requested_by": "worker",
+            "evidence": ["HTTP 401 from the owner-only Site"],
+            "options": ["relay", "stop"],
+            "contact_role": "worker",
+            "resume_status": "working",
+            "resume_assignee": "worker",
+            "answer": null
+        });
+        channel
+            .compare_and_swap(0, &serde_json::from_value(parked).unwrap())
+            .unwrap();
+        let repaired = role_session::repair_publication_policy(
+            &run_dir,
+            &dir.path().join("credentials"),
+            Role::Worker,
+            "claude-session",
+            "claude",
+            "codex",
+            1,
+        )
+        .expect("a parked unreadable-policy run must be repairable");
+        assert_eq!(repaired.status, Status::Working);
+        assert_eq!(repaired.assignee, Assignee::Worker);
+        let decision: &HumanDecision = repaired.human_decision.as_ref().unwrap();
+        assert!(decision
+            .answer
+            .as_deref()
+            .unwrap()
+            .contains("resolved autonomously"));
+        assert_eq!(decision.kind, HumanDecisionKind::Scope);
+        // Nothing is left for a human: the next actor is the worker.
+        let actions = next_action::classify(&repaired, Role::Worker, "Claude");
+        assert!(actions.next_actions.contains(&"work"));
+        assert!(!actions.legal_actions.contains(&"answer_human"));
+    }
+
+    /// [P1 compatibility] Checkpoints a 0.2 kernel accepted — `git` with
+    /// `HEAD`, `analysis` with a free-form identity and a `document` artifact —
+    /// still read, so those runs are not stranded under the same schema.
+    #[test]
+    fn v0_2_checkpoints_still_read() {
+        use dvandva_v4::model::{
+            checkpoint_manifest_digest, Checkpoint, CheckpointDeliverable, ExternalRef,
+        };
+        for (kind, identity, artifact_kind, artifact_value) in [
+            ("git", "HEAD", "commit", "HEAD"),
+            ("git", "abc123", "branch", "main"),
+            ("analysis", "old-analysis-v1", "document", "review.md"),
+        ] {
+            let dir = tempfile::tempdir().unwrap();
+            let channel = created_run(dir.path(), "claude", "codex");
+            let run_dir = dir.path().join("run-a");
+            let mut checkpoint = Checkpoint {
+                kind: kind.into(),
+                identity: identity.into(),
+                deliverables: vec![CheckpointDeliverable {
+                    id: "kernel".into(),
+                    artifacts: vec![ExternalRef {
+                        kind: artifact_kind.into(),
+                        value: artifact_value.into(),
+                    }],
+                }],
+                verification: vec!["tests passed".into()],
+                scope_revision: 0,
+                manifest_digest: String::new(),
+            };
+            checkpoint.manifest_digest = checkpoint_manifest_digest(&checkpoint);
+            let binding = checkpoint.binding();
+            let stored = serde_json::to_value(&checkpoint).unwrap();
+            let stored_binding = serde_json::to_value(&binding).unwrap();
+            rewrite_run(&run_dir, |baton| {
+                baton["status"] = serde_json::json!("reviewing");
+                baton["assignee"] = serde_json::json!("reviewer");
+                baton["checkpoint"] = stored.clone();
+                baton["checkpoint_history"] = serde_json::json!([stored_binding.clone()]);
+            });
+            let loaded = channel
+                .read()
+                .unwrap_or_else(|error| panic!("{kind}/{identity} became unreadable: {error}"));
+            assert_eq!(loaded.checkpoint.as_ref().unwrap().identity, identity);
+        }
+    }
+
+    /// [P1 receipt ordering] An omitted sequence is only the first receipt; an
+    /// exact replay is a no-op whatever it was prepared against, even after
+    /// later receipts; a stale write is refused, not applied.
+    #[test]
+    fn omitted_sequence_is_first_receipt_only_and_exact_replay_is_a_no_op() {
+        let dir = tempfile::tempdir().unwrap();
+        let channel = created_run(dir.path(), "codex", "claude");
+        let worker = claim::claim(&channel, Role::Worker, "codex-session", 1800, 0).unwrap();
+        let reviewer = claim::claim(&channel, Role::Reviewer, "claude-session", 1800, 1).unwrap();
+        let obligation = channel
+            .read()
+            .unwrap()
+            .publication_binding
+            .unwrap()
+            .obligation;
+        let stage = |label: &str, after_seq| {
+            let source = dir.path().join(format!("{label}.html"));
+            std::fs::write(&source, format!("<h1>{label}</h1>")).unwrap();
+            Action::StageExplainer {
+                obligation: obligation.clone(),
+                after_seq,
+                source_path: source,
+            }
+        };
+        let apply_worker = |revision, action| {
+            transition::apply(
+                &channel,
+                Role::Worker,
+                "codex-session",
+                &worker.token,
+                revision,
+                action,
+            )
+        };
+
+        // First receipt: an omitted sequence is honoured, as the released API did.
+        let first = apply_worker(2, stage("first", None)).unwrap();
+        let first_digest = first
+            .publication_binding
+            .as_ref()
+            .unwrap()
+            .artifact
+            .as_ref()
+            .unwrap()
+            .source_digest
+            .clone();
+
+        // Once any receipt exists, an omitted sequence can no longer bypass
+        // ordering: a delayed "first" payload must not regress the newer bytes.
+        let newer = apply_worker(3, stage("second", Some(1))).unwrap();
+        assert!(matches!(
+            apply_worker(4, stage("delayed", None)),
+            Err(transition::TransitionError::StaleReceiptSequence)
+        ));
+
+        // A downstream receipt lands, then the *exact* documented stage of the
+        // current bytes is retried with its original sequence: a no-op, not
+        // stale, not invalid history.
+        transition::apply(
+            &channel,
+            Role::Reviewer,
+            "claude-session",
+            &reviewer.token,
+            4,
+            Action::RecordExplainerReview {
+                obligation: obligation.clone(),
+                after_seq: Some(2),
+                source_digest: newer
+                    .publication_binding
+                    .as_ref()
+                    .unwrap()
+                    .artifact
+                    .as_ref()
+                    .unwrap()
+                    .source_digest
+                    .clone(),
+                verdict: ReviewVerdict::ChangesRequested,
+                findings: vec!["rework".into()],
+            },
+        )
+        .unwrap();
+        let before = channel.read().unwrap();
+        let replayed = apply_worker(before.revision, stage("second", Some(1)))
+            .expect("an exact replay must be a no-op, not stale");
+        assert_eq!(replayed.revision, before.revision);
+        assert_eq!(channel.read().unwrap(), before);
+
+        // The replayed first stage — older bytes — is still refused.
+        assert!(matches!(
+            apply_worker(before.revision, stage("first", Some(0))),
+            Err(transition::TransitionError::StaleReceiptSequence)
+        ));
+        assert_ne!(
+            first_digest,
+            before
+                .publication_binding
+                .unwrap()
+                .artifact
+                .unwrap()
+                .source_digest
+        );
+    }
+
+    /// [P1 confinement] A symlinked `analysis/` directory is an escape as much as
+    /// a symlinked file: the facade read and the approval gate both refuse it.
+    #[test]
+    fn a_symlinked_analysis_directory_is_refused_everywhere() {
+        let dir = tempfile::tempdir().unwrap();
+        let channel = created_run(dir.path(), "claude", "codex");
+        let run_dir = dir.path().join("run-a");
+        let credentials = dir.path().join("credentials");
+        role_session::claim(
+            &run_dir,
+            &credentials,
+            Role::Worker,
+            "claude-session",
+            1800,
+            0,
+        )
+        .unwrap();
+        let source = dir.path().join("review.md");
+        std::fs::write(&source, b"# review\n").unwrap();
+        let worker_credential =
+            dvandva_v4::credential::load(&credentials, "claude-session", "run-a", Role::Worker)
+                .unwrap();
+        let staged = transition::apply(
+            &channel,
+            Role::Worker,
+            "claude-session",
+            &worker_credential.token,
+            1,
+            Action::StageAnalysis {
+                source_path: source,
+            },
+        )
+        .unwrap();
+        let digest = staged.staged_analysis[0].clone();
+
+        // Replace the analysis directory with a symlink to an outside directory
+        // holding a same-named, world-readable file with the same bytes.
+        let outside = dir.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join(&digest), b"# review\n").unwrap();
+        std::fs::set_permissions(
+            outside.join(&digest),
+            std::fs::Permissions::from_mode(0o644),
+        )
+        .unwrap();
+        std::fs::remove_dir_all(run_dir.join("analysis")).unwrap();
+        std::os::unix::fs::symlink(&outside, run_dir.join("analysis")).unwrap();
+
+        assert!(
+            role_session::read_analysis(
+                &run_dir,
+                &credentials,
+                Role::Worker,
+                "claude-session",
+                &digest
+            )
+            .is_err(),
+            "the facade must not read through a symlinked run-state directory"
+        );
+        assert!(
+            store::read_private_file_beneath(&run_dir, &format!("analysis/{digest}")).is_err(),
+            "beneath reads must refuse a symlinked intermediate directory"
+        );
+    }
 }

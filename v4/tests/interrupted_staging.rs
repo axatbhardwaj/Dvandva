@@ -1,16 +1,15 @@
 //! Abrupt write-interruption coverage for run creation and history staging.
 //!
-//! The interruption has to be a genuine, uncatchable process death. A handled
-//! write error lets the kernel unwind and clean up, which is not the failure
-//! being tested. It also has to leave the host quiet: an intentional injection
-//! must not produce a core dump or a desktop crash notification.
+//! The interruption has to be a genuine, abrupt process death: no unwinding,
+//! no destructors, no flushing. A handled write error lets the kernel clean up,
+//! which is not the failure under test. It also has to leave the host quiet —
+//! an intentional injection must not produce a core dump or a desktop crash
+//! notification.
 //!
-//! SIGKILL satisfies both. It cannot be caught, blocked, or handled, so the
-//! writer dies wherever it happens to be, with no unwinding; and SIGKILL is not
-//! a core-generating signal, so nothing is dumped and nothing is reported.
-//!
-//! The kill lands at ramping offsets so the writer is interrupted at many
-//! different points, including inside history staging and inside head install.
+//! A debug-only `_exit` failpoint satisfies both, and, unlike a scheduler-timed
+//! kill, proves the writer actually reached the boundary being tested. These
+//! tests therefore only run in debug builds, where the failpoint exists.
+#![cfg(debug_assertions)]
 
 use std::os::unix::process::ExitStatusExt;
 use std::{path::Path, process::Command};
@@ -57,10 +56,12 @@ fn inspect(run_dir: &Path) -> Result<&'static str, String> {
 fn dying_at_each_staging_boundary_never_exposes_a_partial_revision() {
     // `during_history_stage`: the revision is written but not yet linked into
     // place. `after_history_stage`: the revision is linked, but no head is
-    // installed. Both must be invisible to a reader.
+    // installed. `during_head_install`: the head is written to a temporary but
+    // not yet renamed into place. All three must be invisible to a reader.
     for (failpoint, expected) in [
         ("during_history_stage", "nothing"),
         ("after_history_stage", "revision-only"),
+        ("during_head_install", "revision-only"),
     ] {
         let dir = tempfile::tempdir().unwrap();
         let run_dir = dir.path().join("run-a");
@@ -126,6 +127,21 @@ fn dying_at_each_staging_boundary_never_exposes_a_partial_revision() {
             .unwrap();
         assert!(recovered.success(), "{failpoint} wedged the next creation");
         assert_eq!(inspect(&run_dir).unwrap(), "complete");
+
+        // Recovery scavenged whatever the dead writer left behind, so repeated
+        // interruptions cannot grow junk without bound.
+        let leftovers = [run_dir.clone(), run_dir.join("history")]
+            .iter()
+            .flat_map(|directory| std::fs::read_dir(directory).unwrap().flatten())
+            .filter(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                name.starts_with('.') && name.ends_with(".tmp")
+            })
+            .count();
+        assert_eq!(
+            leftovers, 0,
+            "{failpoint} left {leftovers} staging temporaries"
+        );
     }
 }
 

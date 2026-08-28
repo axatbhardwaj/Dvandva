@@ -300,10 +300,12 @@ impl RunChannel {
                     actual: current.revision,
                 });
             }
-            // A repair must not canonize an inconsistent chain: the head has to
-            // be exactly the revision history recorded, or the run is already
-            // corrupt and repairing it would launder that corruption forward.
-            if self.read_history_revision(expected_revision)? != current {
+            // A repair must not canonize an inconsistent chain. Checking the
+            // head against one revision is not enough — an earlier revision can
+            // be tampered while the head still matches its own file — so the
+            // whole chain is walked and every edge validated first.
+            let (validated_head, high) = self.validated_history_head()?;
+            if high != expected_revision || validated_head != current {
                 return Err(StoreError::InvalidHistory);
             }
             require_current_schema(&current)?;
@@ -318,6 +320,19 @@ impl RunChannel {
                 binding.deployment = None;
                 binding.review = None;
             }
+            // If this exact problem is what parked the run, the repair is its
+            // answer: resume the recorded pre-request role rather than leaving
+            // a human decision open that nobody needs to make.
+            if next.status == Status::HumanDecision {
+                if let Some(decision) = next.human_decision.as_mut() {
+                    if decision.answer.is_none() {
+                        decision.answer =
+                            Some("resolved autonomously: publication policy repaired".to_owned());
+                        next.status = decision.resume_status.clone();
+                        next.assignee = decision.resume_assignee.clone();
+                    }
+                }
+            }
             validate_baton(&next)?;
             // The repair edge is an ordinary v2 history edge and is held to the
             // same rules as every other transition.
@@ -326,6 +341,53 @@ impl RunChannel {
             self.install(&next)?;
             Ok(next)
         })
+    }
+
+    /// Walk every recorded revision, validating each edge, and return the head
+    /// the chain actually justifies. Callers that are about to build on the
+    /// chain — repair, recovery — use this rather than trusting the installed
+    /// head, so a tampered or truncated history cannot be laundered forward.
+    fn validated_history_head(&self) -> Result<(RunBaton, u64), StoreError> {
+        let history_dir = self.directory.join("history");
+        let mut revisions = fs::read_dir(&history_dir)?
+            .filter_map(Result::ok)
+            .filter_map(|entry| {
+                entry
+                    .path()
+                    .file_stem()
+                    .and_then(|stem| stem.to_str())
+                    .and_then(|stem| stem.parse::<u64>().ok())
+            })
+            .collect::<Vec<_>>();
+        revisions.sort_unstable();
+        let high = *revisions.last().ok_or(StoreError::InvalidHistory)?;
+        if revisions != (0..=high).collect::<Vec<_>>() {
+            return Err(StoreError::InvalidHistory);
+        }
+        let mut previous: Option<RunBaton> = None;
+        let mut run_id: Option<String> = None;
+        for revision in 0..=high {
+            let baton = self.read_history_revision(revision)?;
+            if baton.revision != revision {
+                return Err(StoreError::InvalidHistory);
+            }
+            if revision == 0 && baton.schema == SCHEMA && !valid_v2_creation_root(&baton) {
+                return Err(StoreError::InvalidHistory);
+            }
+            if let Some(previous_baton) = previous.as_ref() {
+                validate_history_edge(previous_baton, &baton)
+                    .map_err(|_| StoreError::InvalidHistory)?;
+            }
+            match &run_id {
+                Some(expected) if expected != &baton.run_id => {
+                    return Err(StoreError::InvalidHistory)
+                }
+                None => run_id = Some(baton.run_id.clone()),
+                _ => {}
+            }
+            previous = Some(baton);
+        }
+        Ok((previous.ok_or(StoreError::InvalidHistory)?, high))
     }
 
     pub fn recover(&self, from_revision: u64) -> Result<RunBaton, StoreError> {
@@ -465,14 +527,41 @@ impl RunChannel {
         file.write_all(&bytes)?;
         file.write_all(b"\n")?;
         file.sync_all()?;
+        test_failpoint("during_head_install");
         fs::rename(&temporary, self.baton_path())?;
         sync_directory(&self.directory)?;
         Ok(())
     }
 
+    /// Remove staging temporaries left by writers that died mid-write. Only the
+    /// lock holder writes, so any temporary present while we hold the lock is
+    /// abandoned, and leaving them would let repeated interruptions grow junk
+    /// without bound.
+    fn scavenge_staging_temporaries(&self) {
+        let is_temporary = |name: &std::ffi::OsStr| {
+            let name = name.to_string_lossy();
+            name.starts_with('.') && name.ends_with(".tmp")
+        };
+        for directory in [self.directory.clone(), self.directory.join("history")] {
+            let Ok(entries) = fs::read_dir(&directory) else {
+                continue;
+            };
+            for entry in entries.flatten() {
+                if is_temporary(&entry.file_name())
+                    && entry
+                        .file_type()
+                        .is_ok_and(|kind| kind.is_file() && !kind.is_symlink())
+                {
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
+    }
+
     fn write_history(&self, baton: &RunBaton) -> Result<(), StoreError> {
         let directory = self.directory.join("history");
         create_private_dir(&directory)?;
+        self.scavenge_staging_temporaries();
         let path = directory.join(format!("{:020}.json", baton.revision));
         let temporary = directory.join(format!(".{:020}.{}.tmp", baton.revision, Uuid::new_v4()));
         let bytes = serde_json::to_vec_pretty(baton)?;
@@ -1026,9 +1115,24 @@ fn valid_publication_policy_repair_edge(current: &RunBaton, next: &RunBaton) -> 
     {
         return false;
     }
+    let resumed_parked_decision = current.status == Status::HumanDecision
+        && current
+            .human_decision
+            .as_ref()
+            .is_some_and(|decision| decision.answer.is_none())
+        && next.human_decision.as_ref().is_some_and(|decision| {
+            decision.answer.is_some()
+                && next.status == decision.resume_status
+                && next.assignee == decision.resume_assignee
+        });
     only_fields_changed(current, next, |expected| {
         expected.publication_policy = next.publication_policy.clone();
         expected.publication_binding = next.publication_binding.clone();
+        if resumed_parked_decision {
+            expected.human_decision = next.human_decision.clone();
+            expected.status = next.status.clone();
+            expected.assignee = next.assignee.clone();
+        }
     })
 }
 
@@ -1048,7 +1152,11 @@ fn valid_publication_receipt_edge(
     // Every receipt advances the sequence by exactly one. This is what makes an
     // out-of-order or replayed receipt detectable at the history layer, so a
     // direct compare-and-swap cannot install one either.
-    if next_binding.receipt_seq != current_binding.receipt_seq + 1 {
+    // Revisions written before receipts were sequenced carry 0 on both sides.
+    // Those edges stay readable; once a sequence has been recorded the rule is
+    // strict, so ordering is guaranteed from the first sequenced receipt on.
+    let legacy_unsequenced = current_binding.receipt_seq == 0 && next_binding.receipt_seq == 0;
+    if !legacy_unsequenced && next_binding.receipt_seq != current_binding.receipt_seq + 1 {
         return false;
     }
     if current_binding.artifact != next_binding.artifact {
@@ -1713,6 +1821,80 @@ pub fn read_private_file(path: &Path) -> Result<Vec<u8>, std::io::Error> {
             std::io::ErrorKind::InvalidInput,
             "run artifact is readable outside its owner",
         ));
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
+/// Open a directory without following a final symlink, and prove it is one.
+pub fn open_dir_nofollow(path: &Path) -> Result<File, std::io::Error> {
+    let directory = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_DIRECTORY | libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)?;
+    if !directory.metadata()?.is_dir() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "not a directory",
+        ));
+    }
+    Ok(directory)
+}
+
+fn openat_nofollow(
+    parent: &File,
+    name: &std::ffi::OsStr,
+    flags: libc::c_int,
+) -> Result<File, std::io::Error> {
+    use std::os::fd::{AsRawFd, FromRawFd};
+    use std::os::unix::ffi::OsStrExt;
+    let name = std::ffi::CString::new(name.as_bytes())
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidInput, "nul in path"))?;
+    let fd = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            flags | libc::O_NOFOLLOW | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(unsafe { File::from_raw_fd(fd) })
+}
+
+/// Read a run-private file by walking `relative` beneath `root` one component
+/// at a time, never following a symlink at any step. A symlinked directory in
+/// the middle of the path is as much an escape as a symlinked file at the end,
+/// so both are refused. The file must be a regular file unreadable by others.
+pub fn read_private_file_beneath(root: &Path, relative: &str) -> Result<Vec<u8>, std::io::Error> {
+    use std::io::Read;
+    let invalid =
+        |message: &str| std::io::Error::new(std::io::ErrorKind::InvalidInput, message.to_owned());
+    let mut components = Path::new(relative).components().peekable();
+    let mut current = open_dir_nofollow(root)?;
+    let mut file = None;
+    while let Some(component) = components.next() {
+        let std::path::Component::Normal(name) = component else {
+            return Err(invalid("run artifact paths are plain relative paths"));
+        };
+        if components.peek().is_some() {
+            current = openat_nofollow(&current, name, libc::O_DIRECTORY | libc::O_RDONLY)?;
+            if !current.metadata()?.is_dir() {
+                return Err(invalid("run artifact path crosses a non-directory"));
+            }
+        } else {
+            file = Some(openat_nofollow(&current, name, libc::O_RDONLY)?);
+        }
+    }
+    let mut file = file.ok_or_else(|| invalid("run artifact path is empty"))?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(invalid("run artifact is not a regular file"));
+    }
+    if metadata.permissions().mode() & 0o077 != 0 {
+        return Err(invalid("run artifact is readable outside its owner"));
     }
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes)?;
