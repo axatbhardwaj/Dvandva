@@ -8,8 +8,17 @@ pub const SCHEMA: &str = "dvandva.run.v2";
 pub const ROLE_API: u32 = 2;
 pub const EXPLAINER_PUBLISHER_HARNESS: &str = "Codex";
 pub const EXPLAINER_REVIEWER_HARNESS: &str = "Claude";
-pub const EXPLAINER_CHANNEL: &str = "codex_sites";
-pub const EXPLAINER_ACCESS: &str = "owner_only";
+/// Digest-bound explainer bytes staged inside the run directory. Both harnesses
+/// run locally against the same run directory, so both can read this channel.
+pub const EXPLAINER_CHANNEL: &str = "run_artifact";
+pub const EXPLAINER_ACCESS: &str = "run_private";
+/// Recognized but reviewer-unreadable: an owner-only Codex Site is gated behind
+/// the publisher owner's session, which the reviewing harness cannot present.
+pub const LEGACY_EXPLAINER_CHANNEL: &str = "codex_sites";
+pub const LEGACY_EXPLAINER_ACCESS: &str = "owner_only";
+pub const EXPLAINER_ARTIFACT_DIR: &str = "explainer";
+pub const EXPLAINER_MEDIA_TYPE: &str = "text/html";
+pub const MAX_EXPLAINER_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ModelError {
@@ -65,6 +74,28 @@ pub struct Participants {
 pub struct Participant {
     pub harness: String,
     pub claim: Option<ParticipantClaim>,
+    /// Last self-reported step. Lets a peer distinguish "slow" from "dead"
+    /// without inferring liveness from lease expiry alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<ParticipantProgress>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProgressPhase {
+    Working,
+    PublishingExplainer,
+    ReviewingExplainer,
+    ReviewingCheckpoint,
+    Waiting,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParticipantProgress {
+    pub phase: ProgressPhase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -194,6 +225,25 @@ impl PublicationPolicy {
             reviewer_harness: EXPLAINER_REVIEWER_HARNESS.to_owned(),
         }
     }
+
+    /// Whether the designated reviewing harness can actually read bytes the
+    /// designated publisher places on this channel. A policy that fails this
+    /// check can never reach an explainer review and must be rejected at start
+    /// rather than after the publisher has already deployed.
+    pub fn reviewer_can_read(&self) -> bool {
+        match (self.channel.as_str(), self.access.as_str()) {
+            // Run-directory artifacts are local files both harnesses can open.
+            (EXPLAINER_CHANNEL, EXPLAINER_ACCESS) => true,
+            // An owner-only Site is readable only by the publisher's own owner
+            // session, so it works only when publisher and reviewer coincide.
+            (LEGACY_EXPLAINER_CHANNEL, LEGACY_EXPLAINER_ACCESS) => {
+                self.publisher_harness
+                    .trim()
+                    .eq_ignore_ascii_case(self.reviewer_harness.trim())
+            }
+            _ => false,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -229,13 +279,27 @@ pub struct PublicationDeployment {
     pub publisher_harness: String,
 }
 
+/// Digest-bound explainer bytes staged inside the run directory. This is the
+/// artifact the reviewing harness actually reads and the gate actually binds;
+/// `PublicationDeployment` is an optional human-facing rendering of the same
+/// bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExplainerArtifact {
+    pub obligation: HandoffObligation,
+    pub source_digest: String,
+    /// Run-directory-relative path, always `explainer/<source_digest>.html`.
+    pub path: String,
+    pub media_type: String,
+    pub byte_length: u64,
+    pub channel: String,
+    pub access: String,
+    pub publisher_harness: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicationReview {
     pub obligation: HandoffObligation,
     pub source_digest: String,
-    pub site_id: String,
-    pub site_version: String,
-    pub url: String,
     pub verdict: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub findings: Vec<String>,
@@ -247,8 +311,15 @@ pub struct PublicationBinding {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub site_id: Option<String>,
     pub obligation: HandoffObligation,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact: Option<ExplainerArtifact>,
     pub deployment: Option<PublicationDeployment>,
     pub review: Option<PublicationReview>,
+}
+
+/// Content-addressed, run-directory-relative location for staged explainer bytes.
+pub fn explainer_artifact_path(source_digest: &str) -> String {
+    format!("{EXPLAINER_ARTIFACT_DIR}/{source_digest}.html")
 }
 
 pub fn create_handoff_obligation(
@@ -264,6 +335,7 @@ pub fn create_handoff_obligation(
             scope_revision,
             checkpoint: None,
         },
+        artifact: None,
         deployment: None,
         review: None,
     }
@@ -376,10 +448,12 @@ impl RunBaton {
                 worker: Participant {
                     harness: worker_harness,
                     claim: None,
+                    progress: None,
                 },
                 reviewer: Participant {
                     harness: reviewer_harness,
                     claim: None,
+                    progress: None,
                 },
             },
             status: Status::Working,

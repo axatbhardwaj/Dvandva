@@ -1,6 +1,10 @@
 use serde::Deserialize;
 
-use crate::model::{CheckpointSubmission, DeliverableRequirement, ExternalRef, HandoffObligation};
+use std::path::PathBuf;
+
+use crate::model::{
+    CheckpointSubmission, DeliverableRequirement, ExternalRef, HandoffObligation, ProgressPhase,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct ScopeAmendment {
@@ -46,6 +50,15 @@ pub enum Action {
         #[serde(default)]
         refs: Vec<ExternalRef>,
     },
+    /// Stage the explainer's bytes into the run directory. The kernel hashes the
+    /// file at `source_path`, copies it to a content-addressed location both
+    /// harnesses can read, and binds the digest to the current obligation.
+    StageExplainer {
+        obligation: HandoffObligation,
+        source_path: PathBuf,
+    },
+    /// Record the optional human-facing Site that renders the staged bytes. Never
+    /// gates the run; the digest must match the staged artifact.
     RecordExplainerPublication {
         obligation: HandoffObligation,
         source_digest: String,
@@ -58,12 +71,15 @@ pub enum Action {
     RecordExplainerReview {
         obligation: HandoffObligation,
         source_digest: String,
-        site_id: String,
-        site_version: String,
-        url: String,
         verdict: ReviewVerdict,
         #[serde(default)]
         findings: Vec<String>,
+    },
+    /// Publish a liveness/progress signal and renew this role's own lease.
+    ReportProgress {
+        phase: ProgressPhase,
+        #[serde(default)]
+        detail: Option<String>,
     },
     Abandon {
         reason: String,

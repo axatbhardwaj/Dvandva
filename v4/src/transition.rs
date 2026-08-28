@@ -1,17 +1,20 @@
 use std::collections::HashSet;
 
+use sha2::Digest;
+
 use thiserror::Error;
 
 use crate::{
     action::{Action, ReviewVerdict, ScopeAmendment},
     claim::{self, ClaimError, Role},
     model::{
-        checkpoint_manifest_digest, create_bound_handoff_obligation, normalize_deliverables,
-        valid_exact_reference, valid_sha256, Assignee, Checkpoint, CheckpointBinding,
-        CheckpointSubmission, CheckpointSupersession, HandoffKind, HumanDecision,
-        PublicationDeployment, PublicationReview, ReviewReceipt, RunBaton, Status, TaskIdentity,
-        TerminalProvenance, EXPLAINER_ACCESS, EXPLAINER_CHANNEL, EXPLAINER_PUBLISHER_HARNESS,
-        EXPLAINER_REVIEWER_HARNESS,
+        checkpoint_manifest_digest, create_bound_handoff_obligation, explainer_artifact_path,
+        normalize_deliverables, valid_exact_reference, valid_sha256, Assignee, Checkpoint,
+        CheckpointBinding, CheckpointSubmission, CheckpointSupersession, ExplainerArtifact,
+        HandoffKind, HumanDecision, ParticipantProgress, ProgressPhase, PublicationDeployment,
+        PublicationPolicy, PublicationReview, ReviewReceipt, RunBaton, Status, TaskIdentity,
+        TerminalProvenance, EXPLAINER_ACCESS, EXPLAINER_ARTIFACT_DIR, EXPLAINER_CHANNEL,
+        EXPLAINER_MEDIA_TYPE, MAX_EXPLAINER_BYTES,
     },
     store::{RunChannel, StoreError},
 };
@@ -60,6 +63,12 @@ pub enum TransitionError {
     SiteIdMismatch,
     #[error("abandonment requires a non-blank reason")]
     MissingReason,
+    #[error("explainer bytes are missing, unreadable, empty, or above the size limit")]
+    InvalidExplainerSource,
+    #[error("no explainer bytes are staged for the current obligation")]
+    ExplainerNotStaged,
+    #[error("progress detail must be non-blank when present")]
+    InvalidProgress,
 }
 
 pub fn apply(
@@ -94,7 +103,6 @@ fn apply_locked(
             if !matches!(baton.status, Status::Working | Status::Revising) {
                 return Err(TransitionError::IllegalState);
             }
-            require_publication_gate(baton, None)?;
             let checkpoint = normalize_checkpoint(checkpoint, baton)?;
             if channel.checkpoint_identity_seen(&checkpoint.identity, expected_revision)?
                 || baton
@@ -144,10 +152,6 @@ fn apply_locked(
             if checkpoint.binding() != submitted_binding {
                 return Err(TransitionError::StaleReview);
             }
-            require_publication_gate(
-                baton,
-                Some((&HandoffKind::WorkerToReviewer, &submitted_binding)),
-            )?;
             let findings = findings
                 .into_iter()
                 .map(|finding| finding.trim().to_owned())
@@ -317,7 +321,6 @@ fn apply_locked(
             if pending.checkpoint != checkpoint {
                 return Err(TransitionError::InvalidCheckpoint);
             }
-            require_publication_gate(baton, Some((&HandoffKind::WorkerToReviewer, &checkpoint)))?;
             baton.checkpoint = None;
             baton.review = None;
             baton.pending_checkpoint_supersession = None;
@@ -342,7 +345,6 @@ fn apply_locked(
             if review.verdict != "approved" || review.binding() != checkpoint {
                 return Err(TransitionError::StaleReview);
             }
-            require_publication_gate(baton, Some((&HandoffKind::ReviewerToWorker, &checkpoint)))?;
             baton.checkpoint = None;
             baton.review = None;
             baton.pending_checkpoint_supersession = None;
@@ -358,18 +360,50 @@ fn apply_locked(
         } => {
             return Err(TransitionError::LegacyPublicationUnsupported);
         }
+        Action::StageExplainer {
+            obligation,
+            source_path,
+        } => {
+            require_publisher(baton, role)?;
+            let binding = baton
+                .publication_binding
+                .as_ref()
+                .ok_or(TransitionError::PublicationStale)?;
+            if binding.obligation != obligation {
+                return Err(TransitionError::StalePublicationBinding);
+            }
+            let (source_digest, byte_length) =
+                stage_explainer_bytes(channel.directory(), &source_path)?;
+            let publisher_harness = caller_harness(baton, role).to_owned();
+            let binding = baton
+                .publication_binding
+                .as_mut()
+                .ok_or(TransitionError::PublicationStale)?;
+            binding.artifact = Some(ExplainerArtifact {
+                obligation,
+                path: explainer_artifact_path(&source_digest),
+                source_digest,
+                media_type: EXPLAINER_MEDIA_TYPE.to_owned(),
+                byte_length,
+                channel: EXPLAINER_CHANNEL.to_owned(),
+                access: EXPLAINER_ACCESS.to_owned(),
+                publisher_harness,
+            });
+            // Fresh bytes invalidate any rendering and review of the old bytes.
+            binding.deployment = None;
+            binding.review = None;
+        }
         Action::RecordExplainerPublication {
             obligation,
             source_digest,
             site_id,
             site_version,
             url,
-            channel,
+            channel: site_channel,
             access,
         } => {
-            if caller_harness(baton, role) != EXPLAINER_PUBLISHER_HARNESS {
-                return Err(TransitionError::WrongPublisherHarness);
-            }
+            require_publisher(baton, role)?;
+            let publisher_harness = caller_harness(baton, role).to_owned();
             let binding = baton
                 .publication_binding
                 .as_mut()
@@ -377,12 +411,21 @@ fn apply_locked(
             if binding.obligation != obligation {
                 return Err(TransitionError::StalePublicationBinding);
             }
+            // A Site is a rendering of bytes that already exist locally; it can
+            // never be the only copy the reviewer has.
+            let artifact = binding
+                .artifact
+                .as_ref()
+                .ok_or(TransitionError::ExplainerNotStaged)?;
+            if artifact.obligation != obligation || artifact.source_digest != source_digest {
+                return Err(TransitionError::StalePublicationBinding);
+            }
             if !valid_sha256(&source_digest)
                 || !valid_exact_reference(&site_id)
                 || !valid_exact_reference(&site_version)
                 || !valid_exact_reference(&url)
-                || channel != EXPLAINER_CHANNEL
-                || access != EXPLAINER_ACCESS
+                || !valid_exact_reference(&site_channel)
+                || !valid_exact_reference(&access)
             {
                 return Err(TransitionError::InvalidExplainerPublication);
             }
@@ -400,38 +443,30 @@ fn apply_locked(
                 site_id,
                 site_version,
                 url,
-                channel,
+                channel: site_channel,
                 access,
-                publisher_harness: EXPLAINER_PUBLISHER_HARNESS.to_owned(),
+                publisher_harness,
             });
-            binding.review = None;
         }
         Action::RecordExplainerReview {
             obligation,
             source_digest,
-            site_id,
-            site_version,
-            url,
             verdict,
             findings,
         } => {
-            if caller_harness(baton, role) != EXPLAINER_REVIEWER_HARNESS {
-                return Err(TransitionError::WrongReviewerHarness);
-            }
+            require_reviewer(baton, role)?;
+            let reviewer_harness = caller_harness(baton, role).to_owned();
             let binding = baton
                 .publication_binding
                 .as_mut()
                 .ok_or(TransitionError::PublicationStale)?;
-            let deployment = binding
-                .deployment
+            let artifact = binding
+                .artifact
                 .as_ref()
-                .ok_or(TransitionError::PublicationStale)?;
+                .ok_or(TransitionError::ExplainerNotStaged)?;
             if binding.obligation != obligation
-                || deployment.obligation != obligation
-                || deployment.source_digest != source_digest
-                || deployment.site_id != site_id
-                || deployment.site_version != site_version
-                || deployment.url != url
+                || artifact.obligation != obligation
+                || artifact.source_digest != source_digest
             {
                 return Err(TransitionError::StalePublicationBinding);
             }
@@ -456,13 +491,20 @@ fn apply_locked(
             binding.review = Some(PublicationReview {
                 obligation,
                 source_digest,
-                site_id,
-                site_version,
-                url,
                 verdict: verdict.to_owned(),
                 findings,
-                reviewer_harness: EXPLAINER_REVIEWER_HARNESS.to_owned(),
+                reviewer_harness,
             });
+        }
+        Action::ReportProgress { phase, detail } => {
+            let detail = match detail {
+                Some(detail) if detail.trim().is_empty() => {
+                    return Err(TransitionError::InvalidProgress)
+                }
+                Some(detail) => Some(detail.trim().to_owned()),
+                None => None,
+            };
+            record_progress(baton, role, phase, detail)?;
         }
         Action::Abandon { reason } => {
             if reason.trim().is_empty() {
@@ -611,18 +653,22 @@ fn replace_handoff_obligation(
     baton.publication_binding = Some(binding);
 }
 
+/// The finalization gate. It binds the reviewer's approval to the exact staged
+/// bytes for the current obligation. The optional Site rendering is deliberately
+/// not consulted: it is never the artifact the reviewer read.
 fn require_publication_gate(
     baton: &RunBaton,
     expected: Option<(&HandoffKind, &CheckpointBinding)>,
 ) -> Result<(), TransitionError> {
+    let policy = effective_policy(baton);
     let binding = baton
         .publication_binding
         .as_ref()
         .ok_or(TransitionError::PublicationStale)?;
-    let deployment = binding
-        .deployment
+    let artifact = binding
+        .artifact
         .as_ref()
-        .ok_or(TransitionError::PublicationStale)?;
+        .ok_or(TransitionError::ExplainerNotStaged)?;
     let review = binding
         .review
         .as_ref()
@@ -630,21 +676,107 @@ fn require_publication_gate(
     if expected.is_some_and(|(kind, checkpoint)| {
         &binding.obligation.kind != kind
             || binding.obligation.checkpoint.as_ref() != Some(checkpoint)
-    }) || binding.site_id.as_ref() != Some(&deployment.site_id)
-        || deployment.obligation != binding.obligation
+    }) || artifact.obligation != binding.obligation
         || review.obligation != binding.obligation
-        || review.source_digest != deployment.source_digest
-        || review.site_id != deployment.site_id
-        || review.site_version != deployment.site_version
-        || review.url != deployment.url
+        || review.source_digest != artifact.source_digest
         || review.verdict != "approved"
         || !review.findings.is_empty()
-        || deployment.channel != EXPLAINER_CHANNEL
-        || deployment.access != EXPLAINER_ACCESS
-        || deployment.publisher_harness != EXPLAINER_PUBLISHER_HARNESS
-        || review.reviewer_harness != EXPLAINER_REVIEWER_HARNESS
+        || artifact.channel != policy.channel
+        || artifact.access != policy.access
+        || artifact.publisher_harness != policy.publisher_harness
+        || review.reviewer_harness != policy.reviewer_harness
     {
         return Err(TransitionError::PublicationStale);
+    }
+    Ok(())
+}
+
+pub(crate) fn effective_policy(baton: &RunBaton) -> PublicationPolicy {
+    baton
+        .publication_policy
+        .clone()
+        .unwrap_or_else(PublicationPolicy::fixed)
+}
+
+fn require_publisher(baton: &RunBaton, role: Role) -> Result<(), TransitionError> {
+    let policy = effective_policy(baton);
+    if !caller_harness(baton, role)
+        .trim()
+        .eq_ignore_ascii_case(policy.publisher_harness.trim())
+    {
+        return Err(TransitionError::WrongPublisherHarness);
+    }
+    Ok(())
+}
+
+fn require_reviewer(baton: &RunBaton, role: Role) -> Result<(), TransitionError> {
+    let policy = effective_policy(baton);
+    if !caller_harness(baton, role)
+        .trim()
+        .eq_ignore_ascii_case(policy.reviewer_harness.trim())
+    {
+        return Err(TransitionError::WrongReviewerHarness);
+    }
+    Ok(())
+}
+
+/// Copy the publisher's explainer bytes into a content-addressed file under the
+/// run directory and return their digest and length. Content addressing makes
+/// re-staging identical bytes a no-op and keeps every prior obligation's bytes
+/// readable for audit.
+fn stage_explainer_bytes(
+    run_dir: &std::path::Path,
+    source_path: &std::path::Path,
+) -> Result<(String, u64), TransitionError> {
+    let metadata =
+        std::fs::metadata(source_path).map_err(|_| TransitionError::InvalidExplainerSource)?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_EXPLAINER_BYTES {
+        return Err(TransitionError::InvalidExplainerSource);
+    }
+    let bytes = std::fs::read(source_path).map_err(|_| TransitionError::InvalidExplainerSource)?;
+    if bytes.is_empty() || bytes.len() as u64 > MAX_EXPLAINER_BYTES {
+        return Err(TransitionError::InvalidExplainerSource);
+    }
+    let source_digest = format!("{:x}", sha2::Sha256::digest(&bytes));
+    let directory = run_dir.join(EXPLAINER_ARTIFACT_DIR);
+    std::fs::create_dir_all(&directory).map_err(StoreError::Io)?;
+    let destination = run_dir.join(explainer_artifact_path(&source_digest));
+    if !destination.exists() {
+        let temporary = directory.join(format!(".{source_digest}.{}.tmp", uuid::Uuid::new_v4()));
+        std::fs::write(&temporary, &bytes).map_err(StoreError::Io)?;
+        std::fs::rename(&temporary, &destination).map_err(StoreError::Io)?;
+    }
+    Ok((source_digest, bytes.len() as u64))
+}
+
+fn record_progress(
+    baton: &mut RunBaton,
+    role: Role,
+    phase: ProgressPhase,
+    detail: Option<String>,
+) -> Result<(), TransitionError> {
+    let updated_at = time::OffsetDateTime::now_utc()
+        .format(&time::format_description::well_known::Rfc3339)
+        .map_err(|_| TransitionError::InvalidProgress)?;
+    let participant = match role {
+        Role::Worker => &mut baton.participants.worker,
+        Role::Reviewer => &mut baton.participants.reviewer,
+    };
+    participant.progress = Some(ParticipantProgress {
+        phase,
+        detail,
+        updated_at: updated_at.clone(),
+    });
+    // Reporting progress is also a liveness signal: extend this role's own lease
+    // so long authorized work never looks like a dead session.
+    if let Some(claim) = participant.claim.as_mut() {
+        let expires = time::OffsetDateTime::now_utc()
+            .checked_add(time::Duration::seconds(claim.lease_seconds as i64))
+            .ok_or(TransitionError::InvalidProgress)?
+            .format(&time::format_description::well_known::Rfc3339)
+            .map_err(|_| TransitionError::InvalidProgress)?;
+        claim.lease_started_at = Some(updated_at);
+        claim.lease_expires_at = expires;
     }
     Ok(())
 }

@@ -16,8 +16,7 @@ use crate::model::{
     normalize_participants, valid_exact_reference, valid_sha256, Assignee, Checkpoint,
     DeliverableRequirement, HandoffKind, LegacyPublication, MigrationProvenance, ParticipantClaim,
     PublicationBinding, PublicationPolicy, RecoveryProvenance, RunBaton, Status,
-    TerminalProvenance, EXPLAINER_ACCESS, EXPLAINER_CHANNEL, EXPLAINER_PUBLISHER_HARNESS,
-    EXPLAINER_REVIEWER_HARNESS, LEGACY_SCHEMA, SCHEMA,
+    TerminalProvenance, LEGACY_SCHEMA, SCHEMA,
 };
 
 #[derive(Debug, Error)]
@@ -659,20 +658,35 @@ fn valid_publication_binding(binding: &crate::model::PublicationBinding) -> bool
     {
         return false;
     }
-    let Some(deployment) = binding.deployment.as_ref() else {
-        return binding.review.is_none();
+    let Some(artifact) = binding.artifact.as_ref() else {
+        // Without staged bytes there is nothing to render and nothing to review.
+        return binding.deployment.is_none() && binding.review.is_none();
     };
-    if binding.site_id.as_ref() != Some(&deployment.site_id)
-        || deployment.obligation != binding.obligation
-        || !valid_sha256(&deployment.source_digest)
-        || !valid_exact_reference(&deployment.site_id)
-        || !valid_exact_reference(&deployment.site_version)
-        || !valid_exact_reference(&deployment.url)
-        || deployment.channel != EXPLAINER_CHANNEL
-        || deployment.access != EXPLAINER_ACCESS
-        || deployment.publisher_harness != EXPLAINER_PUBLISHER_HARNESS
+    if artifact.obligation != binding.obligation
+        || !valid_sha256(&artifact.source_digest)
+        || artifact.path != crate::model::explainer_artifact_path(&artifact.source_digest)
+        || artifact.byte_length == 0
+        || artifact.byte_length > crate::model::MAX_EXPLAINER_BYTES
+        || !valid_exact_reference(&artifact.media_type)
+        || !valid_exact_reference(&artifact.channel)
+        || !valid_exact_reference(&artifact.access)
+        || !valid_exact_reference(&artifact.publisher_harness)
     {
         return false;
+    }
+    if let Some(deployment) = binding.deployment.as_ref() {
+        if binding.site_id.as_ref() != Some(&deployment.site_id)
+            || deployment.obligation != binding.obligation
+            || deployment.source_digest != artifact.source_digest
+            || !valid_exact_reference(&deployment.site_id)
+            || !valid_exact_reference(&deployment.site_version)
+            || !valid_exact_reference(&deployment.url)
+            || !valid_exact_reference(&deployment.channel)
+            || !valid_exact_reference(&deployment.access)
+            || deployment.publisher_harness != artifact.publisher_harness
+        {
+            return false;
+        }
     }
     let Some(review) = binding.review.as_ref() else {
         return true;
@@ -682,11 +696,8 @@ fn valid_publication_binding(binding: &crate::model::PublicationBinding) -> bool
         .iter()
         .all(|finding| valid_exact_reference(finding));
     review.obligation == binding.obligation
-        && review.source_digest == deployment.source_digest
-        && review.site_id == deployment.site_id
-        && review.site_version == deployment.site_version
-        && review.url == deployment.url
-        && review.reviewer_harness == EXPLAINER_REVIEWER_HARNESS
+        && review.source_digest == artifact.source_digest
+        && valid_exact_reference(&review.reviewer_harness)
         && match review.verdict.as_str() {
             "approved" => review.findings.is_empty(),
             "changes_requested" => !review.findings.is_empty() && findings_are_normalized,
@@ -819,8 +830,15 @@ fn valid_publication_receipt_edge(
     {
         return false;
     }
+    if current_binding.artifact != next_binding.artifact {
+        // Staging fresh bytes invalidates the rendering and review of the old ones.
+        return next_binding.artifact.is_some()
+            && next_binding.deployment.is_none()
+            && next_binding.review.is_none();
+    }
     if current_binding.deployment != next_binding.deployment {
-        return next_binding.deployment.is_some() && next_binding.review.is_none();
+        return next_binding.deployment.is_some()
+            && current_binding.review == next_binding.review;
     }
     current_binding.site_id == next_binding.site_id
         && current_binding.review != next_binding.review
@@ -1117,11 +1135,7 @@ fn valid_worker_to_reviewer(
         return false;
     };
     let checkpoint = checkpoint.binding();
-    if !current
-        .publication_binding
-        .as_ref()
-        .is_some_and(|current_binding| approved_publication_gate(current_binding, None))
-        || !matches!(current.status, Status::Working | Status::Revising)
+    if !matches!(current.status, Status::Working | Status::Revising)
         || current.assignee != Assignee::Worker
         || next.status != Status::Reviewing
         || next.assignee != Assignee::Reviewer
@@ -1162,11 +1176,8 @@ fn valid_reviewer_to_worker(
         }
         _ => false,
     };
-    if !current
-        .publication_binding
-        .as_ref()
-        .is_some_and(|current_binding| approved_publication_gate(current_binding, expected_gate))
-        || current.status != Status::Reviewing
+    let _ = expected_gate;
+    if current.status != Status::Reviewing
         || current.assignee != Assignee::Reviewer
         || next.assignee != Assignee::Worker
         || !valid_verdict
@@ -1259,11 +1270,8 @@ fn valid_checkpoint_superseded(
     };
     let checkpoint = checkpoint.binding();
     let expected_gate = Some((&HandoffKind::WorkerToReviewer, &checkpoint));
-    if !current
-        .publication_binding
-        .as_ref()
-        .is_some_and(|current_binding| approved_publication_gate(current_binding, expected_gate))
-        || current.status != Status::Reviewing
+    let _ = expected_gate;
+    if current.status != Status::Reviewing
         || current.assignee != Assignee::Reviewer
         || pending.checkpoint != checkpoint
         || next.status != Status::Revising

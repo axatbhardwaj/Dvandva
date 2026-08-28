@@ -924,6 +924,9 @@ fn transition_error_code(error: &TransitionError) -> &'static str {
         TransitionError::StalePublicationBinding => "stale_publication_binding",
         TransitionError::SiteIdMismatch => "site_id_mismatch",
         TransitionError::MissingReason => "missing_reason",
+        TransitionError::InvalidExplainerSource => "invalid_explainer_source",
+        TransitionError::ExplainerNotStaged => "explainer_not_staged",
+        TransitionError::InvalidProgress => "invalid_progress",
     }
 }
 
