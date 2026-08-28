@@ -498,6 +498,42 @@ pub fn create_bound_handoff_obligation(
     binding
 }
 
+pub const CHECKPOINT_KIND_GIT: &str = "git";
+/// For deliverables that produce an analysis rather than a commit — a review, an
+/// audit, a research finding. Immutability comes from the content digest instead
+/// of from a git object.
+pub const CHECKPOINT_KIND_ANALYSIS: &str = "analysis";
+
+/// Whether `kind`/`identity`/`artifacts` form an immutable checkpoint manifest
+/// for a checkpoint of this kind.
+pub fn valid_checkpoint_shape(kind: &str, identity: &str, artifacts: &[ExternalRef]) -> bool {
+    match kind {
+        CHECKPOINT_KIND_GIT => {
+            valid_git_object(identity)
+                && artifacts.iter().all(|artifact| {
+                    matches!(artifact.kind.as_str(), "commit" | "tree" | "blob")
+                        && valid_git_object(&artifact.value)
+                })
+        }
+        CHECKPOINT_KIND_ANALYSIS => {
+            valid_sha256(identity)
+                && artifacts.iter().all(|artifact| {
+                    artifact.kind == "analysis_digest" && valid_sha256(&artifact.value)
+                })
+        }
+        _ => false,
+    }
+}
+
+/// A full-length git object name, in either SHA-1 or SHA-256 object format.
+/// Abbreviations and mutable names such as branches or `HEAD` are rejected.
+pub fn valid_git_object(value: &str) -> bool {
+    matches!(value.len(), 40 | 64)
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
 pub fn valid_sha256(value: &str) -> bool {
     value.len() == 64
         && value

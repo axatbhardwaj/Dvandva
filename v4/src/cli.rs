@@ -48,9 +48,13 @@ enum Command {
         #[arg(long)]
         task_reference: Option<String>,
         #[arg(long)]
+        objective: Option<String>,
+        #[arg(long)]
         run_id: Option<String>,
         #[arg(long)]
         session_id: Option<String>,
+        #[arg(long)]
+        stale_after_days: Option<u64>,
     },
     DiscoverWait {
         #[arg(long)]
@@ -64,7 +68,11 @@ enum Command {
         #[arg(long)]
         task_reference: Option<String>,
         #[arg(long)]
+        objective: Option<String>,
+        #[arg(long)]
         session_id: Option<String>,
+        #[arg(long)]
+        stale_after_days: Option<u64>,
         #[arg(long, default_value_t = 1000)]
         poll_interval_ms: u64,
         #[arg(long, default_value_t = 300_000)]
@@ -75,6 +83,16 @@ enum Command {
     Role {
         #[command(subcommand)]
         command: RoleCommand,
+    },
+    /// Report, and optionally archive, unclaimed runs whose head has not moved
+    /// for `--older-than-days`. Archiving moves a run aside; it never deletes.
+    RunsGc {
+        #[arg(long)]
+        runs_dir: PathBuf,
+        #[arg(long, default_value_t = 14)]
+        older_than_days: u64,
+        #[arg(long)]
+        archive: bool,
     },
     Init {
         #[arg(long)]
@@ -436,6 +454,35 @@ pub fn run() -> Result<(), CliError> {
                 ))
             }
         }
+        Command::RunsGc {
+            runs_dir,
+            older_than_days,
+            archive,
+        } => {
+            let stale = discovery::stale_runs(&runs_dir, older_than_days)?;
+            let mut archived = Vec::new();
+            if archive {
+                let destination_root = runs_dir.join(".archived");
+                std::fs::create_dir_all(&destination_root).map_err(StoreError::Io)?;
+                for run in &stale {
+                    let destination = destination_root.join(&run.run_id);
+                    if destination.exists() {
+                        continue;
+                    }
+                    std::fs::rename(&run.run_dir, &destination).map_err(StoreError::Io)?;
+                    archived.push(destination);
+                }
+            }
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "older_than_days": older_than_days,
+                    "stale": stale,
+                    "archived": archived,
+                }))?
+            );
+            Ok(())
+        }
         Command::Identify { workspace } => {
             println!(
                 "{}",
@@ -449,8 +496,10 @@ pub fn run() -> Result<(), CliError> {
             reviewer_harness,
             role,
             task_reference,
+            objective,
             run_id,
             session_id,
+            stale_after_days,
         } => {
             let outcome = discovery::discover(
                 &runs_dir,
@@ -459,8 +508,10 @@ pub fn run() -> Result<(), CliError> {
                     role,
                     participant_harness: &reviewer_harness,
                     task_reference: task_reference.as_deref(),
+                    objective: objective.as_deref(),
                     run_id: run_id.as_deref(),
                     session_id: session_id.as_deref(),
+                    stale_after_days: stale_after_days.filter(|days| *days > 0),
                 },
             )?;
             println!("{}", serde_json::to_string_pretty(&outcome)?);
@@ -472,7 +523,9 @@ pub fn run() -> Result<(), CliError> {
             reviewer_harness,
             role,
             task_reference,
+            objective,
             session_id,
+            stale_after_days,
             poll_interval_ms,
             timeout_ms,
             poll_only,
@@ -484,8 +537,10 @@ pub fn run() -> Result<(), CliError> {
                     role,
                     participant_harness: &reviewer_harness,
                     task_reference: task_reference.as_deref(),
+                    objective: objective.as_deref(),
                     run_id: None,
                     session_id: session_id.as_deref(),
+                    stale_after_days: stale_after_days.filter(|days| *days > 0),
                 },
                 std::time::Duration::from_millis(poll_interval_ms.max(1)),
                 std::time::Duration::from_millis(timeout_ms),
@@ -984,6 +1039,7 @@ fn transition_error_code(error: &TransitionError) -> &'static str {
         TransitionError::InvalidExplainerSource => "invalid_explainer_source",
         TransitionError::ExplainerNotStaged => "explainer_not_staged",
         TransitionError::InvalidProgress => "invalid_progress",
+        TransitionError::InvalidCheckpointArtifact => "invalid_checkpoint_artifact",
     }
 }
 

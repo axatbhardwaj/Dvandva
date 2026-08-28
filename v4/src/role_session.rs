@@ -192,6 +192,10 @@ pub struct RoleStartRequest<'a> {
     pub required_deliverables: &'a [DeliverableRequirement],
 }
 
+/// A run with no live claim whose head has not moved for this long is treated as
+/// abandoned by non-exact discovery. Exact `--run-id` joins still reach it.
+pub const STALE_RUN_DAYS: u64 = 14;
+
 pub fn start(request: RoleStartRequest<'_>) -> Result<RoleStartResult, RoleSessionError> {
     start_with_retries(request, 8)
 }
@@ -244,8 +248,10 @@ fn start_with_retries(
         role: request.role,
         participant_harness,
         task_reference: request.task_reference,
+        objective: request.objective,
         run_id: request.run_id,
         session_id: Some(request.session_id),
+        stale_after_days: Some(STALE_RUN_DAYS),
     };
     let mut outcome = discovery::discover(request.runs_dir, query)?;
     if request.new_run && request.run_id.is_none() {

@@ -29,8 +29,15 @@ pub struct DiscoveryQuery<'a> {
     pub role: Role,
     pub participant_harness: &'a str,
     pub task_reference: Option<&'a str>,
+    /// Canonical objective the caller asked for. A non-exact start must not
+    /// adopt, or collide with, a run pursuing a different objective.
+    pub objective: Option<&'a str>,
     pub run_id: Option<&'a str>,
     pub session_id: Option<&'a str>,
+    /// Runs with no live claim whose head has not moved for this many days are
+    /// abandoned rather than merely idle, and are excluded from non-exact
+    /// discovery. `None` disables the horizon.
+    pub stale_after_days: Option<u64>,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -90,10 +97,23 @@ pub struct DiscoveryOutcome {
     pub outcome: DiscoveryKind,
     pub candidates: Vec<RunCandidate>,
     pub corrupt: Vec<CorruptCandidate>,
+    /// Unclaimed runs older than the staleness horizon, excluded from matching
+    /// but reported so they can be garbage-collected rather than silently kept.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub stale: Vec<StaleCandidate>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requested_scope: Option<RequestedScope>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_action: Option<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StaleCandidate {
+    pub run_id: String,
+    pub run_dir: PathBuf,
+    pub schema: String,
+    pub status: Status,
+    pub idle_days: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -124,6 +144,7 @@ pub fn discover(
     let mut task_mismatches = Vec::new();
     let mut upgrades = Vec::new();
     let mut corrupt = Vec::new();
+    let mut stale = Vec::new();
     for entry in fs::read_dir(runs_dir)? {
         let entry = entry?;
         if query
@@ -143,7 +164,20 @@ pub fn discover(
             continue;
         }
         match RunChannel::open(&run_dir).read() {
-            Ok(baton) => match candidate(&run_dir, baton, &query) {
+            Ok(baton) => {
+                if query.run_id.is_none() {
+                    if let Some(idle_days) = stale_idle_days(&run_dir, &baton, &query) {
+                        stale.push(StaleCandidate {
+                            run_id: baton.run_id,
+                            run_dir,
+                            schema: baton.schema,
+                            status: baton.status,
+                            idle_days,
+                        });
+                        continue;
+                    }
+                }
+                match candidate(&run_dir, baton, &query) {
                 Ok(Some(CandidateMatch::Exact(candidate))) => candidates.push(candidate),
                 Ok(Some(CandidateMatch::TaskMismatch(candidate))) => {
                     task_mismatches.push(candidate)
@@ -151,7 +185,8 @@ pub fn discover(
                 Ok(Some(CandidateMatch::Upgrade(candidate))) => upgrades.push(candidate),
                 Ok(None) => {}
                 Err(error) => corrupt.push(CorruptCandidate { run_dir, error }),
-            },
+                }
+            }
             Err(crate::store::StoreError::RunMissing) => {
                 if query.run_id.is_some() {
                     corrupt.push(CorruptCandidate {
@@ -170,13 +205,45 @@ pub fn discover(
     task_mismatches.sort_by(|left, right| left.run_id.cmp(&right.run_id));
     upgrades.sort_by(|left, right| left.run_id.cmp(&right.run_id));
     corrupt.sort_by(|left, right| left.run_dir.cmp(&right.run_dir));
+    stale.sort_by(|left, right| left.run_id.cmp(&right.run_id));
     let mut result = outcome(candidates, task_mismatches, upgrades, corrupt);
+    result.stale = stale;
     if query.run_id.is_some() && result.outcome == DiscoveryKind::None {
         result.outcome = DiscoveryKind::RunMissing;
     } else if query.run_id.is_some() && result.outcome == DiscoveryKind::Busy {
         result.next_action = Some("wait");
     }
     Ok(result)
+}
+
+/// Every unclaimed, non-terminal run idle for at least `older_than_days`,
+/// regardless of repository, role, or objective.
+pub fn stale_runs(runs_dir: &Path, older_than_days: u64) -> Result<Vec<StaleCandidate>, DiscoveryError> {
+    if !runs_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut stale = Vec::new();
+    for entry in fs::read_dir(runs_dir)? {
+        let entry = entry?;
+        let run_dir = entry.path();
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let Ok(baton) = RunChannel::open(&run_dir).read() else {
+            continue;
+        };
+        if let Some(idle_days) = idle_days_without_live_claim(&run_dir, &baton, older_than_days) {
+            stale.push(StaleCandidate {
+                run_id: baton.run_id,
+                run_dir,
+                schema: baton.schema,
+                status: baton.status,
+                idle_days,
+            });
+        }
+    }
+    stale.sort_by(|left, right| left.run_id.cmp(&right.run_id));
+    Ok(stale)
 }
 
 pub fn wait_for_match(
@@ -319,7 +386,9 @@ fn candidate(
     let task_matches = query.task_reference.is_none_or(|expected| {
         task.and_then(|identity| identity.reference.as_deref())
             .is_some_and(|actual| actual == expected.trim())
-    });
+    }) && query
+        .objective
+        .is_none_or(|expected| candidate.objective.summary == expected.trim());
     if baton.schema == LEGACY_SCHEMA && (query.run_id.is_some() || task_matches) {
         Ok(Some(CandidateMatch::Upgrade(candidate)))
     } else if query.run_id.is_none() && !task_matches {
@@ -370,7 +439,38 @@ fn outcome(
         outcome,
         candidates,
         corrupt,
+        stale: Vec::new(),
         requested_scope: None,
         next_action: None,
     }
+}
+
+/// How long a run has sat with no live claim and no head movement, when that
+/// exceeds the caller's horizon.
+fn stale_idle_days(run_dir: &Path, baton: &RunBaton, query: &DiscoveryQuery<'_>) -> Option<u64> {
+    idle_days_without_live_claim(run_dir, baton, query.stale_after_days?)
+}
+
+fn idle_days_without_live_claim(run_dir: &Path, baton: &RunBaton, horizon: u64) -> Option<u64> {
+    if matches!(baton.status, Status::Done | Status::Abandoned) {
+        return None;
+    }
+    let live_claim = [
+        baton.participants.worker.claim.as_ref(),
+        baton.participants.reviewer.claim.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|claim| {
+        OffsetDateTime::parse(&claim.lease_expires_at, &Rfc3339)
+            .is_ok_and(|expiry| expiry > OffsetDateTime::now_utc())
+    });
+    if live_claim {
+        return None;
+    }
+    let modified = std::fs::metadata(run_dir.join("baton.json"))
+        .and_then(|metadata| metadata.modified())
+        .ok()?;
+    let idle_days = modified.elapsed().ok()?.as_secs() / 86_400;
+    (idle_days >= horizon).then_some(idle_days)
 }

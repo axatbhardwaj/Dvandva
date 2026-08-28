@@ -794,6 +794,15 @@ fn valid_checkpoint(checkpoint: &Checkpoint, baton: &RunBaton) -> bool {
     {
         return false;
     }
+    if !checkpoint.deliverables.iter().all(|deliverable| {
+        crate::model::valid_checkpoint_shape(
+            &checkpoint.kind,
+            &checkpoint.identity,
+            &deliverable.artifacts,
+        )
+    }) {
+        return false;
+    }
     let required = baton
         .scope_deliverables
         .iter()

@@ -69,6 +69,8 @@ pub enum TransitionError {
     ExplainerNotStaged,
     #[error("progress detail must be non-blank when present")]
     InvalidProgress,
+    #[error("checkpoint artifacts are not immutable for this checkpoint kind")]
+    InvalidCheckpointArtifact,
 }
 
 /// Actions that carry their own idempotency token, or that only report
@@ -573,6 +575,9 @@ fn normalize_checkpoint(
             if artifact.kind.is_empty() || artifact.value.is_empty() {
                 return Err(TransitionError::InvalidCheckpoint);
             }
+        }
+        if !crate::model::valid_checkpoint_shape(&kind, &identity, &deliverable.artifacts) {
+            return Err(TransitionError::InvalidCheckpointArtifact);
         }
         deliverable
             .artifacts
