@@ -267,41 +267,72 @@ pub fn archive_stale_run(
         }
         _ => return Ok(None),
     };
+    let name: &OsStr = &name;
     if Path::new(&name).components().count() != 1 {
         return Ok(None);
     }
 
-    // Revalidate under the run's own lock, so a session that reclaimed it in the
-    // meantime keeps it.
-    let channel = RunChannel::open(run_dir);
-    let Ok(baton) = channel.read() else {
-        return Ok(None);
-    };
-    if collectable_idle_days(run_dir, &baton, older_than_days).is_none() {
-        return Ok(None);
-    }
-
+    // The archive root is opened once and pinned, so a symlink swapped in after
+    // the check cannot redirect the move.
     let archive_root = runs_dir.join(".archived");
     match fs::symlink_metadata(&archive_root) {
-        Ok(metadata) if metadata.file_type().is_symlink() => return Ok(None),
-        Ok(metadata) if !metadata.is_dir() => return Ok(None),
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => return Ok(None),
         Ok(_) => {}
         Err(_) => {
             fs::create_dir_all(&archive_root)?;
             fs::set_permissions(&archive_root, std::fs::Permissions::from_mode(0o700))?;
         }
     }
+    let archive_fd = match fs::File::open(&archive_root) {
+        Ok(directory) => directory,
+        Err(_) => return Ok(None),
+    };
+    let source_parent = match fs::File::open(runs_dir) {
+        Ok(directory) => directory,
+        Err(_) => return Ok(None),
+    };
 
-    let destination = archive_root.join(&name);
-    // Never replace an existing archive entry, and never race one into place.
-    if fs::symlink_metadata(&destination).is_ok() {
-        return Ok(None);
+    // Revalidate and move while holding the run's own lock, so a session that
+    // reclaimed it between the scan and now keeps it.
+    let channel = RunChannel::open(run_dir);
+    let archived = channel.with_run_lock(|| {
+        let Ok(baton) = channel.read() else {
+            return Ok(None);
+        };
+        if collectable_idle_days(run_dir, &baton, older_than_days).is_none() {
+            return Ok(None);
+        }
+        Ok(rename_no_replace(&source_parent, name, &archive_fd, name))
+    });
+    match archived {
+        Ok(Some(())) => Ok(Some(archive_root.join(name))),
+        Ok(None) => Ok(None),
+        Err(_) => Ok(None),
     }
-    match fs::rename(run_dir, &destination) {
-        Ok(()) => Ok(Some(destination)),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(DiscoveryError::Io(error)),
-    }
+}
+
+/// Move `name` from one pinned directory to another, failing rather than
+/// replacing an existing entry. Both ends are named relative to open directory
+/// descriptors, so neither can be redirected by a swapped symlink.
+fn rename_no_replace(
+    source_dir: &fs::File,
+    source_name: &OsStr,
+    destination_dir: &fs::File,
+    destination_name: &OsStr,
+) -> Option<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let source = std::ffi::CString::new(source_name.as_bytes()).ok()?;
+    let destination = std::ffi::CString::new(destination_name.as_bytes()).ok()?;
+    let moved = unsafe {
+        libc::renameat2(
+            std::os::fd::AsRawFd::as_raw_fd(source_dir),
+            source.as_ptr(),
+            std::os::fd::AsRawFd::as_raw_fd(destination_dir),
+            destination.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    (moved == 0).then_some(())
 }
 
 pub fn wait_for_match(

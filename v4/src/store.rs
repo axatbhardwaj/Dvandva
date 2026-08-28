@@ -204,6 +204,15 @@ impl RunChannel {
     /// actions that carry their own idempotency token (the handoff obligation)
     /// and for pure liveness writes. Both are correct against any head, and both
     /// were previously forced into a retry loop by unrelated peer heartbeats.
+    /// Run whatever needs the run's own exclusion, for callers outside this
+    /// module that must revalidate and act atomically with respect to claims.
+    pub(crate) fn with_run_lock<T>(
+        &self,
+        operation: impl FnOnce() -> Result<T, StoreError>,
+    ) -> Result<T, StoreError> {
+        self.with_lock(operation)
+    }
+
     pub(crate) fn mutate_locked_untracked<T, E>(
         &self,
         mutation: impl FnOnce(&mut RunBaton, OffsetDateTime) -> Result<T, E>,
@@ -1592,9 +1601,54 @@ fn validate_supported_schema(schema: &str) -> Result<(), StoreError> {
 /// Run state is private regardless of the caller's umask: `access: run_private`
 /// is a promise about the bytes on disk, not about how a process happened to be
 /// invoked. Existing directories are tightened too.
-pub(crate) fn create_private_dir(path: &Path) -> Result<(), std::io::Error> {
-    fs::create_dir_all(path)?;
+pub fn create_private_dir(path: &Path) -> Result<(), std::io::Error> {
+    // A symlinked or non-directory path is refused rather than followed: run
+    // state must live inside the run, not wherever a link points.
+    match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "run state path is not an ordinary directory",
+            ));
+        }
+        Ok(_) => {}
+        Err(_) => fs::create_dir_all(path)?,
+    }
     fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
+}
+
+/// Read a file that must genuinely live inside the run: a regular file, opened
+/// without following a final symlink, and not readable by anyone else. Content
+/// addressing is only meaningful if the named path is really the stored bytes.
+pub fn read_private_file(path: &Path) -> Result<Vec<u8>, std::io::Error> {
+    use std::io::Read;
+    let mut file = OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)?;
+    let metadata = file.metadata()?;
+    if !metadata.is_file() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "run artifact is not a regular file",
+        ));
+    }
+    if metadata.permissions().mode() & 0o077 != 0 {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "run artifact is readable outside its owner",
+        ));
+    }
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    Ok(bytes)
+}
+
+/// Whether a path is a private regular file this run can safely reuse.
+pub fn is_private_regular_file(path: &Path) -> bool {
+    fs::symlink_metadata(path).is_ok_and(|metadata| {
+        metadata.file_type().is_file() && metadata.permissions().mode() & 0o077 == 0
+    })
 }
 
 fn sync_directory(path: &Path) -> Result<(), std::io::Error> {

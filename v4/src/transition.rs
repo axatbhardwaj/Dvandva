@@ -785,7 +785,7 @@ fn require_staged_bytes_intact(
     run_dir: &std::path::Path,
     artifact: &ExplainerArtifact,
 ) -> Result<(), TransitionError> {
-    let bytes = std::fs::read(run_dir.join(&artifact.path))
+    let bytes = crate::store::read_private_file(&run_dir.join(&artifact.path))
         .map_err(|_| TransitionError::ExplainerBytesMissing)?;
     if bytes.len() as u64 != artifact.byte_length
         || format!("{:x}", sha2::Sha256::digest(&bytes)) != artifact.source_digest
@@ -849,8 +849,15 @@ fn stage_content_addressed(
     let directory = run_dir.join(directory_name);
     crate::store::create_private_dir(&directory).map_err(StoreError::Io)?;
     let destination = run_dir.join(relative(&digest));
-    let reusable = std::fs::read(&destination)
-        .is_ok_and(|existing| format!("{:x}", sha2::Sha256::digest(&existing)) == digest);
+    // Reuse only a private regular file inside the run whose bytes really hash
+    // to its name. A symlink, a group-readable file, or tampered content is
+    // replaced rather than trusted.
+    let reusable = crate::store::is_private_regular_file(&destination)
+        && crate::store::read_private_file(&destination)
+            .is_ok_and(|existing| format!("{:x}", sha2::Sha256::digest(&existing)) == digest);
+    if !reusable && std::fs::symlink_metadata(&destination).is_ok() {
+        std::fs::remove_file(&destination).map_err(StoreError::Io)?;
+    }
     if !reusable {
         let temporary = directory.join(format!(".{digest}.{}.tmp", uuid::Uuid::new_v4()));
         std::fs::write(&temporary, &bytes).map_err(StoreError::Io)?;

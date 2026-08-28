@@ -2,7 +2,8 @@
 //! when the human is absent, and its routine operations must not look like
 //! crashes to the surrounding harness.
 
-use sha2::Digest;
+use sha2::{Digest, Sha256};
+use std::os::unix::fs::PermissionsExt;
 
 use dvandva_v4::{
     claim::Role,
@@ -625,4 +626,57 @@ fn a_released_api_2_decision_payload_still_applies() {
         "options": ["yes", "no"],
     }))
     .is_err());
+}
+
+/// `access: run_private` is a promise about bytes on disk. A digest-named path
+/// that is really a symlink to a world-readable file outside the run must not
+/// be stageable, readable, or gate-satisfying.
+#[test]
+fn run_private_artifacts_cannot_escape_the_run_directory() {
+    use dvandva_v4::store;
+
+    let dir = tempfile::tempdir().unwrap();
+    let run_dir = dir.path().join("run-a");
+    let explainer = run_dir.join("explainer");
+    std::fs::create_dir_all(&explainer).unwrap();
+
+    let outside = dir.path().join("outside.html");
+    std::fs::write(&outside, b"<h1>not in the run</h1>").unwrap();
+    std::fs::set_permissions(&outside, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+    let digest = format!("{:x}", Sha256::digest(b"<h1>not in the run</h1>"));
+    let linked = explainer.join(format!("{digest}.html"));
+    std::os::unix::fs::symlink(&outside, &linked).unwrap();
+
+    // Reading refuses to follow the link, whatever it points at.
+    assert!(
+        store::read_private_file(&linked).is_err(),
+        "a symlinked artifact must not be readable as run-private"
+    );
+    assert!(
+        !store::is_private_regular_file(&linked),
+        "a symlink is never a reusable private artifact"
+    );
+
+    // A world-readable regular file inside the run is refused too: the promise
+    // is about who can read it, not only about where it lives.
+    let exposed = explainer.join("exposed.html");
+    std::fs::write(&exposed, b"<h1>exposed</h1>").unwrap();
+    std::fs::set_permissions(&exposed, std::fs::Permissions::from_mode(0o644)).unwrap();
+    assert!(store::read_private_file(&exposed).is_err());
+    assert!(!store::is_private_regular_file(&exposed));
+
+    // A private regular file inside the run is accepted.
+    let owned = explainer.join("owned.html");
+    std::fs::write(&owned, b"<h1>owned</h1>").unwrap();
+    std::fs::set_permissions(&owned, std::fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(store::read_private_file(&owned).unwrap(), b"<h1>owned</h1>");
+    assert!(store::is_private_regular_file(&owned));
+
+    // A symlinked run-state directory is refused rather than followed.
+    let elsewhere = dir.path().join("elsewhere");
+    std::fs::create_dir(&elsewhere).unwrap();
+    let linked_dir = run_dir.join("analysis");
+    std::os::unix::fs::symlink(&elsewhere, &linked_dir).unwrap();
+    assert!(store::create_private_dir(&linked_dir).is_err());
 }
