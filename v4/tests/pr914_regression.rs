@@ -645,3 +645,111 @@ fn two_independent_harnesses_reach_a_terminal_state_without_invoking_each_other(
     assert_eq!(restarted["disposition"], "terminal");
     assert!(restarted["peer_prompt"].is_null());
 }
+
+/// Incident timeline, first entry: `start` returned `scope_mismatch` against a
+/// stale unrelated run — a parked Notion spec review on the old schema — and the
+/// worker had to retry with `--new-run`. An unrelated run must not block a fresh
+/// objective, whatever schema it is on and however long it has been parked.
+#[test]
+fn an_unrelated_parked_run_does_not_block_a_fresh_objective() {
+    let fixture = Fixture::started(&[("kernel", "Fix the kernel")]);
+
+    // A sibling on the legacy schema, parked in human_decision, pursuing an
+    // entirely different objective — exactly the incident's blocker.
+    let sibling = fixture
+        .runs
+        .join("notion-mobile-app-tech-spec-review-90cfffcc");
+    std::fs::create_dir_all(sibling.join("history")).unwrap();
+    let legacy = serde_json::json!({
+        "schema": "dvandva.run.v1",
+        "run_id": "notion-mobile-app-tech-spec-review-90cfffcc",
+        "objective": {"summary": "Review the Notion mobile app technical spec", "refs": []},
+        "workspace": {
+            "repository_id": "github.com/axatbhardwaj/dvandva",
+            "origin": "https://github.com/axatbhardwaj/Dvandva",
+            "worktree": null
+        },
+        "task": {"reference": null, "summary": "Review the Notion mobile app technical spec"},
+        "participants": {
+            "worker": {"harness": "claude", "claim": null},
+            "reviewer": {"harness": "codex", "claim": null}
+        },
+        "status": "human_decision", "assignee": "human", "revision": 0,
+        "checkpoint": null, "review": null,
+        "publication": {"required": true, "desired_revision": 0, "published_revision": null, "refs": []},
+        "human_decision": {
+            "question": "Which sections?", "requested_by": "worker",
+            "evidence": ["parked"], "options": ["a", "b"],
+            "contact_role": "worker", "resume_status": "working",
+            "resume_assignee": "worker", "answer": null
+        },
+        "predecessor_run_id": null, "terminal": null, "recovery": null
+    });
+    let bytes = serde_json::to_vec_pretty(&legacy).unwrap();
+    std::fs::write(sibling.join("history/00000000000000000000.json"), &bytes).unwrap();
+    std::fs::write(sibling.join("baton.json"), &bytes).unwrap();
+
+    // A fresh, unrelated objective must create its own run without --new-run.
+    let started = run_json(command().args([
+        "role",
+        "start",
+        "--api",
+        "2",
+        "--workspace",
+        fixture.workspace.to_str().unwrap(),
+        "--runs-dir",
+        fixture.runs.to_str().unwrap(),
+        "--credentials-root",
+        fixture.credentials.to_str().unwrap(),
+        "--role",
+        "worker",
+        "--session-id",
+        "fresh-session",
+        "--current-harness",
+        "claude",
+        "--peer-harness",
+        "codex",
+        "--objective",
+        "Something else entirely",
+        "--required-deliverable",
+        "other=Other work",
+    ]));
+    assert_eq!(started["outcome"], "started");
+    assert_eq!(started["disposition"], "created");
+    assert_eq!(started["objective"]["summary"], "Something else entirely");
+    assert_ne!(started["run_id"], fixture.run_id.as_str());
+
+    // The unrelated sibling is untouched: not upgraded, not claimed, not moved.
+    let after: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(sibling.join("baton.json")).unwrap()).unwrap();
+    assert_eq!(after["schema"], "dvandva.run.v1");
+    assert_eq!(after["revision"], 0);
+
+    // Naming this run's own task reference, with a different objective, is still
+    // a real scope disagreement rather than an unrelated run.
+    let mismatch = run_json(command().args([
+        "role",
+        "start",
+        "--api",
+        "2",
+        "--workspace",
+        fixture.workspace.to_str().unwrap(),
+        "--runs-dir",
+        fixture.runs.to_str().unwrap(),
+        "--credentials-root",
+        fixture.credentials.to_str().unwrap(),
+        "--role",
+        "worker",
+        "--session-id",
+        "claude-session",
+        "--current-harness",
+        "claude",
+        "--peer-harness",
+        "codex",
+        "--run-id",
+        &fixture.run_id,
+        "--objective",
+        "A different objective for the same run",
+    ]));
+    assert_eq!(mismatch["outcome"], "scope_mismatch");
+}

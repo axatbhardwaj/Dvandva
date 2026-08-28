@@ -236,7 +236,7 @@ pub fn stale_runs(
         let Ok(baton) = RunChannel::open(&run_dir).read() else {
             continue;
         };
-        if let Some(idle_days) = idle_days_without_live_claim(&run_dir, &baton, older_than_days) {
+        if let Some(idle_days) = collectable_idle_days(&run_dir, &baton, older_than_days) {
             stale.push(StaleCandidate {
                 run_id: baton.run_id,
                 run_dir,
@@ -277,7 +277,7 @@ pub fn archive_stale_run(
     let Ok(baton) = channel.read() else {
         return Ok(None);
     };
-    if idle_days_without_live_claim(run_dir, &baton, older_than_days).is_none() {
+    if collectable_idle_days(run_dir, &baton, older_than_days).is_none() {
         return Ok(None);
     }
 
@@ -365,8 +365,9 @@ fn candidate(
     {
         return Err("baton run id does not match its named directory".to_owned());
     }
-    let terminal =
-        baton.schema == SCHEMA && matches!(baton.status, Status::Done | Status::Abandoned);
+    // A finished run is finished whatever schema recorded it. A terminal v1
+    // sibling must not be offered for upgrade to an unrelated new start.
+    let terminal = matches!(baton.status, Status::Done | Status::Abandoned);
     if terminal && query.run_id.is_none() {
         return Ok(None);
     }
@@ -441,12 +442,25 @@ fn candidate(
             next_action: "upgrade_protocol",
         }),
     };
+    let task_reference_matches = query.task_reference.is_some_and(|expected| {
+        task.and_then(|identity| identity.reference.as_deref())
+            .is_some_and(|actual| actual == expected.trim())
+    });
+    let objective_matches = query
+        .objective
+        .is_none_or(|expected| candidate.objective.summary == expected.trim());
+    // A run pursuing a different objective, which the caller has not pointed at
+    // by task reference, is not this start's run at all. It is unrelated, not a
+    // near miss, so it must not surface as a mismatch and block a new run. When
+    // the caller does name this run's task, a differing objective is a real
+    // scope disagreement and must still be surfaced.
+    if query.run_id.is_none() && !objective_matches && !task_reference_matches {
+        return Ok(None);
+    }
     let task_matches = query.task_reference.is_none_or(|expected| {
         task.and_then(|identity| identity.reference.as_deref())
             .is_some_and(|actual| actual == expected.trim())
-    }) && query
-        .objective
-        .is_none_or(|expected| candidate.objective.summary == expected.trim());
+    });
     if baton.schema == LEGACY_SCHEMA && (query.run_id.is_some() || task_matches) {
         Ok(Some(CandidateMatch::Upgrade(candidate)))
     } else if query.run_id.is_none() && !task_matches {
@@ -509,10 +523,20 @@ fn stale_idle_days(run_dir: &Path, baton: &RunBaton, query: &DiscoveryQuery<'_>)
     idle_days_without_live_claim(run_dir, baton, query.stale_after_days?)
 }
 
+/// Like `idle_days_without_live_claim`, but a terminal run counts too: it is
+/// finished, so an explicit collection may archive it once it has gone quiet.
+fn collectable_idle_days(run_dir: &Path, baton: &RunBaton, horizon: u64) -> Option<u64> {
+    idle_days(run_dir, baton, horizon)
+}
+
 fn idle_days_without_live_claim(run_dir: &Path, baton: &RunBaton, horizon: u64) -> Option<u64> {
     if matches!(baton.status, Status::Done | Status::Abandoned) {
         return None;
     }
+    idle_days(run_dir, baton, horizon)
+}
+
+fn idle_days(run_dir: &Path, baton: &RunBaton, horizon: u64) -> Option<u64> {
     let live_claim = [
         baton.participants.worker.claim.as_ref(),
         baton.participants.reviewer.claim.as_ref(),
