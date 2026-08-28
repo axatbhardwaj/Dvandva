@@ -321,7 +321,7 @@ run_dir_command() {
           printf '%s\n' "$output"
           exit 0
         fi
-        test "$chunk_ms" -le 300000 || chunk_ms=300000
+        test "$chunk_ms" -le "${DVANDVA_POLL_CHUNK_MS:-300000}" || chunk_ms="${DVANDVA_POLL_CHUNK_MS:-300000}"
         output="$("$binary" role wait "${common[@]}" --after-revision "$after" \
           --timeout-ms "$chunk_ms")" || exit $?
         outcome="$(printf '%s' "$output" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("wait_outcome",""))')"

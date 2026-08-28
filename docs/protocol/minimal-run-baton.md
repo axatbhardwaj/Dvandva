@@ -86,7 +86,9 @@ Act as prativadi and join Dvandva run <run-id>.
 ```
 
 Both roles obey the snapshot's actions and foreground-wait when the peer owns
-the next mutation. Tokens remain private to each role facade.
+the next mutation. The wait is `poll`: it re-enters the kernel wait on every
+idle timeout and returns only on a real wake, a terminal run, or its budget, and
+the role calls it again at once on an idle return rather than ending its turn. Tokens remain private to each role facade.
 
 ## Rolling explainer gate
 

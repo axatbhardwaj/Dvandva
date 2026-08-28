@@ -117,7 +117,11 @@ Only `finalize` waits on this gate. A finished deliverable can always be
 checkpointed, and the recovery paths — supersession and approval withdrawal —
 are never blocked by it.
 
-After every handoff the assigned-away role foreground-waits and both roles
+After every handoff the assigned-away role foreground-waits with
+`dvandva-role.sh poll`, in the same turn as its handoff report. `poll` re-enters
+the kernel wait on every `idle_timeout` until a real wake, a terminal run, or
+its budget; on an idle return the role calls it again immediately. Ending the
+turn is not a wait — it lets the lease lapse and stalls the peer. Both roles
 refresh the facade snapshot after waking. A role stops only for explicit human
 stop, `abandoned`, or after observing `done` with the current scope, complete
 checkpoint, exact semantic approval, and the current obligation's staged bytes

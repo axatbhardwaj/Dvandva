@@ -49,8 +49,9 @@ After every facade operation, use the fresh facade snapshot. `next_actions`
 combines `advisory_actions` and ordinary `legal_actions`; semantic work happens
 only when the returned advisory action authorizes it. Apply only a returned
 legal action. `request_human_decision` may be selected directly from
-`legal_actions` solely for new human scope or genuine ambiguity about what the
-human wants; it is never an ordinary wake or action.
+`legal_actions` solely for a decision that is the human's alone — `scope`,
+`intent`, or `authority` — and never for protocol approval; it is never an
+ordinary wake or action.
 
 Protocol-internal problems never block on human approval, because the human may
 be absent. Every one has a deterministic recovery to take instead:
@@ -117,11 +118,17 @@ permission that is the human's alone to give. There is deliberately
 no approval kind: a protocol-internal problem has a deterministic recovery, and
 the human may be absent.
 
+The options are the decision. The human answers by choosing one of them, and
+the kernel refuses any other answer. A `scope` decision resolves only through a
+scope amendment; an `intent` or `authority` answer is recorded as an objective
+reference of that kind. A pause that would change nothing about the run cannot
+be resolved, which is what makes an approval wait unrepresentable.
+
 Use only the minimal request. The kernel derives contact and resume routing:
 
 ```json
 {"type":"request_human_decision","kind":"scope","question":"<one decision>","evidence":["<verified fact>"],"options":["<concrete option A>","<concrete option B>"]}
-{"type":"resume_human_decision","answer":"<human answer>"}
+{"type":"resume_human_decision","answer":"<one of the recorded options>"}
 ```
 
 `answer_human` maps to `resume_human_decision`; copy the human's answer. If the

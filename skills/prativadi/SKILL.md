@@ -35,8 +35,12 @@ terminal or the human says stop; a handoff report is followed by a poll, never
 by the end of the turn.
 
 `request_human_decision` is the sole documented exception to `next_actions`:
-choose it from `legal_actions` only for new human scope or genuine ambiguity
-about what the human wants. It is never an ordinary wake or action.
+choose it from `legal_actions` only for a decision that is the human's alone —
+`scope`, `intent`, or `authority` — never for protocol approval. A decision is
+answered by choosing one of its options: a scope decision resolves only
+through a scope amendment, and an intent or authority answer is recorded on the
+canonical objective, so a pause that would change nothing cannot be resolved.
+It is never an ordinary wake or action.
 
 Protocol-internal problems resolve autonomously. An unreadable publication
 policy, a legacy schema, a lapsed peer lease, a changes-requested explainer, and
