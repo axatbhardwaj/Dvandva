@@ -2738,6 +2738,7 @@ fn human_decision_and_terminal_snapshots_do_not_advertise_another_request() {
     baton.status = Status::HumanDecision;
     baton.assignee = Assignee::Human;
     baton.human_decision = Some(HumanDecision {
+        kind: HumanDecisionKind::Scope,
         question: "Choose".into(),
         requested_by: "worker".into(),
         evidence: vec!["Evidence".into()],

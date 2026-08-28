@@ -166,7 +166,7 @@ bash "$vadi" heartbeat codex-session "$run_dir" 3 | grep -Fq '"revision":4'
 bash "$vadi" wait codex-session "$run_dir" 4 50 | grep -Fq '"revision": 4'
 
 action="$test_root/human.json"
-(umask 077; printf '%s\n' '{"type":"request_human_decision","question":"Confirm scope","evidence":["scope changed"],"options":["yes","no"]}' >"$action")
+(umask 077; printf '%s\n' '{"type":"request_human_decision","kind":"scope","question":"Which sections are in scope","evidence":["scope changed"],"options":["all","only the kernel"]}' >"$action")
 test "$(stat -c '%a' "$action")" = 600
 bash "$vadi" apply codex-session "$run_dir" 4 "$action" | grep -Fq '"status": "human_decision"'
 rm -f -- "$action"
@@ -268,6 +268,7 @@ for required in \
   'legal_actions' \
   'new human scope or genuine ambiguity' \
   'never block on human approval' \
+  'no approval kind' \
   'wait_outcome: idle_timeout' \
   'never leaves `request_human_decision` as the only way forward' \
   'never an ordinary wake or action' \

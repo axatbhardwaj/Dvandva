@@ -465,7 +465,7 @@ fn an_obligation_bound_write_survives_an_unrelated_heartbeat() {
             "worker",
             prepared_revision,
             serde_json::json!({
-                "type": "request_human_decision",
+                "type": "request_human_decision", "kind": "scope",
                 "question": "Which scope?",
                 "evidence": ["stale revision"],
                 "options": ["a", "b"]

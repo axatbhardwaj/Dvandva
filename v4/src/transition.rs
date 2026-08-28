@@ -255,6 +255,7 @@ fn apply_locked(
         }
         Action::RequestHumanDecision(request) => {
             let crate::action::HumanDecisionRequest {
+                kind,
                 question,
                 evidence,
                 options,
@@ -274,6 +275,7 @@ fn apply_locked(
             let resume_status = baton.status.clone();
             let resume_assignee = baton.assignee.clone();
             baton.human_decision = Some(HumanDecision {
+                kind,
                 question,
                 requested_by: role_name(role).to_owned(),
                 evidence,

@@ -1237,6 +1237,7 @@ mod tests {
             &private.token,
             expected_revision,
             Action::RequestHumanDecision(HumanDecisionRequest {
+                kind: crate::model::HumanDecisionKind::Scope,
                 question: "Use amended scope?".to_owned(),
                 evidence: vec!["new requirement".to_owned()],
                 options: vec!["yes".to_owned(), "no".to_owned()],
@@ -1529,6 +1530,7 @@ mod tests {
             &private.token,
             1,
             Action::RequestHumanDecision(HumanDecisionRequest {
+                kind: crate::model::HumanDecisionKind::Scope,
                 question: "Use amended scope?".to_owned(),
                 evidence: vec!["new requirement".to_owned()],
                 options: vec!["yes".to_owned(), "no".to_owned()],

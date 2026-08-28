@@ -94,6 +94,9 @@ pub enum Action {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HumanDecisionRequest {
+    /// Declaring what is being asked for is what keeps a pause from becoming an
+    /// open-ended approval wait: there is no kind for "please confirm".
+    pub kind: crate::model::HumanDecisionKind,
     pub question: String,
     pub evidence: Vec<String>,
     pub options: Vec<String>,

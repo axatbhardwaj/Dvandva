@@ -360,8 +360,26 @@ pub fn create_handoff_obligation(
     }
 }
 
+/// What a human is being asked for. There is deliberately no "approval" kind:
+/// a protocol-internal problem has a deterministic recovery and must be taken
+/// autonomously, because during an autonomous run there may be nobody to ask.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HumanDecisionKind {
+    /// What the work should cover. Only a human can widen or change scope.
+    Scope,
+    /// Which of several readings of the human's request is meant.
+    Intent,
+    /// Permission that is the human's alone to give, such as acting outside
+    /// the workspace or on their behalf somewhere the run cannot reach.
+    Authority,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HumanDecision {
+    /// Defaults to `scope` so runs created before decisions were typed load.
+    #[serde(default = "default_human_decision_kind")]
+    pub kind: HumanDecisionKind,
     pub question: String,
     pub requested_by: String,
     pub evidence: Vec<String>,
@@ -575,6 +593,10 @@ pub fn valid_git_object(value: &str) -> bool {
         && value
             .bytes()
             .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn default_human_decision_kind() -> HumanDecisionKind {
+    HumanDecisionKind::Scope
 }
 
 pub fn valid_sha256(value: &str) -> bool {

@@ -479,3 +479,41 @@ fn an_analysis_checkpoint_must_cite_bytes_the_reviewer_can_materialize() {
         "staged analysis bytes must hash to the digest the manifest cites"
     );
 }
+
+/// The PR-914 run parked because "unavailable publication capability" was a
+/// documented reason to stop and ask. A human decision now has to declare what
+/// it asks for, and there is no kind that fits "please approve a workaround for
+/// a problem the protocol can fix itself".
+#[test]
+fn a_human_decision_must_name_what_only_a_human_can_decide() {
+    use dvandva_v4::action::Action;
+
+    let decision = |kind: &str| {
+        serde_json::from_value::<Action>(serde_json::json!({
+            "type": "request_human_decision",
+            "kind": kind,
+            "question": "Which sections are in scope?",
+            "evidence": ["the report names two areas"],
+            "options": ["both", "only the kernel"],
+        }))
+    };
+    for kind in ["scope", "intent", "authority"] {
+        assert!(decision(kind).is_ok(), "{kind} must be requestable");
+    }
+    // The incident's escalation has no kind, because it is not a human decision.
+    for kind in ["approval", "capability", "confirm", "publication"] {
+        assert!(
+            decision(kind).is_err(),
+            "{kind} must not be a way to park a run"
+        );
+    }
+
+    // An untyped request is refused outright rather than defaulting to a pause.
+    assert!(serde_json::from_value::<Action>(serde_json::json!({
+        "type": "request_human_decision",
+        "question": "Can I proceed?",
+        "evidence": ["blocked"],
+        "options": ["yes", "no"],
+    }))
+    .is_err());
+}

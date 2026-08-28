@@ -361,7 +361,7 @@ fn setup_scope_amended_checkpoint(dir: &std::path::Path) -> (String, String) {
         5,
         "human.json",
         serde_json::json!({
-            "type": "request_human_decision", "question": "Replace scope?",
+            "type": "request_human_decision", "kind": "scope", "question": "Replace scope?",
             "evidence": ["New requirement"], "options": ["yes", "no"]
         }),
     )
@@ -472,7 +472,7 @@ fn setup_taskless_legacy_human_decision(dir: &std::path::Path) -> String {
         2,
         "request-scope.json",
         serde_json::json!({
-            "type": "request_human_decision",
+            "type": "request_human_decision", "kind": "scope",
             "question": "Which ticket now defines the run?",
             "evidence": ["The legacy run had no task identity"],
             "options": ["Adopt DEF-456", "Keep the run taskless"]
@@ -2593,7 +2593,7 @@ fn human_decision_resumes_authoritative_pre_request_owner() {
         2,
         "pause.json",
         serde_json::json!({
-            "type": "request_human_decision", "question": "Which API should win?",
+            "type": "request_human_decision", "kind": "scope", "question": "Which API should win?",
             "evidence": ["Both variants pass tests"], "options": ["Keep A", "Keep B"]
         }),
     )
@@ -2644,7 +2644,7 @@ fn human_decision_derives_requester_contact_and_authoritative_resume_target() {
         5,
         "pause.json",
         serde_json::json!({
-            "type": "request_human_decision",
+            "type": "request_human_decision", "kind": "scope",
             "question": "Should the new requirement enter scope?",
             "evidence": ["The ticket changed during review"],
             "options": ["Amend scope", "Keep current scope"]
@@ -2691,7 +2691,7 @@ fn human_decision_rejects_legacy_caller_supplied_routing() {
     .enumerate()
     {
         let mut action = serde_json::json!({
-            "type": "request_human_decision",
+            "type": "request_human_decision", "kind": "scope",
             "question": "Choose",
             "evidence": ["Evidence"],
             "options": ["A", "B"]
@@ -3254,7 +3254,7 @@ fn scope_checkpoint_identity_history_on_disk_remains_authoritative() {
         5,
         "human.json",
         serde_json::json!({
-            "type": "request_human_decision", "question": "Replace scope?",
+            "type": "request_human_decision", "kind": "scope", "question": "Replace scope?",
             "evidence": ["New requirement"], "options": ["yes", "no"]
         }),
     )
@@ -3343,7 +3343,7 @@ fn scope_amendment_replaces_scope_and_pending_handoff() {
         6,
         "human.json",
         serde_json::json!({
-            "type": "request_human_decision", "question": "Expand scope?",
+            "type": "request_human_decision", "kind": "scope", "question": "Expand scope?",
             "evidence": ["A report is required"], "options": ["yes", "no"]
         }),
     )

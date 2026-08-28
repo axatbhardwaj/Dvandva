@@ -11,6 +11,7 @@ apply SESSION RUN_DIR EXPECTED_REVISION ACTION_FILE
 wait  SESSION RUN_DIR AFTER_REVISION [TIMEOUT_MS]
 heartbeat SESSION RUN_DIR EXPECTED_REVISION
 explainer SESSION RUN_DIR
+analysis SESSION RUN_DIR DIGEST
 upgrade SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION
 repair-policy SESSION RUN_DIR EXPECTED_REVISION
 claim SESSION RUN_DIR EXPECTED_REVISION
@@ -106,10 +107,16 @@ Publication never substitutes for supersession or withdrawal.
 
 ## Human Decision
 
+Every request declares what it asks for: `scope` for what the work should cover,
+`intent` for which reading of the request is meant, or `authority` for
+permission that is the human's alone to give. There is deliberately
+no approval kind: a protocol-internal problem has a deterministic recovery, and
+the human may be absent.
+
 Use only the minimal request. The kernel derives contact and resume routing:
 
 ```json
-{"type":"request_human_decision","question":"<one decision>","evidence":["<verified fact>"],"options":["<concrete option A>","<concrete option B>"]}
+{"type":"request_human_decision","kind":"scope","question":"<one decision>","evidence":["<verified fact>"],"options":["<concrete option A>","<concrete option B>"]}
 {"type":"resume_human_decision","answer":"<human answer>"}
 ```
 
