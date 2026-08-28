@@ -137,6 +137,8 @@ not returned by the Human Decision object and must never be inferred:
 At every semantic handoff, the Codex harness stages the explainer's bytes into
 the run directory and the Claude harness reviews those exact bytes,
 regardless of semantic casting. Staging is first: the gate binds a digest, not a URL.
+A new handoff replaces the current obligation, so the gate requires the current
+obligation to be staged and reviewed, not every obligation the run has opened.
 The explainer carries this exact content:
 canonical scope, complete manifest, findings and decisions, and a current plan/TODO.
 

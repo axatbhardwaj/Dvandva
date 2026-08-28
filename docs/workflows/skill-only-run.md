@@ -88,16 +88,22 @@ New required work has two stale-work paths:
 - During `finalizing`, vadi applies `withdraw_approval` and produces a new
   complete checkpoint.
 
-New human scope, ambiguity, or a missing mandated capability uses Human
-Decision. Only its designated contact resumes it, and only a human-approved
-scope amendment can change canonical scope.
+Human Decision is for what only a human can settle: `scope` for what the work
+should cover, `intent` for which reading of the request is meant, and
+`authority` for permission that is theirs alone to give. A missing capability is
+not one of these — it has a deterministic recovery, and the kernel refuses to
+park a run while it holds one. Only the designated contact resumes a decision,
+and only a human-approved scope amendment can change canonical scope.
 
 ## Published explainer
 
-At each handoff the Codex-harness participant stages the explainer's bytes into
-the run directory with `stage_explainer`, and the Claude-harness participant
-reads those exact bytes back through `dvandva-role.sh explainer` and reviews
-them, regardless of vadi/prativadi casting. The explainer carries canonical
+Each handoff opens an obligation. The Codex-harness participant stages the
+explainer's bytes for the current obligation with `stage_explainer`, and the
+Claude-harness participant reads those exact bytes back through
+`dvandva-role.sh explainer` and reviews them, regardless of vadi/prativadi
+casting. A new handoff replaces the current obligation, so what the gate
+requires is that the run's current obligation is staged and reviewed — not that
+every obligation the run ever opened was. The explainer carries canonical
 scope, complete manifest, findings and decisions, and a current plan/TODO list.
 
 The gate binds a sha256 digest, not a URL, so both harnesses can always reach
@@ -114,9 +120,10 @@ are never blocked by it.
 After every handoff the assigned-away role foreground-waits and both roles
 refresh the facade snapshot after waking. A role stops only for explicit human
 stop, `abandoned`, or after observing `done` with the current scope, complete
-checkpoint, exact semantic approval, exact Sites deployment, and exact Claude
-review all bound together. A Human Decision pauses the pair rather than
-completing it.
+checkpoint, exact semantic approval, and the current obligation's staged bytes
+and approved Claude review bound together. A Sites deployment is optional and is
+not required at `done`. A Human Decision pauses the pair rather than completing
+it.
 
 ## Explicit-only companion skills
 

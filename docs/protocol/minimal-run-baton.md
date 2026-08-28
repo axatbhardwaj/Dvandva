@@ -96,9 +96,12 @@ reads those exact bytes back through the facade and reviews them, independent of
 worker/reviewer casting. The explainer contains canonical scope, the complete
 manifest, findings and decisions, and a current plan/TODO.
 
-The staged artifact is content-addressed at `explainer/<source_digest>.html` and
-echoes the pending handoff kind and revision, `scope_revision`, and the optional
-three-coordinate checkpoint binding. A review binds that digest, and staging
+A new handoff replaces the current obligation, so the gate binds the current
+obligation rather than the run's whole history of them. The staged artifact is
+content-addressed at `explainer/<source_digest>.html` and echoes the pending
+handoff kind and revision, `scope_revision`, and the optional three-coordinate
+checkpoint binding. Each receipt advances `receipt_seq`, which receipts declare
+as `after_seq` so an out-of-order one is refused rather than applied. A review binds that digest, and staging
 different bytes clears the earlier review. The gate binds bytes, not a location:
 an unread approval, a Claude Artifact, a mutable URL, or a public or generic
 host cannot satisfy it, and finalization rehashes the staged bytes rather than
