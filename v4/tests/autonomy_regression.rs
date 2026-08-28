@@ -206,9 +206,22 @@ fn a_pre_staging_baton_still_loads_and_can_be_repaired() {
         &run_dir,
         Role::Worker,
         "claude-session",
+        "claude",
+        "codex",
         0,
     )
     .expect("an unreadable policy must be repairable");
+
+    // Repair is scoped: a caller naming the wrong topology is refused.
+    assert!(dvandva_v4::role_session::repair_publication_policy(
+        &run_dir,
+        Role::Worker,
+        "claude-session",
+        "codex",
+        "claude",
+        repaired.revision,
+    )
+    .is_err());
     assert_eq!(
         repaired.publication_policy,
         Some(PublicationPolicy::fixed())
@@ -481,37 +494,133 @@ fn an_analysis_checkpoint_must_cite_bytes_the_reviewer_can_materialize() {
 }
 
 /// The PR-914 run parked because "unavailable publication capability" was a
-/// documented reason to stop and ask. A human decision now has to declare what
-/// it asks for, and there is no kind that fits "please approve a workaround for
-/// a problem the protocol can fix itself".
+/// documented reason to stop and ask. Typing the request is not enough on its
+/// own — a label can lie — so the kernel refuses to park a run at all while it
+/// still holds a deterministic recovery, whatever the request claims to be.
 #[test]
-fn a_human_decision_must_name_what_only_a_human_can_decide() {
-    use dvandva_v4::action::Action;
-
-    let decision = |kind: &str| {
-        serde_json::from_value::<Action>(serde_json::json!({
-            "type": "request_human_decision",
-            "kind": kind,
-            "question": "Which sections are in scope?",
-            "evidence": ["the report names two areas"],
-            "options": ["both", "only the kernel"],
-        }))
+fn a_run_cannot_be_parked_while_the_kernel_can_recover_itself() {
+    use dvandva_v4::{
+        action::{Action, HumanDecisionRequest},
+        model::HumanDecisionKind,
+        store::RunChannel,
+        transition,
     };
-    for kind in ["scope", "intent", "authority"] {
-        assert!(decision(kind).is_ok(), "{kind} must be requestable");
-    }
-    // The incident's escalation has no kind, because it is not a human decision.
-    for kind in ["approval", "capability", "confirm", "publication"] {
+
+    let dir = tempfile::tempdir().unwrap();
+    let run_dir = dir.path().join("run-a");
+    let mut created = baton();
+    created.workspace = Some(dvandva_v4::model::WorkspaceIdentity {
+        repository_id: "github.com/axatbhardwaj/dvandva".into(),
+        origin: None,
+        worktree: None,
+    });
+    // The incident's own state: a policy whose reviewer cannot read its channel.
+    created.publication_policy = Some(PublicationPolicy {
+        publisher_harness: "Codex".into(),
+        channel: LEGACY_EXPLAINER_CHANNEL.into(),
+        access: LEGACY_EXPLAINER_ACCESS.into(),
+        reviewer_harness: "Claude".into(),
+    });
+    let channel = RunChannel::open(&run_dir);
+    channel.create(&created).unwrap();
+    let worker =
+        dvandva_v4::claim::claim(&channel, Role::Worker, "claude-session", 1800, 0).unwrap();
+
+    let escalation = |kind| {
+        Action::RequestHumanDecision(HumanDecisionRequest {
+            kind,
+            question: "The explainer Site returns 401. Approve relaying it by hand?".into(),
+            evidence: ["the reviewing harness has no session for the Site".into()].into(),
+            options: ["relay the text".into(), "stop the run".into()].into(),
+        })
+    };
+
+    // The incident's escalation is refused, and relabelling it does not help:
+    // the kernel is answering the condition, not the description of it.
+    for kind in [
+        HumanDecisionKind::Scope,
+        HumanDecisionKind::Intent,
+        HumanDecisionKind::Authority,
+    ] {
+        let refused = transition::apply(
+            &channel,
+            Role::Worker,
+            "claude-session",
+            &worker.token,
+            1,
+            escalation(kind),
+        );
         assert!(
-            decision(kind).is_err(),
-            "{kind} must not be a way to park a run"
+            matches!(
+                refused,
+                Err(transition::TransitionError::AutonomousRecoveryAvailable)
+            ),
+            "{kind:?} must not park a run the kernel can repair"
         );
     }
+    // And the run really is still live rather than parked.
+    let head = channel.read().unwrap();
+    assert_eq!(head.status, Status::Working);
+    assert!(head.human_decision.is_none());
 
-    // An untyped request is refused outright rather than defaulting to a pause.
+    // Once the recovery has been taken, a genuine scope question is allowed
+    // again: autonomy is about not stalling on protocol problems, not about
+    // refusing to ask what only a human can answer.
+    let repaired = dvandva_v4::role_session::repair_publication_policy(
+        &run_dir,
+        Role::Worker,
+        "claude-session",
+        "claude",
+        "codex",
+        head.revision,
+    )
+    .unwrap();
+    let asked = transition::apply(
+        &channel,
+        Role::Worker,
+        "claude-session",
+        &worker.token,
+        repaired.revision,
+        Action::RequestHumanDecision(HumanDecisionRequest {
+            kind: HumanDecisionKind::Scope,
+            question: "Should the migration guide be in scope?".into(),
+            evidence: ["the report names it as adjacent".into()].into(),
+            options: ["include it".into(), "leave it out".into()].into(),
+        }),
+    )
+    .expect("a real scope question must still be possible");
+    assert_eq!(asked.status, Status::HumanDecision);
+    assert_eq!(
+        asked.human_decision.as_ref().unwrap().kind,
+        HumanDecisionKind::Scope
+    );
+}
+
+/// A payload written against the released API 2, which had no `kind`, must
+/// still apply: the kernel advertises that API and cannot silently break it.
+#[test]
+fn a_released_api_2_decision_payload_still_applies() {
+    use dvandva_v4::{action::Action, model::HumanDecisionKind};
+
+    let action = serde_json::from_value::<Action>(serde_json::json!({
+        "type": "request_human_decision",
+        "question": "Which sections are in scope?",
+        "evidence": ["the report names two areas"],
+        "options": ["both", "only the kernel"],
+    }))
+    .expect("the released API 2 payload must still deserialize");
+    match action {
+        Action::RequestHumanDecision(request) => {
+            assert_eq!(request.kind, HumanDecisionKind::Scope)
+        }
+        _ => panic!("unexpected action"),
+    }
+
+    // An unknown kind is still refused, so the vocabulary stays closed.
     assert!(serde_json::from_value::<Action>(serde_json::json!({
         "type": "request_human_decision",
-        "question": "Can I proceed?",
+        "kind": "approval",
+        "question": "Approve the workaround?",
         "evidence": ["blocked"],
         "options": ["yes", "no"],
     }))

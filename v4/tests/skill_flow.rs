@@ -65,7 +65,7 @@ fn assert_role_source_contract(role: &str) {
         "foreground local wait",
         "upgrade_required",
         "upgrade SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION",
-        "repair-policy SESSION RUN_DIR EXPECTED_REVISION",
+        "repair-policy SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION",
         "explainer SESSION RUN_DIR",
         "claim SESSION RUN_DIR EXPECTED_REVISION",
         "reclaim SESSION RUN_DIR EXPECTED_REVISION",

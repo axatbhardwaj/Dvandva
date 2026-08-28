@@ -76,6 +76,8 @@ pub enum TransitionError {
     ExplainerBytesMissing,
     #[error("analysis checkpoint cites a digest that has not been staged for this run")]
     AnalysisNotStaged,
+    #[error("a protocol-internal recovery is available; take it instead of parking the run")]
+    AutonomousRecoveryAvailable,
 }
 
 /// Actions that carry their own idempotency token, or that only report
@@ -260,6 +262,14 @@ fn apply_locked(
                 evidence,
                 options,
             } = request;
+            // Enforceable autonomy, not just a label on the request: while the
+            // kernel itself offers a deterministic recovery, parking the run is
+            // refused whatever the request claims to be about. This is exactly
+            // the PR-914 escalation — an unreadable publication policy is
+            // repairable, so it is never a question for a human.
+            if !effective_policy(baton).reviewer_can_read() {
+                return Err(TransitionError::AutonomousRecoveryAvailable);
+            }
             if baton
                 .human_decision
                 .as_ref()

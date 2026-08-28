@@ -323,12 +323,20 @@ run_dir_command() {
       "$binary" role analysis "${common[@]}" --digest "$1"
       ;;
     repair-policy)
-      test "$#" -eq 1 || {
-        printf 'usage: dvandva-role.sh repair-policy SESSION RUN_DIR REVISION\n' >&2
+      test "$#" -eq 3 || {
+        printf 'usage: dvandva-role.sh repair-policy SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS REVISION\n' >&2
         exit 2
       }
+      case "$1:$2" in
+        codex:claude|claude:codex) ;;
+        *)
+          printf 'dvandva-role: harness families must be exactly codex and claude\n' >&2
+          exit 2
+          ;;
+      esac
       "$binary" role repair-policy --api "$role_api" --run-dir "$run_dir" \
-        --role "$role" --session-id "$session" --expected-revision "$1"
+        --role "$role" --session-id "$session" \
+        --current-harness "$1" --peer-harness "$2" --expected-revision "$3"
       ;;
   esac
 }

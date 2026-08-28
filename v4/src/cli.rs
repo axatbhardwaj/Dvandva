@@ -360,6 +360,10 @@ enum RoleCommand {
         #[arg(long)]
         session_id: String,
         #[arg(long)]
+        current_harness: String,
+        #[arg(long)]
+        peer_harness: String,
+        #[arg(long)]
         expected_revision: u64,
     },
     /// Materialize the bytes behind a staged analysis checkpoint artifact.
@@ -758,6 +762,8 @@ pub fn run() -> Result<(), CliError> {
                 run_dir,
                 role,
                 session_id,
+                current_harness,
+                peer_harness,
                 expected_revision,
             } => {
                 require_role_api(api)?;
@@ -765,6 +771,8 @@ pub fn run() -> Result<(), CliError> {
                     &run_dir,
                     role,
                     &session_id,
+                    &current_harness,
+                    &peer_harness,
                     expected_revision,
                 )?;
                 println!("{}", serde_json::to_string_pretty(&baton)?);
@@ -1079,6 +1087,7 @@ fn transition_error_code(error: &TransitionError) -> &'static str {
         TransitionError::InvalidCheckpointArtifact => "invalid_checkpoint_artifact",
         TransitionError::ExplainerBytesMissing => "explainer_bytes_missing",
         TransitionError::AnalysisNotStaged => "analysis_not_staged",
+        TransitionError::AutonomousRecoveryAvailable => "autonomous_recovery_available",
     }
 }
 

@@ -95,7 +95,10 @@ pub enum Action {
 #[serde(deny_unknown_fields)]
 pub struct HumanDecisionRequest {
     /// Declaring what is being asked for is what keeps a pause from becoming an
-    /// open-ended approval wait: there is no kind for "please confirm".
+    /// open-ended approval wait: there is no kind for "please confirm". It
+    /// defaults to `scope` so payloads written against the released API 2
+    /// surface, which had no such field, still apply.
+    #[serde(default)]
     pub kind: crate::model::HumanDecisionKind,
     pub question: String,
     pub evidence: Vec<String>,

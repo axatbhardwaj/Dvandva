@@ -243,7 +243,7 @@ do
     'foreground local wait' \
     'upgrade_required' \
     'upgrade SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION' \
-    'repair-policy SESSION RUN_DIR EXPECTED_REVISION' \
+    'repair-policy SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION' \
     'explainer SESSION RUN_DIR' \
     'analysis SESSION RUN_DIR DIGEST' \
     'claim SESSION RUN_DIR EXPECTED_REVISION' \

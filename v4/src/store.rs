@@ -281,6 +281,12 @@ impl RunChannel {
                     actual: current.revision,
                 });
             }
+            // A repair must not canonize an inconsistent chain: the head has to
+            // be exactly the revision history recorded, or the run is already
+            // corrupt and repairing it would launder that corruption forward.
+            if self.read_history_revision(expected_revision)? != current {
+                return Err(StoreError::InvalidHistory);
+            }
             require_current_schema(&current)?;
             if matches!(current.status, Status::Done | Status::Abandoned) {
                 return Err(StoreError::TerminalState);
@@ -294,6 +300,9 @@ impl RunChannel {
                 binding.review = None;
             }
             validate_baton(&next)?;
+            // The repair edge is an ordinary v2 history edge and is held to the
+            // same rules as every other transition.
+            validate_history_edge(&current, &next)?;
             self.write_history(&next)?;
             self.install(&next)?;
             Ok(next)

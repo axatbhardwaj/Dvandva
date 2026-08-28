@@ -1048,6 +1048,8 @@ pub fn repair_publication_policy(
     run_dir: &Path,
     role: Role,
     session_id: &str,
+    current_harness: &str,
+    peer_harness: &str,
     expected_revision: u64,
 ) -> Result<RunBaton, RoleSessionError> {
     if session_id.trim().is_empty() {
@@ -1068,6 +1070,27 @@ pub fn repair_publication_policy(
     if matches!(baton.status, Status::Done | Status::Abandoned) {
         return Err(ClaimError::Terminal.into());
     }
+    // Scoped like `upgrade`, the other control-plane operation: a claim cannot
+    // be required, because `start` refuses an unreadable policy before minting
+    // one. Instead the caller must name the run's actual participant topology,
+    // so a repair cannot be aimed at a run the caller is not part of.
+    let requested = match role {
+        Role::Worker => normalize_participants(current_harness.to_owned(), peer_harness.to_owned()),
+        Role::Reviewer => {
+            normalize_participants(peer_harness.to_owned(), current_harness.to_owned())
+        }
+    }
+    .map_err(|_| RoleSessionError::Invalid("repair harnesses are invalid".to_owned()))?;
+    let stored = normalize_participants(
+        baton.participants.worker.harness.clone(),
+        baton.participants.reviewer.harness.clone(),
+    )
+    .map_err(|_| RoleSessionError::Invalid("stored harnesses are invalid".to_owned()))?;
+    if requested != stored {
+        return Err(RoleSessionError::Invalid(
+            "repair caller does not match the stored participant topology".to_owned(),
+        ));
+    }
     let policy = baton
         .publication_policy
         .clone()
@@ -1077,7 +1100,6 @@ pub fn repair_publication_policy(
             "publication policy is already reviewer-readable".to_owned(),
         ));
     }
-    let _ = role;
     Ok(channel.repair_publication_policy(expected_revision)?)
 }
 

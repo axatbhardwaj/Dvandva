@@ -100,6 +100,65 @@ impl Fixture {
         fixture
     }
 
+    /// A run at revision 0 with no claims and the incident's unreadable policy,
+    /// written consistently to both the head and its history revision.
+    fn unclaimed_with_owner_only_site() -> Self {
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir(&workspace).unwrap();
+        for args in [
+            vec!["init", "--quiet"],
+            vec![
+                "remote",
+                "add",
+                "origin",
+                "git@github.com:axatbhardwaj/Dvandva.git",
+            ],
+        ] {
+            assert!(std::process::Command::new("git")
+                .arg("-C")
+                .arg(&workspace)
+                .args(args)
+                .status()
+                .unwrap()
+                .success());
+        }
+        let runs = root.path().join("runs");
+        let root_credentials = root.path().join("credentials");
+        let run_id = "unreadable-policy-run".to_owned();
+        let run_dir = runs.join(&run_id);
+        command()
+            .args([
+                "init",
+                "--run-dir",
+                run_dir.to_str().unwrap(),
+                "--run-id",
+                &run_id,
+                "--objective",
+                "Fix the protocol defects",
+                "--worker",
+                "claude",
+                "--reviewer",
+                "codex",
+                "--repository-id",
+                "github.com/axatbhardwaj/dvandva",
+                "--required-deliverable",
+                "kernel=Fix the kernel",
+            ])
+            .assert()
+            .success();
+        rewrite_policy_to_owner_only_site(&run_dir);
+        Self {
+            _root: root,
+            workspace,
+            runs,
+            credentials: root_credentials,
+            run_dir,
+            run_id,
+            lease_seconds: 1800,
+        }
+    }
+
     fn join_reviewer(&self) {
         let joined = run_json(command().args([
             "role",
@@ -279,21 +338,6 @@ fn run_json(command: &mut Command) -> serde_json::Value {
     serde_json::from_slice(&output.stdout).unwrap()
 }
 
-/// Return a run to its unclaimed shape, so a start is exercised from the state
-/// a joining session actually meets.
-fn strip_claims(run_dir: &Path) {
-    for name in ["baton.json", "history/00000000000000000000.json"] {
-        let path = run_dir.join(name);
-        let Ok(bytes) = std::fs::read(&path) else {
-            continue;
-        };
-        let mut baton: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-        baton["participants"]["worker"]["claim"] = serde_json::Value::Null;
-        baton["participants"]["reviewer"]["claim"] = serde_json::Value::Null;
-        std::fs::write(&path, serde_json::to_vec_pretty(&baton).unwrap()).unwrap();
-    }
-}
-
 fn rewrite_policy_to_owner_only_site(run_dir: &Path) {
     for name in ["baton.json", "history/00000000000000000000.json"] {
         let path = run_dir.join(name);
@@ -312,87 +356,102 @@ fn rewrite_policy_to_owner_only_site(run_dir: &Path) {
 /// refused before any claim rather than after a deployment is already spent.
 #[test]
 fn an_unreadable_publication_policy_is_refused_at_start_and_can_be_repaired() {
-    let fixture = Fixture::started(&[("kernel", "Fix the kernel")]);
-    rewrite_policy_to_owner_only_site(&fixture.run_dir);
-    // The refusal must precede any claim, which is the whole point of a
-    // preflight: the incident discovered the mismatch only after the publisher
-    // had already spent a deployment. Strip both claims so this exercises a
-    // genuinely unclaimed run.
-    strip_claims(&fixture.run_dir);
+    // A genuine unclaimed revision-0 run, so the preflight is exercised from the
+    // state a joining session actually meets rather than from an edited head.
+    let fixture = Fixture::unclaimed_with_owner_only_site();
 
-    let refused = run_json(command().args([
-        "role",
-        "start",
-        "--api",
-        "2",
-        "--workspace",
-        fixture.workspace.to_str().unwrap(),
-        "--runs-dir",
-        fixture.runs.to_str().unwrap(),
-        "--credentials-root",
-        fixture.credentials.to_str().unwrap(),
-        "--role",
-        "worker",
-        "--session-id",
-        "claude-session",
-        "--current-harness",
-        "claude",
-        "--peer-harness",
-        "codex",
-        "--run-id",
-        &fixture.run_id,
-    ]));
+    let start = |session: &str| {
+        let mut command = command();
+        command.args([
+            "role",
+            "start",
+            "--api",
+            "2",
+            "--workspace",
+            fixture.workspace.to_str().unwrap(),
+            "--runs-dir",
+            fixture.runs.to_str().unwrap(),
+            "--credentials-root",
+            fixture.credentials.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            session,
+            "--current-harness",
+            "claude",
+            "--peer-harness",
+            "codex",
+            "--run-id",
+            &fixture.run_id,
+        ]);
+        command
+    };
+
+    let refused = run_json(&mut start("claude-session"));
     assert_eq!(refused["outcome"], "publication_unreadable");
     assert_eq!(refused["next_action"], "repair_publication_policy");
     assert_eq!(refused["publication_policy"]["channel"], "codex_sites");
     assert_eq!(refused["publication_policy"]["access"], "owner_only");
-    // Nothing was claimed and no credential was minted by the refused start.
-    let refused_baton: serde_json::Value =
+    assert_eq!(refused["revision"], 0);
+
+    // The refusal precedes every side effect: nothing claimed, nothing minted.
+    let untouched: serde_json::Value =
         serde_json::from_slice(&std::fs::read(fixture.run_dir.join("baton.json")).unwrap())
             .unwrap();
-    assert!(refused_baton["participants"]["worker"]["claim"].is_null());
-    assert!(refused_baton["participants"]["reviewer"]["claim"].is_null());
+    assert_eq!(untouched["revision"], 0);
+    assert!(untouched["participants"]["worker"]["claim"].is_null());
+    assert!(untouched["participants"]["reviewer"]["claim"].is_null());
+    assert!(
+        !fixture.credentials.join("claude-session").exists(),
+        "a refused start must not mint a credential"
+    );
 
-    let repaired = run_json(command().args([
-        "role",
-        "repair-policy",
-        "--api",
-        "2",
-        "--run-dir",
-        fixture.run_dir.to_str().unwrap(),
-        "--role",
-        "worker",
-        "--session-id",
-        "claude-session",
-        "--expected-revision",
-        &refused["revision"].as_u64().unwrap().to_string(),
-    ]));
+    let repair = |session: &str, current: &str, peer: &str, revision: u64| {
+        let mut command = command();
+        command.args([
+            "role",
+            "repair-policy",
+            "--api",
+            "2",
+            "--run-dir",
+            fixture.run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            session,
+            "--current-harness",
+            current,
+            "--peer-harness",
+            peer,
+            "--expected-revision",
+            &revision.to_string(),
+        ]);
+        command
+    };
+
+    // Repair is scoped to the run's actual topology.
+    repair("claude-session", "codex", "claude", 0)
+        .assert()
+        .failure();
+
+    let repaired = run_json(&mut repair("claude-session", "claude", "codex", 0));
     assert_eq!(repaired["publication_policy"]["channel"], "run_artifact");
     assert_eq!(repaired["publication_policy"]["access"], "run_private");
     assert!(repaired["publication_binding"]["artifact"].is_null());
+    assert!(repaired["publication_binding"]["deployment"].is_null());
 
-    let resumed = run_json(command().args([
-        "role",
-        "start",
-        "--api",
-        "2",
-        "--workspace",
-        fixture.workspace.to_str().unwrap(),
-        "--runs-dir",
-        fixture.runs.to_str().unwrap(),
-        "--credentials-root",
-        fixture.credentials.to_str().unwrap(),
-        "--role",
-        "worker",
-        "--session-id",
-        "claude-session",
-        "--current-harness",
-        "claude",
-        "--peer-harness",
-        "codex",
-        "--run-id",
-        &fixture.run_id,
-    ]));
+    // The repaired chain is consistent: the head is exactly its own revision.
+    let head: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(fixture.run_dir.join("baton.json")).unwrap())
+            .unwrap();
+    let recorded: serde_json::Value = serde_json::from_slice(
+        &std::fs::read(fixture.run_dir.join("history/00000000000000000001.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(head, recorded);
+
+    // And the run is joinable now that the policy is readable.
+    let resumed = run_json(&mut start("claude-session"));
     assert_eq!(resumed["outcome"], "started");
 }
 
