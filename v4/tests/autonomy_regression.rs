@@ -472,13 +472,27 @@ fn an_analysis_checkpoint_must_cite_bytes_the_reviewer_can_materialize() {
         .join(dvandva_v4::model::analysis_artifact_path(&digest))
         .is_file());
 
+    // The identity is derived from the cited digests, so it cannot be chosen.
+    let derived = dvandva_v4::model::analysis_checkpoint_identity(&[digest.clone()]);
+    assert!(
+        transition::apply(
+            &channel,
+            Role::Worker,
+            "claude-session",
+            &worker.token,
+            2,
+            submit(&"c".repeat(64), &digest),
+        )
+        .is_err(),
+        "an analysis identity unrelated to its own content must be refused"
+    );
     let submitted = transition::apply(
         &channel,
         Role::Worker,
         "claude-session",
         &worker.token,
         2,
-        submit(&digest, &digest),
+        submit(&derived, &digest),
     )
     .unwrap();
     assert_eq!(submitted.status, Status::Reviewing);

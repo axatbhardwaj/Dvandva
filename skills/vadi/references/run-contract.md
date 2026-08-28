@@ -76,7 +76,10 @@ commit:
 ```
 
 An `analysis` checkpoint may only cite digests this run has staged, so the
-reviewer can materialize exactly what the manifest names. Stage the bytes first
+reviewer can materialize exactly what the manifest names. Its `identity` is
+derived from the cited digests — sha256 of them sorted, deduplicated, and joined
+with newlines — so a manifest cannot name one thing and carry another. Every
+cited artifact is rehashed at approval and at finalization. Stage the bytes first
 with `stage_analysis`, then cite the digests it records:
 
 ```json

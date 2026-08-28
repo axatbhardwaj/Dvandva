@@ -328,6 +328,14 @@ fn reviewer_role(baton: &serde_json::Value) -> &'static str {
     }
 }
 
+/// An `analysis` identity is derived from the digests the manifest cites.
+fn analysis_identity(digests: &[String]) -> String {
+    let mut sorted = digests.to_vec();
+    sorted.sort();
+    sorted.dedup();
+    format!("{:x}", Sha256::digest(sorted.join("\n").as_bytes()))
+}
+
 fn run_json(command: &mut Command) -> serde_json::Value {
     let output = command.output().unwrap();
     assert!(
@@ -694,6 +702,7 @@ fn a_checkpoint_is_submittable_before_any_explainer_exists() {
         .contains(&serde_json::json!("submit_checkpoint")));
 
     let digest = fixture.stage_analysis("early");
+    let identity = analysis_identity(&[digest.clone()]);
     let submitted = fixture.apply(
         "worker",
         fixture.revision(),
@@ -701,7 +710,7 @@ fn a_checkpoint_is_submittable_before_any_explainer_exists() {
             "type": "submit_checkpoint",
             "checkpoint": {
                 "kind": "analysis",
-                "identity": digest,
+                "identity": identity,
                 "deliverables": [
                     {"id": "kernel", "artifacts": [{"kind": "analysis_digest", "value": digest}]}
                 ],
@@ -719,7 +728,7 @@ fn a_checkpoint_is_submittable_before_any_explainer_exists() {
         serde_json::json!({
             "type": "record_review",
             "verdict": "approved",
-            "checkpoint_identity": digest,
+            "checkpoint_identity": identity,
             "manifest_digest": submitted["checkpoint"]["manifest_digest"],
             "scope_revision": 0,
             "findings": []
@@ -807,7 +816,8 @@ fn two_independent_harnesses_reach_a_terminal_state_without_invoking_each_other(
     assert_eq!(started["participants"]["worker"]["harness"], "Claude");
     assert_eq!(started["participants"]["reviewer"]["harness"], "Codex");
 
-    let identity = fixture.stage_analysis("lifecycle");
+    let digest = fixture.stage_analysis("lifecycle");
+    let identity = analysis_identity(&[digest.clone()]);
     let submitted = fixture.apply(
         "worker",
         fixture.revision(),
@@ -817,7 +827,7 @@ fn two_independent_harnesses_reach_a_terminal_state_without_invoking_each_other(
                 "kind": "analysis",
                 "identity": identity,
                 "deliverables": [
-                    {"id": "kernel", "artifacts": [{"kind": "analysis_digest", "value": identity}]}
+                    {"id": "kernel", "artifacts": [{"kind": "analysis_digest", "value": digest}]}
                 ],
                 "verification": ["cargo test --offline"]
             }

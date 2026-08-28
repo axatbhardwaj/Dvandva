@@ -334,6 +334,17 @@ pub fn explainer_artifact_path(source_digest: &str) -> String {
     format!("{EXPLAINER_ARTIFACT_DIR}/{source_digest}.html")
 }
 
+/// The identity of an `analysis` checkpoint is derived from the artifacts it
+/// cites, so it cannot name one thing while carrying another. Two manifests over
+/// the same bytes have the same identity, and changing any cited digest changes
+/// it.
+pub fn analysis_checkpoint_identity(artifact_digests: &[String]) -> String {
+    let mut sorted = artifact_digests.to_vec();
+    sorted.sort();
+    sorted.dedup();
+    format!("{:x}", Sha256::digest(sorted.join("\n").as_bytes()))
+}
+
 /// Content-addressed location for a staged analysis deliverable. An `analysis`
 /// checkpoint names digests, and a reviewer has to be able to materialize the
 /// exact bytes behind each one.

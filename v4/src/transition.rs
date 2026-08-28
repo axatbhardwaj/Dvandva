@@ -78,6 +78,8 @@ pub enum TransitionError {
     AnalysisNotStaged,
     #[error("a protocol-internal recovery is available; take it instead of parking the run")]
     AutonomousRecoveryAvailable,
+    #[error("a cited analysis artifact is missing or no longer matches its digest")]
+    AnalysisBytesMissing,
 }
 
 /// Actions that carry their own idempotency token, or that only report
@@ -203,6 +205,11 @@ fn apply_locked(
                     if !findings.is_empty() {
                         return Err(TransitionError::BlockingFindings);
                     }
+                    let checkpoint = baton
+                        .checkpoint
+                        .as_ref()
+                        .ok_or(TransitionError::InvalidCheckpoint)?;
+                    require_checkpoint_artifacts_intact(channel.directory(), checkpoint)?;
                     baton.status = Status::Finalizing;
                     baton.assignee = Assignee::Worker;
                     "approved"
@@ -248,6 +255,11 @@ fn apply_locked(
                 .and_then(|binding| binding.artifact.as_ref())
                 .ok_or(TransitionError::ExplainerNotStaged)?;
             require_staged_bytes_intact(channel.directory(), artifact)?;
+            let checkpoint = baton
+                .checkpoint
+                .as_ref()
+                .ok_or(TransitionError::InvalidCheckpoint)?;
+            require_checkpoint_artifacts_intact(channel.directory(), checkpoint)?;
             baton.status = Status::Done;
             baton.assignee = Assignee::None;
             baton.terminal = Some(TerminalProvenance {
@@ -647,6 +659,18 @@ fn normalize_checkpoint(
             .sort_by(|left, right| (&left.kind, &left.value).cmp(&(&right.kind, &right.value)));
         deliverables.push(deliverable);
     }
+    // An analysis identity must be derived from the bytes it cites, so a
+    // manifest cannot claim an identity unrelated to its own content.
+    if kind == crate::model::CHECKPOINT_KIND_ANALYSIS {
+        let cited = deliverables
+            .iter()
+            .flat_map(|deliverable| deliverable.artifacts.iter())
+            .map(|artifact| artifact.value.clone())
+            .collect::<Vec<_>>();
+        if identity != crate::model::analysis_checkpoint_identity(&cited) {
+            return Err(TransitionError::InvalidCheckpointArtifact);
+        }
+    }
     let required = baton
         .scope_deliverables
         .iter()
@@ -774,6 +798,30 @@ fn require_publication_gate(
         || review.reviewer_harness != policy.reviewer_harness
     {
         return Err(TransitionError::PublicationStale);
+    }
+    Ok(())
+}
+
+/// Re-hash every analysis artifact a checkpoint cites. A checkpoint is only
+/// immutable if the bytes behind it are still there and still themselves, so a
+/// deleted or tampered deliverable must not reach an approval or a terminal
+/// state.
+fn require_checkpoint_artifacts_intact(
+    run_dir: &std::path::Path,
+    checkpoint: &Checkpoint,
+) -> Result<(), TransitionError> {
+    if checkpoint.kind != crate::model::CHECKPOINT_KIND_ANALYSIS {
+        return Ok(());
+    }
+    for deliverable in &checkpoint.deliverables {
+        for artifact in &deliverable.artifacts {
+            let path = run_dir.join(crate::model::analysis_artifact_path(&artifact.value));
+            let bytes = crate::store::read_private_file(&path)
+                .map_err(|_| TransitionError::AnalysisBytesMissing)?;
+            if format!("{:x}", sha2::Sha256::digest(&bytes)) != artifact.value {
+                return Err(TransitionError::AnalysisBytesMissing);
+            }
+        }
     }
     Ok(())
 }

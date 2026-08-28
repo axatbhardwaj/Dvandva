@@ -1088,6 +1088,7 @@ fn transition_error_code(error: &TransitionError) -> &'static str {
         TransitionError::ExplainerBytesMissing => "explainer_bytes_missing",
         TransitionError::AnalysisNotStaged => "analysis_not_staged",
         TransitionError::AutonomousRecoveryAvailable => "autonomous_recovery_available",
+        TransitionError::AnalysisBytesMissing => "analysis_bytes_missing",
     }
 }
 
