@@ -473,7 +473,7 @@ fn an_analysis_checkpoint_must_cite_bytes_the_reviewer_can_materialize() {
         .is_file());
 
     // The identity is derived from the cited digests, so it cannot be chosen.
-    let derived = dvandva_v4::model::analysis_checkpoint_identity(&[digest.clone()]);
+    let derived = dvandva_v4::model::analysis_checkpoint_identity(std::slice::from_ref(&digest));
     assert!(
         transition::apply(
             &channel,

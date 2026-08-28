@@ -73,6 +73,11 @@ apply_action_error() {
   return "$status"
 }
 
+# An analysis identity is derived from the digests the manifest cites.
+analysis_identity() {
+  python3 -c 'import hashlib,sys; print(hashlib.sha256("\n".join(sorted(set(sys.argv[1:]))).encode()).hexdigest())' "$@"
+}
+
 rev() {
   python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["revision"])' "$1/baton.json"
 }
@@ -225,7 +230,7 @@ run_supersession_incident() {
   local worker_session="incident-worker" reviewer_session="incident-reviewer"
   local objective="Review architecture and module reuse" task="TASK-incident"
   local site_id="site-incident" started mismatch joined run_id run_dir revision
-  local checkpoint_a checkpoint_b checkpoint_b_extra
+  local checkpoint_a checkpoint_b checkpoint_b_extra identity_a identity_b
   local reviewing_a reviewing_b digest_a digest_b request accepted terminal
   local failure_output failure_status worker_wait reviewer_wait
 
@@ -266,8 +271,9 @@ assert mismatch["candidates"][0]["run_id"] == sys.argv[1]
     "$reviewer_session" "$run_dir" 2 "$site_id" incident-1
 
   checkpoint_a="$(stage_analysis "$worker" "$worker_session" "$run_dir" review)"
+  identity_a="$(analysis_identity "$checkpoint_a")"
   reviewing_a="$(apply_action "$worker" "$worker_session" "$run_dir" "$(rev "$run_dir")" incident-a \
-    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$checkpoint_a\",\"deliverables\":[{\"id\":\"review-package\",\"artifacts\":[{\"kind\":\"analysis_digest\",\"value\":\"$checkpoint_a\"}]}],\"verification\":[\"review.md checked\"]}}")"
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$identity_a\",\"deliverables\":[{\"id\":\"review-package\",\"artifacts\":[{\"kind\":\"analysis_digest\",\"value\":\"$checkpoint_a\"}]}],\"verification\":[\"review.md checked\"]}}")"
   digest_a="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' \
     <<<"$reviewing_a")"
   approve_explainer "$worker" "$worker_session" "$reviewer" \
@@ -281,7 +287,7 @@ assert mismatch["candidates"][0]["run_id"] == sys.argv[1]
   set +e
   failure_output="$(apply_action_error "$reviewer" "$reviewer_session" "$run_dir" "$(( $(rev "$run_dir") - 1 ))" \
     incident-stale-approval \
-    "{\"type\":\"record_review\",\"verdict\":\"approved\",\"checkpoint_identity\":\"$checkpoint_a\",\"manifest_digest\":\"$digest_a\",\"scope_revision\":0,\"findings\":[]}")"
+    "{\"type\":\"record_review\",\"verdict\":\"approved\",\"checkpoint_identity\":\"$identity_a\",\"manifest_digest\":\"$digest_a\",\"scope_revision\":0,\"findings\":[]}")"
   failure_status=$?
   set -e
   test "$failure_status" -ne 0
@@ -290,7 +296,7 @@ assert mismatch["candidates"][0]["run_id"] == sys.argv[1]
   set +e
   failure_output="$(apply_action_error "$reviewer" "$reviewer_session" "$run_dir" "$(rev "$run_dir")" \
     incident-blocked-approval \
-    "{\"type\":\"record_review\",\"verdict\":\"approved\",\"checkpoint_identity\":\"$checkpoint_a\",\"manifest_digest\":\"$digest_a\",\"scope_revision\":0,\"findings\":[]}")"
+    "{\"type\":\"record_review\",\"verdict\":\"approved\",\"checkpoint_identity\":\"$identity_a\",\"manifest_digest\":\"$digest_a\",\"scope_revision\":0,\"findings\":[]}")"
   failure_status=$?
   set -e
   test "$failure_status" -ne 0
@@ -305,20 +311,21 @@ assert mismatch["candidates"][0]["run_id"] == sys.argv[1]
 
   checkpoint_b="$(stage_analysis "$worker" "$worker_session" "$run_dir" reuse)"
   checkpoint_b_extra="$(stage_analysis "$worker" "$worker_session" "$run_dir" reuse-extra)"
+  identity_b="$(analysis_identity "$checkpoint_b" "$checkpoint_b_extra")"
   reviewing_b="$(apply_action "$worker" "$worker_session" "$run_dir" "$(rev "$run_dir")" incident-b \
-    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$checkpoint_b\",\"deliverables\":[{\"id\":\"review-package\",\"artifacts\":[{\"kind\":\"analysis_digest\",\"value\":\"$checkpoint_b\"},{\"kind\":\"analysis_digest\",\"value\":\"$checkpoint_b_extra\"}]}],\"verification\":[\"review.md checked\",\"reuse-analysis.md checked\"]}}")"
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$identity_b\",\"deliverables\":[{\"id\":\"review-package\",\"artifacts\":[{\"kind\":\"analysis_digest\",\"value\":\"$checkpoint_b\"},{\"kind\":\"analysis_digest\",\"value\":\"$checkpoint_b_extra\"}]}],\"verification\":[\"review.md checked\",\"reuse-analysis.md checked\"]}}")"
   digest_b="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' \
     <<<"$reviewing_b")"
   approve_explainer "$worker" "$worker_session" "$reviewer" \
     "$reviewer_session" "$run_dir" "$(rev "$run_dir")" "$site_id" incident-4
   apply_action "$reviewer" "$reviewer_session" "$run_dir" "$(rev "$run_dir")" incident-approve-b \
-    "{\"type\":\"record_review\",\"verdict\":\"approved\",\"checkpoint_identity\":\"$checkpoint_b\",\"manifest_digest\":\"$digest_b\",\"scope_revision\":0,\"findings\":[]}" >/dev/null
+    "{\"type\":\"record_review\",\"verdict\":\"approved\",\"checkpoint_identity\":\"$identity_b\",\"manifest_digest\":\"$digest_b\",\"scope_revision\":0,\"findings\":[]}" >/dev/null
   approve_explainer "$worker" "$worker_session" "$reviewer" \
     "$reviewer_session" "$run_dir" "$(rev "$run_dir")" "$site_id" incident-5
   terminal="$(apply_action "$worker" "$worker_session" "$run_dir" "$(rev "$run_dir")" \
     incident-finalize '{"type":"finalize"}')"
 
-  python3 - "$run_dir" "$site_id" "$checkpoint_b" "$digest_b" <<'PY'
+  python3 - "$run_dir" "$site_id" "$identity_b" "$digest_b" <<'PY'
 import hashlib, json, pathlib, sys
 run_dir, _site_id, checkpoint, digest = sys.argv[1:]
 receipts = []

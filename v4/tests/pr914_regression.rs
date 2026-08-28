@@ -702,7 +702,7 @@ fn a_checkpoint_is_submittable_before_any_explainer_exists() {
         .contains(&serde_json::json!("submit_checkpoint")));
 
     let digest = fixture.stage_analysis("early");
-    let identity = analysis_identity(&[digest.clone()]);
+    let identity = analysis_identity(std::slice::from_ref(&digest));
     let submitted = fixture.apply(
         "worker",
         fixture.revision(),
@@ -817,7 +817,7 @@ fn two_independent_harnesses_reach_a_terminal_state_without_invoking_each_other(
     assert_eq!(started["participants"]["reviewer"]["harness"], "Codex");
 
     let digest = fixture.stage_analysis("lifecycle");
-    let identity = analysis_identity(&[digest.clone()]);
+    let identity = analysis_identity(std::slice::from_ref(&digest));
     let submitted = fixture.apply(
         "worker",
         fixture.revision(),
