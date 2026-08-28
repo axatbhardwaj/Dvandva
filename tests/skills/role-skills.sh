@@ -216,8 +216,9 @@ for role_skill in "$vadi_skill" "$prativadi_skill"; do
     "$role_skill"
   grep -Fq 'Goals the user sets in a launch prompt remain outside the protocol.' \
     "$role_skill"
-  grep -Fq 'new human scope, ambiguity' "$role_skill"
-  grep -Fq 'unavailable mandated publication/review capability' "$role_skill"
+  grep -Fq 'new human scope or genuine ambiguity' "$role_skill"
+  grep -Fq 'Protocol-internal problems resolve autonomously' "$role_skill"
+  grep -Fq 'the human may be absent' "$role_skill"
   ! grep -Fq 'only for new human scope or ambiguity' "$role_skill"
 done
 
@@ -264,8 +265,10 @@ for required in \
   'fresh facade snapshot' \
   'advisory_actions' \
   'legal_actions' \
-  'new human scope, ambiguity' \
-  'unavailable mandated publication/review capability' \
+  'new human scope or genuine ambiguity' \
+  'never block on human approval' \
+  'wait_outcome: idle_timeout' \
+  'never leaves `request_human_decision` as the only way forward' \
   'never an ordinary wake or action' \
   'scope_mismatch' \
   'complete deliverable manifest' \

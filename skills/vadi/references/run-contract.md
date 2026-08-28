@@ -47,8 +47,16 @@ After every facade operation, use the fresh facade snapshot. `next_actions`
 combines `advisory_actions` and ordinary `legal_actions`; semantic work happens
 only when the returned advisory action authorizes it. Apply only a returned
 legal action. `request_human_decision` may be selected directly from
-`legal_actions` solely for new human scope, ambiguity, or unavailable mandated
-publication/review capability; it is never an ordinary wake or action.
+`legal_actions` solely for new human scope or genuine ambiguity about what the
+human wants; it is never an ordinary wake or action.
+
+Protocol-internal problems never block on human approval, because the human may
+be absent. Every one has a deterministic recovery to take instead:
+`publication_unreadable` takes `repair-policy`, `upgrade_required` takes
+`upgrade`, an expired own claim takes exact `start --run-id`, a
+changes-requested explainer takes `stage_explainer` again, and a wait timeout
+(`wait_outcome: idle_timeout`) takes a fresh snapshot and another wait. The
+kernel never leaves `request_human_decision` as the only way forward.
 
 ## Checkpoint and worker mutations
 

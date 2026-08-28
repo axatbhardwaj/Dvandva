@@ -27,9 +27,13 @@ before domain-tool work.
 4. Repeat from a fresh snapshot. Stop only on terminal state or human stop.
 
 `request_human_decision` is the sole documented exception to `next_actions`:
-choose it from `legal_actions` only for new human scope, ambiguity, or
-unavailable mandated publication/review capability. It is never an ordinary
-wake or action.
+choose it from `legal_actions` only for new human scope or genuine ambiguity
+about what the human wants. It is never an ordinary wake or action.
+
+Protocol-internal problems resolve autonomously. An unreadable publication
+policy, a legacy schema, a lapsed peer lease, a changes-requested explainer, and
+a wait timeout all have deterministic recoveries, and the human may be absent.
+Take the recovery the snapshot offers rather than blocking for approval.
 
 ## Boundaries
 
