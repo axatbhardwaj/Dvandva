@@ -735,8 +735,11 @@ fn valid_publication_binding(binding: &crate::model::PublicationBinding) -> bool
         return false;
     }
     let Some(artifact) = binding.artifact.as_ref() else {
-        // Without staged bytes there is nothing to render and nothing to review.
-        return binding.deployment.is_none() && binding.review.is_none();
+        // A binding written before explainer staging existed: it may carry a
+        // deployment and a review that were bound to a Site rather than to
+        // staged bytes. Such a binding still loads, so the run can be repaired,
+        // but it can never satisfy the gate, which requires an artifact.
+        return valid_legacy_site_binding(binding);
     };
     if artifact.obligation != binding.obligation
         || !valid_sha256(&artifact.source_digest)
@@ -777,6 +780,39 @@ fn valid_publication_binding(binding: &crate::model::PublicationBinding) -> bool
         && match review.verdict.as_str() {
             "approved" => review.findings.is_empty(),
             "changes_requested" => !review.findings.is_empty() && findings_are_normalized,
+            _ => false,
+        }
+}
+
+/// A pre-staging binding, readable so the run can reach `repair_publication_policy`.
+fn valid_legacy_site_binding(binding: &crate::model::PublicationBinding) -> bool {
+    let Some(deployment) = binding.deployment.as_ref() else {
+        return binding.review.is_none();
+    };
+    if binding.site_id.as_ref() != Some(&deployment.site_id)
+        || deployment.obligation != binding.obligation
+        || !valid_sha256(&deployment.source_digest)
+        || !valid_exact_reference(&deployment.site_id)
+        || !valid_exact_reference(&deployment.site_version)
+        || !valid_exact_reference(&deployment.url)
+        || !valid_exact_reference(&deployment.channel)
+        || !valid_exact_reference(&deployment.access)
+        || !valid_exact_reference(&deployment.publisher_harness)
+    {
+        return false;
+    }
+    let Some(review) = binding.review.as_ref() else {
+        return true;
+    };
+    review.obligation == binding.obligation
+        && review.source_digest == deployment.source_digest
+        && valid_exact_reference(&review.reviewer_harness)
+        && match review.verdict.as_str() {
+            "approved" => review.findings.is_empty(),
+            "changes_requested" => review
+                .findings
+                .iter()
+                .all(|finding| valid_exact_reference(finding)),
             _ => false,
         }
 }

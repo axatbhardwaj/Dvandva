@@ -117,3 +117,104 @@ fn reporting_progress_never_makes_an_idle_role_actionable() {
     assert!(publisher.legal_actions.contains(&"stage_explainer"));
     assert!(publisher.actionable);
 }
+
+/// A run created before explainer staging existed must still load, so it can
+/// reach `repair_publication_policy` instead of becoming unreadable. This is the
+/// exact shape the PR-914-era kernel wrote: an owner-only Site deployment with
+/// no staged artifact.
+#[test]
+fn a_pre_staging_baton_still_loads_and_can_be_repaired() {
+    use dvandva_v4::store::RunChannel;
+
+    let dir = tempfile::tempdir().unwrap();
+    let run_dir = dir.path().join("run-a");
+    std::fs::create_dir_all(run_dir.join("history")).unwrap();
+    let baton = serde_json::json!({
+        "schema": "dvandva.run.v2",
+        "run_id": "run-a",
+        "objective": {"summary": "Fix the protocol"},
+        "workspace": {
+            "repository_id": "github.com/axatbhardwaj/dvandva",
+            "origin": "https://github.com/axatbhardwaj/Dvandva",
+            "worktree": null
+        },
+        "task": {"reference": null, "summary": "Fix the protocol"},
+        "participants": {
+            "worker": {"harness": "Claude", "claim": null},
+            "reviewer": {"harness": "Codex", "claim": null}
+        },
+        "status": "working",
+        "assignee": "worker",
+        "revision": 0,
+        "scope_revision": 0,
+        "scope_deliverables": [{"id": "kernel", "description": "Fix the kernel"}],
+        "checkpoint": null,
+        "review": null,
+        "publication_policy": {
+            "publisher_harness": "Codex",
+            "channel": "codex_sites",
+            "access": "owner_only",
+            "reviewer_harness": "Claude"
+        },
+        "publication_binding": {
+            "site_id": "appgprj_deadbeef",
+            "obligation": {"handoff_revision": 0, "kind": "run_started", "scope_revision": 0},
+            "deployment": {
+                "obligation": {"handoff_revision": 0, "kind": "run_started", "scope_revision": 0},
+                "source_digest": "8888888888888888888888888888888888888888888888888888888888888888",
+                "site_id": "appgprj_deadbeef",
+                "site_version": "1",
+                "url": "https://example.chatgpt.site",
+                "channel": "codex_sites",
+                "access": "owner_only",
+                "publisher_harness": "Codex"
+            },
+            "review": null
+        },
+        "human_decision": null,
+        "predecessor_run_id": null,
+        "terminal": null,
+        "recovery": null
+    });
+    let bytes = serde_json::to_vec_pretty(&baton).unwrap();
+    std::fs::write(run_dir.join("history/00000000000000000000.json"), &bytes).unwrap();
+    std::fs::write(run_dir.join("baton.json"), &bytes).unwrap();
+
+    // It loads: an unreadable policy must be repairable, not unreachable.
+    let channel = RunChannel::open(&run_dir);
+    let loaded = channel.read().expect("a pre-staging baton must still load");
+    assert!(loaded
+        .publication_binding
+        .as_ref()
+        .unwrap()
+        .artifact
+        .is_none());
+    assert!(loaded
+        .publication_binding
+        .as_ref()
+        .unwrap()
+        .deployment
+        .is_some());
+
+    // And the Site alone never gates anything, however it was recorded.
+    let actions = next_action::classify(&loaded, Role::Worker, "Claude");
+    assert!(actions.legal_actions.contains(&"submit_checkpoint"));
+
+    let repaired = dvandva_v4::role_session::repair_publication_policy(
+        &run_dir,
+        Role::Worker,
+        "claude-session",
+        0,
+    )
+    .expect("an unreadable policy must be repairable");
+    assert_eq!(
+        repaired.publication_policy,
+        Some(PublicationPolicy::fixed())
+    );
+    let binding = repaired.publication_binding.as_ref().unwrap();
+    assert!(binding.artifact.is_none());
+    assert!(binding.deployment.is_none());
+    assert!(binding.review.is_none());
+    // The stable Site ID survives, so a later rendering keeps one identity.
+    assert_eq!(binding.site_id.as_deref(), Some("appgprj_deadbeef"));
+}
