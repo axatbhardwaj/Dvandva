@@ -178,6 +178,10 @@ fn install_claim(
 ) -> Result<ClaimGrant, ClaimError> {
     let token = Uuid::new_v4().to_string();
     let (started, expires) = lease_times(now, lease_seconds)?;
+    // A new epoch reports nothing until it reports something. Carrying the old
+    // session's phase forward would present a dead session's last activity as
+    // the current one, which is the inference this field exists to prevent.
+    participant_mut(baton, role).progress = None;
     participant_mut(baton, role).claim = Some(ParticipantClaim {
         session_id: session_id.to_owned(),
         epoch,

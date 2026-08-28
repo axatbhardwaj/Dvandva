@@ -478,7 +478,7 @@ fn a_long_publication_keeps_the_claim_live_and_the_phase_visible() {
         &time::format_description::well_known::Rfc3339,
     )
     .unwrap();
-    let report_at = original_expiry - time::Duration::milliseconds(500);
+    let report_at = original_expiry - time::Duration::seconds(2);
     while time::OffsetDateTime::now_utc() < report_at {
         std::thread::sleep(std::time::Duration::from_millis(25));
     }

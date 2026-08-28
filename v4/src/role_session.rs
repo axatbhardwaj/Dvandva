@@ -459,8 +459,9 @@ fn start_candidate(
         }
     }
     if matches!(candidate.status, Status::Done | Status::Abandoned) {
+        // A terminal run is reported as terminal on any supported schema. It is
+        // finished, so there is nothing to migrate and nothing to claim.
         let baton = RunChannel::open(&candidate.run_dir).read()?;
-        require_current_schema(&baton)?;
         if baton.revision != candidate.revision {
             return Err(StoreError::RevisionConflict {
                 expected: candidate.revision,

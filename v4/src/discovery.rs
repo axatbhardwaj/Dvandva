@@ -492,7 +492,12 @@ fn candidate(
         task.and_then(|identity| identity.reference.as_deref())
             .is_some_and(|actual| actual == expected.trim())
     });
-    if baton.schema == LEGACY_SCHEMA && (query.run_id.is_some() || task_matches) {
+    if terminal {
+        // Finished runs are never offered for migration: `upgrade` would refuse
+        // them as terminal, so advertising `upgrade_protocol` for one sends the
+        // caller to an action that cannot succeed.
+        Ok(Some(CandidateMatch::Exact(candidate)))
+    } else if baton.schema == LEGACY_SCHEMA && (query.run_id.is_some() || task_matches) {
         Ok(Some(CandidateMatch::Upgrade(candidate)))
     } else if query.run_id.is_none() && !task_matches {
         if candidate.claim_state == ClaimState::Busy {

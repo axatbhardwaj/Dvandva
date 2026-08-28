@@ -376,6 +376,8 @@ impl RunChannel {
             recovered.revision = high + 1;
             recovered.participants.worker.claim = None;
             recovered.participants.reviewer.claim = None;
+            recovered.participants.worker.progress = None;
+            recovered.participants.reviewer.progress = None;
             recovered.recovery = Some(RecoveryProvenance {
                 from_revision,
                 previous_high_revision: high,
@@ -1041,19 +1043,31 @@ fn valid_claim_edge(current: &RunBaton, next: &RunBaton) -> bool {
     if worker_changed == reviewer_changed {
         return false;
     }
+    // A claim mutation may also clear that participant's progress, because a new
+    // epoch must not inherit the previous session's reported activity. It may
+    // never set progress: only the owning session reports.
+    let (current_participant, next_participant) = if worker_changed {
+        (&current.participants.worker, &next.participants.worker)
+    } else {
+        (&current.participants.reviewer, &next.participants.reviewer)
+    };
+    let progress_cleared_or_kept = next_participant.progress.is_none()
+        || next_participant.progress == current_participant.progress;
+    if !progress_cleared_or_kept
+        || !valid_claim_mutation(
+            current_participant.claim.as_ref(),
+            next_participant.claim.as_ref(),
+        )
+    {
+        return false;
+    }
     if worker_changed {
-        valid_claim_mutation(
-            current.participants.worker.claim.as_ref(),
-            next.participants.worker.claim.as_ref(),
-        ) && only_fields_changed(current, next, |expected| {
-            expected.participants.worker.claim = next.participants.worker.claim.clone();
+        only_fields_changed(current, next, |expected| {
+            expected.participants.worker = next.participants.worker.clone();
         })
     } else {
-        valid_claim_mutation(
-            current.participants.reviewer.claim.as_ref(),
-            next.participants.reviewer.claim.as_ref(),
-        ) && only_fields_changed(current, next, |expected| {
-            expected.participants.reviewer.claim = next.participants.reviewer.claim.clone();
+        only_fields_changed(current, next, |expected| {
+            expected.participants.reviewer = next.participants.reviewer.clone();
         })
     }
 }

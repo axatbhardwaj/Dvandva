@@ -680,3 +680,67 @@ fn run_private_artifacts_cannot_escape_the_run_directory() {
     std::os::unix::fs::symlink(&elsewhere, &linked_dir).unwrap();
     assert!(store::create_private_dir(&linked_dir).is_err());
 }
+
+/// A reclaimed role starts a new epoch. Presenting the previous session's phase
+/// as the current one is exactly the inference `progress` exists to prevent.
+#[test]
+fn a_new_claim_epoch_does_not_inherit_the_previous_session_s_progress() {
+    use dvandva_v4::{action::Action, claim, model::ProgressPhase, store::RunChannel, transition};
+
+    let dir = tempfile::tempdir().unwrap();
+    let run_dir = dir.path().join("run-a");
+    let mut created = baton();
+    created.workspace = Some(dvandva_v4::model::WorkspaceIdentity {
+        repository_id: "github.com/axatbhardwaj/dvandva".into(),
+        origin: None,
+        worktree: None,
+    });
+    let channel = RunChannel::open(&run_dir);
+    channel.create(&created).unwrap();
+
+    // A first session reports progress, then its lease lapses.
+    let first = claim::claim(&channel, Role::Worker, "session-one", 1, 0).unwrap();
+    let reported = transition::apply(
+        &channel,
+        Role::Worker,
+        "session-one",
+        &first.token,
+        1,
+        Action::ReportProgress {
+            phase: ProgressPhase::PublishingExplainer,
+            detail: Some("halfway through a long build".into()),
+        },
+    )
+    .unwrap();
+    assert_eq!(
+        reported
+            .participants
+            .worker
+            .progress
+            .as_ref()
+            .unwrap()
+            .phase,
+        ProgressPhase::PublishingExplainer
+    );
+    while claim::verify(
+        &channel.read().unwrap(),
+        Role::Worker,
+        "session-one",
+        &first.token,
+    )
+    .is_ok()
+    {
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+
+    // The next epoch reports nothing until it reports something.
+    let head = channel.read().unwrap();
+    let second =
+        claim::reclaim(&channel, Role::Worker, "session-two", 1800, head.revision).unwrap();
+    assert_eq!(second.epoch, 2);
+    let after = channel.read().unwrap();
+    assert!(
+        after.participants.worker.progress.is_none(),
+        "a reclaim must not present the previous session's activity as current"
+    );
+}
