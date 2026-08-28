@@ -220,6 +220,40 @@ impl RunChannel {
         })
     }
 
+    /// Rewrite an unreadable publication policy to the canonical readable one and
+    /// reset the current obligation's receipts. This is a control-plane repair,
+    /// so it bypasses the ordinary edge kinds rather than pretending to be one.
+    pub(crate) fn repair_publication_policy(
+        &self,
+        expected_revision: u64,
+    ) -> Result<RunBaton, StoreError> {
+        self.with_lock(|| {
+            let current = self.read()?;
+            if current.revision != expected_revision {
+                return Err(StoreError::RevisionConflict {
+                    expected: expected_revision,
+                    actual: current.revision,
+                });
+            }
+            require_current_schema(&current)?;
+            if matches!(current.status, Status::Done | Status::Abandoned) {
+                return Err(StoreError::TerminalState);
+            }
+            let mut next = current.clone();
+            next.revision = current.revision + 1;
+            next.publication_policy = Some(crate::model::PublicationPolicy::fixed());
+            if let Some(binding) = next.publication_binding.as_mut() {
+                binding.artifact = None;
+                binding.deployment = None;
+                binding.review = None;
+            }
+            validate_baton(&next)?;
+            self.write_history(&next)?;
+            self.install(&next)?;
+            Ok(next)
+        })
+    }
+
     pub fn recover(&self, from_revision: u64) -> Result<RunBaton, StoreError> {
         self.with_lock(|| {
             let history_dir = self.directory.join("history");
@@ -799,6 +833,9 @@ fn valid_v2_edge_kind(current: &RunBaton, next: &RunBaton) -> bool {
     {
         return false;
     }
+    if valid_publication_policy_repair_edge(current, next) {
+        return true;
+    }
     if current_binding.obligation != next_binding.obligation {
         return current_binding.site_id == next_binding.site_id
             && next_binding.deployment.is_none()
@@ -815,6 +852,37 @@ fn valid_v2_edge_kind(current: &RunBaton, next: &RunBaton) -> bool {
         || valid_finalize_edge(current, next, current_binding)
         || valid_abandon_edge(current, next)
         || valid_recovery_successor_edge(current, next)
+}
+
+/// Control-plane repair: an unreadable policy is replaced by the canonical
+/// readable one and the current obligation's receipts are dropped so the
+/// publisher restages onto the channel the reviewer can actually open.
+fn valid_publication_policy_repair_edge(current: &RunBaton, next: &RunBaton) -> bool {
+    if is_terminal(current) {
+        return false;
+    }
+    let current_policy = current
+        .publication_policy
+        .clone()
+        .unwrap_or_else(crate::model::PublicationPolicy::fixed);
+    if current_policy.reviewer_can_read()
+        || next.publication_policy != Some(crate::model::PublicationPolicy::fixed())
+    {
+        return false;
+    }
+    let Some(next_binding) = next.publication_binding.as_ref() else {
+        return false;
+    };
+    if next_binding.artifact.is_some()
+        || next_binding.deployment.is_some()
+        || next_binding.review.is_some()
+    {
+        return false;
+    }
+    only_fields_changed(current, next, |expected| {
+        expected.publication_policy = next.publication_policy.clone();
+        expected.publication_binding = next.publication_binding.clone();
+    })
 }
 
 fn valid_publication_receipt_edge(

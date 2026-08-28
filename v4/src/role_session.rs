@@ -4,6 +4,7 @@ use std::{
 };
 
 use serde::Serialize;
+use sha2::Digest;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -17,8 +18,8 @@ use crate::{
     },
     identity::{self, IdentityError},
     model::{
-        normalize_participants, DeliverableRequirement, ExternalRef, ModelError, RunBaton, Status,
-        TaskIdentity, LEGACY_SCHEMA,
+        normalize_participants, DeliverableRequirement, ExternalRef, ModelError,
+        ParticipantProgress, RunBaton, Status, TaskIdentity, LEGACY_SCHEMA,
     },
     next_action::{self, NextActions},
     store::{require_current_schema, RunChannel, StoreError},
@@ -80,6 +81,23 @@ pub enum RoleStartResult {
     Started(Box<StartedRole>),
     Discovery(DiscoveryOutcome),
     Upgrade(UpgradeRequiredRole),
+    PublicationUnreadable(UnreadablePublicationRole),
+}
+
+/// A run whose publication policy names a reviewer that cannot read the
+/// publisher's channel can never reach an explainer review. Surface it before
+/// any claim, rather than after the publisher has already spent a deployment.
+#[derive(Debug, Serialize)]
+pub struct UnreadablePublicationRole {
+    pub outcome: &'static str,
+    pub run_id: String,
+    pub run_dir: PathBuf,
+    pub revision: u64,
+    pub publication_policy: crate::model::PublicationPolicy,
+    pub reason: &'static str,
+    pub next_action: &'static str,
+    pub next_actions: [&'static str; 1],
+    pub actionable: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -120,8 +138,37 @@ pub struct RoleSnapshot {
     #[serde(flatten)]
     pub baton: RunBaton,
     pub run_dir: PathBuf,
+    pub peer: PeerStatus,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub explainer: Option<StagedExplainer>,
     #[serde(flatten)]
     pub actions: NextActions,
+}
+
+/// What the other role is doing right now. Without this a worker can only see
+/// an unfulfilled obligation and a lease timestamp, and cannot tell a peer that
+/// is mid-way through a long publication from one that died.
+#[derive(Debug, Serialize)]
+pub struct PeerStatus {
+    pub role: &'static str,
+    pub harness: String,
+    pub claim_state: ClaimState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lease_expires_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<ParticipantProgress>,
+}
+
+/// Absolute location of the digest-bound explainer bytes for the current
+/// obligation, so the reviewing role can read exactly what was staged.
+#[derive(Debug, Serialize)]
+pub struct StagedExplainer {
+    pub source_digest: String,
+    pub path: PathBuf,
+    pub media_type: String,
+    pub byte_length: u64,
+    pub channel: String,
+    pub access: String,
 }
 
 #[derive(Clone, Copy)]
@@ -363,6 +410,36 @@ fn is_revision_conflict(error: &RoleSessionError) -> bool {
     )
 }
 
+/// Capability preflight: refuse to join a run whose reviewer cannot read the
+/// channel its publisher must use.
+fn publication_preflight(
+    candidate: &crate::discovery::RunCandidate,
+) -> Result<(), RoleStartResult> {
+    let Ok(baton) = RunChannel::open(&candidate.run_dir).read() else {
+        return Ok(());
+    };
+    let policy = baton
+        .publication_policy
+        .clone()
+        .unwrap_or_else(crate::model::PublicationPolicy::fixed);
+    if policy.reviewer_can_read() {
+        return Ok(());
+    }
+    Err(RoleStartResult::PublicationUnreadable(
+        UnreadablePublicationRole {
+            outcome: "publication_unreadable",
+            run_id: baton.run_id,
+            run_dir: candidate.run_dir.clone(),
+            revision: baton.revision,
+            publication_policy: policy,
+            reason: "the reviewing harness cannot read the publisher's channel at this access level",
+            next_action: "repair_publication_policy",
+            next_actions: ["repair_publication_policy"],
+            actionable: true,
+        },
+    ))
+}
+
 fn start_candidate(
     candidate: crate::discovery::RunCandidate,
     credentials_root: &Path,
@@ -370,6 +447,11 @@ fn start_candidate(
     session_id: &str,
     lease_seconds: u64,
 ) -> Result<RoleStartResult, RoleSessionError> {
+    if !matches!(candidate.status, Status::Done | Status::Abandoned) {
+        if let Err(unreadable) = publication_preflight(&candidate) {
+            return Ok(unreadable);
+        }
+    }
     if matches!(candidate.status, Status::Done | Status::Abandoned) {
         let baton = RunChannel::open(&candidate.run_dir).read()?;
         require_current_schema(&baton)?;
@@ -713,11 +795,103 @@ fn snapshot(baton: RunBaton, run_dir: &Path, role: Role) -> RoleSnapshot {
         Role::Reviewer => &baton.participants.reviewer.harness,
     };
     let actions = next_action::classify(&baton, role, harness);
+    let run_dir = std::fs::canonicalize(run_dir).unwrap_or_else(|_| run_dir.to_owned());
+    let peer = peer_status(&baton, role);
+    let explainer = baton
+        .publication_binding
+        .as_ref()
+        .and_then(|binding| binding.artifact.as_ref())
+        .map(|artifact| StagedExplainer {
+            source_digest: artifact.source_digest.clone(),
+            path: run_dir.join(&artifact.path),
+            media_type: artifact.media_type.clone(),
+            byte_length: artifact.byte_length,
+            channel: artifact.channel.clone(),
+            access: artifact.access.clone(),
+        });
     RoleSnapshot {
         baton,
-        run_dir: std::fs::canonicalize(run_dir).unwrap_or_else(|_| run_dir.to_owned()),
+        run_dir,
+        peer,
+        explainer,
         actions,
     }
+}
+
+fn peer_status(baton: &RunBaton, role: Role) -> PeerStatus {
+    let (peer_role, participant) = match role {
+        Role::Worker => ("reviewer", &baton.participants.reviewer),
+        Role::Reviewer => ("worker", &baton.participants.worker),
+    };
+    let claim_state = match participant.claim.as_ref() {
+        None => ClaimState::Unclaimed,
+        Some(claim) => {
+            match time::OffsetDateTime::parse(
+                &claim.lease_expires_at,
+                &time::format_description::well_known::Rfc3339,
+            ) {
+                Ok(expiry) if expiry > time::OffsetDateTime::now_utc() => ClaimState::Busy,
+                _ => ClaimState::Expired,
+            }
+        }
+    };
+    PeerStatus {
+        role: peer_role,
+        harness: participant.harness.clone(),
+        claim_state,
+        lease_expires_at: participant
+            .claim
+            .as_ref()
+            .map(|claim| claim.lease_expires_at.clone()),
+        progress: participant.progress.clone(),
+    }
+}
+
+/// Broker the staged explainer bytes through the facade so a role never reads
+/// run-directory files directly, and always verifies the digest it was handed.
+pub fn read_explainer(
+    run_dir: &Path,
+    credentials_root: &Path,
+    role: Role,
+    session_id: &str,
+) -> Result<StagedExplainerContents, RoleSessionError> {
+    let snapshot = read(run_dir, credentials_root, role, session_id)?;
+    let staged = snapshot
+        .explainer
+        .ok_or_else(|| RoleSessionError::Invalid("no explainer bytes are staged".to_owned()))?;
+    let bytes = std::fs::read(&staged.path).map_err(StoreError::Io)?;
+    let digest = format!("{:x}", sha2::Sha256::digest(&bytes));
+    if digest != staged.source_digest {
+        return Err(RoleSessionError::Invalid(
+            "staged explainer bytes do not match their recorded digest".to_owned(),
+        ));
+    }
+    let contents = String::from_utf8(bytes).map_err(|_| {
+        RoleSessionError::Invalid("staged explainer bytes are not valid UTF-8".to_owned())
+    })?;
+    Ok(StagedExplainerContents {
+        obligation: snapshot
+            .baton
+            .publication_binding
+            .as_ref()
+            .map(|binding| binding.obligation.clone()),
+        source_digest: staged.source_digest,
+        path: staged.path,
+        media_type: staged.media_type,
+        byte_length: staged.byte_length,
+        contents,
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct StagedExplainerContents {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub obligation: Option<crate::model::HandoffObligation>,
+    pub source_digest: String,
+    pub path: PathBuf,
+    pub media_type: String,
+    pub byte_length: u64,
+    pub contents: String,
 }
 
 fn load_for_run(
@@ -813,6 +987,46 @@ pub fn reclaim(
         credential,
         committed_baton: grant.committed_baton,
     })
+}
+
+/// Swap an unreadable publication policy for the canonical channel both
+/// harnesses can read, and reset the current obligation's receipts so the
+/// publisher restages against the new channel. Never touches semantic scope.
+pub fn repair_publication_policy(
+    run_dir: &Path,
+    role: Role,
+    session_id: &str,
+    expected_revision: u64,
+) -> Result<RunBaton, RoleSessionError> {
+    if session_id.trim().is_empty() {
+        return Err(RoleSessionError::Invalid(
+            "repair session id must not be blank".to_owned(),
+        ));
+    }
+    let channel = RunChannel::open(run_dir);
+    let baton = channel.read()?;
+    require_current_schema(&baton)?;
+    if baton.revision != expected_revision {
+        return Err(StoreError::RevisionConflict {
+            expected: expected_revision,
+            actual: baton.revision,
+        }
+        .into());
+    }
+    if matches!(baton.status, Status::Done | Status::Abandoned) {
+        return Err(ClaimError::Terminal.into());
+    }
+    let policy = baton
+        .publication_policy
+        .clone()
+        .unwrap_or_else(crate::model::PublicationPolicy::fixed);
+    if policy.reviewer_can_read() {
+        return Err(RoleSessionError::Invalid(
+            "publication policy is already reviewer-readable".to_owned(),
+        ));
+    }
+    let _ = role;
+    Ok(channel.repair_publication_policy(expected_revision)?)
 }
 
 pub fn upgrade(

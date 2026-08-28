@@ -330,6 +330,33 @@ enum RoleCommand {
         #[arg(long)]
         credentials_root: PathBuf,
     },
+    /// Replace an unreadable publication policy with the canonical channel both
+    /// harnesses can read.
+    RepairPolicy {
+        #[arg(long)]
+        api: u32,
+        #[arg(long)]
+        run_dir: PathBuf,
+        #[arg(long)]
+        role: Role,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        expected_revision: u64,
+    },
+    /// Read the digest-bound explainer bytes staged for the current obligation.
+    Explainer {
+        #[arg(long)]
+        api: u32,
+        #[arg(long)]
+        run_dir: PathBuf,
+        #[arg(long)]
+        role: Role,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        credentials_root: PathBuf,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -655,6 +682,36 @@ pub fn run() -> Result<(), CliError> {
                     expected_revision,
                 )?;
                 println!("{}", serde_json::to_string_pretty(&baton)?);
+                Ok(())
+            }
+            RoleCommand::RepairPolicy {
+                api,
+                run_dir,
+                role,
+                session_id,
+                expected_revision,
+            } => {
+                require_role_api(api)?;
+                let baton = role_session::repair_publication_policy(
+                    &run_dir,
+                    role,
+                    &session_id,
+                    expected_revision,
+                )?;
+                println!("{}", serde_json::to_string_pretty(&baton)?);
+                Ok(())
+            }
+            RoleCommand::Explainer {
+                api,
+                run_dir,
+                role,
+                session_id,
+                credentials_root,
+            } => {
+                require_role_api(api)?;
+                let staged =
+                    role_session::read_explainer(&run_dir, &credentials_root, role, &session_id)?;
+                println!("{}", serde_json::to_string_pretty(&staged)?);
                 Ok(())
             }
         },
