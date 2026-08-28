@@ -34,13 +34,15 @@ Vadi immediately returns the canonical run ID and this exact peer prompt:
 Act as prativadi and join Dvandva run <run-id>.
 ```
 
-The vadi submits one complete immutable checkpoint for canonical scope. At
-every handoff, the Codex-harness participant stages the explainer's bytes into
-the run directory and the Claude-harness participant reads and reviews those
-exact digest-bound bytes, independent of which harness is vadi. A Codex Sites
-deployment is an optional human-facing rendering of the same bytes. Only
-finalization waits on that gate, so a finished deliverable can always be
-checkpointed. The explainer plan is the live TODO list; the Baton remains
+The vadi submits one complete immutable checkpoint for canonical scope. Each
+handoff opens an obligation; for the run's current obligation, the Codex-harness
+participant stages the explainer's bytes into the run directory and the
+Claude-harness participant reads and reviews those exact digest-bound bytes,
+independent of which harness is vadi. A new handoff replaces the obligation, so
+the enforced guarantee is that the current one is staged and reviewed before
+finalization. A Codex Sites deployment is an optional human-facing rendering of
+the same bytes. Only finalization waits on that gate, so a finished deliverable
+can always be checkpointed. The explainer plan is the live TODO list; the Baton remains
 authoritative.
 
 The sessions coordinate only through the local run. Neither harness invokes

@@ -9,6 +9,7 @@ start SESSION CURRENT_HARNESS PEER_HARNESS WORKSPACE [OBJECTIVE [TASK]] [--objec
 read  SESSION RUN_DIR
 apply SESSION RUN_DIR EXPECTED_REVISION ACTION_FILE
 wait  SESSION RUN_DIR AFTER_REVISION [TIMEOUT_MS]
+poll  SESSION RUN_DIR AFTER_REVISION [MAX_MS]
 heartbeat SESSION RUN_DIR EXPECTED_REVISION
 explainer SESSION RUN_DIR
 analysis SESSION RUN_DIR DIGEST
@@ -87,7 +88,7 @@ with `stage_analysis`, then cite the digests it records:
 ```
 
 ```json
-{"type":"submit_checkpoint","checkpoint":{"kind":"analysis","identity":"<sha256 of the analysis>","deliverables":[{"id":"<canonical ID>","artifacts":[{"kind":"analysis_digest","value":"<sha256 of the artifact>"}]}],"verification":["<exact command and result>"]}}
+{"type":"submit_checkpoint","checkpoint":{"kind":"analysis","identity":"<sha256 of the cited digests, sorted, deduplicated, newline-joined>","deliverables":[{"id":"<canonical ID>","artifacts":[{"kind":"analysis_digest","value":"<sha256 of the artifact>"}]}],"verification":["<exact command and result>"]}}
 ```
 
 Read staged analysis bytes back with `dvandva-role.sh analysis SESSION RUN_DIR
@@ -134,9 +135,9 @@ not returned by the Human Decision object and must never be inferred:
 
 ## Explainer obligation
 
-At every semantic handoff, the Codex harness stages the explainer's bytes into
-the run directory and the Claude harness reviews those exact bytes,
-regardless of semantic casting. Staging is first: the gate binds a digest, not a URL.
+Each semantic handoff opens an obligation. For the current one, the
+Codex harness stages the explainer's bytes into the run directory and the
+Claude harness reviews those exact bytes, regardless of semantic casting. Staging is first: the gate binds a digest, not a URL.
 A new handoff replaces the current obligation, so the gate requires the current
 obligation to be staged and reviewed, not every obligation the run has opened.
 The explainer carries this exact content:
@@ -211,8 +212,8 @@ invokes or wakes the other harness. User-created harness goals remain
 unchanged. Third-party and explicit-only skills, including Matt Pocock's
 skills, run only when the human explicitly invokes them in this session.
 
-After each handoff, report these exact fields and continue in a foreground
-local wait until terminal state or human stop:
+After each handoff, report these exact fields and, in the same turn, continue
+in a foreground local wait until terminal state or human stop:
 
 - What changed
 - What was verified
@@ -220,6 +221,10 @@ local wait until terminal state or human stop:
 - Who owns the next action
 - Exact command or prompt
 
-On timeout, read a fresh snapshot and wait again. Heartbeat before long
+The foreground wait is `poll`, which re-enters the kernel wait on every
+`idle_timeout` until a real wake, a terminal run, or its budget. When `poll`
+returns with `wait_outcome: idle_timeout`, call it again immediately; on any
+other outcome, read a fresh snapshot and act. Ending the turn is not a wait: it
+stops the poll, lets the lease lapse, and stalls the peer. Heartbeat before long
 authorized work. Keep action files private (mode 0600), exclude credentials,
 and delete them after `apply`.

@@ -303,6 +303,35 @@ run_dir_command() {
       "$binary" role wait "${common[@]}" --after-revision "$1" \
         --timeout-ms "${2:-300000}"
       ;;
+    poll)
+      # A foreground wait that survives the kernel's own timeout. An idle
+      # timeout is not a reason to yield: it re-enters the wait at once and
+      # returns only on a real wake, a terminal run, or the caller's budget.
+      test "$#" -ge 1 && test "$#" -le 2 || {
+        printf 'usage: dvandva-role.sh poll SESSION RUN_DIR AFTER_REVISION [MAX_MS]\n' >&2
+        exit 2
+      }
+      local after="$1" budget_ms="${2:-540000}" started_ms now_ms chunk_ms output outcome
+      started_ms="$(date +%s%3N)"
+      output=""
+      while :; do
+        now_ms="$(date +%s%3N)"
+        chunk_ms=$((budget_ms - (now_ms - started_ms)))
+        if test "$chunk_ms" -le 0; then
+          printf '%s\n' "$output"
+          exit 0
+        fi
+        test "$chunk_ms" -le 300000 || chunk_ms=300000
+        output="$("$binary" role wait "${common[@]}" --after-revision "$after" \
+          --timeout-ms "$chunk_ms")" || exit $?
+        outcome="$(printf '%s' "$output" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("wait_outcome",""))')"
+        if test "$outcome" != idle_timeout; then
+          printf '%s\n' "$output"
+          exit 0
+        fi
+        after="$(printf '%s' "$output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["revision"])')"
+      done
+      ;;
     heartbeat)
       test "$#" -eq 1 || {
         printf 'usage: dvandva-role.sh heartbeat SESSION RUN_DIR REVISION\n' >&2
@@ -334,8 +363,7 @@ run_dir_command() {
           exit 2
           ;;
       esac
-      "$binary" role repair-policy --api "$role_api" --run-dir "$run_dir" \
-        --role "$role" --session-id "$session" \
+      "$binary" role repair-policy "${common[@]}" \
         --current-harness "$1" --peer-harness "$2" --expected-revision "$3"
       ;;
   esac
@@ -367,7 +395,7 @@ case "$operation" in
     require_kernel
     start_role "$@"
     ;;
-  read|claim|reclaim|apply|wait|heartbeat|explainer|analysis|repair-policy)
+  read|claim|reclaim|apply|wait|poll|heartbeat|explainer|analysis|repair-policy)
     require_kernel
     run_dir_command "$operation" "$@"
     ;;
@@ -376,7 +404,7 @@ case "$operation" in
     upgrade_role "$@"
     ;;
   *)
-    printf 'usage: dvandva-role.sh {session-id|probe|start|read|claim|reclaim|apply|wait|heartbeat|explainer|analysis|repair-policy|upgrade} ...\n' >&2
+    printf 'usage: dvandva-role.sh {session-id|probe|start|read|claim|reclaim|apply|wait|poll|heartbeat|explainer|analysis|repair-policy|upgrade} ...\n' >&2
     exit 2
     ;;
 esac

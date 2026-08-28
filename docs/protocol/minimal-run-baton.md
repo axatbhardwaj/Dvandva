@@ -90,10 +90,10 @@ the next mutation. Tokens remain private to each role facade.
 
 ## Rolling explainer gate
 
-At every semantic handoff the Codex-harness participant stages the current
-explainer's bytes into the run directory, and the Claude-harness participant
-reads those exact bytes back through the facade and reviews them, independent of
-worker/reviewer casting. The explainer contains canonical scope, the complete
+Each semantic handoff opens an obligation. For the run's current obligation the
+Codex-harness participant stages the explainer's bytes into the run directory,
+and the Claude-harness participant reads those exact bytes back through the
+facade and reviews them, independent of worker/reviewer casting. The explainer contains canonical scope, the complete
 manifest, findings and decisions, and a current plan/TODO.
 
 A new handoff replaces the current obligation, so the gate binds the current

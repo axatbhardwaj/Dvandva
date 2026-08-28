@@ -241,6 +241,9 @@ do
     'user-created harness goals remain unchanged' \
     'human starts the peer session' \
     'foreground local wait' \
+    'Ending the turn is not a wait' \
+  'Ending the turn is not a wait' \
+  'poll  SESSION RUN_DIR AFTER_REVISION' \
     'upgrade_required' \
     'upgrade SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION' \
     'repair-policy SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION' \

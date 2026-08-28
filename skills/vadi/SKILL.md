@@ -23,9 +23,16 @@ that returned prompt; never invoke or wake the peer harness.
    `advisory_actions` authorizes `work`; apply a mutation only when it appears
    in `legal_actions`.
 3. Verify and checkpoint the complete canonical scope, satisfy any
-   harness-specific explainer duty, report the five-part handoff, then enter a
-   foreground local wait.
-4. Repeat from a fresh snapshot. Stop only on terminal state or human stop.
+   harness-specific explainer duty, report the five-part handoff, then in the
+   same turn enter a foreground local wait with `dvandva-role.sh poll`.
+4. When `poll` returns `wait_outcome: idle_timeout`, call it again at once.
+   On every other wake, repeat from a fresh snapshot. Stop only on terminal
+   state or human stop.
+
+Ending the turn is not a wait. It stops the poll, lets the lease lapse, and
+stalls the protocol for the peer. Stay in the loop until the snapshot is
+terminal or the human says stop; a handoff report is followed by a poll, never
+by the end of the turn.
 
 `request_human_decision` is the sole documented exception to `next_actions`:
 choose it from `legal_actions` only for new human scope or genuine ambiguity
