@@ -12,7 +12,8 @@
 //! The kill lands at ramping offsets so the writer is interrupted at many
 //! different points, including inside history staging and inside head install.
 
-use std::{path::Path, process::Command, time::Duration};
+use std::os::unix::process::ExitStatusExt;
+use std::{path::Path, process::Command};
 
 fn kernel() -> &'static str {
     env!("CARGO_BIN_EXE_dvandva-v4")
@@ -49,18 +50,22 @@ fn inspect(run_dir: &Path) -> Result<&'static str, String> {
     }
 }
 
+/// Die at each atomicity boundary in turn, deterministically, and require that
+/// a reader never sees a partial or unbacked run. Scheduler-timed kills could
+/// pass without ever reaching the write; a failpoint proves the boundary was hit.
 #[test]
-fn an_abruptly_killed_writer_never_exposes_a_partial_revision() {
-    let mut interrupted = 0usize;
-    let mut completed = 0usize;
-    let mut observed = Vec::new();
-
-    // Ramp across the window in which creation stages and installs, so the kill
-    // lands before, during, and after each write.
-    for step in 0..40 {
+fn dying_at_each_staging_boundary_never_exposes_a_partial_revision() {
+    // `during_history_stage`: the revision is written but not yet linked into
+    // place. `after_history_stage`: the revision is linked, but no head is
+    // installed. Both must be invisible to a reader.
+    for (failpoint, expected) in [
+        ("during_history_stage", "nothing"),
+        ("after_history_stage", "revision-only"),
+    ] {
         let dir = tempfile::tempdir().unwrap();
         let run_dir = dir.path().join("run-a");
-        let mut child = Command::new(kernel())
+        let status = Command::new(kernel())
+            .env("DVANDVA_TEST_FAILPOINT", failpoint)
             .args([
                 "init",
                 "--run-dir",
@@ -78,39 +83,50 @@ fn an_abruptly_killed_writer_never_exposes_a_partial_revision() {
                 "--required-deliverable",
                 "implementation=output",
             ])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .spawn()
+            .status()
             .unwrap();
 
-        std::thread::sleep(Duration::from_micros(50 * step));
-        // Uncatchable and never dumped: the writer gets no chance to clean up.
-        let killed_before_exit = child.try_wait().unwrap().is_none();
-        let _ = child.kill();
-        let status = child.wait().unwrap();
+        // The writer really died at the boundary, abruptly and without a core.
+        assert_eq!(
+            status.code(),
+            Some(137),
+            "{failpoint} did not stop the writer at its boundary"
+        );
+        assert_eq!(
+            status.signal(),
+            None,
+            "an intentional injection must not terminate the host abnormally"
+        );
+        assert_eq!(
+            inspect(&run_dir).unwrap_or_else(|error| panic!("{failpoint}: {error}")),
+            expected,
+            "{failpoint} left a state a reader must never see"
+        );
 
-        if killed_before_exit && !status.success() {
-            interrupted += 1;
-        } else {
-            completed += 1;
-        }
-
-        match inspect(&run_dir) {
-            Ok(state) => observed.push(state),
-            Err(error) => panic!("step {step}: {error}"),
-        }
+        // Whatever was left behind, the next creation still succeeds.
+        let recovered = Command::new(kernel())
+            .args([
+                "init",
+                "--run-dir",
+                run_dir.to_str().unwrap(),
+                "--run-id",
+                "run-a",
+                "--objective",
+                "Interrupt staging",
+                "--worker",
+                "codex",
+                "--reviewer",
+                "claude",
+                "--repository-id",
+                "github.com/axatbhardwaj/dvandva",
+                "--required-deliverable",
+                "implementation=output",
+            ])
+            .status()
+            .unwrap();
+        assert!(recovered.success(), "{failpoint} wedged the next creation");
+        assert_eq!(inspect(&run_dir).unwrap(), "complete");
     }
-
-    assert!(
-        interrupted > 0,
-        "no iteration actually killed the writer mid-flight; the interruption is untested"
-    );
-    // Sanity: the ramp is wide enough to also let creation finish, so the test
-    // is exercising the whole window rather than only the earliest instant.
-    assert!(
-        completed > 0 || observed.contains(&"complete"),
-        "the ramp never reached a completed creation, so late writes are untested"
-    );
 }
 
 /// A staging temporary left behind by a killed writer must not wedge the next

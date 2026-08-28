@@ -78,6 +78,7 @@ impl RunChannel {
                 return Err(StoreError::RunExists);
             }
             self.write_history(initial)?;
+            test_failpoint("after_history_stage");
             self.install(initial)?;
             Ok(initial.clone())
         })
@@ -484,7 +485,22 @@ impl RunChannel {
             file.write_all(&bytes)?;
             file.write_all(b"\n")?;
             file.sync_all()?;
-            fs::hard_link(&temporary, &path)?;
+            test_failpoint("during_history_stage");
+            match fs::hard_link(&temporary, &path) {
+                Ok(()) => {}
+                // A writer that died after linking this revision but before
+                // installing the head leaves it already in place. Re-writing the
+                // identical revision is the resumption of that same write, not a
+                // conflict; different content is a genuine inconsistency.
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let mut written = bytes.clone();
+                    written.push(b'\n');
+                    if fs::read(&path)? != written {
+                        return Err(error);
+                    }
+                }
+                Err(error) => return Err(error),
+            }
             Ok::<_, std::io::Error>(())
         })();
         if let Err(error) = staged {
@@ -1640,6 +1656,22 @@ fn validate_supported_schema(schema: &str) -> Result<(), StoreError> {
         Err(StoreError::UnsupportedSchema(schema.to_owned()))
     }
 }
+
+/// Die exactly here, on demand, for crash-atomicity tests.
+///
+/// `_exit` is abrupt in the way a real crash is: no unwinding, no destructors,
+/// no flushing — and, unlike a fatal signal, it produces no core dump and no
+/// desktop crash notification. Debug builds only, so a released kernel carries
+/// no way to trigger it.
+#[cfg(debug_assertions)]
+fn test_failpoint(name: &str) {
+    if std::env::var("DVANDVA_TEST_FAILPOINT").as_deref() == Ok(name) {
+        unsafe { libc::_exit(137) };
+    }
+}
+
+#[cfg(not(debug_assertions))]
+fn test_failpoint(_name: &str) {}
 
 /// Run state is private regardless of the caller's umask: `access: run_private`
 /// is a promise about the bytes on disk, not about how a process happened to be
