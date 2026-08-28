@@ -2,18 +2,11 @@ use serde::Deserialize;
 
 use std::path::PathBuf;
 
-use crate::model::{
-    CheckpointSubmission, DeliverableRequirement, ExternalRef, HandoffObligation, ProgressPhase,
-};
+use crate::model::{CheckpointSubmission, ExternalRef, HandoffObligation, ProgressPhase};
 
-#[derive(Debug, Deserialize)]
-pub struct ScopeAmendment {
-    pub objective: String,
-    #[serde(default)]
-    pub objective_refs: Vec<ExternalRef>,
-    pub task_reference: Option<String>,
-    pub scope_deliverables: Vec<DeliverableRequirement>,
-}
+/// A human-approved replacement scope. The same shape a decision's proposals
+/// use, so choosing a proposal and amending scope are one operation.
+pub type ScopeAmendment = crate::model::ScopeProposal;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -118,6 +111,10 @@ pub struct HumanDecisionRequest {
     pub question: String,
     pub evidence: Vec<String>,
     pub options: Vec<String>,
+    /// One concrete scope per option. Makes a scope decision a choice the kernel
+    /// can apply; required in autonomous runs.
+    #[serde(default)]
+    pub proposals: Vec<ScopeAmendment>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]

@@ -104,6 +104,11 @@ pub struct ParticipantClaim {
     pub session_id: String,
     pub epoch: u64,
     pub token_digest: String,
+    /// sha256 of a nonce held only in the claimant's private credentials root,
+    /// written before the claim was installed. Recovering an orphaned claim
+    /// requires presenting it, so a public session id alone proves nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_digest: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease_started_at: Option<String>,
     pub lease_expires_at: String,
@@ -395,13 +400,34 @@ pub enum HumanDecisionKind {
     Authority,
 }
 
-/// Why the kernel itself parked a run. Only a decision that carries structured
-/// provenance may be answered by the recovery that fixes its cause; a decision
-/// a role asked on its own account is never answered by anything but a human.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+/// How a run is allowed to interact with its human. An autonomous run admits a
+/// pause only as a choice between concrete scope proposals the kernel can apply
+/// itself, so there is no admissible shape for "please approve".
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum DecisionCause {
-    PublicationUnreadable,
+pub enum InteractionMode {
+    #[default]
+    Attended,
+    Autonomous,
+}
+
+/// A concrete alternative scope a human may choose; applying it is a scope
+/// amendment, so a choice among proposals is a kernel-verifiable effect.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScopeProposal {
+    pub objective: String,
+    #[serde(default)]
+    pub objective_refs: Vec<ExternalRef>,
+    pub task_reference: Option<String>,
+    pub scope_deliverables: Vec<DeliverableRequirement>,
+}
+
+/// Decisions written by this kernel. Version 1 is anything recorded before
+/// decisions were choices, and keeps its original resolution rules.
+pub const DECISION_VERSION: u32 = 2;
+
+fn legacy_decision_version() -> u32 {
+    1
 }
 
 impl HumanDecisionKind {
@@ -420,10 +446,14 @@ pub struct HumanDecision {
     /// Defaults to `scope` so runs created before decisions were typed load.
     #[serde(default = "default_human_decision_kind")]
     pub kind: HumanDecisionKind,
-    /// Present only when the kernel parked the run for a reason it can also
-    /// repair; absent for every decision a role requested.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub cause: Option<DecisionCause>,
+    /// Which resolution rules apply. Absent on decisions written before choices
+    /// were enforced, which therefore resolve under their original rules.
+    #[serde(default = "legacy_decision_version")]
+    pub version: u32,
+    /// One concrete scope per option, when the decision is a choice of scope
+    /// the kernel applies itself. Required in autonomous runs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proposals: Vec<ScopeProposal>,
     pub question: String,
     pub requested_by: String,
     pub evidence: Vec<String>,
@@ -477,6 +507,8 @@ pub struct RunBaton {
     pub workspace: Option<WorkspaceIdentity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task: Option<TaskIdentity>,
+    #[serde(default)]
+    pub interaction: InteractionMode,
     pub participants: Participants,
     pub status: Status,
     pub assignee: Assignee,
@@ -530,6 +562,7 @@ impl RunBaton {
             },
             workspace: None,
             task: None,
+            interaction: InteractionMode::Attended,
             participants: Participants {
                 worker: Participant {
                     harness: worker_harness,

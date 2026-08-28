@@ -85,6 +85,19 @@ impl RunChannel {
     }
 
     pub fn read(&self) -> Result<RunBaton, StoreError> {
+        let head = self.read_head()?;
+        // A revision recorded ahead of the head is an install a writer died in
+        // the middle of. Finish it before answering, so no reader — discovery,
+        // an exact start, a snapshot — acts on a stale head. Never re-enter the
+        // lock: a caller already holding it reconciled when it acquired it.
+        if !holding_run_lock() && self.read_history_revision(head.revision + 1).is_ok() {
+            self.with_lock(|| Ok(()))?;
+            return self.read_head();
+        }
+        Ok(head)
+    }
+
+    fn read_head(&self) -> Result<RunBaton, StoreError> {
         let path = self.baton_path();
         if !path.exists() {
             return Err(StoreError::RunMissing);
@@ -325,9 +338,18 @@ impl RunChannel {
             // a human decision open that nobody needs to make.
             if next.status == Status::HumanDecision {
                 if let Some(decision) = next.human_decision.as_mut() {
-                    let parked_by_this = decision.answer.is_none()
-                        && decision.cause
-                            == Some(crate::model::DecisionCause::PublicationUnreadable);
+                    // Only a decision recorded under the released rules, while the
+                    // policy was unreadable — the shape the released kernel left the
+                    // PR-914 run in. A current-version decision is never answered
+                    // here: this kernel refuses to park on a repairable condition,
+                    // so any current decision is a role's own question.
+                    let legacy_incident = decision.version < crate::model::DECISION_VERSION
+                        && !current
+                            .publication_policy
+                            .clone()
+                            .unwrap_or_else(crate::model::PublicationPolicy::fixed)
+                            .reviewer_can_read();
+                    let parked_by_this = decision.answer.is_none() && legacy_incident;
                     if parked_by_this {
                         decision.answer =
                             Some("resolved autonomously: publication policy repaired".to_owned());
@@ -510,8 +532,13 @@ impl RunChannel {
         lock.lock_exclusive()
             .map_err(StoreError::from)
             .map_err(E::from)?;
-        self.reconcile_interrupted_install().map_err(E::from)?;
-        let result = operation();
+        HOLDING_RUN_LOCK.with(|flag| flag.set(true));
+        let reconciled = self.reconcile_interrupted_install();
+        let result = match reconciled {
+            Ok(()) => operation(),
+            Err(error) => Err(E::from(error)),
+        };
+        HOLDING_RUN_LOCK.with(|flag| flag.set(false));
         FileExt::unlock(&lock)
             .map_err(StoreError::from)
             .map_err(E::from)?;
@@ -546,17 +573,27 @@ impl RunChannel {
         // An unreadable or missing head is not this function's problem: the
         // operation that follows will report it, and recovery in particular
         // must be able to run over a corrupt head.
-        let Ok(head) = self.read() else {
+        let Ok(head) = self.read_head() else {
             return Ok(());
         };
         let ahead = head.revision + 1;
         let Ok(next) = self.read_history_revision(ahead) else {
             return Ok(());
         };
-        if next.revision != ahead || validate_history_edge(&head, &next).is_err() {
-            return Ok(());
+        // Finishing an install advances state, so it is held to the same
+        // standard as any other append: the recorded prefix must justify the
+        // head, the orphan must be exactly one revision, and its edge must be a
+        // valid live edge. Anything else is corruption and is refused here
+        // rather than after the state has moved.
+        let (validated, high) = self.validated_history_head()?;
+        if high != ahead || validated != next || self.read_history_revision(head.revision)? != head
+        {
+            return Err(StoreError::InvalidHistory);
         }
-        self.install(&next)
+        validate_history_edge(&head, &next)?;
+        self.install(&next)?;
+        self.scavenge_staging_temporaries();
+        Ok(())
     }
 
     /// Remove staging temporaries left by writers that died mid-write. Only the
@@ -1059,6 +1096,16 @@ fn validate_migration_edge(current: &RunBaton, next: &RunBaton) -> Result<(), St
 }
 
 thread_local! {
+    /// Set while this thread holds a run lock, so a read inside the locked
+    /// section never tries to take the lock again.
+    static HOLDING_RUN_LOCK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+fn holding_run_lock() -> bool {
+    HOLDING_RUN_LOCK.with(|flag| flag.get())
+}
+
+thread_local! {
     /// Set while validating revisions already on disk. Stored history written by
     /// earlier kernels is read with the rules those kernels had; a live append
     /// is always held to the current rules, so leniency never becomes a bypass.
@@ -1162,8 +1209,7 @@ fn valid_publication_policy_repair_edge(current: &RunBaton, next: &RunBaton) -> 
     }
     let resumed_parked_decision = current.status == Status::HumanDecision
         && current.human_decision.as_ref().is_some_and(|decision| {
-            decision.answer.is_none()
-                && decision.cause == Some(crate::model::DecisionCause::PublicationUnreadable)
+            decision.answer.is_none() && decision.version < crate::model::DECISION_VERSION
         })
         && next.human_decision.as_ref().is_some_and(|decision| {
             decision.answer.is_some()
@@ -1436,6 +1482,10 @@ fn valid_human_decision_request_edge(current: &RunBaton, next: &RunBaton) -> boo
         || !valid_resume_target(&decision.resume_status, &decision.resume_assignee)
         || next.status != Status::HumanDecision
         || next.assignee != Assignee::Human
+        // A live append records a current-version decision; only stored
+        // history may carry the older, plainer rules.
+        || (!validating_stored_edge() && decision.version != crate::model::DECISION_VERSION)
+        || !valid_decision_admission(current, decision)
     {
         return false;
     }
@@ -1444,6 +1494,52 @@ fn valid_human_decision_request_edge(current: &RunBaton, next: &RunBaton) -> boo
         expected.status = Status::HumanDecision;
         expected.assignee = Assignee::Human;
     })
+}
+
+/// What may be asked at all. Proposals, when present, are one per option and
+/// distinct; an autonomous run admits only a choice among scope proposals; and
+/// the decision just answered may not be asked again verbatim.
+fn valid_decision_admission(current: &RunBaton, decision: &crate::model::HumanDecision) -> bool {
+    let options_distinct = decision
+        .options
+        .iter()
+        .collect::<std::collections::HashSet<_>>()
+        .len()
+        == decision.options.len();
+    if !options_distinct {
+        return false;
+    }
+    if !decision.proposals.is_empty() {
+        let distinct = decision
+            .proposals
+            .iter()
+            .map(|proposal| serde_json::to_string(proposal).unwrap_or_default())
+            .collect::<std::collections::HashSet<_>>()
+            .len();
+        if decision.proposals.len() != decision.options.len()
+            || distinct != decision.proposals.len()
+            || decision.proposals.iter().any(|proposal| {
+                proposal.objective.trim().is_empty() || proposal.scope_deliverables.is_empty()
+            })
+        {
+            return false;
+        }
+    }
+    if current.interaction == crate::model::InteractionMode::Autonomous
+        && (decision.kind != crate::model::HumanDecisionKind::Scope
+            || decision.proposals.is_empty())
+    {
+        return false;
+    }
+    if current.human_decision.as_ref().is_some_and(|previous| {
+        previous.answer.is_some()
+            && previous.kind == decision.kind
+            && previous.question == decision.question
+            && previous.options == decision.options
+    }) {
+        return false;
+    }
+    true
 }
 
 fn valid_plain_human_decision_resume_edge(current: &RunBaton, next: &RunBaton) -> bool {
@@ -1478,7 +1574,7 @@ fn valid_plain_human_decision_resume_edge(current: &RunBaton, next: &RunBaton) -
     // amendment — and an intent or authority answer must appear as exactly one
     // new objective reference. Stored history keeps the older, plainer rule.
     let mut expected_refs = current.objective.refs.clone();
-    if !validating_stored_edge() {
+    if current_decision.version >= crate::model::DECISION_VERSION {
         let answer = next_decision.answer.as_deref().unwrap_or_default();
         if !current_decision
             .options
@@ -1717,7 +1813,7 @@ fn valid_scope_amended(current: &RunBaton, next: &RunBaton, binding: &Publicatio
     ) else {
         return false;
     };
-    if !validating_stored_edge()
+    if current_decision.version >= crate::model::DECISION_VERSION
         && !next_decision.answer.as_deref().is_some_and(|answer| {
             current_decision
                 .options

@@ -193,6 +193,7 @@ pub struct RoleStartRequest<'a> {
     pub timeout: Duration,
     pub new_run: bool,
     pub required_deliverables: &'a [DeliverableRequirement],
+    pub interaction: crate::model::InteractionMode,
 }
 
 /// A run with no live claim whose head has not moved for this long is treated as
@@ -336,6 +337,7 @@ fn start_with_retries(
             )?
             .with_discovery_identity(workspace_identity, task);
             baton.objective.refs = request.objective_refs.to_vec();
+            baton.interaction = request.interaction;
             RunChannel::open(&run_dir).create(&baton)?;
             start_created_run(&run_dir, &baton, request, remaining_conflicts)
         }
@@ -1024,7 +1026,18 @@ pub fn claim(
     require_current_schema(&baton)?;
     let canonical_run = std::fs::canonicalize(run_dir).map_err(StoreError::Io)?;
     credential_lock.prepare(&baton)?;
-    let grant = claim::claim(&channel, role, session_id, lease_seconds, expected_revision)?;
+    // A recovery nonce lives only in this private root, written before the
+    // claim exists. Its digest travels with the claim, so if the process dies
+    // before the token is stored, only this root can replace the claim.
+    let nonce = write_recovery_nonce(credentials_root, session_id, &baton.run_id, role)?;
+    let grant = claim::claim_with_recovery(
+        &channel,
+        role,
+        session_id,
+        lease_seconds,
+        expected_revision,
+        Some(claim::digest(&nonce)),
+    )?;
     let credential = Credential {
         run_dir: canonical_run,
         run_id: baton.run_id,
@@ -1176,7 +1189,15 @@ fn reclaim_own(
     require_current_schema(&baton)?;
     let canonical_run = std::fs::canonicalize(run_dir).map_err(StoreError::Io)?;
     credential_lock.prepare(&baton)?;
-    let grant = claim::reclaim_own(&channel, role, session_id, lease_seconds, expected_revision)?;
+    let nonce = read_recovery_nonce(credentials_root, session_id, &baton.run_id, role)?;
+    let grant = claim::reclaim_own(
+        &channel,
+        role,
+        session_id,
+        lease_seconds,
+        expected_revision,
+        &nonce,
+    )?;
     let credential = Credential {
         run_dir: canonical_run,
         run_id: baton.run_id,
@@ -1192,6 +1213,58 @@ fn reclaim_own(
         credential,
         committed_baton: grant.committed_baton,
     })
+}
+
+fn recovery_nonce_path(
+    credentials_root: &Path,
+    session_id: &str,
+    run_id: &str,
+    role: Role,
+) -> Result<PathBuf, RoleSessionError> {
+    let credential = credential::path(credentials_root, session_id, run_id, role)?;
+    let directory = credential
+        .parent()
+        .ok_or(CredentialError::UnsafeDirectory)?;
+    Ok(directory.join(format!(
+        ".{}.recovery",
+        match role {
+            Role::Worker => "worker",
+            Role::Reviewer => "reviewer",
+        }
+    )))
+}
+
+fn write_recovery_nonce(
+    credentials_root: &Path,
+    session_id: &str,
+    run_id: &str,
+    role: Role,
+) -> Result<String, RoleSessionError> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let path = recovery_nonce_path(credentials_root, session_id, run_id, role)?;
+    let nonce = Uuid::new_v4().to_string();
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(&path)
+        .map_err(StoreError::Io)?;
+    file.write_all(nonce.as_bytes()).map_err(StoreError::Io)?;
+    file.sync_all().map_err(StoreError::Io)?;
+    Ok(nonce)
+}
+
+fn read_recovery_nonce(
+    credentials_root: &Path,
+    session_id: &str,
+    run_id: &str,
+    role: Role,
+) -> Result<String, RoleSessionError> {
+    let path = recovery_nonce_path(credentials_root, session_id, run_id, role)?;
+    let nonce = crate::store::read_private_file(&path).map_err(|_| CredentialError::Missing)?;
+    String::from_utf8(nonce).map_err(|_| CredentialError::Missing.into())
 }
 
 pub fn upgrade(
@@ -1333,6 +1406,7 @@ mod tests {
             timeout: Duration::from_millis(1),
             new_run,
             required_deliverables: scope,
+            interaction: crate::model::InteractionMode::Attended,
         }
     }
 
@@ -1354,6 +1428,7 @@ mod tests {
                 question: "Use amended scope?".to_owned(),
                 evidence: vec!["new requirement".to_owned()],
                 options: vec!["yes".to_owned(), "no".to_owned()],
+                proposals: Vec::new(),
             }),
         )
         .unwrap();
@@ -1647,6 +1722,7 @@ mod tests {
                 question: "Use amended scope?".to_owned(),
                 evidence: vec!["new requirement".to_owned()],
                 options: vec!["yes".to_owned(), "no".to_owned()],
+                proposals: Vec::new(),
             }),
         )
         .unwrap();
@@ -1689,6 +1765,7 @@ mod tests {
             timeout: Duration::from_millis(1),
             new_run: false,
             required_deliverables: &original_scope,
+            interaction: crate::model::InteractionMode::Attended,
         };
         let first = start_candidate(candidate, &credentials, Role::Worker, "worker", 300);
         let result = retry_start_conflict(first, request, 2).unwrap();

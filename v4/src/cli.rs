@@ -235,6 +235,10 @@ enum RoleCommand {
         new_run: bool,
         #[arg(long = "required-deliverable")]
         required_deliverables: Vec<String>,
+        /// `attended` (default) or `autonomous`. An autonomous run admits a
+        /// human decision only as a choice among concrete scope proposals.
+        #[arg(long, default_value = "attended")]
+        interaction: String,
     },
     Claim {
         #[arg(long)]
@@ -572,6 +576,7 @@ pub fn run() -> Result<(), CliError> {
         Command::Role { command } => match command {
             RoleCommand::Start {
                 api,
+                interaction,
                 workspace,
                 runs_dir,
                 credentials_root,
@@ -611,6 +616,15 @@ pub fn run() -> Result<(), CliError> {
                     timeout: std::time::Duration::from_millis(timeout_ms),
                     new_run,
                     required_deliverables: &required_deliverables,
+                    interaction: match interaction.trim() {
+                        "attended" => crate::model::InteractionMode::Attended,
+                        "autonomous" => crate::model::InteractionMode::Autonomous,
+                        _ => {
+                            return Err(CliError::Invalid(
+                                "interaction must be attended or autonomous".to_owned(),
+                            ))
+                        }
+                    },
                 })?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
                 Ok(())
@@ -1096,6 +1110,8 @@ fn transition_error_code(error: &TransitionError) -> &'static str {
         TransitionError::StaleReceiptSequence => "stale_receipt_sequence",
         TransitionError::AnswerNotAnOption => "answer_not_an_option",
         TransitionError::DecisionWithoutChange => "decision_without_change",
+        TransitionError::NotAnAutonomousDecision => "not_an_autonomous_decision",
+        TransitionError::RepeatedDecision => "repeated_decision",
     }
 }
 

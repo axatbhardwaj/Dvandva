@@ -86,6 +86,10 @@ pub enum TransitionError {
     AnswerNotAnOption,
     #[error("a scope decision resolves only through a scope amendment; a pause that changes nothing was an approval wait")]
     DecisionWithoutChange,
+    #[error("an autonomous run admits a pause only as a choice among concrete scope proposals")]
+    NotAnAutonomousDecision,
+    #[error("the decision just answered cannot be asked again")]
+    RepeatedDecision,
 }
 
 /// Actions that carry their own idempotency token, or that only report
@@ -279,6 +283,7 @@ fn apply_locked(
                 question,
                 evidence,
                 options,
+                proposals,
             } = request;
             // Enforceable autonomy, not just a label on the request: while the
             // kernel itself offers a deterministic recovery, parking the run is
@@ -307,6 +312,41 @@ fn apply_locked(
                 .map(|option| option.trim().to_owned())
                 .collect::<Vec<_>>();
             let distinct = options.iter().collect::<HashSet<_>>().len() == options.len();
+            let question = question.trim().to_owned();
+            // Admission is where an approval wait is made unrepresentable. An
+            // autonomous run admits a pause only as a choice among concrete
+            // scope proposals the kernel applies itself: no proposals, or a
+            // question of any other kind, has no admissible shape when the
+            // human may be absent. In every mode, proposals are one per option
+            // and distinct, and the decision just answered cannot be re-asked.
+            if baton.interaction == crate::model::InteractionMode::Autonomous
+                && (kind != crate::model::HumanDecisionKind::Scope || proposals.is_empty())
+            {
+                return Err(TransitionError::NotAnAutonomousDecision);
+            }
+            if !proposals.is_empty() {
+                let normalized = proposals
+                    .iter()
+                    .map(|proposal| serde_json::to_string(proposal).unwrap_or_default())
+                    .collect::<HashSet<_>>();
+                if proposals.len() != options.len()
+                    || normalized.len() != proposals.len()
+                    || proposals.iter().any(|proposal| {
+                        proposal.objective.trim().is_empty()
+                            || proposal.scope_deliverables.is_empty()
+                    })
+                {
+                    return Err(TransitionError::InvalidHumanDecision);
+                }
+            }
+            if baton.human_decision.as_ref().is_some_and(|previous| {
+                previous.answer.is_some()
+                    && previous.kind == kind
+                    && previous.question == question
+                    && previous.options == options
+            }) {
+                return Err(TransitionError::RepeatedDecision);
+            }
             if baton
                 .human_decision
                 .as_ref()
@@ -324,7 +364,8 @@ fn apply_locked(
             let resume_assignee = baton.assignee.clone();
             baton.human_decision = Some(HumanDecision {
                 kind,
-                cause: None,
+                version: crate::model::DECISION_VERSION,
+                proposals,
                 question,
                 requested_by: role_name(role).to_owned(),
                 evidence,
@@ -345,7 +386,7 @@ fn apply_locked(
                 return Err(TransitionError::InvalidHumanDecision);
             }
             let answer = answer.trim().to_owned();
-            let (kind, resume_status, resume_assignee) = {
+            let (kind, version, chosen_proposal, resume_status, resume_assignee) = {
                 let decision = baton
                     .human_decision
                     .as_mut()
@@ -353,27 +394,37 @@ fn apply_locked(
                 if decision.contact_role != role_name(role) {
                     return Err(TransitionError::WrongContact);
                 }
+                let current_version = decision.version >= crate::model::DECISION_VERSION;
                 // A decision is a choice among the options that were put to the
                 // human. Free-form prose — "yes", "approved", "go ahead" — is
-                // not a choice unless it was one of the options.
-                if !decision.options.iter().any(|option| option == &answer) {
+                // not a choice unless it was one of the options. Decisions
+                // recorded before this rule keep their original resolution, so
+                // a released client never creates a pause it cannot clear.
+                let chosen = decision
+                    .options
+                    .iter()
+                    .position(|option| option.trim() == answer);
+                if current_version && chosen.is_none() {
                     return Err(TransitionError::AnswerNotAnOption);
                 }
                 decision.answer = Some(answer.clone());
                 (
                     decision.kind,
+                    decision.version,
+                    chosen.and_then(|index| decision.proposals.get(index).cloned()),
                     decision.resume_status.clone(),
                     decision.resume_assignee.clone(),
                 )
             };
             // A pause that resolves into no change to the run was an approval
-            // wait, whatever it was called. A scope decision resolves only
-            // through a scope amendment; an intent or authority decision is
-            // recorded on the canonical objective, so the run carries what was
-            // decided and cannot be re-asked.
+            // wait, whatever it was called. A scope decision resolves through
+            // the proposal that was chosen or an explicit amendment; an intent
+            // or authority decision is recorded on the canonical objective.
             if let Some(amendment) = scope_amendment {
                 apply_scope_amendment(baton, amendment)?;
-            } else {
+            } else if let Some(proposal) = chosen_proposal {
+                apply_scope_amendment(baton, proposal)?;
+            } else if version >= crate::model::DECISION_VERSION {
                 match kind {
                     crate::model::HumanDecisionKind::Scope => {
                         return Err(TransitionError::DecisionWithoutChange);
@@ -386,6 +437,9 @@ fn apply_locked(
                         });
                     }
                 }
+                baton.status = resume_status;
+                baton.assignee = resume_assignee;
+            } else {
                 baton.status = resume_status;
                 baton.assignee = resume_assignee;
             }

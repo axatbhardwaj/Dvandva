@@ -583,6 +583,7 @@ fn a_run_cannot_be_parked_while_the_kernel_can_recover_itself() {
             question: "The explainer Site returns 401. Approve relaying it by hand?".into(),
             evidence: ["the reviewing harness has no session for the Site".into()].into(),
             options: ["relay the text".into(), "stop the run".into()].into(),
+            proposals: Vec::new(),
         })
     };
 
@@ -638,6 +639,7 @@ fn a_run_cannot_be_parked_while_the_kernel_can_recover_itself() {
             question: "Should the migration guide be in scope?".into(),
             evidence: ["the report names it as adjacent".into()].into(),
             options: ["include it".into(), "leave it out".into()].into(),
+            proposals: Vec::new(),
         }),
     )
     .expect("a real scope question must still be possible");
@@ -1085,9 +1087,9 @@ mod round_three {
         parked["revision"] = serde_json::json!(1);
         parked["status"] = serde_json::json!("human_decision");
         parked["assignee"] = serde_json::json!("human");
+        // The shape the released kernel left the PR-914 run in: untyped,
+        // unversioned, parked while the policy was unreadable.
         parked["human_decision"] = serde_json::json!({
-            "kind": "scope",
-            "cause": "publication_unreadable",
             "question": "The Site returns 401. Relay it by hand?",
             "requested_by": "worker",
             "evidence": ["HTTP 401 from the owner-only Site"],
@@ -1097,9 +1099,12 @@ mod round_three {
             "resume_assignee": "worker",
             "answer": null
         });
-        channel
-            .compare_and_swap(0, &serde_json::from_value(parked).unwrap())
-            .unwrap();
+        // Written as the released kernel wrote it — stored history, not a live
+        // append, which would rightly refuse an unversioned decision.
+        let mut bytes = serde_json::to_vec_pretty(&parked).unwrap();
+        bytes.push(b'\n');
+        std::fs::write(run_dir.join("history/00000000000000000001.json"), &bytes).unwrap();
+        std::fs::write(run_dir.join("baton.json"), &bytes).unwrap();
         let repaired = role_session::repair_publication_policy(
             &run_dir,
             &dir.path().join("credentials"),
@@ -1119,6 +1124,10 @@ mod round_three {
             .unwrap()
             .contains("resolved autonomously"));
         assert_eq!(decision.kind, HumanDecisionKind::Scope);
+        assert_eq!(
+            decision.version, 1,
+            "only a released-format decision is answered this way"
+        );
         // Nothing is left for a human: the next actor is the worker.
         let actions = next_action::classify(&repaired, Role::Worker, "Claude");
         assert!(actions.next_actions.contains(&"work"));
@@ -1346,7 +1355,7 @@ mod round_four {
     use super::*;
     use dvandva_v4::{
         action::{Action, HumanDecisionRequest},
-        model::{DecisionCause, HumanDecisionKind, WorkspaceIdentity},
+        model::{HumanDecisionKind, WorkspaceIdentity},
         role_session, store,
         store::{RunChannel, StoreError},
         transition,
@@ -1417,6 +1426,7 @@ mod round_four {
                     question: "Please approve the protocol workaround?".into(),
                     evidence: ["a workaround exists".into()].into(),
                     options: ["approve".into(), "reject".into()].into(),
+                    proposals: Vec::new(),
                 }),
             )
             .unwrap();
@@ -1478,7 +1488,7 @@ mod round_four {
     /// for this reason. A genuine scope question stays parked.
     #[test]
     fn repair_leaves_an_unrelated_decision_parked() {
-        let park = |cause: Option<DecisionCause>| {
+        let park = |released_format: bool| {
             let dir = tempfile::tempdir().unwrap();
             let (channel, run_dir) = created_run(dir.path());
             let mut head = serde_json::to_value(channel.read().unwrap()).unwrap();
@@ -1495,9 +1505,8 @@ mod round_four {
             parked["revision"] = serde_json::json!(1);
             parked["status"] = serde_json::json!("human_decision");
             parked["assignee"] = serde_json::json!("human");
-            parked["human_decision"] = serde_json::json!({
+            let mut decision = serde_json::json!({
                 "kind": "scope",
-                "cause": cause,
                 "question": "Should the migration guide be in scope?",
                 "requested_by": "worker",
                 "evidence": ["the report names it"],
@@ -1507,9 +1516,20 @@ mod round_four {
                 "resume_assignee": "worker",
                 "answer": null
             });
-            channel
-                .compare_and_swap(0, &serde_json::from_value(parked).unwrap())
-                .unwrap();
+            if released_format {
+                // Stored as an older kernel wrote it: unversioned.
+                parked["human_decision"] = decision;
+                let mut bytes = serde_json::to_vec_pretty(&parked).unwrap();
+                bytes.push(b'\n');
+                std::fs::write(run_dir.join("history/00000000000000000001.json"), &bytes).unwrap();
+                std::fs::write(run_dir.join("baton.json"), &bytes).unwrap();
+            } else {
+                decision["version"] = serde_json::json!(2);
+                parked["human_decision"] = decision;
+                channel
+                    .compare_and_swap(0, &serde_json::from_value(parked).unwrap())
+                    .unwrap();
+            }
             let repaired = role_session::repair_publication_policy(
                 &run_dir,
                 &dir.path().join("credentials"),
@@ -1523,7 +1543,7 @@ mod round_four {
             (dir, repaired)
         };
 
-        let (_keep, unrelated) = park(None);
+        let (_keep, unrelated) = park(false);
         assert_eq!(
             unrelated.status,
             Status::HumanDecision,
@@ -1535,11 +1555,11 @@ mod round_four {
             PublicationPolicy::fixed()
         );
 
-        let (_keep, caused) = park(Some(DecisionCause::PublicationUnreadable));
+        let (_keep, caused) = park(true);
         assert_eq!(
             caused.status,
             Status::Working,
-            "the kernel's own park resumes"
+            "the released-format incident resumes"
         );
         assert!(caused.human_decision.unwrap().answer.is_some());
     }
@@ -1655,5 +1675,332 @@ mod round_four {
         );
         assert!(runs.join("run-a").join("baton.json").is_file());
         let _ = store::open_dir_nofollow(&runs).unwrap();
+    }
+}
+
+/// Round-five findings.
+mod round_five {
+    use super::*;
+    use dvandva_v4::{
+        action::{Action, HumanDecisionRequest},
+        model::{HumanDecisionKind, InteractionMode, ScopeProposal, WorkspaceIdentity},
+        role_session,
+        store::RunChannel,
+        transition,
+    };
+
+    fn created_run(
+        dir: &std::path::Path,
+        mode: InteractionMode,
+    ) -> (RunChannel, std::path::PathBuf) {
+        let run_dir = dir.join("run-a");
+        let mut created = RunBaton::new(
+            "run-a",
+            "Objective",
+            "claude",
+            "codex",
+            vec![DeliverableRequirement {
+                id: "kernel".into(),
+                description: "Fix the kernel".into(),
+            }],
+        )
+        .unwrap();
+        created.workspace = Some(WorkspaceIdentity {
+            repository_id: "github.com/axatbhardwaj/dvandva".into(),
+            origin: None,
+            worktree: None,
+        });
+        created.interaction = mode;
+        let channel = RunChannel::open(&run_dir);
+        channel.create(&created).unwrap();
+        (channel, run_dir)
+    }
+
+    fn worker_token(dir: &std::path::Path, run_dir: &std::path::Path) -> String {
+        let credentials = dir.join("credentials");
+        role_session::claim(
+            run_dir,
+            &credentials,
+            Role::Worker,
+            "claude-session",
+            1800,
+            0,
+        )
+        .unwrap();
+        dvandva_v4::credential::load(&credentials, "claude-session", "run-a", Role::Worker)
+            .unwrap()
+            .token
+    }
+
+    fn proposal(objective: &str, deliverable: &str) -> ScopeProposal {
+        ScopeProposal {
+            objective: objective.into(),
+            objective_refs: Vec::new(),
+            task_reference: None,
+            scope_deliverables: vec![DeliverableRequirement {
+                id: deliverable.into(),
+                description: format!("Deliver {deliverable}"),
+            }],
+        }
+    }
+
+    /// [P1 autonomy] In an autonomous run, "please approve" has no admissible
+    /// shape: only a choice among concrete scope proposals may park the run,
+    /// choosing one applies it, and the same question cannot be asked twice.
+    #[test]
+    fn an_autonomous_run_admits_only_a_choice_among_scope_proposals() {
+        let dir = tempfile::tempdir().unwrap();
+        let (channel, run_dir) = created_run(dir.path(), InteractionMode::Autonomous);
+        let token = worker_token(dir.path(), &run_dir);
+        let ask = |kind, proposals: Vec<ScopeProposal>| {
+            Action::RequestHumanDecision(HumanDecisionRequest {
+                kind,
+                question: "Please approve the protocol workaround?".into(),
+                evidence: ["a workaround exists".into()].into(),
+                options: ["approve".into(), "reject".into()].into(),
+                proposals,
+            })
+        };
+        for kind in [HumanDecisionKind::Intent, HumanDecisionKind::Authority] {
+            assert!(matches!(
+                transition::apply(
+                    &channel,
+                    Role::Worker,
+                    "claude-session",
+                    &token,
+                    1,
+                    ask(kind, Vec::new())
+                ),
+                Err(transition::TransitionError::NotAnAutonomousDecision)
+            ));
+        }
+        assert!(matches!(
+            transition::apply(
+                &channel,
+                Role::Worker,
+                "claude-session",
+                &token,
+                1,
+                ask(HumanDecisionKind::Scope, Vec::new())
+            ),
+            Err(transition::TransitionError::NotAnAutonomousDecision)
+        ));
+        // Two identical proposals are not a choice.
+        assert!(matches!(
+            transition::apply(
+                &channel,
+                Role::Worker,
+                "claude-session",
+                &token,
+                1,
+                ask(
+                    HumanDecisionKind::Scope,
+                    vec![proposal("Same", "kernel"), proposal("Same", "kernel")]
+                )
+            ),
+            Err(transition::TransitionError::InvalidHumanDecision)
+        ));
+        assert_eq!(
+            channel.read().unwrap().status,
+            Status::Working,
+            "nothing above may park the run"
+        );
+
+        // A real choice of scope is admitted, and choosing applies it.
+        let parked = transition::apply(
+            &channel,
+            Role::Worker,
+            "claude-session",
+            &token,
+            1,
+            ask(
+                HumanDecisionKind::Scope,
+                vec![
+                    proposal("Kernel only", "kernel"),
+                    proposal("Kernel and guide", "guide"),
+                ],
+            ),
+        )
+        .unwrap();
+        assert_eq!(parked.status, Status::HumanDecision);
+        let resumed = transition::apply(
+            &channel,
+            Role::Worker,
+            "claude-session",
+            &token,
+            parked.revision,
+            Action::ResumeHumanDecision {
+                answer: "reject".into(),
+                scope_amendment: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(resumed.status, Status::Revising);
+        assert_eq!(resumed.objective.summary, "Kernel and guide");
+        assert_eq!(resumed.scope_deliverables[0].id, "guide");
+        assert_eq!(resumed.scope_revision, 1);
+
+        // The decision just answered cannot be asked again.
+        assert!(matches!(
+            transition::apply(
+                &channel,
+                Role::Worker,
+                "claude-session",
+                &token,
+                resumed.revision,
+                ask(
+                    HumanDecisionKind::Scope,
+                    vec![
+                        proposal("Kernel only", "kernel"),
+                        proposal("Kernel and guide", "guide")
+                    ]
+                ),
+            ),
+            Err(transition::TransitionError::RepeatedDecision)
+        ));
+        // Nor can a live append record a decision under the released rules,
+        // which is the only shape repair would ever answer on its own.
+        let mut forged = channel.read().unwrap();
+        let head = forged.revision;
+        forged.revision += 1;
+        forged.status = Status::HumanDecision;
+        forged.assignee = Assignee::Human;
+        let mut decision = forged.human_decision.clone().unwrap();
+        decision.answer = None;
+        decision.version = 1;
+        decision.question = "Another question".into();
+        forged.human_decision = Some(decision);
+        assert!(channel.compare_and_swap(head, &forged).is_err());
+    }
+
+    /// [P1 history integrity] A resolved intent decision must validate when the
+    /// whole history is walked, not only when it was appended.
+    #[test]
+    fn a_resolved_intent_decision_survives_a_full_history_walk() {
+        let dir = tempfile::tempdir().unwrap();
+        let (channel, run_dir) = created_run(dir.path(), InteractionMode::Attended);
+        let token = worker_token(dir.path(), &run_dir);
+        let parked = transition::apply(
+            &channel,
+            Role::Worker,
+            "claude-session",
+            &token,
+            1,
+            Action::RequestHumanDecision(HumanDecisionRequest {
+                kind: HumanDecisionKind::Intent,
+                question: "Which reading?".into(),
+                evidence: ["two readings".into()].into(),
+                options: ["strict".into(), "lenient".into()].into(),
+                proposals: Vec::new(),
+            }),
+        )
+        .unwrap();
+        let resumed = transition::apply(
+            &channel,
+            Role::Worker,
+            "claude-session",
+            &token,
+            parked.revision,
+            Action::ResumeHumanDecision {
+                answer: "strict".into(),
+                scope_amendment: None,
+            },
+        )
+        .unwrap();
+        assert_eq!(resumed.objective.refs.last().unwrap().value, "strict");
+        let recovered = channel
+            .recover(resumed.revision)
+            .expect("the walked history must validate");
+        assert_eq!(recovered.objective.refs.last().unwrap().value, "strict");
+    }
+
+    /// [P1 API-2 compatibility] A decision recorded by a released client — no
+    /// version, no kind, padded options — still resolves under its own rules.
+    #[test]
+    fn a_released_format_pending_decision_still_resolves() {
+        let dir = tempfile::tempdir().unwrap();
+        let (channel, run_dir) = created_run(dir.path(), InteractionMode::Attended);
+        let token = worker_token(dir.path(), &run_dir);
+        let head = channel.read().unwrap();
+        let mut parked = serde_json::to_value(&head).unwrap();
+        parked["revision"] = serde_json::json!(head.revision + 1);
+        parked["status"] = serde_json::json!("human_decision");
+        parked["assignee"] = serde_json::json!("human");
+        parked["human_decision"] = serde_json::json!({
+            "question": "Keep going?",
+            "requested_by": "worker",
+            "evidence": ["released client"],
+            "options": [" yes ", " no "],
+            "contact_role": "worker",
+            "resume_status": "working",
+            "resume_assignee": "worker",
+            "answer": null
+        });
+        // Written as stored history, the way that client left it.
+        let mut bytes = serde_json::to_vec_pretty(&parked).unwrap();
+        bytes.push(b'\n');
+        std::fs::write(
+            run_dir.join(format!("history/{:020}.json", head.revision + 1)),
+            &bytes,
+        )
+        .unwrap();
+        std::fs::write(run_dir.join("baton.json"), &bytes).unwrap();
+        let resumed = transition::apply(
+            &channel,
+            Role::Worker,
+            "claude-session",
+            &token,
+            head.revision + 1,
+            Action::ResumeHumanDecision {
+                answer: "yes".into(),
+                scope_amendment: None,
+            },
+        )
+        .expect("a released-format decision resolves under its own rules");
+        assert_eq!(resumed.status, Status::Working);
+        assert_eq!(resumed.human_decision.unwrap().version, 1);
+        channel
+            .recover(resumed.revision)
+            .expect("and its history walks");
+    }
+
+    /// [P1 claim authority] Recovering an orphaned claim requires the nonce
+    /// held in the claimant's private credentials root; a public session id
+    /// from another root proves nothing.
+    #[test]
+    fn an_orphaned_claim_is_recoverable_only_from_the_root_that_made_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (_channel, run_dir) = created_run(dir.path(), InteractionMode::Attended);
+        let mine = dir.path().join("mine");
+        let theirs = dir.path().join("theirs");
+        let granted =
+            role_session::claim(&run_dir, &mine, Role::Worker, "claude-session", 1800, 0).unwrap();
+        // Lose the token, as a crash between install and store would.
+        std::fs::remove_file(&granted.credential).unwrap();
+
+        let impostor = role_session::start(role_session::RoleStartRequest {
+            workspace: &dir.path().join("nowhere"),
+            runs_dir: dir.path(),
+            credentials_root: &theirs,
+            role: Role::Worker,
+            session_id: "claude-session",
+            current_harness: "claude",
+            peer_harness: "codex",
+            objective: None,
+            objective_refs: &[],
+            task_reference: None,
+            run_id: Some("run-a"),
+            lease_seconds: 1800,
+            wait: false,
+            poll_interval: std::time::Duration::from_millis(10),
+            timeout: std::time::Duration::from_millis(10),
+            new_run: false,
+            required_deliverables: &[],
+            interaction: InteractionMode::Attended,
+        });
+        assert!(
+            impostor.is_err(),
+            "another credentials root must not recover the claim"
+        );
     }
 }
