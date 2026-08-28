@@ -960,18 +960,17 @@ fn role_apply_loads_the_private_token_without_a_cli_argument() {
         ])
         .assert()
         .success();
+    let explainer = root.path().join("explainer.html");
+    std::fs::write(&explainer, b"<h1>run-a explainer</h1>").unwrap();
     let action = root.path().join("publication.json");
     std::fs::write(
         &action,
         serde_json::to_vec_pretty(&serde_json::json!({
-            "type": "record_explainer_publication",
+            "type": "stage_explainer",
             "obligation": {
                 "handoff_revision": 0, "kind": "run_started", "scope_revision": 0
             },
-            "source_digest": "a".repeat(64),
-            "site_id": "site-run-a", "site_version": "deployment-1",
-            "url": "https://sites.openai.test/site-run-a/deployment-1",
-            "channel": "codex_sites", "access": "owner_only"
+            "source_path": explainer.to_str().unwrap()
         }))
         .unwrap(),
     )
@@ -1007,10 +1006,16 @@ fn role_apply_loads_the_private_token_without_a_cli_argument() {
     assert_eq!(baton["status"], "working");
     assert_eq!(baton["assignee"], "worker");
     assert_eq!(baton["revision"], 2);
+    let digest = format!("{:x}", Sha256::digest(b"<h1>run-a explainer</h1>"));
     assert_eq!(
-        baton["publication_binding"]["deployment"]["site_id"],
-        "site-run-a"
+        baton["publication_binding"]["artifact"]["source_digest"],
+        digest
     );
+    assert_eq!(
+        baton["publication_binding"]["artifact"]["path"],
+        format!("explainer/{digest}.html")
+    );
+    assert!(run_dir.join(format!("explainer/{digest}.html")).is_file());
 
     let private: serde_json::Value = serde_json::from_slice(
         &std::fs::read(credentials.join("worker-session/run-a/worker.json")).unwrap(),
@@ -1654,12 +1659,19 @@ fn worker_start_creates_claims_and_idempotently_resumes_one_run() {
     assert_eq!(created["advisory_actions"], serde_json::json!(["work"]));
     assert_eq!(
         created["legal_actions"],
-        serde_json::json!(["publish_explainer", "request_human_decision"])
+        serde_json::json!([
+            "submit_checkpoint",
+            "stage_explainer",
+            "report_progress",
+            "request_human_decision"
+        ])
     );
     assert_eq!(
         created["next_actions"],
-        serde_json::json!(["work", "publish_explainer"])
+        serde_json::json!(["work", "submit_checkpoint", "stage_explainer", "report_progress"])
     );
+    // A completed deliverable always has somewhere to land, from revision 1 on.
+    assert_eq!(created["blocking_reason"], serde_json::Value::Null);
     assert_eq!(created["actionable"], true);
     assert_eq!(
         created["peer_prompt"],
@@ -2589,15 +2601,17 @@ fn snapshot_classifier_keeps_semantic_and_harness_duties_independent() {
     assert_eq!(worker.advisory_actions, vec!["work"]);
     assert_eq!(
         worker.legal_actions,
-        vec!["publish_explainer", "request_human_decision"]
+        vec![
+            "submit_checkpoint",
+            "stage_explainer",
+            "report_progress",
+            "request_human_decision"
+        ]
     );
-    assert_eq!(
-        worker.blocking_reason,
-        Some("submit_checkpoint awaits current explainer approval")
-    );
+    assert_eq!(worker.blocking_reason, None);
     assert_eq!(
         next_action::classify(&normal, Role::Reviewer, "Claude").next_actions,
-        vec!["wait"]
+        vec!["wait", "report_progress"]
     );
 
     let reverse = RunBaton::new(
@@ -2613,11 +2627,11 @@ fn snapshot_classifier_keeps_semantic_and_harness_duties_independent() {
     .unwrap();
     assert_eq!(
         next_action::classify(&reverse, Role::Worker, "Claude").next_actions,
-        vec!["work"]
+        vec!["work", "submit_checkpoint", "report_progress"]
     );
     assert_eq!(
         next_action::classify(&reverse, Role::Reviewer, "Codex").next_actions,
-        vec!["publish_explainer"]
+        vec!["stage_explainer", "report_progress"]
     );
 
     let mut stale = normal;
@@ -2636,14 +2650,11 @@ fn snapshot_classifier_keeps_semantic_and_harness_duties_independent() {
         checkpoint: stale.checkpoint.as_ref().unwrap().binding(),
     });
     let reviewer = next_action::classify(&stale, Role::Reviewer, "Claude");
-    assert!(!reviewer
+    assert!(reviewer
         .next_actions
         .contains(&"accept_checkpoint_supersession"));
     assert!(!reviewer.next_actions.contains(&"record_review"));
-    assert_eq!(
-        reviewer.blocking_reason,
-        Some("accept_checkpoint_supersession awaits current explainer approval")
-    );
+    assert_eq!(reviewer.blocking_reason, None);
 }
 
 #[test]
@@ -2692,10 +2703,10 @@ fn claimed_active_snapshots_advertise_human_escape_without_making_wait_actionabl
     )
     .unwrap();
     let waiting = next_action::classify(&waiting, Role::Reviewer, "Other");
-    assert_eq!(waiting.next_actions, vec!["wait"]);
+    assert_eq!(waiting.next_actions, vec!["wait", "report_progress"]);
     assert_eq!(
         waiting.legal_actions,
-        vec!["wait", "request_human_decision"]
+        vec!["wait", "report_progress", "request_human_decision"]
     );
     assert!(!waiting.actionable);
 }

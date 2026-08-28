@@ -600,7 +600,10 @@ fn validate_baton(baton: &RunBaton) -> Result<(), StoreError> {
             baton.participants.reviewer.harness.clone(),
         )
         || normalized_deliverables != baton.scope_deliverables
-        || baton.publication_policy.as_ref() != Some(&PublicationPolicy::fixed())
+        || !baton
+            .publication_policy
+            .as_ref()
+            .is_some_and(PublicationPolicy::is_recognized)
         || baton.publication.is_some()
         || binding.obligation.scope_revision != baton.scope_revision
         || binding.obligation.handoff_revision > baton.revision
@@ -1330,7 +1333,6 @@ fn valid_reviewer_to_worker(
         return false;
     };
     let checkpoint = checkpoint.binding();
-    let expected_gate = Some((&HandoffKind::WorkerToReviewer, &checkpoint));
     let valid_verdict = match review.verdict.as_str() {
         "changes_requested" => next.status == Status::Revising,
         "approved" => {
@@ -1338,7 +1340,6 @@ fn valid_reviewer_to_worker(
         }
         _ => false,
     };
-    let _ = expected_gate;
     if current.status != Status::Reviewing
         || current.assignee != Assignee::Reviewer
         || next.assignee != Assignee::Worker
@@ -1431,8 +1432,6 @@ fn valid_checkpoint_superseded(
         return false;
     };
     let checkpoint = checkpoint.binding();
-    let expected_gate = Some((&HandoffKind::WorkerToReviewer, &checkpoint));
-    let _ = expected_gate;
     if current.status != Status::Reviewing
         || current.assignee != Assignee::Reviewer
         || pending.checkpoint != checkpoint
@@ -1456,12 +1455,7 @@ fn valid_approval_withdrawn(
         return false;
     };
     let checkpoint = checkpoint.binding();
-    let expected_gate = Some((&HandoffKind::ReviewerToWorker, &checkpoint));
-    if !current
-        .publication_binding
-        .as_ref()
-        .is_some_and(|current_binding| approved_publication_gate(current_binding, expected_gate))
-        || current.status != Status::Finalizing
+    if current.status != Status::Finalizing
         || current.assignee != Assignee::Worker
         || review.verdict != "approved"
         || review.binding() != checkpoint

@@ -93,11 +93,13 @@ pub fn classify(baton: &RunBaton, role: Role, participant_harness: &str) -> Next
     {
         legal.push("review_explainer");
     }
-    legal.push("report_progress");
 
     if advisory.is_empty() && legal.is_empty() {
         legal.push("wait");
     }
+    // Always available, never a reason to wake: reporting liveness is something
+    // a role may do, not work the protocol is waiting on.
+    legal.push("report_progress");
     let mut actions = result(role_state, wake_reason, advisory, legal, blocking_reason);
     if baton.status != Status::HumanDecision {
         actions.legal_actions.push("request_human_decision");
@@ -119,7 +121,7 @@ fn result(
         .collect::<Vec<_>>();
     let actionable = next_actions
         .iter()
-        .any(|action| !matches!(*action, "wait" | "stop"));
+        .any(|action| !matches!(*action, "wait" | "stop" | "report_progress"));
     NextActions {
         role_state,
         wake_reason,

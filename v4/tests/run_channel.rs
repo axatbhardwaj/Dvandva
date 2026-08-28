@@ -64,12 +64,49 @@ fn init_pair_with_scope(dir: &std::path::Path, deliverables: &[(&str, &str)]) {
     command().args(args).assert().success();
 }
 
+fn digest_of(value: &str) -> String {
+    format!("{:x}", Sha256::digest(value.as_bytes()))
+}
+
+/// Map a readable test label onto a valid sha256 coordinate, preserving any
+/// surrounding whitespace so the kernel's trimming stays under test.
+fn checkpoint_identity(label: &str) -> String {
+    let leading = &label[..label.len() - label.trim_start().len()];
+    let trailing = &label[label.trim_end().len()..];
+    format!("{leading}{}{trailing}", digest_of(label.trim()))
+}
+
 fn checkpoint_submission(identity: &str, deliverables: serde_json::Value) -> serde_json::Value {
+    let deliverables = deliverables
+        .as_array()
+        .expect("deliverables are an array")
+        .iter()
+        .map(|deliverable| {
+            let artifacts = deliverable["artifacts"]
+                .as_array()
+                .expect("artifacts are an array")
+                .iter()
+                .map(|artifact| {
+                    // Blank coordinates stay blank so invalid-manifest fixtures
+                    // keep testing what they were written to test.
+                    let kind = artifact["kind"].as_str().unwrap_or_default();
+                    let value = artifact["value"].as_str().unwrap_or_default();
+                    serde_json::json!({
+                        "kind": if kind.trim().is_empty() { kind.to_owned() }
+                                else { "analysis_digest".to_owned() },
+                        "value": if value.trim().is_empty() { value.to_owned() }
+                                 else { checkpoint_identity(value) }
+                    })
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({"id": deliverable["id"], "artifacts": artifacts})
+        })
+        .collect::<Vec<_>>();
     serde_json::json!({
         "type": "submit_checkpoint",
         "checkpoint": {
-            "kind": "artifact",
-            "identity": identity,
+            "kind": "analysis",
+            "identity": checkpoint_identity(identity),
             "deliverables": deliverables,
             "verification": ["tests passed"]
         }
@@ -130,20 +167,38 @@ fn explainer_publication_action(
 
 fn explainer_review_action(
     obligation: &serde_json::Value,
-    deployment: &serde_json::Value,
+    artifact: &serde_json::Value,
     verdict: &str,
     findings: serde_json::Value,
 ) -> serde_json::Value {
     serde_json::json!({
         "type": "record_explainer_review",
         "obligation": obligation,
-        "source_digest": deployment["source_digest"],
-        "site_id": deployment["site_id"],
-        "site_version": deployment["site_version"],
-        "url": deployment["url"],
+        "source_digest": artifact["source_digest"],
         "verdict": verdict,
         "findings": findings
     })
+}
+
+/// Write explainer bytes outside the run directory and return the action that
+/// stages them, plus their digest.
+fn stage_explainer_action(
+    dir: &std::path::Path,
+    obligation: &serde_json::Value,
+    label: &str,
+) -> (serde_json::Value, String) {
+    let bytes = format!("<h1>{label}</h1>").into_bytes();
+    let source = dir.join(format!(".source-{label}.html"));
+    std::fs::write(&source, &bytes).unwrap();
+    let digest = format!("{:x}", Sha256::digest(&bytes));
+    (
+        serde_json::json!({
+            "type": "stage_explainer",
+            "obligation": obligation,
+            "source_path": source.to_str().unwrap()
+        }),
+        digest,
+    )
 }
 
 fn approved_publication_binding(
@@ -151,9 +206,20 @@ fn approved_publication_binding(
     site_id: &str,
     site_version: &str,
 ) -> serde_json::Value {
+    let source_digest = "c".repeat(64);
+    let artifact = serde_json::json!({
+        "obligation": obligation,
+        "source_digest": source_digest,
+        "path": format!("explainer/{source_digest}.html"),
+        "media_type": "text/html",
+        "byte_length": 32,
+        "channel": "run_artifact",
+        "access": "run_private",
+        "publisher_harness": "Codex"
+    });
     let deployment = serde_json::json!({
         "obligation": obligation,
-        "source_digest": "c".repeat(64),
+        "source_digest": source_digest,
         "site_id": site_id,
         "site_version": site_version,
         "url": format!("https://sites.openai.test/{site_id}/{site_version}"),
@@ -164,13 +230,11 @@ fn approved_publication_binding(
     serde_json::json!({
         "site_id": site_id,
         "obligation": obligation,
+        "artifact": artifact,
         "deployment": deployment,
         "review": {
             "obligation": obligation,
-            "source_digest": deployment["source_digest"],
-            "site_id": deployment["site_id"],
-            "site_version": deployment["site_version"],
-            "url": deployment["url"],
+            "source_digest": source_digest,
             "verdict": "approved",
             "reviewer_harness": "Claude"
         }
@@ -216,24 +280,22 @@ fn approve_current_explainer(
     let baton = read_baton(dir);
     let revision = baton["revision"].as_u64().unwrap();
     let obligation = baton["publication_binding"]["obligation"].clone();
+    let (stage, digest) = stage_explainer_action(dir, &obligation, site_version);
     apply_action(
         dir,
         codex_role,
         codex_session,
         codex_token,
         revision,
-        &format!("publish-{site_version}.json"),
-        explainer_publication_action(
-            &obligation,
-            &"a".repeat(64),
-            "site-run-a",
-            site_version,
-            &format!("https://sites.openai.test/site-run-a/{site_version}"),
-        ),
+        &format!("stage-{site_version}.json"),
+        stage,
     )
     .success();
+    // The Site rendering is optional and never gates; tests that exercise it
+    // publish explicitly. The gate binds the staged bytes.
+    let _ = &digest;
     let baton = read_baton(dir);
-    let deployment = baton["publication_binding"]["deployment"].clone();
+    let artifact = baton["publication_binding"]["artifact"].clone();
     apply_action(
         dir,
         claude_role,
@@ -241,7 +303,7 @@ fn approve_current_explainer(
         claude_token,
         revision + 1,
         &format!("review-{site_version}.json"),
-        explainer_review_action(&obligation, &deployment, "approved", serde_json::json!([])),
+        explainer_review_action(&obligation, &artifact, "approved", serde_json::json!([])),
     )
     .success();
 }
@@ -472,8 +534,8 @@ fn migration_init_writes_v2_scope_and_run_started_obligation() {
     assert_eq!(
         baton["publication_policy"],
         serde_json::json!({
-            "publisher_harness": "Codex", "channel": "codex_sites",
-            "access": "owner_only", "reviewer_harness": "Claude"
+            "publisher_harness": "Codex", "channel": "run_artifact",
+            "access": "run_private", "reviewer_harness": "Claude"
         })
     );
     assert_eq!(
@@ -2504,8 +2566,14 @@ fn complete_review_fix_loop_reaches_done() {
         serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
     assert_eq!(baton["status"], "done");
     assert_eq!(baton["assignee"], "none");
-    assert_eq!(baton["checkpoint"]["identity"], "sha256:second");
-    assert_eq!(baton["review"]["checkpoint_identity"], "sha256:second");
+    assert_eq!(
+        baton["checkpoint"]["identity"],
+        checkpoint_identity("sha256:second")
+    );
+    assert_eq!(
+        baton["review"]["checkpoint_identity"],
+        checkpoint_identity("sha256:second")
+    );
 }
 
 #[test]
@@ -2759,7 +2827,10 @@ fn recovery_fences_old_sessions_and_preserves_evidence() {
     let baton: serde_json::Value =
         serde_json::from_slice(&std::fs::read(dir.path().join("baton.json")).unwrap()).unwrap();
     assert_eq!(baton["revision"], 6);
-    assert_eq!(baton["checkpoint"]["identity"], "sha256:recover");
+    assert_eq!(
+        baton["checkpoint"]["identity"],
+        checkpoint_identity("sha256:recover")
+    );
     assert!(baton["participants"]["worker"]["claim"].is_null());
     assert!(baton["participants"]["reviewer"]["claim"].is_null());
     assert_eq!(baton["recovery"]["from_revision"], 5);
@@ -3084,12 +3155,15 @@ fn checkpoint_digest_is_deterministic_and_scope_stamped() {
     let first = read(&first);
     let second = read(&second);
     assert_eq!(first["checkpoint"], second["checkpoint"]);
-    assert_eq!(first["checkpoint"]["identity"], "checkpoint-a");
+    assert_eq!(
+        first["checkpoint"]["identity"],
+        checkpoint_identity("checkpoint-a")
+    );
     assert_eq!(first["checkpoint"]["scope_revision"], 0);
     let digest = first["checkpoint"]["manifest_digest"].as_str().unwrap();
     assert_eq!(
         digest,
-        "4e5a7ed7606fb766f9139460ec6e6f1fb0e5d73a92ee818f6d472e70e8527bc1"
+        "67d908b2651b8bc97c46bf853848400533255b93b95f7c2b26837e4008373cf9"
     );
 }
 
@@ -3116,8 +3190,8 @@ fn checkpoint_review_binds_all_coordinates_and_identity_history() {
     let binding = checkpoint_binding(dir.path());
     for (index, stale) in [
         serde_json::json!({"checkpoint_identity": "other", "manifest_digest": binding["manifest_digest"], "scope_revision": 0}),
-        serde_json::json!({"checkpoint_identity": "checkpoint-a", "manifest_digest": "0".repeat(64), "scope_revision": 0}),
-        serde_json::json!({"checkpoint_identity": "checkpoint-a", "manifest_digest": binding["manifest_digest"], "scope_revision": 1}),
+        serde_json::json!({"checkpoint_identity": checkpoint_identity("checkpoint-a"), "manifest_digest": "0".repeat(64), "scope_revision": 0}),
+        serde_json::json!({"checkpoint_identity": checkpoint_identity("checkpoint-a"), "manifest_digest": binding["manifest_digest"], "scope_revision": 1}),
     ].into_iter().enumerate() {
         apply_action(
             dir.path(), "reviewer", "reviewer-1", &reviewer, 5,
@@ -3413,33 +3487,17 @@ fn supersession_request_blocks_approval_and_acceptance_reopens_revision() {
     let before_gate = read_baton(dir.path());
     let before_gate: RunBaton = serde_json::from_value(before_gate).unwrap();
     assert!(
-        !dvandva_v4::next_action::classify(&before_gate, Role::Reviewer, "claude")
+        dvandva_v4::next_action::classify(&before_gate, Role::Reviewer, "claude")
             .legal_actions
             .contains(&"accept_checkpoint_supersession")
     );
+    let _ = &worker;
     apply_action(
         dir.path(),
         "reviewer",
         "reviewer-1",
         &reviewer,
         6,
-        "accept-before-publication.json",
-        serde_json::json!({"type": "accept_checkpoint_supersession"}),
-    )
-    .failure()
-    .stderr(predicate::str::contains(r#""error":"publication_stale""#));
-    approve_current_explainer(
-        dir.path(),
-        ("worker", "worker-1", &worker),
-        ("reviewer", "reviewer-1", &reviewer),
-        "supersession-pending",
-    );
-    apply_action(
-        dir.path(),
-        "reviewer",
-        "reviewer-1",
-        &reviewer,
-        8,
         "blocked.json",
         review_action("approved", &binding, serde_json::json!([])),
     )
@@ -3452,7 +3510,7 @@ fn supersession_request_blocks_approval_and_acceptance_reopens_revision() {
         "reviewer",
         "reviewer-1",
         &reviewer,
-        8,
+        6,
         "accept.json",
         serde_json::json!({"type": "accept_checkpoint_supersession"}),
     )
@@ -3644,33 +3702,17 @@ fn supersession_approval_withdrawal_reopens_revision_and_replaces_handoff() {
     let before_gate = read_baton(dir.path());
     let before_gate: RunBaton = serde_json::from_value(before_gate).unwrap();
     assert!(
-        !dvandva_v4::next_action::classify(&before_gate, Role::Worker, "codex")
+        dvandva_v4::next_action::classify(&before_gate, Role::Worker, "codex")
             .legal_actions
             .contains(&"withdraw_approval")
     );
+    let _ = &reviewer;
     apply_action(
         dir.path(),
         "worker",
         "worker-1",
         &worker,
         8,
-        "withdraw-before-publication.json",
-        serde_json::json!({"type": "withdraw_approval", "reason": "new deliverable"}),
-    )
-    .failure()
-    .stderr(predicate::str::contains(r#""error":"publication_stale""#));
-    approve_current_explainer(
-        dir.path(),
-        ("worker", "worker-1", &worker),
-        ("reviewer", "reviewer-1", &reviewer),
-        "withdraw-approved",
-    );
-    apply_action(
-        dir.path(),
-        "worker",
-        "worker-1",
-        &worker,
-        10,
         "blank.json",
         serde_json::json!({"type": "withdraw_approval", "reason": " "}),
     )
@@ -3681,7 +3723,7 @@ fn supersession_approval_withdrawal_reopens_revision_and_replaces_handoff() {
         "worker",
         "worker-1",
         &worker,
-        10,
+        8,
         "withdraw.json",
         serde_json::json!({"type": "withdraw_approval", "reason": "new deliverable"}),
     )
@@ -3704,7 +3746,7 @@ fn supersession_approval_withdrawal_reopens_revision_and_replaces_handoff() {
 }
 
 #[test]
-fn immutable_history_rejects_supersession_edges_without_the_current_publication_gate() {
+fn immutable_history_rejects_supersession_edges_binding_the_wrong_checkpoint() {
     use dvandva_v4::model::{
         create_bound_handoff_obligation, Assignee, HandoffKind, RunBaton, Status,
     };
@@ -3738,7 +3780,8 @@ fn immutable_history_rejects_supersession_edges_without_the_current_publication_
     )
     .success();
     let current = RunChannel::open(supersession.path()).read().unwrap();
-    let checkpoint = current.checkpoint.as_ref().unwrap().binding();
+    let mut checkpoint = current.checkpoint.as_ref().unwrap().binding();
+    checkpoint.checkpoint_identity = "f".repeat(64);
     let mut forged = current.clone();
     forged.revision += 1;
     forged.status = Status::Revising;
@@ -3760,8 +3803,12 @@ fn immutable_history_rejects_supersession_edges_without_the_current_publication_
         .clone();
     assert!(matches!(
         RunChannel::open(supersession.path()).compare_and_swap(current.revision, &forged),
-        Err(StoreError::InvalidHistory)
+        Err(StoreError::InvalidHistory | StoreError::InvalidBaton(_))
     ));
+    assert_eq!(
+        RunChannel::open(supersession.path()).read().unwrap(),
+        current
+    );
 
     let withdrawal = tempfile::tempdir().unwrap();
     init_pair(withdrawal.path());
@@ -3799,7 +3846,8 @@ fn immutable_history_rejects_supersession_edges_without_the_current_publication_
     )
     .success();
     let current: RunBaton = RunChannel::open(withdrawal.path()).read().unwrap();
-    let checkpoint = current.checkpoint.as_ref().unwrap().binding();
+    let mut checkpoint = current.checkpoint.as_ref().unwrap().binding();
+    checkpoint.checkpoint_identity = "f".repeat(64);
     let mut forged = current.clone();
     forged.revision += 1;
     forged.status = Status::Revising;
@@ -3821,8 +3869,9 @@ fn immutable_history_rejects_supersession_edges_without_the_current_publication_
         .clone();
     assert!(matches!(
         RunChannel::open(withdrawal.path()).compare_and_swap(current.revision, &forged),
-        Err(StoreError::InvalidHistory)
+        Err(StoreError::InvalidHistory | StoreError::InvalidBaton(_))
     ));
+    assert_eq!(RunChannel::open(withdrawal.path()).read().unwrap(), current);
 }
 
 #[test]
@@ -4162,49 +4211,27 @@ fn supersession_finalize_rejects_approved_review_with_pending_request() {
 }
 
 #[test]
-fn publication_rolling_gate_binds_every_semantic_handoff_without_recursive_staleness() {
+fn publication_obligation_rolls_at_every_handoff_and_gates_only_finalize() {
     let dir = tempfile::tempdir().unwrap();
     init_pair(dir.path());
     let worker = claim_role(dir.path(), "worker", "worker-1", 0);
     let reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
-    let first_checkpoint = checkpoint_submission(
-        "checkpoint-a",
-        serde_json::json!([
-            {"id": "implementation", "artifacts": [{"kind": "commit", "value": "abc"}]}
-        ]),
-    );
 
+    // Every semantic handoff still rolls a fresh obligation, but none of them
+    // waits on the explainer: a finished deliverable always has somewhere to land.
     apply_action_raw(
         dir.path(),
         "worker",
         "worker-1",
         &worker,
         2,
-        "blocked-first-checkpoint.json",
-        first_checkpoint.clone(),
-    )
-    .failure()
-    .stderr(predicate::str::contains(r#""error":"publication_stale""#));
-    approve_current_explainer(
-        dir.path(),
-        ("worker", "worker-1", &worker),
-        ("reviewer", "reviewer-1", &reviewer),
-        "deploy-1",
-    );
-    let approved_run_started = read_baton(dir.path());
-    assert_eq!(approved_run_started["revision"], 4);
-    assert_eq!(
-        approved_run_started["publication_binding"]["obligation"]["handoff_revision"],
-        0
-    );
-    apply_action_raw(
-        dir.path(),
-        "worker",
-        "worker-1",
-        &worker,
-        4,
         "first-checkpoint.json",
-        first_checkpoint,
+        checkpoint_submission(
+            "checkpoint-a",
+            serde_json::json!([
+                {"id": "implementation", "artifacts": [{"kind": "commit", "value": "abc"}]}
+            ]),
+        ),
     )
     .success();
     let first_binding = checkpoint_binding(dir.path());
@@ -4215,112 +4242,61 @@ fn publication_rolling_gate_binds_every_semantic_handoff_without_recursive_stale
     );
     assert_eq!(
         baton["publication_binding"]["obligation"]["handoff_revision"],
-        5
-    );
-    assert_eq!(
-        baton["publication_binding"]["obligation"]["scope_revision"],
-        0
+        3
     );
     assert_eq!(
         baton["publication_binding"]["obligation"]["checkpoint"],
         first_binding
     );
-    assert!(baton["publication_binding"]["deployment"].is_null());
+    assert!(baton["publication_binding"]["artifact"].is_null());
 
-    let changes = review_action(
-        "changes_requested",
-        &first_binding,
-        serde_json::json!(["Handle empty input"]),
-    );
     apply_action_raw(
         dir.path(),
         "reviewer",
         "reviewer-1",
         &reviewer,
-        5,
-        "blocked-review.json",
-        changes.clone(),
-    )
-    .failure()
-    .stderr(predicate::str::contains(r#""error":"publication_stale""#));
-    approve_current_explainer(
-        dir.path(),
-        ("worker", "worker-1", &worker),
-        ("reviewer", "reviewer-1", &reviewer),
-        "deploy-2",
-    );
-    apply_action_raw(
-        dir.path(),
-        "reviewer",
-        "reviewer-1",
-        &reviewer,
-        7,
+        3,
         "changes.json",
-        changes,
+        review_action(
+            "changes_requested",
+            &first_binding,
+            serde_json::json!(["Handle empty input"]),
+        ),
     )
     .success();
     let baton = read_baton(dir.path());
     assert_eq!(baton["status"], "revising");
-    assert_eq!(baton["assignee"], "worker");
     assert_eq!(
         baton["publication_binding"]["obligation"]["kind"],
         "reviewer_to_worker"
     );
     assert_eq!(
         baton["publication_binding"]["obligation"]["handoff_revision"],
-        8
-    );
-    assert_eq!(
-        baton["publication_binding"]["obligation"]["checkpoint"],
-        first_binding
+        4
     );
 
-    let revised_checkpoint = checkpoint_submission(
-        "checkpoint-b",
-        serde_json::json!([
-            {"id": "implementation", "artifacts": [{"kind": "commit", "value": "def"}]}
-        ]),
-    );
     apply_action_raw(
         dir.path(),
         "worker",
         "worker-1",
         &worker,
-        8,
-        "blocked-revision.json",
-        revised_checkpoint.clone(),
-    )
-    .failure()
-    .stderr(predicate::str::contains(r#""error":"publication_stale""#));
-    approve_current_explainer(
-        dir.path(),
-        ("worker", "worker-1", &worker),
-        ("reviewer", "reviewer-1", &reviewer),
-        "deploy-3",
-    );
-    apply_action_raw(
-        dir.path(),
-        "worker",
-        "worker-1",
-        &worker,
-        10,
+        4,
         "revised-checkpoint.json",
-        revised_checkpoint,
+        checkpoint_submission(
+            "checkpoint-b",
+            serde_json::json!([
+                {"id": "implementation", "artifacts": [{"kind": "commit", "value": "def"}]}
+            ]),
+        ),
     )
     .success();
     let revised_binding = checkpoint_binding(dir.path());
-    approve_current_explainer(
-        dir.path(),
-        ("worker", "worker-1", &worker),
-        ("reviewer", "reviewer-1", &reviewer),
-        "deploy-4",
-    );
     apply_action(
         dir.path(),
         "reviewer",
         "reviewer-1",
         &reviewer,
-        13,
+        5,
         "approve-checkpoint.json",
         review_action("approved", &revised_binding, serde_json::json!([])),
     )
@@ -4332,36 +4308,36 @@ fn publication_rolling_gate_binds_every_semantic_handoff_without_recursive_stale
         "reviewer_to_worker"
     );
     assert_eq!(
-        baton["publication_binding"]["obligation"]["handoff_revision"],
-        14
-    );
-    assert_eq!(
         baton["publication_binding"]["obligation"]["checkpoint"],
         revised_binding
     );
+
+    // Finalization is the one gate, and it binds the current obligation's bytes.
     apply_action_raw(
         dir.path(),
         "worker",
         "worker-1",
         &worker,
-        14,
+        6,
         "blocked-finalize.json",
         serde_json::json!({"type": "finalize"}),
     )
     .failure()
-    .stderr(predicate::str::contains(r#""error":"publication_stale""#));
+    .stderr(predicate::str::contains(
+        r#""error":"explainer_not_staged""#,
+    ));
     approve_current_explainer(
         dir.path(),
         ("worker", "worker-1", &worker),
         ("reviewer", "reviewer-1", &reviewer),
-        "deploy-5",
+        "final",
     );
     apply_action(
         dir.path(),
         "worker",
         "worker-1",
         &worker,
-        16,
+        8,
         "finalize.json",
         serde_json::json!({"type": "finalize"}),
     )
@@ -4376,13 +4352,7 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
     let worker = claim_role(dir.path(), "worker", "worker-1", 0);
     let reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
     let obligation = current_obligation(dir.path());
-    let valid = explainer_publication_action(
-        &obligation,
-        &"a".repeat(64),
-        "site-run-a",
-        "deployment-1",
-        "https://sites.openai.test/site-run-a/deployment-1",
-    );
+    let (stage, digest) = stage_explainer_action(dir.path(), &obligation, "deployment-1");
 
     apply_action(
         dir.path(),
@@ -4391,38 +4361,31 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
         &reviewer,
         2,
         "wrong-publisher.json",
-        valid.clone(),
+        stage.clone(),
     )
     .failure()
     .stderr(predicate::str::contains(
         r#""error":"wrong_publisher_harness""#,
     ));
-    for (index, mutate) in [
-        ("source_digest", serde_json::json!("A".repeat(64))),
-        ("source_digest", serde_json::json!("a".repeat(63))),
-        ("site_id", serde_json::json!(" ")),
-        ("site_version", serde_json::json!(" ")),
-        ("url", serde_json::json!(" ")),
-        ("channel", serde_json::json!("local")),
-        ("access", serde_json::json!("public")),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let mut action = valid.clone();
-        action[mutate.0] = mutate.1;
+    for (index, source) in ["missing.html", "empty.html"].into_iter().enumerate() {
+        let path = dir.path().join(source);
+        if source == "empty.html" {
+            std::fs::write(&path, b"").unwrap();
+        }
+        let mut action = stage.clone();
+        action["source_path"] = serde_json::json!(path.to_str().unwrap());
         apply_action(
             dir.path(),
             "worker",
             "worker-1",
             &worker,
             2,
-            &format!("invalid-deployment-{index}.json"),
+            &format!("invalid-source-{index}.json"),
             action,
         )
         .failure()
         .stderr(predicate::str::contains(
-            r#""error":"invalid_explainer_publication""#,
+            r#""error":"invalid_explainer_source""#,
         ));
     }
     for (index, stale_obligation) in [
@@ -4440,7 +4403,7 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
     .into_iter()
     .enumerate()
     {
-        let mut stale = valid.clone();
+        let mut stale = stage.clone();
         stale["obligation"] = stale_obligation;
         apply_action(
             dir.path(),
@@ -4448,7 +4411,7 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
             "worker-1",
             &worker,
             2,
-            &format!("stale-deployment-{index}.json"),
+            &format!("stale-stage-{index}.json"),
             stale,
         )
         .failure()
@@ -4456,31 +4419,83 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
             r#""error":"stale_publication_binding""#,
         ));
     }
-    apply_action(
-        dir.path(),
-        "worker",
-        "worker-1",
-        &worker,
-        2,
-        "valid-deployment.json",
-        valid,
-    )
-    .success();
+    apply_action(dir.path(), "worker", "worker-1", &worker, 2, "stage.json", stage).success();
     let baton = read_baton(dir.path());
-    let deployment = baton["publication_binding"]["deployment"].clone();
-    assert_eq!(deployment["obligation"], obligation);
-    assert_eq!(deployment["publisher_harness"], "Codex");
-    assert_eq!(deployment["channel"], "codex_sites");
-    assert_eq!(deployment["access"], "owner_only");
+    let artifact = baton["publication_binding"]["artifact"].clone();
+    assert_eq!(artifact["obligation"], obligation);
+    assert_eq!(artifact["source_digest"], digest);
+    assert_eq!(artifact["channel"], "run_artifact");
+    assert_eq!(artifact["access"], "run_private");
+    assert_eq!(artifact["publisher_harness"], "Codex");
+    assert!(dir.path().join(format!("explainer/{digest}.html")).is_file());
 
-    let approved =
-        explainer_review_action(&obligation, &deployment, "approved", serde_json::json!([]));
+    // The Site is an optional rendering: it must name the staged bytes exactly.
+    let valid_site = explainer_publication_action(
+        &obligation,
+        &digest,
+        "site-run-a",
+        "deployment-1",
+        "https://sites.openai.test/site-run-a/deployment-1",
+    );
+    let mut wrong_digest = valid_site.clone();
+    wrong_digest["source_digest"] = serde_json::json!("b".repeat(64));
     apply_action(
         dir.path(),
         "worker",
         "worker-1",
         &worker,
         3,
+        "site-wrong-digest.json",
+        wrong_digest,
+    )
+    .failure()
+    .stderr(predicate::str::contains(
+        r#""error":"stale_publication_binding""#,
+    ));
+    for (index, coordinate) in ["site_id", "site_version", "url", "channel", "access"]
+        .into_iter()
+        .enumerate()
+    {
+        let mut action = valid_site.clone();
+        action[coordinate] = serde_json::json!(" ");
+        apply_action(
+            dir.path(),
+            "worker",
+            "worker-1",
+            &worker,
+            3,
+            &format!("invalid-site-{index}.json"),
+            action,
+        )
+        .failure()
+        .stderr(predicate::str::contains(
+            r#""error":"invalid_explainer_publication""#,
+        ));
+    }
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        3,
+        "valid-site.json",
+        valid_site,
+    )
+    .success();
+    let baton = read_baton(dir.path());
+    let deployment = baton["publication_binding"]["deployment"].clone();
+    assert_eq!(deployment["source_digest"], digest);
+    assert_eq!(deployment["channel"], "codex_sites");
+    assert_eq!(deployment["access"], "owner_only");
+
+    let approved =
+        explainer_review_action(&obligation, &artifact, "approved", serde_json::json!([]));
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        4,
         "wrong-reviewer.json",
         approved.clone(),
     )
@@ -4488,31 +4503,21 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
     .stderr(predicate::str::contains(
         r#""error":"wrong_reviewer_harness""#,
     ));
-    for (index, (coordinate, stale_value)) in [
-        ("source_digest", serde_json::json!("b".repeat(64))),
-        ("site_id", serde_json::json!("site-old")),
-        ("site_version", serde_json::json!("deployment-old")),
-        ("url", serde_json::json!("https://sites.openai.test/stale")),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        let mut stale = approved.clone();
-        stale[coordinate] = stale_value;
-        apply_action(
-            dir.path(),
-            "reviewer",
-            "reviewer-1",
-            &reviewer,
-            3,
-            &format!("stale-review-{index}.json"),
-            stale,
-        )
-        .failure()
-        .stderr(predicate::str::contains(
-            r#""error":"stale_publication_binding""#,
-        ));
-    }
+    let mut stale_review = approved.clone();
+    stale_review["source_digest"] = serde_json::json!("b".repeat(64));
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        4,
+        "stale-review.json",
+        stale_review,
+    )
+    .failure()
+    .stderr(predicate::str::contains(
+        r#""error":"stale_publication_binding""#,
+    ));
     let mut approved_with_findings = approved.clone();
     approved_with_findings["findings"] = serde_json::json!(["blocking"]);
     apply_action(
@@ -4520,26 +4525,25 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
         "reviewer",
         "reviewer-1",
         &reviewer,
-        3,
+        4,
         "approved-with-findings.json",
         approved_with_findings,
     )
     .failure()
     .stderr(predicate::str::contains(r#""error":"blocking_findings""#));
-    let changes_without_findings = explainer_review_action(
-        &obligation,
-        &deployment,
-        "changes_requested",
-        serde_json::json!([]),
-    );
     apply_action(
         dir.path(),
         "reviewer",
         "reviewer-1",
         &reviewer,
-        3,
+        4,
         "changes-without-findings.json",
-        changes_without_findings,
+        explainer_review_action(
+            &obligation,
+            &artifact,
+            "changes_requested",
+            serde_json::json!([]),
+        ),
     )
     .failure()
     .stderr(predicate::str::contains(r#""error":"missing_findings""#));
@@ -4548,15 +4552,17 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
         "reviewer",
         "reviewer-1",
         &reviewer,
-        3,
+        4,
         "approved.json",
         approved,
     )
     .success();
 
+    // One stable Site ID per run; a new version of the same bytes keeps the
+    // approval, because the reviewer's verdict binds the bytes, not the URL.
     let mut different_site = explainer_publication_action(
         &obligation,
-        &"b".repeat(64),
+        &digest,
         "site-other",
         "deployment-2",
         "https://sites.openai.test/site-other/deployment-2",
@@ -4566,7 +4572,7 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
         "worker",
         "worker-1",
         &worker,
-        4,
+        5,
         "different-site.json",
         different_site.clone(),
     )
@@ -4579,12 +4585,28 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
         "worker",
         "worker-1",
         &worker,
-        4,
+        5,
         "republish.json",
         different_site,
     )
     .success();
     let baton = read_baton(dir.path());
+    assert_eq!(baton["publication_binding"]["review"]["verdict"], "approved");
+
+    // Restaging different bytes does invalidate both the rendering and the review.
+    let (restage, _) = stage_explainer_action(dir.path(), &obligation, "deployment-2");
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        6,
+        "restage.json",
+        restage,
+    )
+    .success();
+    let baton = read_baton(dir.path());
+    assert!(baton["publication_binding"]["deployment"].is_null());
     assert!(baton["publication_binding"]["review"].is_null());
     assert_eq!(baton["publication_binding"]["obligation"], obligation);
 }
@@ -4593,7 +4615,7 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
 fn publication_store_rejects_moved_receipts_and_site_identity_rewrites() {
     for (index, (pointer, value)) in [
         (
-            "/publication_binding/deployment/obligation/handoff_revision",
+            "/publication_binding/artifact/obligation/handoff_revision",
             serde_json::json!(1),
         ),
         (
@@ -4601,12 +4623,16 @@ fn publication_store_rejects_moved_receipts_and_site_identity_rewrites() {
             serde_json::json!("scope_amended"),
         ),
         (
-            "/publication_binding/deployment/publisher_harness",
-            serde_json::json!("Claude"),
+            "/publication_binding/artifact/source_digest",
+            serde_json::json!("b".repeat(64)),
+        ),
+        (
+            "/publication_binding/artifact/path",
+            serde_json::json!("explainer/elsewhere.html"),
         ),
         (
             "/publication_binding/review/reviewer_harness",
-            serde_json::json!("Codex"),
+            serde_json::json!(" "),
         ),
         ("/publication_policy/channel", serde_json::json!("local")),
     ]
@@ -4650,6 +4676,28 @@ fn publication_store_rejects_moved_receipts_and_site_identity_rewrites() {
         ("reviewer", "reviewer-1", &reviewer),
         "deployment-1",
     );
+    let obligation = current_obligation(dir.path());
+    let digest = read_baton(dir.path())["publication_binding"]["artifact"]["source_digest"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let revision = read_baton(dir.path())["revision"].as_u64().unwrap();
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        revision,
+        "site.json",
+        explainer_publication_action(
+            &obligation,
+            &digest,
+            "site-run-a",
+            "deployment-1",
+            "https://sites.openai.test/site-run-a/deployment-1",
+        ),
+    )
+    .success();
     let channel = RunChannel::open(dir.path());
     let current = channel.read().unwrap();
     let mut rewritten = current.clone();
@@ -4657,7 +4705,6 @@ fn publication_store_rejects_moved_receipts_and_site_identity_rewrites() {
     let binding = rewritten.publication_binding.as_mut().unwrap();
     binding.site_id = Some("site-other".to_owned());
     binding.deployment.as_mut().unwrap().site_id = "site-other".to_owned();
-    binding.review.as_mut().unwrap().site_id = "site-other".to_owned();
     let error = channel
         .compare_and_swap(current.revision, &rewritten)
         .unwrap_err();
@@ -5607,33 +5654,44 @@ fn publication_changes_requested_is_substate_only_and_legacy_numeric_is_rejected
     .stderr(predicate::str::contains(
         r#""error":"legacy_publication_unsupported""#,
     ));
+    let (stage, digest) = stage_explainer_action(dir.path(), &obligation, "deployment-1");
     apply_action(
         dir.path(),
         "worker",
         "worker-1",
         &worker,
         2,
+        "stage.json",
+        stage,
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        3,
         "deploy.json",
         explainer_publication_action(
             &obligation,
-            &"a".repeat(64),
+            &digest,
             "site-run-a",
             "deployment-1",
             "https://sites.openai.test/site-run-a/deployment-1",
         ),
     )
     .success();
-    let deployment = read_baton(dir.path())["publication_binding"]["deployment"].clone();
+    let artifact = read_baton(dir.path())["publication_binding"]["artifact"].clone();
     apply_action(
         dir.path(),
         "reviewer",
         "reviewer-1",
         &reviewer,
-        3,
+        4,
         "changes.json",
         explainer_review_action(
             &obligation,
-            &deployment,
+            &artifact,
             "changes_requested",
             serde_json::json!(["Explain the current TODO"]),
         ),
@@ -5648,13 +5706,15 @@ fn publication_changes_requested_is_substate_only_and_legacy_numeric_is_rejected
         baton["publication_binding"]["review"]["verdict"],
         "changes_requested"
     );
+    // Checkpoint submission is deliberately independent of the explainer, so a
+    // changes-requested explainer never strands a finished deliverable.
     apply_action_raw(
         dir.path(),
         "worker",
         "worker-1",
         &worker,
-        4,
-        "still-blocked.json",
+        5,
+        "still-available.json",
         checkpoint_submission(
             "checkpoint-a",
             serde_json::json!([
@@ -5662,8 +5722,7 @@ fn publication_changes_requested_is_substate_only_and_legacy_numeric_is_rejected
             ]),
         ),
     )
-    .failure()
-    .stderr(predicate::str::contains(r#""error":"publication_stale""#));
+    .success();
 }
 
 #[test]
@@ -5692,13 +5751,7 @@ fn reverse_casting_keeps_codex_publisher_and_claude_explainer_reviewer() {
     let worker = claim_role(dir.path(), "worker", "claude-worker", 0);
     let reviewer = claim_role(dir.path(), "reviewer", "codex-reviewer", 1);
     let obligation = current_obligation(dir.path());
-    let deployment_action = explainer_publication_action(
-        &obligation,
-        &"a".repeat(64),
-        "site-reverse",
-        "deployment-1",
-        "https://sites.openai.test/site-reverse/deployment-1",
-    );
+    let (stage_action, _digest) = stage_explainer_action(dir.path(), &obligation, "reverse");
     apply_action(
         dir.path(),
         "worker",
@@ -5706,7 +5759,7 @@ fn reverse_casting_keeps_codex_publisher_and_claude_explainer_reviewer() {
         &worker,
         2,
         "claude-cannot-publish.json",
-        deployment_action.clone(),
+        stage_action.clone(),
     )
     .failure()
     .stderr(predicate::str::contains(
@@ -5719,12 +5772,12 @@ fn reverse_casting_keeps_codex_publisher_and_claude_explainer_reviewer() {
         &reviewer,
         2,
         "codex-publishes.json",
-        deployment_action,
+        stage_action,
     )
     .success();
-    let deployment = read_baton(dir.path())["publication_binding"]["deployment"].clone();
+    let artifact = read_baton(dir.path())["publication_binding"]["artifact"].clone();
     let approval =
-        explainer_review_action(&obligation, &deployment, "approved", serde_json::json!([]));
+        explainer_review_action(&obligation, &artifact, "approved", serde_json::json!([]));
     apply_action(
         dir.path(),
         "reviewer",

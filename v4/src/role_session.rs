@@ -1464,8 +1464,10 @@ mod tests {
                 role: Role::Worker,
                 participant_harness: "Codex",
                 task_reference: Some("DEF-123"),
+                objective: None,
                 run_id: Some("run-a"),
                 session_id: Some("worker"),
+                stale_after_days: None,
             },
         )
         .unwrap();
@@ -1539,6 +1541,9 @@ mod tests {
                 started.snapshot.baton.revision
             ),
             RoleStartResult::Upgrade(_) => panic!("unexpected upgrade"),
+            RoleStartResult::PublicationUnreadable(_) => {
+                panic!("unexpected publication preflight failure")
+            }
         }
         assert_eq!(std::fs::read_dir(&runs).unwrap().count(), 1);
     }

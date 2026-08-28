@@ -217,6 +217,18 @@ pub struct PublicationPolicy {
 }
 
 impl PublicationPolicy {
+    /// Whether this policy names a channel/access pair the kernel recognizes at
+    /// all. Unknown pairs cannot be reasoned about and are rejected on read.
+    pub fn is_recognized(&self) -> bool {
+        !self.publisher_harness.trim().is_empty()
+            && !self.reviewer_harness.trim().is_empty()
+            && matches!(
+                (self.channel.as_str(), self.access.as_str()),
+                (EXPLAINER_CHANNEL, EXPLAINER_ACCESS)
+                    | (LEGACY_EXPLAINER_CHANNEL, LEGACY_EXPLAINER_ACCESS)
+            )
+    }
+
     pub fn fixed() -> Self {
         Self {
             publisher_harness: EXPLAINER_PUBLISHER_HARNESS.to_owned(),
