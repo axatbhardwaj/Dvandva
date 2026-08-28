@@ -199,6 +199,42 @@ impl RunChannel {
         })
     }
 
+    /// Like `mutate_locked`, but with no revision precondition. Reserved for
+    /// actions that carry their own idempotency token (the handoff obligation)
+    /// and for pure liveness writes. Both are correct against any head, and both
+    /// were previously forced into a retry loop by unrelated peer heartbeats.
+    pub(crate) fn mutate_locked_untracked<T, E>(
+        &self,
+        mutation: impl FnOnce(&mut RunBaton, OffsetDateTime) -> Result<T, E>,
+    ) -> Result<T, E>
+    where
+        E: From<StoreError>,
+    {
+        self.with_lock_error(|| {
+            let current = self.read().map_err(E::from)?;
+            if self
+                .read_history_revision(current.revision)
+                .map_err(E::from)?
+                != current
+            {
+                return Err(E::from(StoreError::InvalidHistory));
+            }
+            if current.schema != SCHEMA {
+                return Err(E::from(StoreError::MigrationRequired));
+            }
+            let mut next = current.clone();
+            let result = mutation(&mut next, OffsetDateTime::now_utc())?;
+            if next.revision != current.revision + 1 {
+                return Err(E::from(StoreError::InvalidHistory));
+            }
+            validate_baton(&next).map_err(E::from)?;
+            validate_history_edge(&current, &next).map_err(E::from)?;
+            self.write_history(&next).map_err(E::from)?;
+            self.install(&next).map_err(E::from)?;
+            Ok(result)
+        })
+    }
+
     pub(crate) fn upgrade_legacy(&self, expected_revision: u64) -> Result<RunBaton, StoreError> {
         self.with_lock(|| {
             let current = self.read()?;
@@ -846,6 +882,7 @@ fn valid_v2_edge_kind(current: &RunBaton, next: &RunBaton) -> bool {
         return valid_publication_receipt_edge(current, next, current_binding, next_binding);
     }
     valid_claim_edge(current, next)
+        || valid_progress_edge(current, next)
         || valid_human_decision_request_edge(current, next)
         || valid_plain_human_decision_resume_edge(current, next)
         || valid_checkpoint_supersession_request_edge(current, next)
@@ -937,6 +974,54 @@ fn valid_claim_edge(current: &RunBaton, next: &RunBaton) -> bool {
             expected.participants.reviewer.claim = next.participants.reviewer.claim.clone();
         })
     }
+}
+
+/// A liveness write: one participant updates its own reported phase and, when it
+/// holds a live claim, renews that claim in the same edge.
+fn valid_progress_edge(current: &RunBaton, next: &RunBaton) -> bool {
+    if is_terminal(current) {
+        return false;
+    }
+    let worker_changed = current.participants.worker.progress != next.participants.worker.progress;
+    let reviewer_changed =
+        current.participants.reviewer.progress != next.participants.reviewer.progress;
+    if worker_changed == reviewer_changed {
+        return false;
+    }
+    let (current_participant, next_participant) = if worker_changed {
+        (&current.participants.worker, &next.participants.worker)
+    } else {
+        (&current.participants.reviewer, &next.participants.reviewer)
+    };
+    let Some(progress) = next_participant.progress.as_ref() else {
+        return false;
+    };
+    if progress
+        .detail
+        .as_ref()
+        .is_some_and(|detail| !valid_exact_reference(detail))
+        || OffsetDateTime::parse(&progress.updated_at, &Rfc3339).is_err()
+    {
+        return false;
+    }
+    // A renewal is permitted alongside, but only of this participant's own claim
+    // and only under the ordinary same-session renewal rules.
+    let claim_renewed = current_participant.claim != next_participant.claim;
+    if claim_renewed
+        && !valid_claim_mutation(
+            current_participant.claim.as_ref(),
+            next_participant.claim.as_ref(),
+        )
+    {
+        return false;
+    }
+    only_fields_changed(current, next, |expected| {
+        if worker_changed {
+            expected.participants.worker = next.participants.worker.clone();
+        } else {
+            expected.participants.reviewer = next.participants.reviewer.clone();
+        }
+    })
 }
 
 fn valid_claim_mutation(

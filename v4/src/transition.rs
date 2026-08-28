@@ -71,6 +71,20 @@ pub enum TransitionError {
     InvalidProgress,
 }
 
+/// Actions that carry their own idempotency token, or that only report
+/// liveness, are correct against whatever head they land on. Binding them to a
+/// caller-supplied revision made every unrelated peer heartbeat invalidate a
+/// prepared write and forced an optimistic retry loop on the caller.
+fn is_obligation_bound(action: &Action) -> bool {
+    matches!(
+        action,
+        Action::StageExplainer { .. }
+            | Action::RecordExplainerPublication { .. }
+            | Action::RecordExplainerReview { .. }
+            | Action::ReportProgress { .. }
+    )
+}
+
 pub fn apply(
     channel: &RunChannel,
     role: Role,
@@ -79,7 +93,7 @@ pub fn apply(
     expected_revision: u64,
     action: Action,
 ) -> Result<RunBaton, TransitionError> {
-    channel.mutate_locked(expected_revision, |baton, now| {
+    let mutate = |baton: &mut RunBaton, now, action| -> Result<RunBaton, TransitionError> {
         if matches!(baton.status, Status::Done | Status::Abandoned) {
             return Err(TransitionError::Terminal);
         }
@@ -87,7 +101,12 @@ pub fn apply(
         apply_locked(channel, baton, role, expected_revision, action)?;
         baton.revision += 1;
         Ok(baton.clone())
-    })
+    };
+    if is_obligation_bound(&action) {
+        channel.mutate_locked_untracked(|baton, now| mutate(baton, now, action))
+    } else {
+        channel.mutate_locked(expected_revision, |baton, now| mutate(baton, now, action))
+    }
 }
 
 fn apply_locked(
