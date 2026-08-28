@@ -207,6 +207,7 @@ impl RunChannel {
     pub(crate) fn mutate_locked_untracked<T, E>(
         &self,
         mutation: impl FnOnce(&mut RunBaton, OffsetDateTime) -> Result<T, E>,
+        replayed: impl FnOnce(RunBaton) -> T,
     ) -> Result<T, E>
     where
         E: From<StoreError>,
@@ -227,6 +228,14 @@ impl RunChannel {
             let result = mutation(&mut next, OffsetDateTime::now_utc())?;
             if next.revision != current.revision + 1 {
                 return Err(E::from(StoreError::InvalidHistory));
+            }
+            // Exact replay is a no-op. Without a revision precondition, a retried
+            // write must not append an identical revision, or an ordinary retry
+            // would grow history and could fail its own edge validation.
+            let mut unchanged = next.clone();
+            unchanged.revision = current.revision;
+            if unchanged == current {
+                return Ok(replayed(current));
             }
             validate_baton(&next).map_err(E::from)?;
             validate_history_edge(&current, &next).map_err(E::from)?;

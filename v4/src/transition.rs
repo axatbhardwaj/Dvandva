@@ -108,7 +108,7 @@ pub fn apply(
         Ok(baton.clone())
     };
     if is_obligation_bound(&action) {
-        channel.mutate_locked_untracked(|baton, now| mutate(baton, now, action))
+        channel.mutate_locked_untracked(|baton, now| mutate(baton, now, action), |current| current)
     } else {
         channel.mutate_locked(expected_revision, |baton, now| mutate(baton, now, action))
     }
@@ -501,6 +501,20 @@ fn apply_locked(
                 return Err(TransitionError::StalePublicationBinding);
             }
             require_staged_bytes_intact(channel.directory(), artifact)?;
+            // Ordering: once these exact bytes carry a verdict, a later delivery
+            // of a different verdict for the same bytes is stale, not an
+            // update. Restaging is how a new verdict is legitimately obtained.
+            if let Some(existing) = binding.review.as_ref() {
+                let same_bytes =
+                    existing.obligation == obligation && existing.source_digest == source_digest;
+                let incoming_verdict = match verdict {
+                    ReviewVerdict::Approved => "approved",
+                    ReviewVerdict::ChangesRequested => "changes_requested",
+                };
+                if same_bytes && existing.verdict != incoming_verdict {
+                    return Err(TransitionError::StalePublicationBinding);
+                }
+            }
             let findings = findings
                 .into_iter()
                 .map(|finding| finding.trim().to_owned())

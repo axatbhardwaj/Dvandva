@@ -7,8 +7,8 @@ use std::{
 };
 
 use notify::{RecursiveMode, Watcher};
-use std::os::unix::fs::PermissionsExt;
 use serde::Serialize;
+use std::os::unix::fs::PermissionsExt;
 use thiserror::Error;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 

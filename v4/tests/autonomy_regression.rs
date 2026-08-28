@@ -254,3 +254,125 @@ fn escape_hatches_never_make_a_waiting_role_actionable() {
         Some("finalize awaits current explainer approval")
     );
 }
+
+/// Obligation-bound writes waive the revision precondition, so they need their
+/// own ordering and replay rules: an exact retry must be a no-op, and a late
+/// delivery must not overwrite a newer verdict for the same bytes.
+#[test]
+fn obligation_bound_writes_replay_cleanly_and_reject_stale_verdicts() {
+    use dvandva_v4::{
+        action::{Action, ReviewVerdict},
+        store::RunChannel,
+        transition,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let run_dir = dir.path().join("run-a");
+    let mut created = RunBaton::new(
+        "run-a",
+        "Objective",
+        "codex",
+        "claude",
+        vec![DeliverableRequirement {
+            id: "kernel".into(),
+            description: "Fix the kernel".into(),
+        }],
+    )
+    .unwrap();
+    created.workspace = Some(dvandva_v4::model::WorkspaceIdentity {
+        repository_id: "github.com/axatbhardwaj/dvandva".into(),
+        origin: None,
+        worktree: None,
+    });
+    let channel = RunChannel::open(&run_dir);
+    channel.create(&created).unwrap();
+
+    let worker =
+        dvandva_v4::claim::claim(&channel, Role::Worker, "codex-session", 1800, 0).unwrap();
+    let reviewer =
+        dvandva_v4::claim::claim(&channel, Role::Reviewer, "claude-session", 1800, 1).unwrap();
+
+    let source = dir.path().join("explainer.html");
+    std::fs::write(&source, b"<h1>bytes</h1>").unwrap();
+    let obligation = channel
+        .read()
+        .unwrap()
+        .publication_binding
+        .unwrap()
+        .obligation;
+    let stage = || Action::StageExplainer {
+        obligation: obligation.clone(),
+        source_path: source.clone(),
+    };
+
+    let staged = transition::apply(
+        &channel,
+        Role::Worker,
+        "codex-session",
+        &worker.token,
+        2,
+        stage(),
+    )
+    .unwrap();
+    let digest = staged
+        .publication_binding
+        .as_ref()
+        .unwrap()
+        .artifact
+        .as_ref()
+        .unwrap()
+        .source_digest
+        .clone();
+
+    // Replay of the identical write is a no-op, not a new revision.
+    let replayed = transition::apply(
+        &channel,
+        Role::Worker,
+        "codex-session",
+        &worker.token,
+        2,
+        stage(),
+    )
+    .unwrap();
+    assert_eq!(replayed.revision, staged.revision);
+    assert_eq!(channel.read().unwrap().revision, staged.revision);
+
+    let review = |verdict, findings: Vec<String>| Action::RecordExplainerReview {
+        obligation: obligation.clone(),
+        source_digest: digest.clone(),
+        verdict,
+        findings,
+    };
+    transition::apply(
+        &channel,
+        Role::Reviewer,
+        "claude-session",
+        &reviewer.token,
+        3,
+        review(ReviewVerdict::ChangesRequested, vec!["rework".into()]),
+    )
+    .unwrap();
+
+    // A late approval for the same bytes must not overwrite the newer verdict
+    // and silently unblock finalization.
+    let stale = transition::apply(
+        &channel,
+        Role::Reviewer,
+        "claude-session",
+        &reviewer.token,
+        3,
+        review(ReviewVerdict::Approved, Vec::new()),
+    );
+    assert!(
+        matches!(
+            stale,
+            Err(transition::TransitionError::StalePublicationBinding)
+        ),
+        "a late differing verdict for the same bytes must be rejected"
+    );
+    let head = channel.read().unwrap();
+    assert_eq!(
+        head.publication_binding.unwrap().review.unwrap().verdict,
+        "changes_requested"
+    );
+}
