@@ -1072,7 +1072,17 @@ pub fn reclaim(
     require_current_schema(&baton)?;
     let canonical_run = std::fs::canonicalize(run_dir).map_err(StoreError::Io)?;
     credential_lock.prepare(&baton)?;
-    let grant = claim::reclaim(&channel, role, session_id, lease_seconds, expected_revision)?;
+    // A replacement claim is as exposed to a crash between install and store
+    // as a first claim, so it gets the same nonce before it exists.
+    let nonce = write_recovery_nonce(credentials_root, session_id, &baton.run_id, role)?;
+    let grant = claim::reclaim_with_recovery(
+        &channel,
+        role,
+        session_id,
+        lease_seconds,
+        expected_revision,
+        Some(claim::digest(&nonce)),
+    )?;
     let credential = Credential {
         run_dir: canonical_run,
         run_id: baton.run_id,

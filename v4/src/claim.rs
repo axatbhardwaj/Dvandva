@@ -101,6 +101,27 @@ pub fn reclaim(
     lease_seconds: u64,
     expected_revision: u64,
 ) -> Result<ClaimGrant, ClaimError> {
+    reclaim_with_recovery(
+        channel,
+        role,
+        session_id,
+        lease_seconds,
+        expected_revision,
+        None,
+    )
+}
+
+/// Replace an expired claim, recording a recovery digest so that if the
+/// process dies before the new token is stored, the replacement is as
+/// recoverable as a first claim.
+pub fn reclaim_with_recovery(
+    channel: &RunChannel,
+    role: Role,
+    session_id: &str,
+    lease_seconds: u64,
+    expected_revision: u64,
+    recovery_digest: Option<String>,
+) -> Result<ClaimGrant, ClaimError> {
     validate_request(session_id, lease_seconds)?;
     channel.mutate_locked(expected_revision, |baton, now| {
         reject_terminal(baton)?;
@@ -115,7 +136,15 @@ pub fn reclaim(
             .epoch
             .checked_add(1)
             .ok_or(ClaimError::InvalidLease)?;
-        install_claim(baton, role, session_id, lease_seconds, epoch, now, None)
+        install_claim(
+            baton,
+            role,
+            session_id,
+            lease_seconds,
+            epoch,
+            now,
+            recovery_digest.clone(),
+        )
     })
 }
 
