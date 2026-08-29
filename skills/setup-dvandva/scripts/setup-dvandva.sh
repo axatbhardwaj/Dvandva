@@ -190,13 +190,13 @@ require_owned_or_absent() {
 
 asset_for_host() {
   test "$(uname -s)" = "Linux" || {
-    printf 'setup-dvandva: only Linux is supported\n' >&2
+    printf 'setup-dvandva: only Linux x86_64 is supported for now (host: %s)\n' "$(uname -s)" >&2
     exit 1
   }
   case "$(uname -m)" in
     x86_64) printf 'dvandva-kernel-linux-x86_64\n' ;;
     *)
-      printf 'setup-dvandva: unsupported architecture: %s\n' "$(uname -m)" >&2
+      printf 'setup-dvandva: unsupported architecture: %s (only x86_64 for now)\n' "$(uname -m)" >&2
       exit 1
       ;;
   esac
