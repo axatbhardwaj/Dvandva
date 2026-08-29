@@ -42,6 +42,8 @@ jobs:
         run: bash tests/skills/package-release.sh
       - name: Verify two-role canary
         run: bash tests/skills/two-role-canary.sh
+      - name: Verify poll behaviour
+        run: bash tests/skills/poll.sh
 
   # Operational prerequisite: repository administrators protect skills-v* tags
   # from deletion or force-updates. This workflow verifies tag identity twice;

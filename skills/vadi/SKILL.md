@@ -23,14 +23,29 @@ that returned prompt; never invoke or wake the peer harness.
    `advisory_actions` authorizes `work`; apply a mutation only when it appears
    in `legal_actions`.
 3. Verify and checkpoint the complete canonical scope, satisfy any
-   harness-specific explainer duty, report the five-part handoff, then enter a
-   foreground local wait.
-4. Repeat from a fresh snapshot. Stop only on terminal state or human stop.
+   harness-specific explainer duty, report the five-part handoff, then in the
+   same turn enter a foreground local wait with `dvandva-role.sh poll`.
+4. When `poll` returns `wait_outcome: idle_timeout`, call it again at once.
+   On every other wake, repeat from a fresh snapshot. Stop only on terminal
+   state or human stop.
+
+Ending the turn is not a wait. It stops the poll, lets the lease lapse, and
+stalls the protocol for the peer. Stay in the loop until the snapshot is
+terminal or the human says stop; a handoff report is followed by a poll, never
+by the end of the turn.
 
 `request_human_decision` is the sole documented exception to `next_actions`:
-choose it from `legal_actions` only for new human scope, ambiguity, or
-unavailable mandated publication/review capability. It is never an ordinary
-wake or action.
+choose it from `legal_actions` only for a decision that is the human's alone —
+`scope`, `intent`, or `authority` — never for protocol approval. A decision is
+answered by choosing one of its options: a scope decision resolves only
+through a scope amendment, and an intent or authority answer is recorded on the
+canonical objective, so a pause that would change nothing cannot be resolved.
+It is never an ordinary wake or action.
+
+Protocol-internal problems resolve autonomously. An unreadable publication
+policy, a legacy schema, a lapsed peer lease, a changes-requested explainer, and
+a wait timeout all have deterministic recoveries, and the human may be absent.
+Take the recovery the snapshot offers rather than blocking for approval.
 
 ## Boundaries
 

@@ -2,10 +2,7 @@ use serde::Serialize;
 
 use crate::{
     claim::Role,
-    model::{
-        Assignee, RunBaton, Status, EXPLAINER_ACCESS, EXPLAINER_CHANNEL,
-        EXPLAINER_PUBLISHER_HARNESS, EXPLAINER_REVIEWER_HARNESS,
-    },
+    model::{Assignee, PublicationPolicy, RunBaton, Status},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -55,29 +52,14 @@ pub fn classify(baton: &RunBaton, role: Role, participant_harness: &str) -> Next
         match (role, &baton.status, &baton.assignee) {
             (Role::Worker, Status::Working | Status::Revising, Assignee::Worker) => {
                 advisory.push("work");
-                if publication_gate_satisfied(baton) {
-                    legal.push("submit_checkpoint");
-                } else {
-                    blocking_reason = Some("submit_checkpoint awaits current explainer approval");
-                }
+                legal.push("submit_checkpoint");
             }
             (Role::Reviewer, Status::Reviewing, Assignee::Reviewer) => {
                 advisory.push("review_checkpoint");
                 if baton.pending_checkpoint_supersession.is_some() {
-                    if publication_gate_satisfied_for_current_checkpoint(
-                        baton,
-                        crate::model::HandoffKind::WorkerToReviewer,
-                    ) {
-                        legal.push("accept_checkpoint_supersession");
-                    } else {
-                        blocking_reason = Some(
-                            "accept_checkpoint_supersession awaits current explainer approval",
-                        );
-                    }
-                } else if publication_gate_satisfied(baton) {
-                    legal.push("record_review");
+                    legal.push("accept_checkpoint_supersession");
                 } else {
-                    blocking_reason = Some("record_review awaits current explainer approval");
+                    legal.push("record_review");
                 }
             }
             (Role::Worker, Status::Reviewing, Assignee::Reviewer)
@@ -86,12 +68,7 @@ pub fn classify(baton: &RunBaton, role: Role, participant_harness: &str) -> Next
                 legal.push("request_checkpoint_supersession");
             }
             (Role::Worker, Status::Finalizing, Assignee::Worker) => {
-                if publication_gate_satisfied_for_current_checkpoint(
-                    baton,
-                    crate::model::HandoffKind::ReviewerToWorker,
-                ) {
-                    legal.push("withdraw_approval");
-                }
+                legal.push("withdraw_approval");
                 if publication_gate_satisfied(baton) {
                     legal.push("finalize");
                 } else {
@@ -103,11 +80,15 @@ pub fn classify(baton: &RunBaton, role: Role, participant_harness: &str) -> Next
     }
 
     let harness = participant_harness.trim();
-    if harness.eq_ignore_ascii_case(EXPLAINER_PUBLISHER_HARNESS) {
-        if publication_needs_deployment(baton) {
+    let policy = effective_policy(baton);
+    if harness.eq_ignore_ascii_case(policy.publisher_harness.trim()) {
+        if publication_needs_artifact(baton) {
+            legal.push("stage_explainer");
+        }
+        if publication_can_publish_site(baton) {
             legal.push("publish_explainer");
         }
-    } else if harness.eq_ignore_ascii_case(EXPLAINER_REVIEWER_HARNESS)
+    } else if harness.eq_ignore_ascii_case(policy.reviewer_harness.trim())
         && publication_needs_review(baton)
     {
         legal.push("review_explainer");
@@ -116,6 +97,9 @@ pub fn classify(baton: &RunBaton, role: Role, participant_harness: &str) -> Next
     if advisory.is_empty() && legal.is_empty() {
         legal.push("wait");
     }
+    // Always available, never a reason to wake: reporting liveness is something
+    // a role may do, not work the protocol is waiting on.
+    legal.push("report_progress");
     let mut actions = result(role_state, wake_reason, advisory, legal, blocking_reason);
     if baton.status != Status::HumanDecision {
         actions.legal_actions.push("request_human_decision");
@@ -135,9 +119,22 @@ fn result(
         .chain(&legal_actions)
         .copied()
         .collect::<Vec<_>>();
-    let actionable = next_actions
-        .iter()
-        .any(|action| !matches!(*action, "wait" | "stop"));
+    // A wake reason is an action that advances the run on the current owner's
+    // behalf. Escape hatches and liveness are always available and are never
+    // reasons to wake: counting them makes a foreground wait return instantly
+    // and spin instead of resting.
+    let actionable = next_actions.iter().any(|action| {
+        !matches!(
+            *action,
+            "wait"
+                | "stop"
+                | "report_progress"
+                | "request_checkpoint_supersession"
+                | "withdraw_approval"
+                // Optional: the run never waits on a human-facing rendering.
+                | "publish_explainer"
+        )
+    });
     NextActions {
         role_state,
         wake_reason,
@@ -149,9 +146,18 @@ fn result(
     }
 }
 
-fn publication_needs_deployment(baton: &RunBaton) -> bool {
+fn effective_policy(baton: &RunBaton) -> PublicationPolicy {
+    baton
+        .publication_policy
+        .clone()
+        .unwrap_or_else(PublicationPolicy::fixed)
+}
+
+/// The publisher owes fresh explainer bytes whenever none are staged against the
+/// current obligation, or the reviewer asked for changes.
+fn publication_needs_artifact(baton: &RunBaton) -> bool {
     baton.publication_binding.as_ref().is_some_and(|binding| {
-        binding.deployment.is_none()
+        binding.artifact.is_none()
             || binding
                 .review
                 .as_ref()
@@ -159,9 +165,23 @@ fn publication_needs_deployment(baton: &RunBaton) -> bool {
     })
 }
 
+/// Recording the optional human-facing Site is possible only once the bytes it
+/// renders are staged, and only while those bytes are not already rendered.
+/// Advertising it unconditionally kept the publisher permanently awake.
+fn publication_can_publish_site(baton: &RunBaton) -> bool {
+    baton.publication_binding.as_ref().is_some_and(|binding| {
+        binding.artifact.as_ref().is_some_and(|artifact| {
+            binding.deployment.as_ref().is_none_or(|deployment| {
+                deployment.source_digest != artifact.source_digest
+                    || deployment.obligation != binding.obligation
+            })
+        })
+    })
+}
+
 fn publication_needs_review(baton: &RunBaton) -> bool {
     baton.publication_binding.as_ref().is_some_and(|binding| {
-        binding.deployment.is_some()
+        binding.artifact.is_some()
             && binding
                 .review
                 .as_ref()
@@ -173,41 +193,23 @@ fn publication_needs_review(baton: &RunBaton) -> bool {
     })
 }
 
+/// The finalization gate: the reviewing harness has approved the exact staged
+/// bytes bound to the current obligation.
 fn publication_gate_satisfied(baton: &RunBaton) -> bool {
+    let policy = effective_policy(baton);
     baton.publication_binding.as_ref().is_some_and(|binding| {
-        binding.deployment.as_ref().is_some_and(|deployment| {
+        binding.artifact.as_ref().is_some_and(|artifact| {
             binding.review.as_ref().is_some_and(|review| {
-                binding.site_id.as_ref() == Some(&deployment.site_id)
-                    && deployment.obligation == binding.obligation
+                artifact.obligation == binding.obligation
                     && review.obligation == binding.obligation
-                    && review.source_digest == deployment.source_digest
-                    && review.site_id == deployment.site_id
-                    && review.site_version == deployment.site_version
-                    && review.url == deployment.url
+                    && review.source_digest == artifact.source_digest
                     && review.verdict == "approved"
                     && review.findings.is_empty()
-                    && deployment.channel == EXPLAINER_CHANNEL
-                    && deployment.access == EXPLAINER_ACCESS
-                    && deployment.publisher_harness == EXPLAINER_PUBLISHER_HARNESS
-                    && review.reviewer_harness == EXPLAINER_REVIEWER_HARNESS
+                    && artifact.channel == policy.channel
+                    && artifact.access == policy.access
+                    && artifact.publisher_harness == policy.publisher_harness
+                    && review.reviewer_harness == policy.reviewer_harness
             })
         })
     })
-}
-
-fn publication_gate_satisfied_for_current_checkpoint(
-    baton: &RunBaton,
-    kind: crate::model::HandoffKind,
-) -> bool {
-    let Some(checkpoint) = baton
-        .checkpoint
-        .as_ref()
-        .map(|checkpoint| checkpoint.binding())
-    else {
-        return false;
-    };
-    baton.publication_binding.as_ref().is_some_and(|binding| {
-        binding.obligation.kind == kind
-            && binding.obligation.checkpoint.as_ref() == Some(&checkpoint)
-    }) && publication_gate_satisfied(baton)
 }

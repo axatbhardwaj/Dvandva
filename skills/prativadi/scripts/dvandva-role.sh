@@ -15,7 +15,7 @@ state_home="${XDG_STATE_HOME:-${HOME:?HOME is required}/.local/state}"
 binary="$data_home/dvandva/bin/current/dvandva-kernel"
 runs_dir="$state_home/dvandva/runs"
 credentials_root="$state_home/dvandva/credentials"
-kernel_version="0.2.0"
+kernel_version="0.3.0"
 schema="dvandva.run.v2"
 role_api="2"
 version_max_bytes=256
@@ -158,7 +158,7 @@ session_id() {
 
 start_role() {
   test "$#" -ge 4 || {
-    printf 'usage: dvandva-role.sh start SESSION HARNESS PEER WORKSPACE [OBJECTIVE [TASK]] [--objective-ref KIND=VALUE] [--required-deliverable ID=DESCRIPTION] [--wait|--new-run|--run-id ID]\n' >&2
+    printf 'usage: dvandva-role.sh start SESSION HARNESS PEER WORKSPACE [OBJECTIVE [TASK]] [--objective-ref KIND=VALUE] [--required-deliverable ID=DESCRIPTION] [--wait|--new-run|--run-id ID] [--autonomous]\n' >&2
     exit 2
   }
   local session="$1" harness="$2" peer="$3" workspace="$4"
@@ -171,7 +171,7 @@ start_role() {
       ;;
   esac
 
-  local objective="" task="" wait_flag="" new_flag="" selected_run=""
+  local objective="" task="" wait_flag="" new_flag="" selected_run="" interaction="attended"
   local -a objective_refs=() deliverables=()
   if (($#)) && [[ "$1" != --* ]]; then
     objective="$1"
@@ -184,6 +184,7 @@ start_role() {
   while (($#)); do
     case "$1" in
       --wait) wait_flag="--wait" ;;
+      --autonomous) interaction="autonomous" ;;
       --new-run) new_flag="--new-run" ;;
       --run-id)
         selected_run="${2:-}"
@@ -253,6 +254,7 @@ start_role() {
     --lease-seconds "${DVANDVA_LEASE_SECONDS:-1800}"
     --timeout-ms "${DVANDVA_WAIT_TIMEOUT_MS:-300000}"
   )
+  args+=(--interaction "$interaction")
   test -z "$objective" || args+=(--objective "$objective")
   test -z "$task" || args+=(--task-reference "$task")
   local value
@@ -303,6 +305,43 @@ run_dir_command() {
       "$binary" role wait "${common[@]}" --after-revision "$1" \
         --timeout-ms "${2:-300000}"
       ;;
+    poll)
+      # A foreground wait that survives the kernel's own timeout. An idle
+      # timeout is not a reason to yield: it re-enters the wait at once and
+      # returns only on a real wake, a terminal run, or the caller's budget.
+      test "$#" -ge 1 && test "$#" -le 2 || {
+        printf 'usage: dvandva-role.sh poll SESSION RUN_DIR AFTER_REVISION [MAX_MS]\n' >&2
+        exit 2
+      }
+      local after="$1" budget_ms="${2:-540000}" started_ms now_ms chunk_ms output outcome
+      case "$budget_ms" in
+        ''|*[!0-9]*|0)
+          printf 'dvandva-role: poll MAX_MS must be a positive integer\n' >&2
+          exit 2
+          ;;
+      esac
+      started_ms="$(date +%s%3N)"
+      output=""
+      while :; do
+        now_ms="$(date +%s%3N)"
+        chunk_ms=$((budget_ms - (now_ms - started_ms)))
+        if test "$chunk_ms" -le 0; then
+          printf '%s\n' "$output"
+          exit 0
+        fi
+        test "$chunk_ms" -le "${DVANDVA_POLL_CHUNK_MS:-300000}" || chunk_ms="${DVANDVA_POLL_CHUNK_MS:-300000}"
+        # Each kernel wait is observable, so re-entry is provable, not assumed.
+        test -z "${DVANDVA_POLL_TRACE:-}" || printf 'wait after=%s timeout_ms=%s\n' "$after" "$chunk_ms" >>"$DVANDVA_POLL_TRACE"
+        output="$("$binary" role wait "${common[@]}" --after-revision "$after" \
+          --timeout-ms "$chunk_ms")" || exit $?
+        outcome="$(printf '%s' "$output" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("wait_outcome",""))')"
+        if test "$outcome" != idle_timeout; then
+          printf '%s\n' "$output"
+          exit 0
+        fi
+        after="$(printf '%s' "$output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["revision"])')"
+      done
+      ;;
     heartbeat)
       test "$#" -eq 1 || {
         printf 'usage: dvandva-role.sh heartbeat SESSION RUN_DIR REVISION\n' >&2
@@ -310,6 +349,32 @@ run_dir_command() {
       }
       "$binary" role heartbeat "${common[@]}" \
         --lease-seconds "${DVANDVA_LEASE_SECONDS:-1800}" --expected-revision "$1"
+      ;;
+    explainer)
+      test "$#" -eq 0
+      "$binary" role explainer "${common[@]}"
+      ;;
+    analysis)
+      test "$#" -eq 1 || {
+        printf 'usage: dvandva-role.sh analysis SESSION RUN_DIR DIGEST\n' >&2
+        exit 2
+      }
+      "$binary" role analysis "${common[@]}" --digest "$1"
+      ;;
+    repair-policy)
+      test "$#" -eq 3 || {
+        printf 'usage: dvandva-role.sh repair-policy SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS REVISION\n' >&2
+        exit 2
+      }
+      case "$1:$2" in
+        codex:claude|claude:codex) ;;
+        *)
+          printf 'dvandva-role: harness families must be exactly codex and claude\n' >&2
+          exit 2
+          ;;
+      esac
+      "$binary" role repair-policy "${common[@]}" \
+        --current-harness "$1" --peer-harness "$2" --expected-revision "$3"
       ;;
   esac
 }
@@ -340,7 +405,7 @@ case "$operation" in
     require_kernel
     start_role "$@"
     ;;
-  read|claim|reclaim|apply|wait|heartbeat)
+  read|claim|reclaim|apply|wait|poll|heartbeat|explainer|analysis|repair-policy)
     require_kernel
     run_dir_command "$operation" "$@"
     ;;
@@ -349,7 +414,7 @@ case "$operation" in
     upgrade_role "$@"
     ;;
   *)
-    printf 'usage: dvandva-role.sh {session-id|probe|start|read|claim|reclaim|apply|wait|heartbeat|upgrade} ...\n' >&2
+    printf 'usage: dvandva-role.sh {session-id|probe|start|read|claim|reclaim|apply|wait|poll|heartbeat|explainer|analysis|repair-policy|upgrade} ...\n' >&2
     exit 2
     ;;
 esac

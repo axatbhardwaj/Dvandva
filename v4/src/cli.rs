@@ -48,9 +48,13 @@ enum Command {
         #[arg(long)]
         task_reference: Option<String>,
         #[arg(long)]
+        objective: Option<String>,
+        #[arg(long)]
         run_id: Option<String>,
         #[arg(long)]
         session_id: Option<String>,
+        #[arg(long)]
+        stale_after_days: Option<u64>,
     },
     DiscoverWait {
         #[arg(long)]
@@ -64,7 +68,11 @@ enum Command {
         #[arg(long)]
         task_reference: Option<String>,
         #[arg(long)]
+        objective: Option<String>,
+        #[arg(long)]
         session_id: Option<String>,
+        #[arg(long)]
+        stale_after_days: Option<u64>,
         #[arg(long, default_value_t = 1000)]
         poll_interval_ms: u64,
         #[arg(long, default_value_t = 300_000)]
@@ -75,6 +83,16 @@ enum Command {
     Role {
         #[command(subcommand)]
         command: RoleCommand,
+    },
+    /// Report, and optionally archive, unclaimed runs whose head has not moved
+    /// for `--older-than-days`. Archiving moves a run aside; it never deletes.
+    RunsGc {
+        #[arg(long)]
+        runs_dir: PathBuf,
+        #[arg(long, default_value_t = 14)]
+        older_than_days: u64,
+        #[arg(long)]
+        archive: bool,
     },
     Init {
         #[arg(long)]
@@ -217,6 +235,10 @@ enum RoleCommand {
         new_run: bool,
         #[arg(long = "required-deliverable")]
         required_deliverables: Vec<String>,
+        /// `attended` (default) or `autonomous`. An autonomous run admits a
+        /// human decision only as a choice among concrete scope proposals.
+        #[arg(long, default_value = "attended")]
+        interaction: String,
     },
     Claim {
         #[arg(long)]
@@ -330,6 +352,54 @@ enum RoleCommand {
         #[arg(long)]
         credentials_root: PathBuf,
     },
+    /// Replace an unreadable publication policy with the canonical channel both
+    /// harnesses can read.
+    RepairPolicy {
+        #[arg(long)]
+        api: u32,
+        #[arg(long)]
+        run_dir: PathBuf,
+        #[arg(long)]
+        role: Role,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        current_harness: String,
+        #[arg(long)]
+        peer_harness: String,
+        #[arg(long)]
+        expected_revision: u64,
+        #[arg(long)]
+        credentials_root: PathBuf,
+    },
+    /// Materialize the bytes behind a staged analysis checkpoint artifact.
+    Analysis {
+        #[arg(long)]
+        api: u32,
+        #[arg(long)]
+        run_dir: PathBuf,
+        #[arg(long)]
+        role: Role,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        credentials_root: PathBuf,
+        #[arg(long)]
+        digest: String,
+    },
+    /// Read the digest-bound explainer bytes staged for the current obligation.
+    Explainer {
+        #[arg(long)]
+        api: u32,
+        #[arg(long)]
+        run_dir: PathBuf,
+        #[arg(long)]
+        role: Role,
+        #[arg(long)]
+        session_id: String,
+        #[arg(long)]
+        credentials_root: PathBuf,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -409,6 +479,34 @@ pub fn run() -> Result<(), CliError> {
                 ))
             }
         }
+        Command::RunsGc {
+            runs_dir,
+            older_than_days,
+            archive,
+        } => {
+            let stale = discovery::stale_runs(&runs_dir, older_than_days)?;
+            let mut archived = Vec::new();
+            let mut skipped = Vec::new();
+            if archive {
+                for run in &stale {
+                    match discovery::archive_stale_run(&runs_dir, &run.run_dir, older_than_days)? {
+                        Some(destination) => archived.push(destination),
+                        // Came back to life, or the archive root was unsafe.
+                        None => skipped.push(run.run_id.clone()),
+                    }
+                }
+            }
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&serde_json::json!({
+                    "older_than_days": older_than_days,
+                    "stale": stale,
+                    "archived": archived,
+                    "skipped": skipped,
+                }))?
+            );
+            Ok(())
+        }
         Command::Identify { workspace } => {
             println!(
                 "{}",
@@ -422,8 +520,10 @@ pub fn run() -> Result<(), CliError> {
             reviewer_harness,
             role,
             task_reference,
+            objective,
             run_id,
             session_id,
+            stale_after_days,
         } => {
             let outcome = discovery::discover(
                 &runs_dir,
@@ -432,8 +532,10 @@ pub fn run() -> Result<(), CliError> {
                     role,
                     participant_harness: &reviewer_harness,
                     task_reference: task_reference.as_deref(),
+                    objective: objective.as_deref(),
                     run_id: run_id.as_deref(),
                     session_id: session_id.as_deref(),
+                    stale_after_days: stale_after_days.filter(|days| *days > 0),
                 },
             )?;
             println!("{}", serde_json::to_string_pretty(&outcome)?);
@@ -445,7 +547,9 @@ pub fn run() -> Result<(), CliError> {
             reviewer_harness,
             role,
             task_reference,
+            objective,
             session_id,
+            stale_after_days,
             poll_interval_ms,
             timeout_ms,
             poll_only,
@@ -457,8 +561,10 @@ pub fn run() -> Result<(), CliError> {
                     role,
                     participant_harness: &reviewer_harness,
                     task_reference: task_reference.as_deref(),
+                    objective: objective.as_deref(),
                     run_id: None,
                     session_id: session_id.as_deref(),
+                    stale_after_days: stale_after_days.filter(|days| *days > 0),
                 },
                 std::time::Duration::from_millis(poll_interval_ms.max(1)),
                 std::time::Duration::from_millis(timeout_ms),
@@ -470,6 +576,7 @@ pub fn run() -> Result<(), CliError> {
         Command::Role { command } => match command {
             RoleCommand::Start {
                 api,
+                interaction,
                 workspace,
                 runs_dir,
                 credentials_root,
@@ -509,6 +616,15 @@ pub fn run() -> Result<(), CliError> {
                     timeout: std::time::Duration::from_millis(timeout_ms),
                     new_run,
                     required_deliverables: &required_deliverables,
+                    interaction: match interaction.trim() {
+                        "attended" => crate::model::InteractionMode::Attended,
+                        "autonomous" => crate::model::InteractionMode::Autonomous,
+                        _ => {
+                            return Err(CliError::Invalid(
+                                "interaction must be attended or autonomous".to_owned(),
+                            ))
+                        }
+                    },
                 })?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
                 Ok(())
@@ -657,6 +773,61 @@ pub fn run() -> Result<(), CliError> {
                 println!("{}", serde_json::to_string_pretty(&baton)?);
                 Ok(())
             }
+            RoleCommand::RepairPolicy {
+                api,
+                run_dir,
+                role,
+                session_id,
+                current_harness,
+                peer_harness,
+                expected_revision,
+                credentials_root,
+            } => {
+                require_role_api(api)?;
+                let baton = role_session::repair_publication_policy(
+                    &run_dir,
+                    &credentials_root,
+                    role,
+                    &session_id,
+                    &current_harness,
+                    &peer_harness,
+                    expected_revision,
+                )?;
+                println!("{}", serde_json::to_string_pretty(&baton)?);
+                Ok(())
+            }
+            RoleCommand::Analysis {
+                api,
+                run_dir,
+                role,
+                session_id,
+                credentials_root,
+                digest,
+            } => {
+                require_role_api(api)?;
+                let staged = role_session::read_analysis(
+                    &run_dir,
+                    &credentials_root,
+                    role,
+                    &session_id,
+                    &digest,
+                )?;
+                println!("{}", serde_json::to_string_pretty(&staged)?);
+                Ok(())
+            }
+            RoleCommand::Explainer {
+                api,
+                run_dir,
+                role,
+                session_id,
+                credentials_root,
+            } => {
+                require_role_api(api)?;
+                let staged =
+                    role_session::read_explainer(&run_dir, &credentials_root, role, &session_id)?;
+                println!("{}", serde_json::to_string_pretty(&staged)?);
+                Ok(())
+            }
         },
         Command::Init {
             run_dir,
@@ -785,7 +956,7 @@ pub fn run() -> Result<(), CliError> {
             poll_interval_ms,
             timeout_ms,
         } => {
-            let baton = wait::wait(
+            let (baton, outcome) = wait::wait(
                 &RunChannel::open(run_dir),
                 role,
                 &session_id,
@@ -794,7 +965,11 @@ pub fn run() -> Result<(), CliError> {
                 std::time::Duration::from_millis(poll_interval_ms.max(1)),
                 std::time::Duration::from_millis(timeout_ms),
             )?;
-            println!("{}", serde_json::to_string_pretty(&baton)?);
+            let mut rendered = serde_json::to_value(&baton)?;
+            if let Some(object) = rendered.as_object_mut() {
+                object.insert("wait_outcome".to_owned(), serde_json::to_value(outcome)?);
+            }
+            println!("{}", serde_json::to_string_pretty(&rendered)?);
             Ok(())
         }
         Command::Recover {
@@ -924,6 +1099,19 @@ fn transition_error_code(error: &TransitionError) -> &'static str {
         TransitionError::StalePublicationBinding => "stale_publication_binding",
         TransitionError::SiteIdMismatch => "site_id_mismatch",
         TransitionError::MissingReason => "missing_reason",
+        TransitionError::InvalidExplainerSource => "invalid_explainer_source",
+        TransitionError::ExplainerNotStaged => "explainer_not_staged",
+        TransitionError::InvalidProgress => "invalid_progress",
+        TransitionError::InvalidCheckpointArtifact => "invalid_checkpoint_artifact",
+        TransitionError::ExplainerBytesMissing => "explainer_bytes_missing",
+        TransitionError::AnalysisNotStaged => "analysis_not_staged",
+        TransitionError::AutonomousRecoveryAvailable => "autonomous_recovery_available",
+        TransitionError::AnalysisBytesMissing => "analysis_bytes_missing",
+        TransitionError::StaleReceiptSequence => "stale_receipt_sequence",
+        TransitionError::AnswerNotAnOption => "answer_not_an_option",
+        TransitionError::DecisionWithoutChange => "decision_without_change",
+        TransitionError::NotAnAutonomousDecision => "not_an_autonomous_decision",
+        TransitionError::RepeatedDecision => "repeated_decision",
     }
 }
 
@@ -931,7 +1119,6 @@ fn wait_error_code(error: &WaitError) -> &'static str {
     match error {
         WaitError::Store(error) => store_error_code(error),
         WaitError::Claim(_) => "claim_fenced",
-        WaitError::Timeout => "timeout",
     }
 }
 

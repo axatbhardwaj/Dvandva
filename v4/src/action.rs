@@ -1,15 +1,12 @@
 use serde::Deserialize;
 
-use crate::model::{CheckpointSubmission, DeliverableRequirement, ExternalRef, HandoffObligation};
+use std::path::PathBuf;
 
-#[derive(Debug, Deserialize)]
-pub struct ScopeAmendment {
-    pub objective: String,
-    #[serde(default)]
-    pub objective_refs: Vec<ExternalRef>,
-    pub task_reference: Option<String>,
-    pub scope_deliverables: Vec<DeliverableRequirement>,
-}
+use crate::model::{CheckpointSubmission, ExternalRef, HandoffObligation, ProgressPhase};
+
+/// A human-approved replacement scope. The same shape a decision's proposals
+/// use, so choosing a proposal and amending scope are one operation.
+pub type ScopeAmendment = crate::model::ScopeProposal;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -46,8 +43,27 @@ pub enum Action {
         #[serde(default)]
         refs: Vec<ExternalRef>,
     },
+    /// Stage the explainer's bytes into the run directory. The kernel hashes the
+    /// file at `source_path`, copies it to a content-addressed location both
+    /// harnesses can read, and binds the digest to the current obligation.
+    StageExplainer {
+        obligation: HandoffObligation,
+        /// The `publication_binding.receipt_seq` this write was prepared
+        /// against. Omitted means "whatever is current", which is only safe for
+        /// a first write.
+        #[serde(default)]
+        after_seq: Option<u64>,
+        source_path: PathBuf,
+    },
+    /// Record the optional human-facing Site that renders the staged bytes. Never
+    /// gates the run; the digest must match the staged artifact.
     RecordExplainerPublication {
         obligation: HandoffObligation,
+        /// The `publication_binding.receipt_seq` this write was prepared
+        /// against. Omitted means "whatever is current", which is only safe for
+        /// a first write.
+        #[serde(default)]
+        after_seq: Option<u64>,
         source_digest: String,
         site_id: String,
         site_version: String,
@@ -57,13 +73,26 @@ pub enum Action {
     },
     RecordExplainerReview {
         obligation: HandoffObligation,
+        /// The `publication_binding.receipt_seq` this write was prepared
+        /// against. Omitted means "whatever is current", which is only safe for
+        /// a first write.
+        #[serde(default)]
+        after_seq: Option<u64>,
         source_digest: String,
-        site_id: String,
-        site_version: String,
-        url: String,
         verdict: ReviewVerdict,
         #[serde(default)]
         findings: Vec<String>,
+    },
+    /// Stage the bytes behind an `analysis` checkpoint artifact so the reviewer
+    /// can materialize exactly what the manifest cites.
+    StageAnalysis {
+        source_path: PathBuf,
+    },
+    /// Publish a liveness/progress signal and renew this role's own lease.
+    ReportProgress {
+        phase: ProgressPhase,
+        #[serde(default)]
+        detail: Option<String>,
     },
     Abandon {
         reason: String,
@@ -73,9 +102,19 @@ pub enum Action {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct HumanDecisionRequest {
+    /// Declaring what is being asked for is what keeps a pause from becoming an
+    /// open-ended approval wait: there is no kind for "please confirm". It
+    /// defaults to `scope` so payloads written against the released API 2
+    /// surface, which had no such field, still apply.
+    #[serde(default)]
+    pub kind: crate::model::HumanDecisionKind,
     pub question: String,
     pub evidence: Vec<String>,
     pub options: Vec<String>,
+    /// One concrete scope per option. Makes a scope decision a choice the kernel
+    /// can apply; required in autonomous runs.
+    #[serde(default)]
+    pub proposals: Vec<ScopeAmendment>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]

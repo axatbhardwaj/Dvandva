@@ -1,17 +1,21 @@
 use std::collections::HashSet;
 
+use sha2::Digest;
+use std::os::unix::fs::PermissionsExt;
+
 use thiserror::Error;
 
 use crate::{
     action::{Action, ReviewVerdict, ScopeAmendment},
     claim::{self, ClaimError, Role},
     model::{
-        checkpoint_manifest_digest, create_bound_handoff_obligation, normalize_deliverables,
-        valid_exact_reference, valid_sha256, Assignee, Checkpoint, CheckpointBinding,
-        CheckpointSubmission, CheckpointSupersession, HandoffKind, HumanDecision,
-        PublicationDeployment, PublicationReview, ReviewReceipt, RunBaton, Status, TaskIdentity,
-        TerminalProvenance, EXPLAINER_ACCESS, EXPLAINER_CHANNEL, EXPLAINER_PUBLISHER_HARNESS,
-        EXPLAINER_REVIEWER_HARNESS,
+        checkpoint_manifest_digest, create_bound_handoff_obligation, explainer_artifact_path,
+        normalize_deliverables, valid_exact_reference, valid_sha256, Assignee, Checkpoint,
+        CheckpointBinding, CheckpointSubmission, CheckpointSupersession, ExplainerArtifact,
+        HandoffKind, HumanDecision, ParticipantProgress, ProgressPhase, PublicationDeployment,
+        PublicationPolicy, PublicationReview, ReviewReceipt, RunBaton, Status, TaskIdentity,
+        TerminalProvenance, EXPLAINER_ACCESS, EXPLAINER_ARTIFACT_DIR, EXPLAINER_CHANNEL,
+        EXPLAINER_MEDIA_TYPE, MAX_EXPLAINER_BYTES,
     },
     store::{RunChannel, StoreError},
 };
@@ -60,6 +64,46 @@ pub enum TransitionError {
     SiteIdMismatch,
     #[error("abandonment requires a non-blank reason")]
     MissingReason,
+    #[error("explainer bytes are missing, unreadable, empty, or above the size limit")]
+    InvalidExplainerSource,
+    #[error("no explainer bytes are staged for the current obligation")]
+    ExplainerNotStaged,
+    #[error("progress detail must be non-blank when present")]
+    InvalidProgress,
+    #[error("checkpoint artifacts are not immutable for this checkpoint kind")]
+    InvalidCheckpointArtifact,
+    #[error("staged explainer bytes are missing or no longer match their digest")]
+    ExplainerBytesMissing,
+    #[error("analysis checkpoint cites a digest that has not been staged for this run")]
+    AnalysisNotStaged,
+    #[error("a protocol-internal recovery is available; take it instead of parking the run")]
+    AutonomousRecoveryAvailable,
+    #[error("a cited analysis artifact is missing or no longer matches its digest")]
+    AnalysisBytesMissing,
+    #[error("this receipt was prepared against an older state of the obligation")]
+    StaleReceiptSequence,
+    #[error("a human decision is answered by choosing one of its options")]
+    AnswerNotAnOption,
+    #[error("a scope decision resolves only through a scope amendment; a pause that changes nothing was an approval wait")]
+    DecisionWithoutChange,
+    #[error("an autonomous run admits a pause only as a choice among concrete scope proposals")]
+    NotAnAutonomousDecision,
+    #[error("the decision just answered cannot be asked again")]
+    RepeatedDecision,
+}
+
+/// Actions that carry their own idempotency token, or that only report
+/// liveness, are correct against whatever head they land on. Binding them to a
+/// caller-supplied revision made every unrelated peer heartbeat invalidate a
+/// prepared write and forced an optimistic retry loop on the caller.
+fn is_obligation_bound(action: &Action) -> bool {
+    matches!(
+        action,
+        Action::StageExplainer { .. }
+            | Action::RecordExplainerPublication { .. }
+            | Action::RecordExplainerReview { .. }
+            | Action::ReportProgress { .. }
+    )
 }
 
 pub fn apply(
@@ -70,7 +114,7 @@ pub fn apply(
     expected_revision: u64,
     action: Action,
 ) -> Result<RunBaton, TransitionError> {
-    channel.mutate_locked(expected_revision, |baton, now| {
+    let mutate = |baton: &mut RunBaton, now, action| -> Result<RunBaton, TransitionError> {
         if matches!(baton.status, Status::Done | Status::Abandoned) {
             return Err(TransitionError::Terminal);
         }
@@ -78,7 +122,12 @@ pub fn apply(
         apply_locked(channel, baton, role, expected_revision, action)?;
         baton.revision += 1;
         Ok(baton.clone())
-    })
+    };
+    if is_obligation_bound(&action) {
+        channel.mutate_locked_untracked(|baton, now| mutate(baton, now, action), |current| current)
+    } else {
+        channel.mutate_locked(expected_revision, |baton, now| mutate(baton, now, action))
+    }
 }
 
 fn apply_locked(
@@ -94,7 +143,6 @@ fn apply_locked(
             if !matches!(baton.status, Status::Working | Status::Revising) {
                 return Err(TransitionError::IllegalState);
             }
-            require_publication_gate(baton, None)?;
             let checkpoint = normalize_checkpoint(checkpoint, baton)?;
             if channel.checkpoint_identity_seen(&checkpoint.identity, expected_revision)?
                 || baton
@@ -144,10 +192,6 @@ fn apply_locked(
             if checkpoint.binding() != submitted_binding {
                 return Err(TransitionError::StaleReview);
             }
-            require_publication_gate(
-                baton,
-                Some((&HandoffKind::WorkerToReviewer, &submitted_binding)),
-            )?;
             let findings = findings
                 .into_iter()
                 .map(|finding| finding.trim().to_owned())
@@ -171,6 +215,11 @@ fn apply_locked(
                     if !findings.is_empty() {
                         return Err(TransitionError::BlockingFindings);
                     }
+                    let checkpoint = baton
+                        .checkpoint
+                        .as_ref()
+                        .ok_or(TransitionError::InvalidCheckpoint)?;
+                    require_checkpoint_artifacts_intact(channel.directory(), checkpoint)?;
                     baton.status = Status::Finalizing;
                     baton.assignee = Assignee::Worker;
                     "approved"
@@ -210,6 +259,17 @@ fn apply_locked(
                 baton,
                 Some((&HandoffKind::ReviewerToWorker, &checkpoint_binding)),
             )?;
+            let artifact = baton
+                .publication_binding
+                .as_ref()
+                .and_then(|binding| binding.artifact.as_ref())
+                .ok_or(TransitionError::ExplainerNotStaged)?;
+            require_staged_bytes_intact(channel.directory(), artifact)?;
+            let checkpoint = baton
+                .checkpoint
+                .as_ref()
+                .ok_or(TransitionError::InvalidCheckpoint)?;
+            require_checkpoint_artifacts_intact(channel.directory(), checkpoint)?;
             baton.status = Status::Done;
             baton.assignee = Assignee::None;
             baton.terminal = Some(TerminalProvenance {
@@ -219,10 +279,74 @@ fn apply_locked(
         }
         Action::RequestHumanDecision(request) => {
             let crate::action::HumanDecisionRequest {
+                kind,
                 question,
                 evidence,
                 options,
+                proposals,
             } = request;
+            // Enforceable autonomy, not just a label on the request: while the
+            // kernel itself offers a deterministic recovery, parking the run is
+            // refused whatever the request claims to be about. This is exactly
+            // the PR-914 escalation — an unreadable publication policy is
+            // repairable, so it is never a question for a human.
+            if !effective_policy(baton).reviewer_can_read() {
+                return Err(TransitionError::AutonomousRecoveryAvailable);
+            }
+            // Likewise a changes-requested explainer: the publisher's recovery
+            // is to restage, and asking a human to bless a rewrite instead is
+            // the approval wait the protocol exists to avoid.
+            let publisher_owes_restage = baton
+                .publication_binding
+                .as_ref()
+                .and_then(|binding| binding.review.as_ref())
+                .is_some_and(|review| review.verdict == "changes_requested")
+                && caller_harness(baton, role)
+                    .trim()
+                    .eq_ignore_ascii_case(effective_policy(baton).publisher_harness.trim());
+            if publisher_owes_restage {
+                return Err(TransitionError::AutonomousRecoveryAvailable);
+            }
+            let options = options
+                .into_iter()
+                .map(|option| option.trim().to_owned())
+                .collect::<Vec<_>>();
+            let distinct = options.iter().collect::<HashSet<_>>().len() == options.len();
+            let question = question.trim().to_owned();
+            // Admission is where an approval wait is made unrepresentable. An
+            // autonomous run admits a pause only as a choice among concrete
+            // scope proposals the kernel applies itself: no proposals, or a
+            // question of any other kind, has no admissible shape when the
+            // human may be absent. In every mode, proposals are one per option
+            // and distinct, and the decision just answered cannot be re-asked.
+            if baton.interaction == crate::model::InteractionMode::Autonomous
+                && (kind != crate::model::HumanDecisionKind::Scope || proposals.is_empty())
+            {
+                return Err(TransitionError::NotAnAutonomousDecision);
+            }
+            // Every proposal is canonicalized here with exactly the rules that
+            // will apply it, so an admitted option can never fail to resolve.
+            let proposals = proposals
+                .into_iter()
+                .map(normalize_scope_proposal)
+                .collect::<Result<Vec<_>, _>>()?;
+            if !proposals.is_empty() {
+                let normalized = proposals
+                    .iter()
+                    .map(|proposal| serde_json::to_string(proposal).unwrap_or_default())
+                    .collect::<HashSet<_>>();
+                if proposals.len() != options.len() || normalized.len() != proposals.len() {
+                    return Err(TransitionError::InvalidHumanDecision);
+                }
+            }
+            if baton.human_decision.as_ref().is_some_and(|previous| {
+                previous.answer.is_some()
+                    && previous.kind == kind
+                    && previous.question == question
+                    && previous.options == options
+            }) {
+                return Err(TransitionError::RepeatedDecision);
+            }
             if baton
                 .human_decision
                 .as_ref()
@@ -231,13 +355,17 @@ fn apply_locked(
                 || evidence.is_empty()
                 || evidence.iter().any(|item| item.trim().is_empty())
                 || options.len() < 2
-                || options.iter().any(|option| option.trim().is_empty())
+                || options.iter().any(String::is_empty)
+                || !distinct
             {
                 return Err(TransitionError::InvalidHumanDecision);
             }
             let resume_status = baton.status.clone();
             let resume_assignee = baton.assignee.clone();
             baton.human_decision = Some(HumanDecision {
+                kind,
+                version: crate::model::DECISION_VERSION,
+                proposals,
                 question,
                 requested_by: role_name(role).to_owned(),
                 evidence,
@@ -257,7 +385,8 @@ fn apply_locked(
             if baton.status != Status::HumanDecision || answer.trim().is_empty() {
                 return Err(TransitionError::InvalidHumanDecision);
             }
-            let (resume_status, resume_assignee) = {
+            let answer = answer.trim().to_owned();
+            let (kind, version, chosen_proposal, resume_status, resume_assignee) = {
                 let decision = baton
                     .human_decision
                     .as_mut()
@@ -265,14 +394,51 @@ fn apply_locked(
                 if decision.contact_role != role_name(role) {
                     return Err(TransitionError::WrongContact);
                 }
-                decision.answer = Some(answer.trim().to_owned());
+                let current_version = decision.version >= crate::model::DECISION_VERSION;
+                // A decision is a choice among the options that were put to the
+                // human. Free-form prose — "yes", "approved", "go ahead" — is
+                // not a choice unless it was one of the options. Decisions
+                // recorded before this rule keep their original resolution, so
+                // a released client never creates a pause it cannot clear.
+                let chosen = decision
+                    .options
+                    .iter()
+                    .position(|option| option.trim() == answer);
+                if current_version && chosen.is_none() {
+                    return Err(TransitionError::AnswerNotAnOption);
+                }
+                decision.answer = Some(answer.clone());
                 (
+                    decision.kind,
+                    decision.version,
+                    chosen.and_then(|index| decision.proposals.get(index).cloned()),
                     decision.resume_status.clone(),
                     decision.resume_assignee.clone(),
                 )
             };
+            // A pause that resolves into no change to the run was an approval
+            // wait, whatever it was called. A scope decision resolves through
+            // the proposal that was chosen or an explicit amendment; an intent
+            // or authority decision is recorded on the canonical objective.
             if let Some(amendment) = scope_amendment {
                 apply_scope_amendment(baton, amendment)?;
+            } else if let Some(proposal) = chosen_proposal {
+                apply_scope_amendment(baton, proposal)?;
+            } else if version >= crate::model::DECISION_VERSION {
+                match kind {
+                    crate::model::HumanDecisionKind::Scope => {
+                        return Err(TransitionError::DecisionWithoutChange);
+                    }
+                    crate::model::HumanDecisionKind::Intent
+                    | crate::model::HumanDecisionKind::Authority => {
+                        baton.objective.refs.push(crate::model::ExternalRef {
+                            kind: kind.reference_kind().to_owned(),
+                            value: answer,
+                        });
+                    }
+                }
+                baton.status = resume_status;
+                baton.assignee = resume_assignee;
             } else {
                 baton.status = resume_status;
                 baton.assignee = resume_assignee;
@@ -317,7 +483,6 @@ fn apply_locked(
             if pending.checkpoint != checkpoint {
                 return Err(TransitionError::InvalidCheckpoint);
             }
-            require_publication_gate(baton, Some((&HandoffKind::WorkerToReviewer, &checkpoint)))?;
             baton.checkpoint = None;
             baton.review = None;
             baton.pending_checkpoint_supersession = None;
@@ -342,7 +507,6 @@ fn apply_locked(
             if review.verdict != "approved" || review.binding() != checkpoint {
                 return Err(TransitionError::StaleReview);
             }
-            require_publication_gate(baton, Some((&HandoffKind::ReviewerToWorker, &checkpoint)))?;
             baton.checkpoint = None;
             baton.review = None;
             baton.pending_checkpoint_supersession = None;
@@ -358,18 +522,63 @@ fn apply_locked(
         } => {
             return Err(TransitionError::LegacyPublicationUnsupported);
         }
+        Action::StageExplainer {
+            obligation,
+            after_seq,
+            source_path,
+        } => {
+            require_publisher(baton, role)?;
+            let binding = baton
+                .publication_binding
+                .as_ref()
+                .ok_or(TransitionError::PublicationStale)?;
+            if binding.obligation != obligation {
+                return Err(TransitionError::StalePublicationBinding);
+            }
+            // An exact replay — the same bytes already staged for this
+            // obligation — changes nothing and is a no-op whatever sequence it
+            // was prepared against, so a retried stage never fails as stale.
+            let incoming_digest = source_digest(&source_path)?;
+            if binding.artifact.as_ref().is_some_and(|artifact| {
+                artifact.obligation == obligation && artifact.source_digest == incoming_digest
+            }) {
+                return Ok(());
+            }
+            require_receipt_seq(binding, after_seq)?;
+            let (source_digest, byte_length) =
+                stage_explainer_bytes(channel.directory(), &source_path)?;
+            let publisher_harness = caller_harness(baton, role).to_owned();
+            let binding = baton
+                .publication_binding
+                .as_mut()
+                .ok_or(TransitionError::PublicationStale)?;
+            binding.artifact = Some(ExplainerArtifact {
+                obligation,
+                path: explainer_artifact_path(&source_digest),
+                source_digest,
+                media_type: EXPLAINER_MEDIA_TYPE.to_owned(),
+                byte_length,
+                channel: EXPLAINER_CHANNEL.to_owned(),
+                access: EXPLAINER_ACCESS.to_owned(),
+                publisher_harness,
+            });
+            // Fresh bytes invalidate any rendering and review of the old bytes.
+            binding.deployment = None;
+            binding.review = None;
+            binding.receipt_seq += 1;
+        }
         Action::RecordExplainerPublication {
             obligation,
+            after_seq,
             source_digest,
             site_id,
             site_version,
             url,
-            channel,
+            channel: site_channel,
             access,
         } => {
-            if caller_harness(baton, role) != EXPLAINER_PUBLISHER_HARNESS {
-                return Err(TransitionError::WrongPublisherHarness);
-            }
+            require_publisher(baton, role)?;
+            let publisher_harness = caller_harness(baton, role).to_owned();
             let binding = baton
                 .publication_binding
                 .as_mut()
@@ -377,12 +586,34 @@ fn apply_locked(
             if binding.obligation != obligation {
                 return Err(TransitionError::StalePublicationBinding);
             }
+            // An exact replay of the recorded rendering is a no-op.
+            if binding.deployment.as_ref().is_some_and(|deployment| {
+                deployment.obligation == obligation
+                    && deployment.source_digest == source_digest
+                    && deployment.site_id == site_id
+                    && deployment.site_version == site_version
+                    && deployment.url == url
+                    && deployment.channel == site_channel
+                    && deployment.access == access
+            }) {
+                return Ok(());
+            }
+            require_receipt_seq(binding, after_seq)?;
+            // A Site is a rendering of bytes that already exist locally; it can
+            // never be the only copy the reviewer has.
+            let artifact = binding
+                .artifact
+                .as_ref()
+                .ok_or(TransitionError::ExplainerNotStaged)?;
+            if artifact.obligation != obligation || artifact.source_digest != source_digest {
+                return Err(TransitionError::StalePublicationBinding);
+            }
             if !valid_sha256(&source_digest)
                 || !valid_exact_reference(&site_id)
                 || !valid_exact_reference(&site_version)
                 || !valid_exact_reference(&url)
-                || channel != EXPLAINER_CHANNEL
-                || access != EXPLAINER_ACCESS
+                || !valid_exact_reference(&site_channel)
+                || !valid_exact_reference(&access)
             {
                 return Err(TransitionError::InvalidExplainerPublication);
             }
@@ -400,40 +631,67 @@ fn apply_locked(
                 site_id,
                 site_version,
                 url,
-                channel,
+                channel: site_channel,
                 access,
-                publisher_harness: EXPLAINER_PUBLISHER_HARNESS.to_owned(),
+                publisher_harness,
             });
-            binding.review = None;
+            binding.receipt_seq += 1;
         }
         Action::RecordExplainerReview {
             obligation,
+            after_seq,
             source_digest,
-            site_id,
-            site_version,
-            url,
             verdict,
             findings,
         } => {
-            if caller_harness(baton, role) != EXPLAINER_REVIEWER_HARNESS {
-                return Err(TransitionError::WrongReviewerHarness);
-            }
+            require_reviewer(baton, role)?;
+            let reviewer_harness = caller_harness(baton, role).to_owned();
             let binding = baton
                 .publication_binding
                 .as_mut()
                 .ok_or(TransitionError::PublicationStale)?;
-            let deployment = binding
-                .deployment
+            let artifact = binding
+                .artifact
                 .as_ref()
-                .ok_or(TransitionError::PublicationStale)?;
+                .ok_or(TransitionError::ExplainerNotStaged)?;
             if binding.obligation != obligation
-                || deployment.obligation != obligation
-                || deployment.source_digest != source_digest
-                || deployment.site_id != site_id
-                || deployment.site_version != site_version
-                || deployment.url != url
+                || artifact.obligation != obligation
+                || artifact.source_digest != source_digest
             {
                 return Err(TransitionError::StalePublicationBinding);
+            }
+            // An exact replay of the recorded verdict is a no-op.
+            let incoming_findings = findings
+                .iter()
+                .map(|finding| finding.trim().to_owned())
+                .collect::<Vec<_>>();
+            let incoming_verdict = match verdict {
+                ReviewVerdict::Approved => "approved",
+                ReviewVerdict::ChangesRequested => "changes_requested",
+            };
+            if binding.review.as_ref().is_some_and(|review| {
+                review.obligation == obligation
+                    && review.source_digest == source_digest
+                    && review.verdict == incoming_verdict
+                    && review.findings == incoming_findings
+            }) {
+                return Ok(());
+            }
+            require_receipt_seq(binding, after_seq)?;
+            require_staged_bytes_intact(channel.directory(), artifact)?;
+            // Ordering: once these exact bytes carry a verdict, a later delivery
+            // of a different verdict for the same bytes is stale, not an
+            // update. Restaging is how a new verdict is legitimately obtained.
+            if let Some(existing) = binding.review.as_ref() {
+                let same_bytes =
+                    existing.obligation == obligation && existing.source_digest == source_digest;
+                let incoming_verdict = match verdict {
+                    ReviewVerdict::Approved => "approved",
+                    ReviewVerdict::ChangesRequested => "changes_requested",
+                };
+                if same_bytes && existing.verdict != incoming_verdict {
+                    return Err(TransitionError::StalePublicationBinding);
+                }
             }
             let findings = findings
                 .into_iter()
@@ -456,13 +714,36 @@ fn apply_locked(
             binding.review = Some(PublicationReview {
                 obligation,
                 source_digest,
-                site_id,
-                site_version,
-                url,
                 verdict: verdict.to_owned(),
                 findings,
-                reviewer_harness: EXPLAINER_REVIEWER_HARNESS.to_owned(),
+                reviewer_harness,
             });
+            binding.receipt_seq += 1;
+        }
+        Action::StageAnalysis { source_path } => {
+            require_owner(baton, role, Role::Worker, Assignee::Worker)?;
+            if !matches!(baton.status, Status::Working | Status::Revising) {
+                return Err(TransitionError::IllegalState);
+            }
+            let digest = stage_content_addressed(
+                channel.directory(),
+                &source_path,
+                crate::model::ANALYSIS_ARTIFACT_DIR,
+                crate::model::analysis_artifact_path,
+            )?;
+            if let Err(index) = baton.staged_analysis.binary_search(&digest) {
+                baton.staged_analysis.insert(index, digest);
+            }
+        }
+        Action::ReportProgress { phase, detail } => {
+            let detail = match detail {
+                Some(detail) if detail.trim().is_empty() => {
+                    return Err(TransitionError::InvalidProgress)
+                }
+                Some(detail) => Some(detail.trim().to_owned()),
+                None => None,
+            };
+            record_progress(baton, role, phase, detail)?;
         }
         Action::Abandon { reason } => {
             if reason.trim().is_empty() {
@@ -513,10 +794,35 @@ fn normalize_checkpoint(
                 return Err(TransitionError::InvalidCheckpoint);
             }
         }
+        if !crate::model::valid_checkpoint_shape(&kind, &identity, &deliverable.artifacts) {
+            return Err(TransitionError::InvalidCheckpointArtifact);
+        }
+        // An analysis deliverable is only reviewable if its bytes are actually
+        // present, so a manifest may only cite digests this run has staged.
+        if kind == crate::model::CHECKPOINT_KIND_ANALYSIS
+            && !deliverable
+                .artifacts
+                .iter()
+                .all(|artifact| baton.staged_analysis.contains(&artifact.value))
+        {
+            return Err(TransitionError::AnalysisNotStaged);
+        }
         deliverable
             .artifacts
             .sort_by(|left, right| (&left.kind, &left.value).cmp(&(&right.kind, &right.value)));
         deliverables.push(deliverable);
+    }
+    // An analysis identity must be derived from the bytes it cites, so a
+    // manifest cannot claim an identity unrelated to its own content.
+    if kind == crate::model::CHECKPOINT_KIND_ANALYSIS {
+        let cited = deliverables
+            .iter()
+            .flat_map(|deliverable| deliverable.artifacts.iter())
+            .map(|artifact| artifact.value.clone())
+            .collect::<Vec<_>>();
+        if identity != crate::model::analysis_checkpoint_identity(&cited) {
+            return Err(TransitionError::InvalidCheckpointArtifact);
+        }
     }
     let required = baton
         .scope_deliverables
@@ -540,15 +846,17 @@ fn normalize_checkpoint(
     Ok(checkpoint)
 }
 
-fn apply_scope_amendment(
-    baton: &mut RunBaton,
-    amendment: ScopeAmendment,
-) -> Result<(), TransitionError> {
-    let objective = amendment.objective.trim().to_owned();
+/// The one canonical form for a scope change, whether proposed or applied.
+/// A proposal that does not canonicalize is refused at admission, so every
+/// option a human is offered is one the kernel can actually apply.
+pub fn normalize_scope_proposal(
+    proposal: ScopeAmendment,
+) -> Result<ScopeAmendment, TransitionError> {
+    let objective = proposal.objective.trim().to_owned();
     if objective.is_empty() {
         return Err(TransitionError::InvalidHumanDecision);
     }
-    let mut refs = amendment.objective_refs;
+    let mut refs = proposal.objective_refs;
     for reference in &mut refs {
         reference.kind = reference.kind.trim().to_owned();
         reference.value = reference.value.trim().to_owned();
@@ -556,14 +864,32 @@ fn apply_scope_amendment(
             return Err(TransitionError::InvalidHumanDecision);
         }
     }
-    let task_reference = amendment
+    let task_reference = proposal
         .task_reference
         .map(|reference| reference.trim().to_owned());
     if task_reference.as_ref().is_some_and(String::is_empty) {
         return Err(TransitionError::InvalidHumanDecision);
     }
-    let scope_deliverables = normalize_deliverables(amendment.scope_deliverables)
+    let scope_deliverables = normalize_deliverables(proposal.scope_deliverables)
         .map_err(|_| TransitionError::InvalidHumanDecision)?;
+    Ok(ScopeAmendment {
+        objective,
+        objective_refs: refs,
+        task_reference,
+        scope_deliverables,
+    })
+}
+
+fn apply_scope_amendment(
+    baton: &mut RunBaton,
+    amendment: ScopeAmendment,
+) -> Result<(), TransitionError> {
+    let ScopeAmendment {
+        objective,
+        objective_refs: refs,
+        task_reference,
+        scope_deliverables,
+    } = normalize_scope_proposal(amendment)?;
     baton.objective.summary = objective.clone();
     baton.objective.refs = refs;
     if let Some(task) = &mut baton.task {
@@ -611,18 +937,22 @@ fn replace_handoff_obligation(
     baton.publication_binding = Some(binding);
 }
 
+/// The finalization gate. It binds the reviewer's approval to the exact staged
+/// bytes for the current obligation. The optional Site rendering is deliberately
+/// not consulted: it is never the artifact the reviewer read.
 fn require_publication_gate(
     baton: &RunBaton,
     expected: Option<(&HandoffKind, &CheckpointBinding)>,
 ) -> Result<(), TransitionError> {
+    let policy = effective_policy(baton);
     let binding = baton
         .publication_binding
         .as_ref()
         .ok_or(TransitionError::PublicationStale)?;
-    let deployment = binding
-        .deployment
+    let artifact = binding
+        .artifact
         .as_ref()
-        .ok_or(TransitionError::PublicationStale)?;
+        .ok_or(TransitionError::ExplainerNotStaged)?;
     let review = binding
         .review
         .as_ref()
@@ -630,21 +960,229 @@ fn require_publication_gate(
     if expected.is_some_and(|(kind, checkpoint)| {
         &binding.obligation.kind != kind
             || binding.obligation.checkpoint.as_ref() != Some(checkpoint)
-    }) || binding.site_id.as_ref() != Some(&deployment.site_id)
-        || deployment.obligation != binding.obligation
+    }) || artifact.obligation != binding.obligation
         || review.obligation != binding.obligation
-        || review.source_digest != deployment.source_digest
-        || review.site_id != deployment.site_id
-        || review.site_version != deployment.site_version
-        || review.url != deployment.url
+        || review.source_digest != artifact.source_digest
         || review.verdict != "approved"
         || !review.findings.is_empty()
-        || deployment.channel != EXPLAINER_CHANNEL
-        || deployment.access != EXPLAINER_ACCESS
-        || deployment.publisher_harness != EXPLAINER_PUBLISHER_HARNESS
-        || review.reviewer_harness != EXPLAINER_REVIEWER_HARNESS
+        || artifact.channel != policy.channel
+        || artifact.access != policy.access
+        || artifact.publisher_harness != policy.publisher_harness
+        || review.reviewer_harness != policy.reviewer_harness
     {
         return Err(TransitionError::PublicationStale);
+    }
+    Ok(())
+}
+
+/// Re-hash every analysis artifact a checkpoint cites. A checkpoint is only
+/// immutable if the bytes behind it are still there and still themselves, so a
+/// deleted or tampered deliverable must not reach an approval or a terminal
+/// state.
+fn require_checkpoint_artifacts_intact(
+    run_dir: &std::path::Path,
+    checkpoint: &Checkpoint,
+) -> Result<(), TransitionError> {
+    if checkpoint.kind != crate::model::CHECKPOINT_KIND_ANALYSIS {
+        return Ok(());
+    }
+    for deliverable in &checkpoint.deliverables {
+        for artifact in &deliverable.artifacts {
+            let relative = crate::model::analysis_artifact_path(&artifact.value);
+            let bytes = crate::store::read_private_file_beneath(run_dir, &relative)
+                .map_err(|_| TransitionError::AnalysisBytesMissing)?;
+            if format!("{:x}", sha2::Sha256::digest(&bytes)) != artifact.value {
+                return Err(TransitionError::AnalysisBytesMissing);
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Re-hash the staged bytes named by an approved artifact. Baton metadata alone
+/// cannot prove the file still holds what the reviewer read, so deletion or
+/// tampering after approval must not be able to reach a terminal state.
+fn require_staged_bytes_intact(
+    run_dir: &std::path::Path,
+    artifact: &ExplainerArtifact,
+) -> Result<(), TransitionError> {
+    let bytes = crate::store::read_private_file_beneath(run_dir, &artifact.path)
+        .map_err(|_| TransitionError::ExplainerBytesMissing)?;
+    if bytes.len() as u64 != artifact.byte_length
+        || format!("{:x}", sha2::Sha256::digest(&bytes)) != artifact.source_digest
+    {
+        return Err(TransitionError::ExplainerBytesMissing);
+    }
+    Ok(())
+}
+
+/// Targeted concurrency control for obligation-bound writes: a caller that saw
+/// receipt N may only write receipt N. Claim and progress edges do not advance
+/// this, so unrelated peer activity never invalidates a prepared receipt, while
+/// a delayed or out-of-order one is refused instead of overwriting newer state.
+fn require_receipt_seq(
+    binding: &crate::model::PublicationBinding,
+    after_seq: Option<u64>,
+) -> Result<(), TransitionError> {
+    // An omitted sequence is the released API-2 shape, and is honoured only
+    // where it is unambiguous: as the first receipt of an obligation. Once any
+    // receipt exists, a write must say what it was prepared against, or a
+    // delayed payload could silently regress newer state.
+    let prepared_against = after_seq.unwrap_or(0);
+    if prepared_against != binding.receipt_seq {
+        return Err(TransitionError::StaleReceiptSequence);
+    }
+    Ok(())
+}
+
+/// The sha256 of the bytes at `path`, subject to the staging size limits.
+fn source_digest(path: &std::path::Path) -> Result<String, TransitionError> {
+    let metadata = std::fs::metadata(path).map_err(|_| TransitionError::InvalidExplainerSource)?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_EXPLAINER_BYTES {
+        return Err(TransitionError::InvalidExplainerSource);
+    }
+    let bytes = std::fs::read(path).map_err(|_| TransitionError::InvalidExplainerSource)?;
+    Ok(format!("{:x}", sha2::Sha256::digest(&bytes)))
+}
+
+pub(crate) fn effective_policy(baton: &RunBaton) -> PublicationPolicy {
+    baton
+        .publication_policy
+        .clone()
+        .unwrap_or_else(PublicationPolicy::fixed)
+}
+
+fn require_publisher(baton: &RunBaton, role: Role) -> Result<(), TransitionError> {
+    let policy = effective_policy(baton);
+    if !caller_harness(baton, role)
+        .trim()
+        .eq_ignore_ascii_case(policy.publisher_harness.trim())
+    {
+        return Err(TransitionError::WrongPublisherHarness);
+    }
+    Ok(())
+}
+
+fn require_reviewer(baton: &RunBaton, role: Role) -> Result<(), TransitionError> {
+    let policy = effective_policy(baton);
+    if !caller_harness(baton, role)
+        .trim()
+        .eq_ignore_ascii_case(policy.reviewer_harness.trim())
+    {
+        return Err(TransitionError::WrongReviewerHarness);
+    }
+    Ok(())
+}
+
+/// Copy the publisher's explainer bytes into a content-addressed file under the
+/// run directory and return their digest and length. Content addressing makes
+/// re-staging identical bytes a no-op and keeps every prior obligation's bytes
+/// readable for audit.
+/// Copy caller-supplied bytes into a content-addressed, mode-restricted file
+/// under the run directory and return their digest.
+fn stage_content_addressed(
+    run_dir: &std::path::Path,
+    source_path: &std::path::Path,
+    directory_name: &str,
+    relative: impl Fn(&str) -> String,
+) -> Result<String, TransitionError> {
+    let metadata =
+        std::fs::metadata(source_path).map_err(|_| TransitionError::InvalidExplainerSource)?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_EXPLAINER_BYTES {
+        return Err(TransitionError::InvalidExplainerSource);
+    }
+    let bytes = std::fs::read(source_path).map_err(|_| TransitionError::InvalidExplainerSource)?;
+    if bytes.is_empty() || bytes.len() as u64 > MAX_EXPLAINER_BYTES {
+        return Err(TransitionError::InvalidExplainerSource);
+    }
+    let digest = format!("{:x}", sha2::Sha256::digest(&bytes));
+    let directory = run_dir.join(directory_name);
+    crate::store::create_private_dir(&directory).map_err(StoreError::Io)?;
+    let destination = run_dir.join(relative(&digest));
+    // Reuse only a private regular file inside the run whose bytes really hash
+    // to its name. A symlink, a group-readable file, or tampered content is
+    // replaced rather than trusted.
+    let reusable = crate::store::is_private_regular_file(&destination)
+        && crate::store::read_private_file_beneath(run_dir, &relative(&digest))
+            .is_ok_and(|existing| format!("{:x}", sha2::Sha256::digest(&existing)) == digest);
+    if !reusable && std::fs::symlink_metadata(&destination).is_ok() {
+        std::fs::remove_file(&destination).map_err(StoreError::Io)?;
+    }
+    if !reusable {
+        let temporary = directory.join(format!(".{digest}.{}.tmp", uuid::Uuid::new_v4()));
+        std::fs::write(&temporary, &bytes).map_err(StoreError::Io)?;
+        std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o600))
+            .map_err(StoreError::Io)?;
+        std::fs::rename(&temporary, &destination).map_err(StoreError::Io)?;
+    }
+    Ok(digest)
+}
+
+fn stage_explainer_bytes(
+    run_dir: &std::path::Path,
+    source_path: &std::path::Path,
+) -> Result<(String, u64), TransitionError> {
+    let metadata =
+        std::fs::metadata(source_path).map_err(|_| TransitionError::InvalidExplainerSource)?;
+    if !metadata.is_file() || metadata.len() == 0 || metadata.len() > MAX_EXPLAINER_BYTES {
+        return Err(TransitionError::InvalidExplainerSource);
+    }
+    let bytes = std::fs::read(source_path).map_err(|_| TransitionError::InvalidExplainerSource)?;
+    if bytes.is_empty() || bytes.len() as u64 > MAX_EXPLAINER_BYTES {
+        return Err(TransitionError::InvalidExplainerSource);
+    }
+    let source_digest = format!("{:x}", sha2::Sha256::digest(&bytes));
+    // `access: run_private` is a promise about the bytes on disk, so the modes
+    // are set explicitly rather than inherited from the caller's umask.
+    let directory = run_dir.join(EXPLAINER_ARTIFACT_DIR);
+    crate::store::create_private_dir(&directory).map_err(StoreError::Io)?;
+    let destination = run_dir.join(explainer_artifact_path(&source_digest));
+    // Content addressing only holds if the existing file really is those bytes;
+    // a tampered or truncated file is replaced rather than trusted.
+    let reusable = std::fs::read(&destination)
+        .is_ok_and(|existing| format!("{:x}", sha2::Sha256::digest(&existing)) == source_digest);
+    if !reusable {
+        let temporary = directory.join(format!(".{source_digest}.{}.tmp", uuid::Uuid::new_v4()));
+        std::fs::write(&temporary, &bytes).map_err(StoreError::Io)?;
+        std::fs::set_permissions(&temporary, std::fs::Permissions::from_mode(0o600))
+            .map_err(StoreError::Io)?;
+        std::fs::rename(&temporary, &destination).map_err(StoreError::Io)?;
+    }
+    Ok((source_digest, bytes.len() as u64))
+}
+
+fn record_progress(
+    baton: &mut RunBaton,
+    role: Role,
+    phase: ProgressPhase,
+    detail: Option<String>,
+) -> Result<(), TransitionError> {
+    // One clock reading: the lease invariant is an exact
+    // `started_at + lease_seconds == expires_at`.
+    let now = time::OffsetDateTime::now_utc();
+    let rfc3339 = &time::format_description::well_known::Rfc3339;
+    let updated_at = now
+        .format(rfc3339)
+        .map_err(|_| TransitionError::InvalidProgress)?;
+    let participant = match role {
+        Role::Worker => &mut baton.participants.worker,
+        Role::Reviewer => &mut baton.participants.reviewer,
+    };
+    participant.progress = Some(ParticipantProgress {
+        phase,
+        detail,
+        updated_at: updated_at.clone(),
+    });
+    // Reporting progress is also a liveness signal: extend this role's own lease
+    // so long authorized work never looks like a dead session.
+    if let Some(claim) = participant.claim.as_mut() {
+        let expires = now
+            .checked_add(time::Duration::seconds(claim.lease_seconds as i64))
+            .ok_or(TransitionError::InvalidProgress)?
+            .format(rfc3339)
+            .map_err(|_| TransitionError::InvalidProgress)?;
+        claim.lease_started_at = Some(updated_at);
+        claim.lease_expires_at = expires;
     }
     Ok(())
 }

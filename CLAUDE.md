@@ -17,9 +17,17 @@
   role session.
 - Semantic roles submit and review only complete checkpoint bindings. Use
   checkpoint supersession or approval withdrawal for newly discovered work.
-- At every handoff, the Codex harness updates the run's owner-only Codex Sites
-  explainer, including its plan/TODO list. The Claude harness reviews that exact
-  deployment, regardless of which harness is vadi.
+- Each handoff opens an obligation. For the current one, the Codex harness
+  stages the run's digest-bound explainer, including its plan/TODO list, and
+  the Claude harness reviews those exact staged bytes, regardless of which
+  harness is vadi. A new handoff replaces the obligation; finalization requires
+  the current one staged and reviewed. A Codex Sites deployment renders the
+  same bytes for humans and never gates the run.
+- Only `finalize` waits on the explainer. Checkpoint submission, review,
+  supersession, and approval withdrawal never do.
+- Publish progress with `report_progress` before and during long authorized
+  work, and read the peer's phase from the snapshot's `peer` block. Never infer
+  a dead peer from an expired lease alone.
 - Harness goals are user-owned prompt context. Leave goals untouched throughout
   role activation, handoff, Human Decision, and terminal completion.
 

@@ -1,8 +1,8 @@
 # Dvandva
 
 > **Dvandva v4 is the active skill-only interface.** The intended
-> `skills-v0.2.0` GitHub release pairs the private, non-publishable kernel
-> `0.2.0` with schema `dvandva.run.v2` and role API 2. Source checkout and tests
+> `skills-v0.3.0` GitHub release pairs the private, non-publishable kernel
+> `0.3.0` with schema `dvandva.run.v2` and role API 2. Source checkout and tests
 > are development-only; setup install remains unavailable until that tag and
 > asset exist. The retired crate and plugin are not an installation path.
 
@@ -16,7 +16,7 @@ npx --yes skills add axatbhardwaj/Dvandva --global \
   --skill setup-dvandva vadi prativadi
 ```
 
-After `skills-v0.2.0` is published, explicitly invoke `$setup-dvandva` with an
+After `skills-v0.3.0` is published, explicitly invoke `$setup-dvandva` with an
 install request. Setup verifies the GitHub asset's checksum and complete
 v2/API2 probe before installing it under XDG data and outside `PATH`. The
 kernel remains `publish = false`; no crate, plugin, or marketplace package is
@@ -34,11 +34,16 @@ Vadi immediately returns the canonical run ID and this exact peer prompt:
 Act as prativadi and join Dvandva run <run-id>.
 ```
 
-The vadi submits one complete immutable checkpoint for canonical scope. At
-every handoff, the Codex-harness participant updates one owner-only Codex Sites
-explainer and the Claude-harness participant reviews that exact deployment,
-independent of which harness is vadi. The explainer plan is the live TODO list;
-the Baton remains authoritative.
+The vadi submits one complete immutable checkpoint for canonical scope. Each
+handoff opens an obligation; for the run's current obligation, the Codex-harness
+participant stages the explainer's bytes into the run directory and the
+Claude-harness participant reads and reviews those exact digest-bound bytes,
+independent of which harness is vadi. A new handoff replaces the obligation, so
+the enforced guarantee is that the current one is staged and reviewed before
+finalization. A Codex Sites deployment is an optional human-facing rendering of
+the same bytes. Only finalization waits on that gate, so a finished deliverable
+can always be checkpointed. The explainer plan is the live TODO list; the Baton remains
+authoritative.
 
 The sessions coordinate only through the local run. Neither harness invokes
 the other, there is no daemon, and user-owned harness goals remain untouched.

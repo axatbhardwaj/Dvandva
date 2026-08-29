@@ -55,13 +55,42 @@ pub fn claim(
     lease_seconds: u64,
     expected_revision: u64,
 ) -> Result<ClaimGrant, ClaimError> {
+    claim_with_recovery(
+        channel,
+        role,
+        session_id,
+        lease_seconds,
+        expected_revision,
+        None,
+    )
+}
+
+/// Claim, recording the digest of a recovery nonce that lives only in the
+/// claimant's private credentials root. Presenting that nonce is what later
+/// proves a session may replace its own orphaned claim.
+pub fn claim_with_recovery(
+    channel: &RunChannel,
+    role: Role,
+    session_id: &str,
+    lease_seconds: u64,
+    expected_revision: u64,
+    recovery_digest: Option<String>,
+) -> Result<ClaimGrant, ClaimError> {
     validate_request(session_id, lease_seconds)?;
     channel.mutate_locked(expected_revision, |baton, now| {
         reject_terminal(baton)?;
         if participant(baton, role).claim.is_some() {
             return Err(ClaimError::Active);
         }
-        install_claim(baton, role, session_id, lease_seconds, 1, now)
+        install_claim(
+            baton,
+            role,
+            session_id,
+            lease_seconds,
+            1,
+            now,
+            recovery_digest.clone(),
+        )
     })
 }
 
@@ -71,6 +100,27 @@ pub fn reclaim(
     session_id: &str,
     lease_seconds: u64,
     expected_revision: u64,
+) -> Result<ClaimGrant, ClaimError> {
+    reclaim_with_recovery(
+        channel,
+        role,
+        session_id,
+        lease_seconds,
+        expected_revision,
+        None,
+    )
+}
+
+/// Replace an expired claim, recording a recovery digest so that if the
+/// process dies before the new token is stored, the replacement is as
+/// recoverable as a first claim.
+pub fn reclaim_with_recovery(
+    channel: &RunChannel,
+    role: Role,
+    session_id: &str,
+    lease_seconds: u64,
+    expected_revision: u64,
+    recovery_digest: Option<String>,
 ) -> Result<ClaimGrant, ClaimError> {
     validate_request(session_id, lease_seconds)?;
     channel.mutate_locked(expected_revision, |baton, now| {
@@ -86,7 +136,59 @@ pub fn reclaim(
             .epoch
             .checked_add(1)
             .ok_or(ClaimError::InvalidLease)?;
-        install_claim(baton, role, session_id, lease_seconds, epoch, now)
+        install_claim(
+            baton,
+            role,
+            session_id,
+            lease_seconds,
+            epoch,
+            now,
+            recovery_digest.clone(),
+        )
+    })
+}
+
+/// Replace this session's own live claim with a fresh one. This is the
+/// recovery for an orphaned claim — installed, but whose private credential was
+/// never stored because the process died in between — and it is only ever
+/// offered to the session the claim already names.
+pub fn reclaim_own(
+    channel: &RunChannel,
+    role: Role,
+    session_id: &str,
+    lease_seconds: u64,
+    expected_revision: u64,
+    recovery_nonce: &str,
+) -> Result<ClaimGrant, ClaimError> {
+    validate_request(session_id, lease_seconds)?;
+    let presented = digest(recovery_nonce);
+    channel.mutate_locked(expected_revision, |baton, now| {
+        reject_terminal(baton)?;
+        let previous = participant(baton, role)
+            .claim
+            .as_ref()
+            .ok_or(ClaimError::Missing)?;
+        // The public session id names the claimant; only the nonce held in that
+        // claimant's private credentials root proves it. Without the digest a
+        // claim recorded nothing to prove against, and is not recoverable.
+        if previous.session_id != session_id
+            || previous.recovery_digest.as_deref() != Some(presented.as_str())
+        {
+            return Err(ClaimError::Fenced);
+        }
+        let epoch = previous
+            .epoch
+            .checked_add(1)
+            .ok_or(ClaimError::InvalidLease)?;
+        install_claim(
+            baton,
+            role,
+            session_id,
+            lease_seconds,
+            epoch,
+            now,
+            Some(presented.clone()),
+        )
     })
 }
 
@@ -175,13 +277,19 @@ fn install_claim(
     lease_seconds: u64,
     epoch: u64,
     now: OffsetDateTime,
+    recovery_digest: Option<String>,
 ) -> Result<ClaimGrant, ClaimError> {
     let token = Uuid::new_v4().to_string();
     let (started, expires) = lease_times(now, lease_seconds)?;
+    // A new epoch reports nothing until it reports something. Carrying the old
+    // session's phase forward would present a dead session's last activity as
+    // the current one, which is the inference this field exists to prevent.
+    participant_mut(baton, role).progress = None;
     participant_mut(baton, role).claim = Some(ParticipantClaim {
         session_id: session_id.to_owned(),
         epoch,
         token_digest: digest(&token),
+        recovery_digest,
         lease_started_at: Some(started),
         lease_expires_at: expires,
         lease_seconds,
@@ -246,7 +354,7 @@ fn parse_timestamp(value: &str) -> Result<OffsetDateTime, ClaimError> {
     OffsetDateTime::parse(value, &Rfc3339).map_err(|_| ClaimError::InvalidTimestamp)
 }
 
-fn digest(token: &str) -> String {
+pub fn digest(token: &str) -> String {
     Sha256::digest(token.as_bytes())
         .iter()
         .map(|byte| format!("{byte:02x}"))

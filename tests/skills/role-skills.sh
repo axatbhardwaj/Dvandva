@@ -42,7 +42,7 @@ test "$(bash "$vadi" session-id)" = "codex-session"
 generated="$(env -u CODEX_SESSION_ID bash "$vadi" session-id --generate)"
 [[ "$generated" =~ ^[0-9a-f-]{36}$ ]]
 probe="$(bash "$vadi" probe)"
-grep -Fq '"version": "0.2.0"' <<<"$probe"
+grep -Fq '"version": "0.3.0"' <<<"$probe"
 grep -Fq '"write_schema": "dvandva.run.v2"' <<<"$probe"
 grep -Fq '"read_schemas": [' <<<"$probe"
 grep -Fq '"role_api": 2' <<<"$probe"
@@ -53,15 +53,15 @@ grep -Fq '"publish": false' <<<"$probe"
 mv "$binary" "$binary.real"
 cat >"$binary" <<'ADVERSARIAL_KERNEL'
 #!/usr/bin/env bash
-valid_probe='{"package":"dvandva-v4","version":"0.2.0","publish":false,"write_schema":"dvandva.run.v2","read_schemas":["dvandva.run.v2","dvandva.run.v1"],"role_api":2,"capabilities":{"upgrade_from_v1":true},"compatible":true}'
+valid_probe='{"package":"dvandva-v4","version":"0.3.0","publish":false,"write_schema":"dvandva.run.v2","read_schemas":["dvandva.run.v2","dvandva.run.v1"],"role_api":2,"capabilities":{"upgrade_from_v1":true},"compatible":true}'
 if test "${1:-}" = "--version"; then
   case "${DVANDVA_FAKE_MODE:-valid}" in
-    valid|probe_*) printf 'dvandva-v4 0.2.0\n' ;;
-    version_nul) printf 'dvandva-v4 0.2.0\0\n' ;;
-    version_invalid_utf8) printf 'dvandva-v4 0.2.0\377\n' ;;
-    version_oversized) printf 'dvandva-v4 0.2.0'; head -c 300 /dev/zero | tr '\0' x ;;
-    version_extra_newline) printf 'dvandva-v4 0.2.0\n\n' ;;
-    version_nonzero) printf 'dvandva-v4 0.2.0\n'; exit 7 ;;
+    valid|probe_*) printf 'dvandva-v4 0.3.0\n' ;;
+    version_nul) printf 'dvandva-v4 0.3.0\0\n' ;;
+    version_invalid_utf8) printf 'dvandva-v4 0.3.0\377\n' ;;
+    version_oversized) printf 'dvandva-v4 0.3.0'; head -c 300 /dev/zero | tr '\0' x ;;
+    version_extra_newline) printf 'dvandva-v4 0.3.0\n\n' ;;
+    version_nonzero) printf 'dvandva-v4 0.3.0\n'; exit 7 ;;
   esac
   exit 0
 fi
@@ -97,14 +97,14 @@ mv "$binary.real" "$binary"
 mv "$binary" "$binary.real"
 cat >"$binary" <<'DECOY_KERNEL'
 #!/usr/bin/env bash
-if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.2.0\n'; exit 0; fi
+if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.3.0\n'; exit 0; fi
 if test "${1:-}" = "probe"; then
   printf '%s\n' '{' \
     '  "package": 7, "version": false, "publish": true, "write_schema": [],' \
     '  "read_schemas": "wrong", "role_api": "2",' \
     '  "capabilities": {"upgrade_from_v1": "true"}, "compatible": "true",' \
     '  "decoy": {' \
-    '    "package": "dvandva-v4", "version": "0.2.0", "publish": false,' \
+    '    "package": "dvandva-v4", "version": "0.3.0", "publish": false,' \
     '    "write_schema": "dvandva.run.v2",' \
     '    "read_schemas": ["dvandva.run.v2", "dvandva.run.v1"],' \
     '    "role_api": 2, "capabilities": {"upgrade_from_v1": true},' \
@@ -166,7 +166,7 @@ bash "$vadi" heartbeat codex-session "$run_dir" 3 | grep -Fq '"revision":4'
 bash "$vadi" wait codex-session "$run_dir" 4 50 | grep -Fq '"revision": 4'
 
 action="$test_root/human.json"
-(umask 077; printf '%s\n' '{"type":"request_human_decision","question":"Confirm scope","evidence":["scope changed"],"options":["yes","no"]}' >"$action")
+(umask 077; printf '%s\n' '{"type":"request_human_decision","kind":"scope","question":"Which sections are in scope","evidence":["scope changed"],"options":["all","only the kernel"]}' >"$action")
 test "$(stat -c '%a' "$action")" = 600
 bash "$vadi" apply codex-session "$run_dir" 4 "$action" | grep -Fq '"status": "human_decision"'
 rm -f -- "$action"
@@ -216,8 +216,9 @@ for role_skill in "$vadi_skill" "$prativadi_skill"; do
     "$role_skill"
   grep -Fq 'Goals the user sets in a launch prompt remain outside the protocol.' \
     "$role_skill"
-  grep -Fq 'new human scope, ambiguity' "$role_skill"
-  grep -Fq 'unavailable mandated publication/review capability' "$role_skill"
+  grep -Fq 'the human'"'"'s alone' "$role_skill"
+  grep -Fq 'Protocol-internal problems resolve autonomously' "$role_skill"
+  grep -Fq 'the human may be absent' "$role_skill"
   ! grep -Fq 'only for new human scope or ambiguity' "$role_skill"
 done
 
@@ -235,13 +236,19 @@ do
     'request_checkpoint_supersession' \
     'accept_checkpoint_supersession' \
     'withdraw_approval' \
-    'Codex harness publishes' \
+    'Codex harness stages' \
     'Claude harness reviews' \
     'user-created harness goals remain unchanged' \
     'human starts the peer session' \
     'foreground local wait' \
+    'Ending the turn is not a wait' \
+  'Ending the turn is not a wait' \
+  'poll  SESSION RUN_DIR AFTER_REVISION' \
     'upgrade_required' \
     'upgrade SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION' \
+    'repair-policy SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION' \
+    'explainer SESSION RUN_DIR' \
+    'analysis SESSION RUN_DIR DIGEST' \
     'claim SESSION RUN_DIR EXPECTED_REVISION' \
     'reclaim SESSION RUN_DIR EXPECTED_REVISION' \
     'exact `start --run-id` automatically reclaims' \
@@ -262,8 +269,11 @@ for required in \
   'fresh facade snapshot' \
   'advisory_actions' \
   'legal_actions' \
-  'new human scope, ambiguity' \
-  'unavailable mandated publication/review capability' \
+  'never for protocol approval' \
+  'never block on human approval' \
+  'no approval kind' \
+  'wait_outcome: idle_timeout' \
+  'never leaves `request_human_decision` as the only way forward' \
   'never an ordinary wake or action' \
   'scope_mismatch' \
   'complete deliverable manifest' \
@@ -273,17 +283,24 @@ for required in \
   'request_checkpoint_supersession' \
   'accept_checkpoint_supersession' \
   'withdraw_approval' \
-  'Codex harness publishes' \
+  'Codex harness stages' \
   'Claude harness reviews' \
   'regardless of semantic casting' \
+  'the gate binds a digest, not a URL' \
   'canonical scope, complete manifest, findings and decisions, and a current plan/TODO' \
+  'stage_explainer' \
+  'explainer/<source_digest>.html' \
   'stable Site ID' \
   'new Site version' \
-  'owner-only' \
+  'never gates the run' \
+  'Never record a verdict on bytes you did not read' \
   'Claude Artifact' \
   'generic publisher' \
-  'public access' \
   'silent fallback' \
+  'publication_unreadable' \
+  'repair-policy' \
+  'report_progress' \
+  'slow from dead' \
   'user-created harness goals remain unchanged' \
   'human starts the peer session' \
   'explicitly invokes them in this session' \
@@ -349,8 +366,8 @@ do
 done
 
 for required in \
-  '0.2.0' \
-  'skills-v0.2.0' \
+  '0.3.0' \
+  'skills-v0.3.0' \
   'source and planned release target' \
   'installation is available only after' \
   'tag and release asset exist' \

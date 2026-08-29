@@ -11,10 +11,17 @@ credentials. Ordinary v1 operations, schema downgrade, old-facade/new-kernel,
 and new-facade/old-kernel combinations fail before run mutation. Setup installs
 kernel bytes but never migrates runs.
 
-The epoch fixes publication to one stable owner-only Codex Site per run,
+The epoch fixed publication to one stable owner-only Codex Site per run,
 published by the authenticated Codex participant and reviewed at each handoff
 by the authenticated Claude participant. A different publication policy needs
-a future protocol epoch rather than an in-run override.
+a deliberate protocol decision rather than an in-run override.
+
+> **Superseded in part by
+> [ADR 0004](0004-run-artifact-explainer-channel.md).** An owner-only Site is
+> readable only through the publisher owner's session, so the designated Claude
+> reviewer could never open it and the gate was unsatisfiable. The explainer gate
+> now binds digest-bound bytes staged in the run directory; a Site is an optional
+> rendering. Every other clause of this epoch stands.
 
 ## External-reference trust boundary
 

@@ -22,7 +22,14 @@ never a downgrade. Setup never migrates runs.
 The Baton owns the objective, references, task identity, `scope_revision`, and
 a non-empty ordered set of required deliverables. Exact-run selection compares
 every supplied coordinate and returns `scope_mismatch` without claiming when
-one differs. Only a resumed Human Decision can amend scope; amendment
+one differs. A Human Decision is one of three kinds — `scope` (what the work
+covers), `intent` (which reading of the request is meant), `authority`
+(permission that is the human's alone) — and never protocol approval: the kernel
+refuses to park while it holds a deterministic recovery, admits a decision only
+with distinct options (and, in an autonomous run, only as a choice among
+concrete scope proposals), refuses to re-ask the decision just answered, and
+resolves a decision only by a chosen option that changes the run. Only a
+resumed Human Decision can amend scope; amendment
 increments `scope_revision` and clears stale checkpoint state.
 
 A checkpoint is complete only when its unique deliverable IDs cover canonical
@@ -40,7 +47,7 @@ working -> reviewing -> finalizing -> done
               v             |
            revising --------+
 
-any active state -> human_decision -> declared active state
+any active state -> human_decision(scope | intent | authority) -> declared active state
 any active state -> abandoned
 ```
 
@@ -86,29 +93,43 @@ Act as prativadi and join Dvandva run <run-id>.
 ```
 
 Both roles obey the snapshot's actions and foreground-wait when the peer owns
-the next mutation. Tokens remain private to each role facade.
+the next mutation. The wait is `poll`: it re-enters the kernel wait on every
+idle timeout and returns only on a real wake, a terminal run, or its budget, and
+the role calls it again at once on an idle return rather than ending its turn. Tokens remain private to each role facade.
 
 ## Rolling explainer gate
 
-Every run uses one stable owner-only Codex Site. At every semantic handoff the
-Codex-harness participant publishes the current explainer, and the
-Claude-harness participant reviews that exact deployment, independent of
-worker/reviewer casting. The explainer contains canonical scope, the complete
+Each semantic handoff opens an obligation. For the run's current obligation the
+Codex-harness participant stages the explainer's bytes into the run directory,
+and the Claude-harness participant reads those exact bytes back through the
+facade and reviews them, independent of worker/reviewer casting. The explainer contains canonical scope, the complete
 manifest, findings and decisions, and a current plan/TODO.
 
-Each deployment and review echoes the pending handoff kind and revision,
-`scope_revision`, optional three-coordinate checkpoint binding, source digest,
-stable Site ID, Site version, and URL. Republishing clears the earlier Claude
-review. A Claude Artifact, local file, mutable URL, public or generic host, or
-another channel cannot satisfy v0.2. Missing Sites or review capability routes
-to Human Decision and remains blocked; an alternative policy requires a future
-protocol epoch.
+A new handoff replaces the current obligation, so the gate binds the current
+obligation rather than the run's whole history of them. The staged artifact is
+content-addressed at `explainer/<source_digest>.html` and echoes the pending
+handoff kind and revision, `scope_revision`, and the optional three-coordinate
+checkpoint binding. Each receipt advances `receipt_seq`, which receipts declare
+as `after_seq` so an out-of-order one is refused rather than applied. A review binds that digest, and staging
+different bytes clears the earlier review. The gate binds bytes, not a location:
+an unread approval, a Claude Artifact, a mutable URL, or a public or generic
+host cannot satisfy it, and finalization rehashes the staged bytes rather than
+trusting the receipt.
+
+A Codex Sites deployment is an optional human-facing rendering of the
+already-staged bytes and must name the same digest; it satisfies nothing on its
+own. A publication policy whose reviewer cannot read its channel is refused at
+`start` and repaired with `repair-policy`, so a capability mismatch is a
+protocol-internal problem with a deterministic recovery rather than a Human
+Decision that blocks indefinitely.
 
 ## Terminal checks
 
 `done` requires one current complete checkpoint whose identity,
 `manifest_digest`, and `scope_revision` match the semantic approval; no pending
-supersession or Human Decision; the current handoff's exact Codex Sites
-deployment; and the matching approved Claude explainer review. Finalization
-records that provenance. Terminal state is immutable, and both role loops stop
+supersession or Human Decision; the current handoff's staged explainer bytes,
+still hashing to their recorded digest; and the matching approved Claude
+explainer review. Finalization records that provenance. It is the only
+transition the explainer gates: checkpoint submission, review, supersession, and
+approval withdrawal never wait on it. Terminal state is immutable, and both role loops stop
 only after observing the same terminal Baton identity.

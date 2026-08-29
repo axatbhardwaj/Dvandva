@@ -16,8 +16,17 @@ pub enum WaitError {
     Store(#[from] StoreError),
     #[error(transparent)]
     Claim(#[from] ClaimError),
-    #[error("wait timed out")]
-    Timeout,
+}
+
+/// Why a foreground wait returned. A timeout is an ordinary idle outcome — the
+/// peer simply has not acted yet — and must never be reported as a failure, or
+/// every routine wait looks like a crash to the surrounding harness.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WaitOutcome {
+    Actionable,
+    Terminal,
+    IdleTimeout,
 }
 
 pub fn wait(
@@ -28,7 +37,7 @@ pub fn wait(
     after_revision: u64,
     poll_interval: Duration,
     timeout: Duration,
-) -> Result<RunBaton, WaitError> {
+) -> Result<(RunBaton, WaitOutcome), WaitError> {
     let (sender, receiver) = mpsc::channel();
     let mut watcher = notify::recommended_watcher(move |_| {
         let _ = sender.send(());
@@ -51,7 +60,7 @@ pub fn wait(
         let baton = channel.read()?;
         require_current_schema(&baton)?;
         if matches!(baton.status, Status::Done | Status::Abandoned) {
-            return Ok(baton);
+            return Ok((baton, WaitOutcome::Terminal));
         }
         claim::verify(&baton, role, session_id, token)?;
         let harness = match role {
@@ -59,7 +68,7 @@ pub fn wait(
             Role::Reviewer => &baton.participants.reviewer.harness,
         };
         if next_action::classify(&baton, role, harness).actionable {
-            return Ok(baton);
+            return Ok((baton, WaitOutcome::Actionable));
         }
         if let Some(lease_seconds) = claim::renewal_lease(&baton, role)? {
             match claim::heartbeat(
@@ -82,7 +91,7 @@ pub fn wait(
 
         let now = std::time::Instant::now();
         if now >= deadline {
-            return Err(WaitError::Timeout);
+            return Ok((baton, WaitOutcome::IdleTimeout));
         }
         let remaining = deadline.saturating_duration_since(now);
         let interval = poll_interval.min(remaining);

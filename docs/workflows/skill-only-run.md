@@ -25,9 +25,9 @@ Then explicitly ask one session:
 $setup-dvandva install Dvandva.
 ```
 
-The intended `skills-v0.2.0` GitHub release provides
+The intended `skills-v0.3.0` GitHub release provides
 `dvandva-kernel-linux-x86_64` and `SHA256SUMS`. Setup becomes usable only after
-that tag and asset exist. It verifies the digest and the complete kernel 0.2.0,
+that tag and asset exist. It verifies the digest and the complete kernel 0.3.0,
 `dvandva.run.v2`, role API 2 probe before installing under
 `${XDG_DATA_HOME:-$HOME/.local/share}/dvandva/`, outside `PATH`. The crate is
 non-publishable and no plugin or marketplace package is involved.
@@ -88,29 +88,46 @@ New required work has two stale-work paths:
 - During `finalizing`, vadi applies `withdraw_approval` and produces a new
   complete checkpoint.
 
-New human scope, ambiguity, or a missing mandated capability uses Human
-Decision. Only its designated contact resumes it, and only a human-approved
-scope amendment can change canonical scope.
+Human Decision is for what only a human can settle: `scope` for what the work
+should cover, `intent` for which reading of the request is meant, and
+`authority` for permission that is theirs alone to give. A missing capability is
+not one of these — it has a deterministic recovery, and the kernel refuses to
+park a run while it holds one. Only the designated contact resumes a decision,
+and only a human-approved scope amendment can change canonical scope.
 
 ## Published explainer
 
-Every run has one stable owner-only Site in Codex Sites. At each handoff the
-Codex-harness participant publishes the exact pending binding, and the
-Claude-harness participant reviews that exact Site version, regardless of
-vadi/prativadi casting. The explainer carries canonical scope, complete
-manifest, findings and decisions, and a current plan/TODO list.
+Each handoff opens an obligation. The Codex-harness participant stages the
+explainer's bytes for the current obligation with `stage_explainer`, and the
+Claude-harness participant reads those exact bytes back through
+`dvandva-role.sh explainer` and reviews them, regardless of vadi/prativadi
+casting. A new handoff replaces the current obligation, so what the gate
+requires is that the run's current obligation is staged and reviewed — not that
+every obligation the run ever opened was. The explainer carries canonical
+scope, complete manifest, findings and decisions, and a current plan/TODO list.
 
-A later deployment invalidates the earlier Claude review. Claude Artifact,
-local HTML, mutable URL, generic hosting, or public access cannot satisfy the
-gate. Sites or review unavailability becomes a Human Decision; it does not
-silently change policy. The page never coordinates wake-up.
+The gate binds a sha256 digest, not a URL, so both harnesses can always reach
+the artifact. Staging different bytes invalidates the earlier review.
+A Codex Sites deployment is an optional human-facing rendering of the
+already-staged bytes; it must name the same digest and never satisfies the gate. Recording an
+unread approval, or substituting a Claude Artifact, mutable URL, or generic
+hosting, cannot satisfy the gate. The page never coordinates wake-up.
 
-After every handoff the assigned-away role foreground-waits and both roles
+Only `finalize` waits on this gate. A finished deliverable can always be
+checkpointed, and the recovery paths — supersession and approval withdrawal —
+are never blocked by it.
+
+After every handoff the assigned-away role foreground-waits with
+`dvandva-role.sh poll`, in the same turn as its handoff report. `poll` re-enters
+the kernel wait on every `idle_timeout` until a real wake, a terminal run, or
+its budget; on an idle return the role calls it again immediately. Ending the
+turn is not a wait — it lets the lease lapse and stalls the peer. Both roles
 refresh the facade snapshot after waking. A role stops only for explicit human
 stop, `abandoned`, or after observing `done` with the current scope, complete
-checkpoint, exact semantic approval, exact Sites deployment, and exact Claude
-review all bound together. A Human Decision pauses the pair rather than
-completing it.
+checkpoint, exact semantic approval, and the current obligation's staged bytes
+and approved Claude review bound together. A Sites deployment is optional and is
+not required at `done`. A Human Decision pauses the pair rather than completing
+it.
 
 ## Explicit-only companion skills
 

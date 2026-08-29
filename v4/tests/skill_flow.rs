@@ -36,17 +36,24 @@ fn assert_role_source_contract(role: &str) {
         "request_checkpoint_supersession",
         "accept_checkpoint_supersession",
         "withdraw_approval",
-        "Codex harness publishes",
+        "Codex harness stages",
         "Claude harness reviews",
         "regardless of semantic casting",
+        "the gate binds a digest, not a URL",
         "canonical scope, complete manifest, findings and decisions, and a current plan/TODO",
+        "stage_explainer",
+        "explainer/<source_digest>.html",
         "stable Site ID",
         "new Site version",
-        "owner-only",
+        "never gates the run",
+        "Never record a verdict on bytes you did not read",
         "Claude Artifact",
         "generic publisher",
-        "public access",
         "silent fallback",
+        "publication_unreadable",
+        "repair-policy",
+        "report_progress",
+        "slow from dead",
         "user-created harness goals remain unchanged",
         "human starts the peer session",
         "explicitly invokes them in this session",
@@ -56,8 +63,12 @@ fn assert_role_source_contract(role: &str) {
         "Who owns the next action",
         "Exact command or prompt",
         "foreground local wait",
+        "Ending the turn is not a wait",
+        "poll  SESSION RUN_DIR AFTER_REVISION [MAX_MS]",
         "upgrade_required",
         "upgrade SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION",
+        "repair-policy SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION",
+        "explainer SESSION RUN_DIR",
         "claim SESSION RUN_DIR EXPECTED_REVISION",
         "reclaim SESSION RUN_DIR EXPECTED_REVISION",
         "exact `start --run-id` automatically reclaims",
@@ -75,8 +86,7 @@ fn assert_role_source_contract(role: &str) {
     assert!(source.contains("deletes it after"));
     assert!(!source.contains("ACTION_JSON"));
     assert!(source.contains("Publication never substitutes for supersession or withdrawal."));
-    let allowed_exception =
-        "new human scope, ambiguity, or unavailable mandated publication/review capability";
+    let allowed_exception = "a decision that is the human's alone";
     assert!(
         skill
             .split_whitespace()
@@ -192,6 +202,15 @@ fn normalize_documented_action(template: &str) -> serde_json::Value {
         }
     });
     let normalized = template
+        .replace("<snapshot.publication_binding.receipt_seq>", "0")
+        .replace(
+            "<absolute path to the explainer HTML>",
+            "/nonexistent/explainer.html",
+        )
+        .replace(
+            "<absolute path to the analysis bytes>",
+            "/nonexistent/analysis.md",
+        )
         .replace(
             r#""<snapshot.publication_binding.obligation>""#,
             &serde_json::to_string(&obligation).unwrap(),
@@ -200,9 +219,16 @@ fn normalize_documented_action(template: &str) -> serde_json::Value {
         .replace("<snapshot.checkpoint.manifest_digest>", &"b".repeat(64))
         .replace("<snapshot.checkpoint.scope_revision>", "0")
         .replace(
-            "<snapshot.publication_binding.deployment.source_digest>",
+            "<snapshot.publication_binding.artifact.source_digest>",
             &"a".repeat(64),
         )
+        .replace(
+            "<sha256 of the cited digests, sorted, deduplicated, newline-joined>",
+            &"c".repeat(64),
+        )
+        .replace("<sha256 of the artifact>", &"d".repeat(64))
+        .replace("<full-length commit object name>", &"e".repeat(40))
+        .replace("<current step>", "building the explainer")
         .replace(
             "<snapshot.publication_binding.deployment.site_id>",
             "site-run",
@@ -216,6 +242,9 @@ fn normalize_documented_action(template: &str) -> serde_json::Value {
             "https://sites.openai.test/site-run/site-version",
         )
         .replace("<human-approved answer>", "Include report")
+        .replace("<one of the recorded options>", "Include report")
+        .replace("<concrete option A>", "Include report")
+        .replace("<concrete option B>", "Leave it out")
         .replace("<human-approved objective>", "Ship approved scope")
         .replace("<human-approved ref kind>", "issue")
         .replace("<human-approved ref value>", "DEF-456")
@@ -256,9 +285,12 @@ fn every_documented_role_action_deserializes_against_the_v2_schema() {
                 "finalize",
                 "record_explainer_publication",
                 "record_explainer_review",
+                "report_progress",
                 "request_checkpoint_supersession",
                 "request_human_decision",
                 "resume_human_decision",
+                "stage_analysis",
+                "stage_explainer",
                 "submit_checkpoint",
                 "withdraw_approval",
             ]),
@@ -270,8 +302,10 @@ fn every_documented_role_action_deserializes_against_the_v2_schema() {
                 "record_explainer_publication",
                 "record_explainer_review",
                 "record_review",
+                "report_progress",
                 "request_human_decision",
                 "resume_human_decision",
+                "stage_explainer",
             ]),
         ),
     ];
@@ -456,8 +490,8 @@ fn setup_skill_sources_pin_v2_without_implicit_run_migration() {
         repository_file("skills/setup-dvandva/references/installation.md")
     );
     for required in [
-        "0.2.0",
-        "skills-v0.2.0",
+        "0.3.0",
+        "skills-v0.3.0",
         "source and planned release target",
         "installation is available only after",
         "tag and release asset exist",
@@ -501,7 +535,7 @@ fn version_and_probe_report_the_installation_contract() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("dvandva-v4 0.2.0"));
+        .stdout(predicate::str::contains("dvandva-v4 0.3.0"));
 
     let output = command()
         .args([
@@ -520,7 +554,7 @@ fn version_and_probe_report_the_installation_contract() {
     );
     let probe: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(probe["package"], "dvandva-v4");
-    assert_eq!(probe["version"], "0.2.0");
+    assert_eq!(probe["version"], "0.3.0");
     assert_eq!(probe["write_schema"], "dvandva.run.v2");
     assert_eq!(probe["role_api"], 2);
     assert_eq!(probe["publish"], false);
@@ -638,27 +672,24 @@ impl Flow<'_> {
             serde_json::from_slice(&std::fs::read(self.run_dir.join("baton.json")).unwrap())
                 .unwrap();
         let obligation = baton["publication_binding"]["obligation"].clone();
-        let mut publication = documented_action("vadi", "record_explainer_publication");
-        publication["obligation"] = obligation.clone();
-        publication["source_digest"] = serde_json::json!("a".repeat(64));
-        publication["site_id"] = serde_json::json!("site-run");
-        publication["site_version"] = serde_json::json!(site_version);
-        publication["url"] =
-            serde_json::json!(format!("https://sites.openai.test/site-run/{site_version}"));
-        let published = self.apply(
+        let source = self.root.join(format!("explainer-{site_version}.html"));
+        std::fs::write(&source, format!("<h1>{site_version}</h1>")).unwrap();
+        let mut stage = documented_action("vadi", "stage_explainer");
+        stage["obligation"] = obligation.clone();
+        stage["after_seq"] = baton["publication_binding"]["receipt_seq"].clone();
+        stage["source_path"] = serde_json::json!(source.to_str().unwrap());
+        let staged = self.apply(
             "worker",
             "worker-session",
             revision,
-            &format!("publish-{site_version}.json"),
-            publication,
+            &format!("stage-{site_version}.json"),
+            stage,
         );
-        let deployment = published["publication_binding"]["deployment"].clone();
+        let artifact = staged["publication_binding"]["artifact"].clone();
         let mut review = documented_action("prativadi", "record_explainer_review");
         review["obligation"] = obligation;
-        review["source_digest"] = deployment["source_digest"].clone();
-        review["site_id"] = deployment["site_id"].clone();
-        review["site_version"] = deployment["site_version"].clone();
-        review["url"] = deployment["url"].clone();
+        review["after_seq"] = staged["publication_binding"]["receipt_seq"].clone();
+        review["source_digest"] = artifact["source_digest"].clone();
         self.apply(
             "reviewer",
             "reviewer-session",
@@ -758,7 +789,7 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
     assert!(reviewing_a["next_actions"]
         .as_array()
         .unwrap()
-        .contains(&serde_json::json!("publish_explainer")));
+        .contains(&serde_json::json!("stage_explainer")));
 
     flow.approve_explainer(5, "deployment-2");
 

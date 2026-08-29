@@ -8,6 +8,7 @@ use std::{
 
 use notify::{RecursiveMode, Watcher};
 use serde::Serialize;
+use std::os::unix::fs::PermissionsExt;
 use thiserror::Error;
 use time::{format_description::well_known::Rfc3339, OffsetDateTime};
 
@@ -29,8 +30,15 @@ pub struct DiscoveryQuery<'a> {
     pub role: Role,
     pub participant_harness: &'a str,
     pub task_reference: Option<&'a str>,
+    /// Canonical objective the caller asked for. A non-exact start must not
+    /// adopt, or collide with, a run pursuing a different objective.
+    pub objective: Option<&'a str>,
     pub run_id: Option<&'a str>,
     pub session_id: Option<&'a str>,
+    /// Runs with no live claim whose head has not moved for this many days are
+    /// abandoned rather than merely idle, and are excluded from non-exact
+    /// discovery. `None` disables the horizon.
+    pub stale_after_days: Option<u64>,
 }
 
 #[derive(Debug, PartialEq, Eq, Serialize)]
@@ -90,10 +98,23 @@ pub struct DiscoveryOutcome {
     pub outcome: DiscoveryKind,
     pub candidates: Vec<RunCandidate>,
     pub corrupt: Vec<CorruptCandidate>,
+    /// Unclaimed runs older than the staleness horizon, excluded from matching
+    /// but reported so they can be garbage-collected rather than silently kept.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub stale: Vec<StaleCandidate>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub requested_scope: Option<RequestedScope>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_action: Option<&'static str>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StaleCandidate {
+    pub run_id: String,
+    pub run_dir: PathBuf,
+    pub schema: String,
+    pub status: Status,
+    pub idle_days: u64,
 }
 
 #[derive(Debug, Serialize)]
@@ -124,6 +145,7 @@ pub fn discover(
     let mut task_mismatches = Vec::new();
     let mut upgrades = Vec::new();
     let mut corrupt = Vec::new();
+    let mut stale = Vec::new();
     for entry in fs::read_dir(runs_dir)? {
         let entry = entry?;
         if query
@@ -143,15 +165,29 @@ pub fn discover(
             continue;
         }
         match RunChannel::open(&run_dir).read() {
-            Ok(baton) => match candidate(&run_dir, baton, &query) {
-                Ok(Some(CandidateMatch::Exact(candidate))) => candidates.push(candidate),
-                Ok(Some(CandidateMatch::TaskMismatch(candidate))) => {
-                    task_mismatches.push(candidate)
+            Ok(baton) => {
+                if query.run_id.is_none() {
+                    if let Some(idle_days) = stale_idle_days(&run_dir, &baton, &query) {
+                        stale.push(StaleCandidate {
+                            run_id: baton.run_id,
+                            run_dir,
+                            schema: baton.schema,
+                            status: baton.status,
+                            idle_days,
+                        });
+                        continue;
+                    }
                 }
-                Ok(Some(CandidateMatch::Upgrade(candidate))) => upgrades.push(candidate),
-                Ok(None) => {}
-                Err(error) => corrupt.push(CorruptCandidate { run_dir, error }),
-            },
+                match candidate(&run_dir, baton, &query) {
+                    Ok(Some(CandidateMatch::Exact(candidate))) => candidates.push(candidate),
+                    Ok(Some(CandidateMatch::TaskMismatch(candidate))) => {
+                        task_mismatches.push(candidate)
+                    }
+                    Ok(Some(CandidateMatch::Upgrade(candidate))) => upgrades.push(candidate),
+                    Ok(None) => {}
+                    Err(error) => corrupt.push(CorruptCandidate { run_dir, error }),
+                }
+            }
             Err(crate::store::StoreError::RunMissing) => {
                 if query.run_id.is_some() {
                     corrupt.push(CorruptCandidate {
@@ -170,13 +206,154 @@ pub fn discover(
     task_mismatches.sort_by(|left, right| left.run_id.cmp(&right.run_id));
     upgrades.sort_by(|left, right| left.run_id.cmp(&right.run_id));
     corrupt.sort_by(|left, right| left.run_dir.cmp(&right.run_dir));
+    stale.sort_by(|left, right| left.run_id.cmp(&right.run_id));
     let mut result = outcome(candidates, task_mismatches, upgrades, corrupt);
+    result.stale = stale;
     if query.run_id.is_some() && result.outcome == DiscoveryKind::None {
         result.outcome = DiscoveryKind::RunMissing;
     } else if query.run_id.is_some() && result.outcome == DiscoveryKind::Busy {
         result.next_action = Some("wait");
     }
     Ok(result)
+}
+
+/// Every unclaimed, non-terminal run idle for at least `older_than_days`,
+/// regardless of repository, role, or objective.
+pub fn stale_runs(
+    runs_dir: &Path,
+    older_than_days: u64,
+) -> Result<Vec<StaleCandidate>, DiscoveryError> {
+    if !runs_dir.exists() {
+        return Ok(Vec::new());
+    }
+    let mut stale = Vec::new();
+    for entry in fs::read_dir(runs_dir)? {
+        let entry = entry?;
+        let run_dir = entry.path();
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
+        let Ok(baton) = RunChannel::open(&run_dir).read() else {
+            continue;
+        };
+        if let Some(idle_days) = collectable_idle_days(&run_dir, &baton, older_than_days) {
+            stale.push(StaleCandidate {
+                run_id: baton.run_id,
+                run_dir,
+                schema: baton.schema,
+                status: baton.status,
+                idle_days,
+            });
+        }
+    }
+    stale.sort_by(|left, right| left.run_id.cmp(&right.run_id));
+    Ok(stale)
+}
+
+/// Move one stale run aside, revalidating it first. Archiving is destructive to
+/// discovery, so it must not act on a run that came back to life between the
+/// scan and the move, must not follow a symlinked archive root, and must not
+/// take its destination name from Baton content.
+pub fn archive_stale_run(
+    runs_dir: &Path,
+    run_dir: &Path,
+    older_than_days: u64,
+) -> Result<Option<PathBuf>, DiscoveryError> {
+    // The destination name comes from the filesystem, not the Baton: a run_id
+    // read out of run state could contain separators or `..`.
+    let name = match run_dir.file_name() {
+        Some(name) if !name.is_empty() && name != OsStr::new(".") && name != OsStr::new("..") => {
+            name.to_owned()
+        }
+        _ => return Ok(None),
+    };
+    let name: &OsStr = &name;
+    if Path::new(&name).components().count() != 1 {
+        return Ok(None);
+    }
+
+    // The archive root is opened once and pinned, so a symlink swapped in after
+    // the check cannot redirect the move.
+    let archive_root = runs_dir.join(".archived");
+    match fs::symlink_metadata(&archive_root) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => return Ok(None),
+        Ok(_) => {}
+        Err(_) => {
+            fs::create_dir_all(&archive_root)?;
+            fs::set_permissions(&archive_root, std::fs::Permissions::from_mode(0o700))?;
+        }
+    }
+    // Both directories are opened no-follow and proven to be directories on the
+    // open descriptor itself, so a symlink swapped in between the metadata
+    // check and the open cannot redirect the move.
+    let archive_fd = match crate::store::open_dir_nofollow(&archive_root) {
+        Ok(directory) => directory,
+        Err(_) => return Ok(None),
+    };
+    let source_parent = match crate::store::open_dir_nofollow(runs_dir) {
+        Ok(directory) => directory,
+        Err(_) => return Ok(None),
+    };
+
+    // Revalidate and move while holding the run's own lock, so a session that
+    // reclaimed it between the scan and now keeps it.
+    let channel = RunChannel::open(run_dir);
+    let archived = channel.with_run_lock(|| {
+        let Ok(baton) = channel.read() else {
+            return Ok(None);
+        };
+        if collectable_idle_days(run_dir, &baton, older_than_days).is_none() {
+            return Ok(None);
+        }
+        // The entry that will be moved is the pinned root's own child named
+        // `name`. It must be the very directory that was just locked and
+        // revalidated, or a same-basename substitution could archive a
+        // different, live run. Identity is compared immediately before the
+        // move, on open descriptors, so nothing can be swapped in between.
+        use std::os::unix::fs::MetadataExt;
+        let (Ok(locked), Ok(child)) = (
+            crate::store::open_dir_nofollow(run_dir),
+            crate::store::open_child_dir_nofollow(&source_parent, name),
+        ) else {
+            return Ok(None);
+        };
+        let (Ok(locked_meta), Ok(child_meta)) = (locked.metadata(), child.metadata()) else {
+            return Ok(None);
+        };
+        if (locked_meta.dev(), locked_meta.ino()) != (child_meta.dev(), child_meta.ino()) {
+            return Ok(None);
+        }
+        Ok(rename_no_replace(&source_parent, name, &archive_fd, name))
+    });
+    match archived {
+        Ok(Some(())) => Ok(Some(archive_root.join(name))),
+        Ok(None) => Ok(None),
+        Err(_) => Ok(None),
+    }
+}
+
+/// Move `name` from one pinned directory to another, failing rather than
+/// replacing an existing entry. Both ends are named relative to open directory
+/// descriptors, so neither can be redirected by a swapped symlink.
+fn rename_no_replace(
+    source_dir: &fs::File,
+    source_name: &OsStr,
+    destination_dir: &fs::File,
+    destination_name: &OsStr,
+) -> Option<()> {
+    use std::os::unix::ffi::OsStrExt;
+    let source = std::ffi::CString::new(source_name.as_bytes()).ok()?;
+    let destination = std::ffi::CString::new(destination_name.as_bytes()).ok()?;
+    let moved = unsafe {
+        libc::renameat2(
+            std::os::fd::AsRawFd::as_raw_fd(source_dir),
+            source.as_ptr(),
+            std::os::fd::AsRawFd::as_raw_fd(destination_dir),
+            destination.as_ptr(),
+            libc::RENAME_NOREPLACE,
+        )
+    };
+    (moved == 0).then_some(())
 }
 
 pub fn wait_for_match(
@@ -240,8 +417,9 @@ fn candidate(
     {
         return Err("baton run id does not match its named directory".to_owned());
     }
-    let terminal =
-        baton.schema == SCHEMA && matches!(baton.status, Status::Done | Status::Abandoned);
+    // A finished run is finished whatever schema recorded it. A terminal v1
+    // sibling must not be offered for upgrade to an unrelated new start.
+    let terminal = matches!(baton.status, Status::Done | Status::Abandoned);
     if terminal && query.run_id.is_none() {
         return Ok(None);
     }
@@ -316,11 +494,31 @@ fn candidate(
             next_action: "upgrade_protocol",
         }),
     };
+    let task_reference_matches = query.task_reference.is_some_and(|expected| {
+        task.and_then(|identity| identity.reference.as_deref())
+            .is_some_and(|actual| actual == expected.trim())
+    });
+    let objective_matches = query
+        .objective
+        .is_none_or(|expected| candidate.objective.summary == expected.trim());
+    // A run pursuing a different objective, which the caller has not pointed at
+    // by task reference, is not this start's run at all. It is unrelated, not a
+    // near miss, so it must not surface as a mismatch and block a new run. When
+    // the caller does name this run's task, a differing objective is a real
+    // scope disagreement and must still be surfaced.
+    if query.run_id.is_none() && !objective_matches && !task_reference_matches {
+        return Ok(None);
+    }
     let task_matches = query.task_reference.is_none_or(|expected| {
         task.and_then(|identity| identity.reference.as_deref())
             .is_some_and(|actual| actual == expected.trim())
     });
-    if baton.schema == LEGACY_SCHEMA && (query.run_id.is_some() || task_matches) {
+    if terminal {
+        // Finished runs are never offered for migration: `upgrade` would refuse
+        // them as terminal, so advertising `upgrade_protocol` for one sends the
+        // caller to an action that cannot succeed.
+        Ok(Some(CandidateMatch::Exact(candidate)))
+    } else if baton.schema == LEGACY_SCHEMA && (query.run_id.is_some() || task_matches) {
         Ok(Some(CandidateMatch::Upgrade(candidate)))
     } else if query.run_id.is_none() && !task_matches {
         if candidate.claim_state == ClaimState::Busy {
@@ -370,7 +568,48 @@ fn outcome(
         outcome,
         candidates,
         corrupt,
+        stale: Vec::new(),
         requested_scope: None,
         next_action: None,
     }
+}
+
+/// How long a run has sat with no live claim and no head movement, when that
+/// exceeds the caller's horizon.
+fn stale_idle_days(run_dir: &Path, baton: &RunBaton, query: &DiscoveryQuery<'_>) -> Option<u64> {
+    idle_days_without_live_claim(run_dir, baton, query.stale_after_days?)
+}
+
+/// Like `idle_days_without_live_claim`, but a terminal run counts too: it is
+/// finished, so an explicit collection may archive it once it has gone quiet.
+fn collectable_idle_days(run_dir: &Path, baton: &RunBaton, horizon: u64) -> Option<u64> {
+    idle_days(run_dir, baton, horizon)
+}
+
+fn idle_days_without_live_claim(run_dir: &Path, baton: &RunBaton, horizon: u64) -> Option<u64> {
+    if matches!(baton.status, Status::Done | Status::Abandoned) {
+        return None;
+    }
+    idle_days(run_dir, baton, horizon)
+}
+
+fn idle_days(run_dir: &Path, baton: &RunBaton, horizon: u64) -> Option<u64> {
+    let live_claim = [
+        baton.participants.worker.claim.as_ref(),
+        baton.participants.reviewer.claim.as_ref(),
+    ]
+    .into_iter()
+    .flatten()
+    .any(|claim| {
+        OffsetDateTime::parse(&claim.lease_expires_at, &Rfc3339)
+            .is_ok_and(|expiry| expiry > OffsetDateTime::now_utc())
+    });
+    if live_claim {
+        return None;
+    }
+    let modified = std::fs::metadata(run_dir.join("baton.json"))
+        .and_then(|metadata| metadata.modified())
+        .ok()?;
+    let idle_days = modified.elapsed().ok()?.as_secs() / 86_400;
+    (idle_days >= horizon).then_some(idle_days)
 }

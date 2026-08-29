@@ -8,8 +8,18 @@ pub const SCHEMA: &str = "dvandva.run.v2";
 pub const ROLE_API: u32 = 2;
 pub const EXPLAINER_PUBLISHER_HARNESS: &str = "Codex";
 pub const EXPLAINER_REVIEWER_HARNESS: &str = "Claude";
-pub const EXPLAINER_CHANNEL: &str = "codex_sites";
-pub const EXPLAINER_ACCESS: &str = "owner_only";
+/// Digest-bound explainer bytes staged inside the run directory. Both harnesses
+/// run locally against the same run directory, so both can read this channel.
+pub const EXPLAINER_CHANNEL: &str = "run_artifact";
+pub const EXPLAINER_ACCESS: &str = "run_private";
+/// Recognized but reviewer-unreadable: an owner-only Codex Site is gated behind
+/// the publisher owner's session, which the reviewing harness cannot present.
+pub const LEGACY_EXPLAINER_CHANNEL: &str = "codex_sites";
+pub const LEGACY_EXPLAINER_ACCESS: &str = "owner_only";
+pub const EXPLAINER_ARTIFACT_DIR: &str = "explainer";
+pub const ANALYSIS_ARTIFACT_DIR: &str = "analysis";
+pub const EXPLAINER_MEDIA_TYPE: &str = "text/html";
+pub const MAX_EXPLAINER_BYTES: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum ModelError {
@@ -65,6 +75,28 @@ pub struct Participants {
 pub struct Participant {
     pub harness: String,
     pub claim: Option<ParticipantClaim>,
+    /// Last self-reported step. Lets a peer distinguish "slow" from "dead"
+    /// without inferring liveness from lease expiry alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<ParticipantProgress>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProgressPhase {
+    Working,
+    PublishingExplainer,
+    ReviewingExplainer,
+    ReviewingCheckpoint,
+    Waiting,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ParticipantProgress {
+    pub phase: ProgressPhase,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+    pub updated_at: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -72,6 +104,11 @@ pub struct ParticipantClaim {
     pub session_id: String,
     pub epoch: u64,
     pub token_digest: String,
+    /// sha256 of a nonce held only in the claimant's private credentials root,
+    /// written before the claim was installed. Recovering an orphaned claim
+    /// requires presenting it, so a public session id alone proves nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recovery_digest: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lease_started_at: Option<String>,
     pub lease_expires_at: String,
@@ -186,12 +223,42 @@ pub struct PublicationPolicy {
 }
 
 impl PublicationPolicy {
+    /// Whether this policy names a channel/access pair the kernel recognizes at
+    /// all. Unknown pairs cannot be reasoned about and are rejected on read.
+    pub fn is_recognized(&self) -> bool {
+        !self.publisher_harness.trim().is_empty()
+            && !self.reviewer_harness.trim().is_empty()
+            && matches!(
+                (self.channel.as_str(), self.access.as_str()),
+                (EXPLAINER_CHANNEL, EXPLAINER_ACCESS)
+                    | (LEGACY_EXPLAINER_CHANNEL, LEGACY_EXPLAINER_ACCESS)
+            )
+    }
+
     pub fn fixed() -> Self {
         Self {
             publisher_harness: EXPLAINER_PUBLISHER_HARNESS.to_owned(),
             channel: EXPLAINER_CHANNEL.to_owned(),
             access: EXPLAINER_ACCESS.to_owned(),
             reviewer_harness: EXPLAINER_REVIEWER_HARNESS.to_owned(),
+        }
+    }
+
+    /// Whether the designated reviewing harness can actually read bytes the
+    /// designated publisher places on this channel. A policy that fails this
+    /// check can never reach an explainer review and must be rejected at start
+    /// rather than after the publisher has already deployed.
+    pub fn reviewer_can_read(&self) -> bool {
+        match (self.channel.as_str(), self.access.as_str()) {
+            // Run-directory artifacts are local files both harnesses can open.
+            (EXPLAINER_CHANNEL, EXPLAINER_ACCESS) => true,
+            // An owner-only Site is readable only by the publisher's own owner
+            // session, so it works only when publisher and reviewer coincide.
+            (LEGACY_EXPLAINER_CHANNEL, LEGACY_EXPLAINER_ACCESS) => self
+                .publisher_harness
+                .trim()
+                .eq_ignore_ascii_case(self.reviewer_harness.trim()),
+            _ => false,
         }
     }
 }
@@ -229,13 +296,27 @@ pub struct PublicationDeployment {
     pub publisher_harness: String,
 }
 
+/// Digest-bound explainer bytes staged inside the run directory. This is the
+/// artifact the reviewing harness actually reads and the gate actually binds;
+/// `PublicationDeployment` is an optional human-facing rendering of the same
+/// bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ExplainerArtifact {
+    pub obligation: HandoffObligation,
+    pub source_digest: String,
+    /// Run-directory-relative path, always `explainer/<source_digest>.html`.
+    pub path: String,
+    pub media_type: String,
+    pub byte_length: u64,
+    pub channel: String,
+    pub access: String,
+    pub publisher_harness: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PublicationReview {
     pub obligation: HandoffObligation,
     pub source_digest: String,
-    pub site_id: String,
-    pub site_version: String,
-    pub url: String,
     pub verdict: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub findings: Vec<String>,
@@ -247,8 +328,40 @@ pub struct PublicationBinding {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub site_id: Option<String>,
     pub obligation: HandoffObligation,
+    /// Counts receipts written against the current obligation. Obligation-bound
+    /// writes waive the run-wide revision precondition, so this is what they
+    /// concurrency-check against instead: it advances only on a receipt, so
+    /// unrelated claim and progress edges never invalidate a prepared write,
+    /// while a stale or out-of-order receipt is rejected.
+    #[serde(default)]
+    pub receipt_seq: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub artifact: Option<ExplainerArtifact>,
     pub deployment: Option<PublicationDeployment>,
     pub review: Option<PublicationReview>,
+}
+
+/// Content-addressed, run-directory-relative location for staged explainer bytes.
+pub fn explainer_artifact_path(source_digest: &str) -> String {
+    format!("{EXPLAINER_ARTIFACT_DIR}/{source_digest}.html")
+}
+
+/// The identity of an `analysis` checkpoint is derived from the artifacts it
+/// cites, so it cannot name one thing while carrying another. Two manifests over
+/// the same bytes have the same identity, and changing any cited digest changes
+/// it.
+pub fn analysis_checkpoint_identity(artifact_digests: &[String]) -> String {
+    let mut sorted = artifact_digests.to_vec();
+    sorted.sort();
+    sorted.dedup();
+    format!("{:x}", Sha256::digest(sorted.join("\n").as_bytes()))
+}
+
+/// Content-addressed location for a staged analysis deliverable. An `analysis`
+/// checkpoint names digests, and a reviewer has to be able to materialize the
+/// exact bytes behind each one.
+pub fn analysis_artifact_path(digest: &str) -> String {
+    format!("{ANALYSIS_ARTIFACT_DIR}/{digest}")
 }
 
 pub fn create_handoff_obligation(
@@ -258,19 +371,89 @@ pub fn create_handoff_obligation(
 ) -> PublicationBinding {
     PublicationBinding {
         site_id: None,
+        receipt_seq: 0,
         obligation: HandoffObligation {
             handoff_revision,
             kind,
             scope_revision,
             checkpoint: None,
         },
+        artifact: None,
         deployment: None,
         review: None,
     }
 }
 
+/// What a human is being asked for. There is deliberately no "approval" kind:
+/// a protocol-internal problem has a deterministic recovery and must be taken
+/// autonomously, because during an autonomous run there may be nobody to ask.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HumanDecisionKind {
+    /// What the work should cover. Only a human can widen or change scope.
+    #[default]
+    Scope,
+    /// Which of several readings of the human's request is meant.
+    Intent,
+    /// Permission that is the human's alone to give, such as acting outside
+    /// the workspace or on their behalf somewhere the run cannot reach.
+    Authority,
+}
+
+/// How a run is allowed to interact with its human. An autonomous run admits a
+/// pause only as a choice between concrete scope proposals the kernel can apply
+/// itself, so there is no admissible shape for "please approve".
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InteractionMode {
+    #[default]
+    Attended,
+    Autonomous,
+}
+
+/// A concrete alternative scope a human may choose; applying it is a scope
+/// amendment, so a choice among proposals is a kernel-verifiable effect.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ScopeProposal {
+    pub objective: String,
+    #[serde(default)]
+    pub objective_refs: Vec<ExternalRef>,
+    pub task_reference: Option<String>,
+    pub scope_deliverables: Vec<DeliverableRequirement>,
+}
+
+/// Decisions written by this kernel. Version 1 is anything recorded before
+/// decisions were choices, and keeps its original resolution rules.
+pub const DECISION_VERSION: u32 = 2;
+
+fn legacy_decision_version() -> u32 {
+    1
+}
+
+impl HumanDecisionKind {
+    /// The objective-reference kind under which a resolved decision is recorded.
+    pub fn reference_kind(self) -> &'static str {
+        match self {
+            HumanDecisionKind::Scope => "scope",
+            HumanDecisionKind::Intent => "intent",
+            HumanDecisionKind::Authority => "authority",
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct HumanDecision {
+    /// Defaults to `scope` so runs created before decisions were typed load.
+    #[serde(default = "default_human_decision_kind")]
+    pub kind: HumanDecisionKind,
+    /// Which resolution rules apply. Absent on decisions written before choices
+    /// were enforced, which therefore resolve under their original rules.
+    #[serde(default = "legacy_decision_version")]
+    pub version: u32,
+    /// One concrete scope per option, when the decision is a choice of scope
+    /// the kernel applies itself. Required in autonomous runs.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub proposals: Vec<ScopeProposal>,
     pub question: String,
     pub requested_by: String,
     pub evidence: Vec<String>,
@@ -324,6 +507,8 @@ pub struct RunBaton {
     pub workspace: Option<WorkspaceIdentity>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub task: Option<TaskIdentity>,
+    #[serde(default)]
+    pub interaction: InteractionMode,
     pub participants: Participants,
     pub status: Status,
     pub assignee: Assignee,
@@ -332,6 +517,11 @@ pub struct RunBaton {
     pub scope_revision: u64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub scope_deliverables: Vec<DeliverableRequirement>,
+    /// sha256 digests of analysis bytes staged under `analysis/`, sorted and
+    /// unique. An `analysis` checkpoint may only cite digests listed here, so
+    /// every non-git deliverable is materializable by the reviewer.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub staged_analysis: Vec<String>,
     pub checkpoint: Option<Checkpoint>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub checkpoint_history: Vec<CheckpointBinding>,
@@ -372,14 +562,17 @@ impl RunBaton {
             },
             workspace: None,
             task: None,
+            interaction: InteractionMode::Attended,
             participants: Participants {
                 worker: Participant {
                     harness: worker_harness,
                     claim: None,
+                    progress: None,
                 },
                 reviewer: Participant {
                     harness: reviewer_harness,
                     claim: None,
+                    progress: None,
                 },
             },
             status: Status::Working,
@@ -387,6 +580,7 @@ impl RunBaton {
             revision: 0,
             scope_revision: 0,
             scope_deliverables,
+            staged_analysis: Vec::new(),
             checkpoint: None,
             checkpoint_history: Vec::new(),
             review: None,
@@ -422,6 +616,66 @@ pub fn create_bound_handoff_obligation(
     let mut binding = create_handoff_obligation(kind, handoff_revision, scope_revision);
     binding.obligation.checkpoint = checkpoint;
     binding
+}
+
+pub const CHECKPOINT_KIND_GIT: &str = "git";
+/// For deliverables that produce an analysis rather than a commit — a review, an
+/// audit, a research finding. Immutability comes from the content digest instead
+/// of from a git object.
+pub const CHECKPOINT_KIND_ANALYSIS: &str = "analysis";
+
+/// Whether a checkpoint already on disk is acceptable to read. Kernels before
+/// 0.3.0 accepted any non-blank kind, so persisted checkpoints may carry one
+/// this kernel does not model. Rejecting those on read would strand every run
+/// created by an earlier kernel, so an unknown kind loads unchanged; only the
+/// kinds this kernel issues are held to their immutability rules.
+pub fn valid_stored_checkpoint_shape(
+    kind: &str,
+    identity: &str,
+    artifacts: &[ExternalRef],
+) -> bool {
+    // Deliberately permissive. Kernels before 0.3.0 accepted any non-blank
+    // kind and any non-blank artifact coordinates — including `git` with
+    // `identity: "HEAD"` and `analysis` with a free-form identity — and those
+    // runs are still schema v2. Tightening the read path would strand them
+    // while the kernel still advertises v2 and API 2. Immutability is enforced
+    // where it can be without stranding anyone: at submission.
+    let _ = (kind, identity, artifacts);
+    true
+}
+
+/// Whether `kind`/`identity`/`artifacts` form an immutable checkpoint manifest
+/// for a checkpoint of this kind. Applied to new submissions only.
+pub fn valid_checkpoint_shape(kind: &str, identity: &str, artifacts: &[ExternalRef]) -> bool {
+    match kind {
+        CHECKPOINT_KIND_GIT => {
+            valid_git_object(identity)
+                && artifacts.iter().all(|artifact| {
+                    matches!(artifact.kind.as_str(), "commit" | "tree" | "blob")
+                        && valid_git_object(&artifact.value)
+                })
+        }
+        CHECKPOINT_KIND_ANALYSIS => {
+            valid_sha256(identity)
+                && artifacts.iter().all(|artifact| {
+                    artifact.kind == "analysis_digest" && valid_sha256(&artifact.value)
+                })
+        }
+        _ => false,
+    }
+}
+
+/// A full-length git object name, in either SHA-1 or SHA-256 object format.
+/// Abbreviations and mutable names such as branches or `HEAD` are rejected.
+pub fn valid_git_object(value: &str) -> bool {
+    matches!(value.len(), 40 | 64)
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn default_human_decision_kind() -> HumanDecisionKind {
+    HumanDecisionKind::Scope
 }
 
 pub fn valid_sha256(value: &str) -> bool {

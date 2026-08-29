@@ -4,6 +4,7 @@ use std::{
 };
 
 use serde::Serialize;
+use sha2::Digest;
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -17,13 +18,13 @@ use crate::{
     },
     identity::{self, IdentityError},
     model::{
-        normalize_participants, DeliverableRequirement, ExternalRef, ModelError, RunBaton, Status,
-        TaskIdentity, LEGACY_SCHEMA,
+        normalize_participants, DeliverableRequirement, ExternalRef, ModelError,
+        ParticipantProgress, RunBaton, Status, TaskIdentity, LEGACY_SCHEMA,
     },
     next_action::{self, NextActions},
     store::{require_current_schema, RunChannel, StoreError},
     transition::{self, TransitionError},
-    wait::{self, WaitError},
+    wait::{self, WaitError, WaitOutcome},
 };
 
 #[derive(Debug, Error)]
@@ -80,6 +81,23 @@ pub enum RoleStartResult {
     Started(Box<StartedRole>),
     Discovery(DiscoveryOutcome),
     Upgrade(UpgradeRequiredRole),
+    PublicationUnreadable(UnreadablePublicationRole),
+}
+
+/// A run whose publication policy names a reviewer that cannot read the
+/// publisher's channel can never reach an explainer review. Surface it before
+/// any claim, rather than after the publisher has already spent a deployment.
+#[derive(Debug, Serialize)]
+pub struct UnreadablePublicationRole {
+    pub outcome: &'static str,
+    pub run_id: String,
+    pub run_dir: PathBuf,
+    pub revision: u64,
+    pub publication_policy: crate::model::PublicationPolicy,
+    pub reason: &'static str,
+    pub next_action: &'static str,
+    pub next_actions: [&'static str; 1],
+    pub actionable: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -120,8 +138,40 @@ pub struct RoleSnapshot {
     #[serde(flatten)]
     pub baton: RunBaton,
     pub run_dir: PathBuf,
+    pub peer: PeerStatus,
+    /// Present only on the result of a foreground wait.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wait_outcome: Option<WaitOutcome>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub explainer: Option<StagedExplainer>,
     #[serde(flatten)]
     pub actions: NextActions,
+}
+
+/// What the other role is doing right now. Without this a worker can only see
+/// an unfulfilled obligation and a lease timestamp, and cannot tell a peer that
+/// is mid-way through a long publication from one that died.
+#[derive(Debug, Serialize)]
+pub struct PeerStatus {
+    pub role: &'static str,
+    pub harness: String,
+    pub claim_state: ClaimState,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lease_expires_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub progress: Option<ParticipantProgress>,
+}
+
+/// Absolute location of the digest-bound explainer bytes for the current
+/// obligation, so the reviewing role can read exactly what was staged.
+#[derive(Debug, Serialize)]
+pub struct StagedExplainer {
+    pub source_digest: String,
+    pub path: PathBuf,
+    pub media_type: String,
+    pub byte_length: u64,
+    pub channel: String,
+    pub access: String,
 }
 
 #[derive(Clone, Copy)]
@@ -143,7 +193,12 @@ pub struct RoleStartRequest<'a> {
     pub timeout: Duration,
     pub new_run: bool,
     pub required_deliverables: &'a [DeliverableRequirement],
+    pub interaction: crate::model::InteractionMode,
 }
+
+/// A run with no live claim whose head has not moved for this long is treated as
+/// abandoned by non-exact discovery. Exact `--run-id` joins still reach it.
+pub const STALE_RUN_DAYS: u64 = 14;
 
 pub fn start(request: RoleStartRequest<'_>) -> Result<RoleStartResult, RoleSessionError> {
     start_with_retries(request, 8)
@@ -197,8 +252,10 @@ fn start_with_retries(
         role: request.role,
         participant_harness,
         task_reference: request.task_reference,
+        objective: request.objective,
         run_id: request.run_id,
         session_id: Some(request.session_id),
+        stale_after_days: Some(STALE_RUN_DAYS),
     };
     let mut outcome = discovery::discover(request.runs_dir, query)?;
     if request.new_run && request.run_id.is_none() {
@@ -280,6 +337,7 @@ fn start_with_retries(
             )?
             .with_discovery_identity(workspace_identity, task);
             baton.objective.refs = request.objective_refs.to_vec();
+            baton.interaction = request.interaction;
             RunChannel::open(&run_dir).create(&baton)?;
             start_created_run(&run_dir, &baton, request, remaining_conflicts)
         }
@@ -363,6 +421,33 @@ fn is_revision_conflict(error: &RoleSessionError) -> bool {
     )
 }
 
+/// Capability preflight: refuse to join a run whose reviewer cannot read the
+/// channel its publisher must use.
+fn publication_preflight(candidate: &crate::discovery::RunCandidate) -> Option<RoleStartResult> {
+    let baton = RunChannel::open(&candidate.run_dir).read().ok()?;
+    let policy = baton
+        .publication_policy
+        .clone()
+        .unwrap_or_else(crate::model::PublicationPolicy::fixed);
+    if policy.reviewer_can_read() {
+        return None;
+    }
+    Some(RoleStartResult::PublicationUnreadable(
+        UnreadablePublicationRole {
+            outcome: "publication_unreadable",
+            run_id: baton.run_id,
+            run_dir: candidate.run_dir.clone(),
+            revision: baton.revision,
+            publication_policy: policy,
+            reason:
+                "the reviewing harness cannot read the publisher's channel at this access level",
+            next_action: "repair_publication_policy",
+            next_actions: ["repair_publication_policy"],
+            actionable: true,
+        },
+    ))
+}
+
 fn start_candidate(
     candidate: crate::discovery::RunCandidate,
     credentials_root: &Path,
@@ -370,9 +455,15 @@ fn start_candidate(
     session_id: &str,
     lease_seconds: u64,
 ) -> Result<RoleStartResult, RoleSessionError> {
+    if !matches!(candidate.status, Status::Done | Status::Abandoned) {
+        if let Some(unreadable) = publication_preflight(&candidate) {
+            return Ok(unreadable);
+        }
+    }
     if matches!(candidate.status, Status::Done | Status::Abandoned) {
+        // A terminal run is reported as terminal on any supported schema. It is
+        // finished, so there is nothing to migrate and nothing to claim.
         let baton = RunChannel::open(&candidate.run_dir).read()?;
-        require_current_schema(&baton)?;
         if baton.revision != candidate.revision {
             return Err(StoreError::RevisionConflict {
                 expected: candidate.revision,
@@ -434,19 +525,44 @@ fn start_candidate(
         ClaimState::Owned => {
             let credential =
                 credential::path(credentials_root, session_id, &candidate.run_id, role)?;
-            let snapshot = read_snapshot_at_revision(
+            match read_snapshot_at_revision(
                 &candidate.run_dir,
                 credentials_root,
                 role,
                 session_id,
                 candidate.revision,
-            )?;
-            Ok(started_role(
-                "resumed",
-                snapshot,
-                credential,
-                role == Role::Worker,
-            ))
+            ) {
+                Ok(snapshot) => Ok(started_role(
+                    "resumed",
+                    snapshot,
+                    credential,
+                    role == Role::Worker,
+                )),
+                // The baton names this session but no credential exists: the
+                // process died after installing the claim and before storing
+                // its token. Nobody else can act on that claim, so the session
+                // replaces it with one it can prove — no human, no recovery
+                // command.
+                Err(RoleSessionError::Credential(CredentialError::Missing)) => {
+                    let grant = reclaim_own(
+                        &candidate.run_dir,
+                        credentials_root,
+                        role,
+                        session_id,
+                        lease_seconds,
+                        candidate.revision,
+                    )?;
+                    finish_candidate_claim(
+                        "reclaimed",
+                        &candidate.run_dir,
+                        credentials_root,
+                        role,
+                        session_id,
+                        grant,
+                    )
+                }
+                Err(error) => Err(error),
+            }
         }
         ClaimState::Busy => Err(RoleSessionError::Invalid(
             "selected run is owned by another live session".to_owned(),
@@ -672,7 +788,7 @@ pub fn wait(
     let baton = channel.read()?;
     require_current_schema(&baton)?;
     let credential = load_for_run(run_dir, credentials_root, role, session_id, &baton.run_id)?;
-    let baton = wait::wait(
+    let (baton, outcome) = wait::wait(
         &channel,
         role,
         session_id,
@@ -681,7 +797,9 @@ pub fn wait(
         poll_interval,
         timeout,
     )?;
-    Ok(snapshot(baton, run_dir, role))
+    let mut snapshot = snapshot(baton, run_dir, role);
+    snapshot.wait_outcome = Some(outcome);
+    Ok(snapshot)
 }
 
 pub fn apply(
@@ -713,11 +831,157 @@ fn snapshot(baton: RunBaton, run_dir: &Path, role: Role) -> RoleSnapshot {
         Role::Reviewer => &baton.participants.reviewer.harness,
     };
     let actions = next_action::classify(&baton, role, harness);
+    let run_dir = std::fs::canonicalize(run_dir).unwrap_or_else(|_| run_dir.to_owned());
+    let peer = peer_status(&baton, role);
+    let explainer = baton
+        .publication_binding
+        .as_ref()
+        .and_then(|binding| binding.artifact.as_ref())
+        .map(|artifact| StagedExplainer {
+            source_digest: artifact.source_digest.clone(),
+            path: run_dir.join(&artifact.path),
+            media_type: artifact.media_type.clone(),
+            byte_length: artifact.byte_length,
+            channel: artifact.channel.clone(),
+            access: artifact.access.clone(),
+        });
     RoleSnapshot {
         baton,
-        run_dir: std::fs::canonicalize(run_dir).unwrap_or_else(|_| run_dir.to_owned()),
+        run_dir,
+        peer,
+        wait_outcome: None,
+        explainer,
         actions,
     }
+}
+
+fn peer_status(baton: &RunBaton, role: Role) -> PeerStatus {
+    let (peer_role, participant) = match role {
+        Role::Worker => ("reviewer", &baton.participants.reviewer),
+        Role::Reviewer => ("worker", &baton.participants.worker),
+    };
+    let claim_state = match participant.claim.as_ref() {
+        None => ClaimState::Unclaimed,
+        Some(claim) => {
+            match time::OffsetDateTime::parse(
+                &claim.lease_expires_at,
+                &time::format_description::well_known::Rfc3339,
+            ) {
+                Ok(expiry) if expiry > time::OffsetDateTime::now_utc() => ClaimState::Busy,
+                _ => ClaimState::Expired,
+            }
+        }
+    };
+    PeerStatus {
+        role: peer_role,
+        harness: participant.harness.clone(),
+        claim_state,
+        lease_expires_at: participant
+            .claim
+            .as_ref()
+            .map(|claim| claim.lease_expires_at.clone()),
+        progress: participant.progress.clone(),
+    }
+}
+
+/// Broker the staged explainer bytes through the facade so a role never reads
+/// run-directory files directly, and always verifies the digest it was handed.
+pub fn read_explainer(
+    run_dir: &Path,
+    credentials_root: &Path,
+    role: Role,
+    session_id: &str,
+) -> Result<StagedExplainerContents, RoleSessionError> {
+    let snapshot = read(run_dir, credentials_root, role, session_id)?;
+    let staged = snapshot
+        .explainer
+        .ok_or_else(|| RoleSessionError::Invalid("no explainer bytes are staged".to_owned()))?;
+    // Read beneath the pinned run root, never following a symlink at any
+    // component, so the bytes handed to the reviewer are the run's own.
+    let relative = snapshot
+        .baton
+        .publication_binding
+        .as_ref()
+        .and_then(|binding| binding.artifact.as_ref())
+        .map(|artifact| artifact.path.clone())
+        .ok_or_else(|| RoleSessionError::Invalid("no explainer bytes are staged".to_owned()))?;
+    let bytes = crate::store::read_private_file_beneath(&snapshot.run_dir, &relative)
+        .map_err(StoreError::Io)?;
+    let digest = format!("{:x}", sha2::Sha256::digest(&bytes));
+    if digest != staged.source_digest {
+        return Err(RoleSessionError::Invalid(
+            "staged explainer bytes do not match their recorded digest".to_owned(),
+        ));
+    }
+    let contents = String::from_utf8(bytes).map_err(|_| {
+        RoleSessionError::Invalid("staged explainer bytes are not valid UTF-8".to_owned())
+    })?;
+    Ok(StagedExplainerContents {
+        obligation: snapshot
+            .baton
+            .publication_binding
+            .as_ref()
+            .map(|binding| binding.obligation.clone()),
+        source_digest: staged.source_digest,
+        path: staged.path,
+        media_type: staged.media_type,
+        byte_length: staged.byte_length,
+        contents,
+    })
+}
+
+/// Materialize the bytes behind an `analysis` checkpoint artifact, verifying the
+/// digest, so a reviewer reads exactly what the manifest cites.
+pub fn read_analysis(
+    run_dir: &Path,
+    credentials_root: &Path,
+    role: Role,
+    session_id: &str,
+    digest: &str,
+) -> Result<StagedAnalysisContents, RoleSessionError> {
+    let snapshot = read(run_dir, credentials_root, role, session_id)?;
+    if !snapshot.baton.staged_analysis.iter().any(|d| d == digest) {
+        return Err(RoleSessionError::Invalid(
+            "that digest is not staged for this run".to_owned(),
+        ));
+    }
+    let relative = crate::model::analysis_artifact_path(digest);
+    let path = snapshot.run_dir.join(&relative);
+    let bytes = crate::store::read_private_file_beneath(&snapshot.run_dir, &relative)
+        .map_err(StoreError::Io)?;
+    if format!("{:x}", sha2::Sha256::digest(&bytes)) != digest {
+        return Err(RoleSessionError::Invalid(
+            "staged analysis bytes do not match their recorded digest".to_owned(),
+        ));
+    }
+    let contents = String::from_utf8(bytes.clone()).ok();
+    Ok(StagedAnalysisContents {
+        digest: digest.to_owned(),
+        path,
+        byte_length: bytes.len() as u64,
+        contents,
+    })
+}
+
+#[derive(Debug, Serialize)]
+pub struct StagedAnalysisContents {
+    pub digest: String,
+    pub path: PathBuf,
+    pub byte_length: u64,
+    /// Absent when the staged bytes are not valid UTF-8; the path is still exact.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub contents: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct StagedExplainerContents {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub obligation: Option<crate::model::HandoffObligation>,
+    pub source_digest: String,
+    pub path: PathBuf,
+    pub media_type: String,
+    pub byte_length: u64,
+    pub contents: String,
 }
 
 fn load_for_run(
@@ -762,7 +1026,18 @@ pub fn claim(
     require_current_schema(&baton)?;
     let canonical_run = std::fs::canonicalize(run_dir).map_err(StoreError::Io)?;
     credential_lock.prepare(&baton)?;
-    let grant = claim::claim(&channel, role, session_id, lease_seconds, expected_revision)?;
+    // A recovery nonce lives only in this private root, written before the
+    // claim exists. Its digest travels with the claim, so if the process dies
+    // before the token is stored, only this root can replace the claim.
+    let nonce = write_recovery_nonce(credentials_root, session_id, &baton.run_id, role)?;
+    let grant = claim::claim_with_recovery(
+        &channel,
+        role,
+        session_id,
+        lease_seconds,
+        expected_revision,
+        Some(claim::digest(&nonce)),
+    )?;
     let credential = Credential {
         run_dir: canonical_run,
         run_id: baton.run_id,
@@ -797,7 +1072,17 @@ pub fn reclaim(
     require_current_schema(&baton)?;
     let canonical_run = std::fs::canonicalize(run_dir).map_err(StoreError::Io)?;
     credential_lock.prepare(&baton)?;
-    let grant = claim::reclaim(&channel, role, session_id, lease_seconds, expected_revision)?;
+    // A replacement claim is as exposed to a crash between install and store
+    // as a first claim, so it gets the same nonce before it exists.
+    let nonce = write_recovery_nonce(credentials_root, session_id, &baton.run_id, role)?;
+    let grant = claim::reclaim_with_recovery(
+        &channel,
+        role,
+        session_id,
+        lease_seconds,
+        expected_revision,
+        Some(claim::digest(&nonce)),
+    )?;
     let credential = Credential {
         run_dir: canonical_run,
         run_id: baton.run_id,
@@ -813,6 +1098,183 @@ pub fn reclaim(
         credential,
         committed_baton: grant.committed_baton,
     })
+}
+
+/// Swap an unreadable publication policy for the canonical channel both
+/// harnesses can read, and reset the current obligation's receipts so the
+/// publisher restages against the new channel. Never touches semantic scope.
+pub fn repair_publication_policy(
+    run_dir: &Path,
+    credentials_root: &Path,
+    role: Role,
+    session_id: &str,
+    current_harness: &str,
+    peer_harness: &str,
+    expected_revision: u64,
+) -> Result<RunBaton, RoleSessionError> {
+    if session_id.trim().is_empty() {
+        return Err(RoleSessionError::Invalid(
+            "repair session id must not be blank".to_owned(),
+        ));
+    }
+    let channel = RunChannel::open(run_dir);
+    let baton = channel.read()?;
+    require_current_schema(&baton)?;
+    if baton.revision != expected_revision {
+        return Err(StoreError::RevisionConflict {
+            expected: expected_revision,
+            actual: baton.revision,
+        }
+        .into());
+    }
+    if matches!(baton.status, Status::Done | Status::Abandoned) {
+        return Err(ClaimError::Terminal.into());
+    }
+    // Scoped like `upgrade`, the other control-plane operation: a claim cannot
+    // be required, because `start` refuses an unreadable policy before minting
+    // one. Instead the caller must name the run's actual participant topology,
+    // so a repair cannot be aimed at a run the caller is not part of.
+    let requested = match role {
+        Role::Worker => normalize_participants(current_harness.to_owned(), peer_harness.to_owned()),
+        Role::Reviewer => {
+            normalize_participants(peer_harness.to_owned(), current_harness.to_owned())
+        }
+    }
+    .map_err(|_| RoleSessionError::Invalid("repair harnesses are invalid".to_owned()))?;
+    let stored = normalize_participants(
+        baton.participants.worker.harness.clone(),
+        baton.participants.reviewer.harness.clone(),
+    )
+    .map_err(|_| RoleSessionError::Invalid("stored harnesses are invalid".to_owned()))?;
+    if requested != stored {
+        return Err(RoleSessionError::Invalid(
+            "repair caller does not match the stored participant topology".to_owned(),
+        ));
+    }
+    // Topology is only enough for the pre-claim path. If this role currently
+    // holds a live claim, the caller must be that claim's session and prove it
+    // with the private credential; otherwise any local process could repair a
+    // run out from under the session that owns it.
+    let participant = match role {
+        Role::Worker => &baton.participants.worker,
+        Role::Reviewer => &baton.participants.reviewer,
+    };
+    let live_claim = participant.claim.as_ref().is_some_and(|claim| {
+        time::OffsetDateTime::parse(
+            &claim.lease_expires_at,
+            &time::format_description::well_known::Rfc3339,
+        )
+        .is_ok_and(|expiry| expiry > time::OffsetDateTime::now_utc())
+    });
+    if live_claim {
+        let credential = load_for_run(run_dir, credentials_root, role, session_id, &baton.run_id)?;
+        claim::verify(&baton, role, session_id, &credential.token)?;
+    }
+    let policy = baton
+        .publication_policy
+        .clone()
+        .unwrap_or_else(crate::model::PublicationPolicy::fixed);
+    if policy.reviewer_can_read() {
+        return Err(RoleSessionError::Invalid(
+            "publication policy is already reviewer-readable".to_owned(),
+        ));
+    }
+    Ok(channel.repair_publication_policy(expected_revision)?)
+}
+
+fn reclaim_own(
+    run_dir: &Path,
+    credentials_root: &Path,
+    role: Role,
+    session_id: &str,
+    lease_seconds: u64,
+    expected_revision: u64,
+) -> Result<RoleClaimResult, RoleSessionError> {
+    let channel = RunChannel::open(run_dir);
+    let initial = channel.read()?;
+    require_current_schema(&initial)?;
+    let credential_lock =
+        credential::lock_for_claim(credentials_root, session_id, &initial.run_id, role)?;
+    let baton = channel.read()?;
+    require_current_schema(&baton)?;
+    let canonical_run = std::fs::canonicalize(run_dir).map_err(StoreError::Io)?;
+    credential_lock.prepare(&baton)?;
+    let nonce = read_recovery_nonce(credentials_root, session_id, &baton.run_id, role)?;
+    let grant = claim::reclaim_own(
+        &channel,
+        role,
+        session_id,
+        lease_seconds,
+        expected_revision,
+        &nonce,
+    )?;
+    let credential = Credential {
+        run_dir: canonical_run,
+        run_id: baton.run_id,
+        role,
+        session_id: session_id.to_owned(),
+        epoch: grant.epoch,
+        token: grant.token,
+    };
+    let credential = credential_lock.store(&credential)?;
+    Ok(RoleClaimResult {
+        revision: grant.revision,
+        epoch: grant.epoch,
+        credential,
+        committed_baton: grant.committed_baton,
+    })
+}
+
+fn recovery_nonce_path(
+    credentials_root: &Path,
+    session_id: &str,
+    run_id: &str,
+    role: Role,
+) -> Result<PathBuf, RoleSessionError> {
+    let credential = credential::path(credentials_root, session_id, run_id, role)?;
+    let directory = credential
+        .parent()
+        .ok_or(CredentialError::UnsafeDirectory)?;
+    Ok(directory.join(format!(
+        ".{}.recovery",
+        match role {
+            Role::Worker => "worker",
+            Role::Reviewer => "reviewer",
+        }
+    )))
+}
+
+fn write_recovery_nonce(
+    credentials_root: &Path,
+    session_id: &str,
+    run_id: &str,
+    role: Role,
+) -> Result<String, RoleSessionError> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+    let path = recovery_nonce_path(credentials_root, session_id, run_id, role)?;
+    let nonce = Uuid::new_v4().to_string();
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(true)
+        .write(true)
+        .mode(0o600)
+        .open(&path)
+        .map_err(StoreError::Io)?;
+    file.write_all(nonce.as_bytes()).map_err(StoreError::Io)?;
+    file.sync_all().map_err(StoreError::Io)?;
+    Ok(nonce)
+}
+
+fn read_recovery_nonce(
+    credentials_root: &Path,
+    session_id: &str,
+    run_id: &str,
+    role: Role,
+) -> Result<String, RoleSessionError> {
+    let path = recovery_nonce_path(credentials_root, session_id, run_id, role)?;
+    let nonce = crate::store::read_private_file(&path).map_err(|_| CredentialError::Missing)?;
+    String::from_utf8(nonce).map_err(|_| CredentialError::Missing.into())
 }
 
 pub fn upgrade(
@@ -954,6 +1416,7 @@ mod tests {
             timeout: Duration::from_millis(1),
             new_run,
             required_deliverables: scope,
+            interaction: crate::model::InteractionMode::Attended,
         }
     }
 
@@ -971,9 +1434,11 @@ mod tests {
             &private.token,
             expected_revision,
             Action::RequestHumanDecision(HumanDecisionRequest {
+                kind: crate::model::HumanDecisionKind::Scope,
                 question: "Use amended scope?".to_owned(),
                 evidence: vec!["new requirement".to_owned()],
                 options: vec!["yes".to_owned(), "no".to_owned()],
+                proposals: Vec::new(),
             }),
         )
         .unwrap();
@@ -1244,8 +1709,10 @@ mod tests {
                 role: Role::Worker,
                 participant_harness: "Codex",
                 task_reference: Some("DEF-123"),
+                objective: None,
                 run_id: Some("run-a"),
                 session_id: Some("worker"),
+                stale_after_days: None,
             },
         )
         .unwrap();
@@ -1261,9 +1728,11 @@ mod tests {
             &private.token,
             1,
             Action::RequestHumanDecision(HumanDecisionRequest {
+                kind: crate::model::HumanDecisionKind::Scope,
                 question: "Use amended scope?".to_owned(),
                 evidence: vec!["new requirement".to_owned()],
                 options: vec!["yes".to_owned(), "no".to_owned()],
+                proposals: Vec::new(),
             }),
         )
         .unwrap();
@@ -1306,6 +1775,7 @@ mod tests {
             timeout: Duration::from_millis(1),
             new_run: false,
             required_deliverables: &original_scope,
+            interaction: crate::model::InteractionMode::Attended,
         };
         let first = start_candidate(candidate, &credentials, Role::Worker, "worker", 300);
         let result = retry_start_conflict(first, request, 2).unwrap();
@@ -1319,6 +1789,9 @@ mod tests {
                 started.snapshot.baton.revision
             ),
             RoleStartResult::Upgrade(_) => panic!("unexpected upgrade"),
+            RoleStartResult::PublicationUnreadable(_) => {
+                panic!("unexpected publication preflight failure")
+            }
         }
         assert_eq!(std::fs::read_dir(&runs).unwrap().count(), 1);
     }
