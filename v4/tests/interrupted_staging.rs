@@ -298,3 +298,129 @@ fn a_crash_during_a_claim_install_is_reconciled_by_the_next_start() {
         .count();
     assert_eq!(leftovers, 0);
 }
+
+/// An expired claim's replacement is as exposed to a crash between install and
+/// store as a first claim, and must be exactly as recoverable.
+#[test]
+fn a_crash_during_an_expired_claim_replacement_is_recovered_by_the_next_start() {
+    let dir = tempfile::tempdir().unwrap();
+    let workspace = dir.path().join("workspace");
+    std::fs::create_dir(&workspace).unwrap();
+    for args in [
+        vec!["init", "--quiet"],
+        vec![
+            "remote",
+            "add",
+            "origin",
+            "git@github.com:axatbhardwaj/Dvandva.git",
+        ],
+    ] {
+        assert!(Command::new("git")
+            .arg("-C")
+            .arg(&workspace)
+            .args(args)
+            .status()
+            .unwrap()
+            .success());
+    }
+    let runs = dir.path().join("runs");
+    let credentials = dir.path().join("credentials");
+    let start = |failpoint: Option<&str>, lease: &str, exact: Option<&str>| {
+        let mut command = Command::new(kernel());
+        if let Some(failpoint) = failpoint {
+            command.env("DVANDVA_TEST_FAILPOINT", failpoint);
+        }
+        command.args([
+            "role",
+            "start",
+            "--api",
+            "2",
+            "--workspace",
+            workspace.to_str().unwrap(),
+            "--runs-dir",
+            runs.to_str().unwrap(),
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "claude-session",
+            "--current-harness",
+            "claude",
+            "--peer-harness",
+            "codex",
+            "--lease-seconds",
+            lease,
+        ]);
+        match exact {
+            Some(run_id) => {
+                command.args(["--run-id", run_id]);
+            }
+            None => {
+                command.args([
+                    "--objective",
+                    "Replace an expired claim",
+                    "--task-reference",
+                    "TASK-2",
+                    "--required-deliverable",
+                    "kernel=Fix the kernel",
+                ]);
+            }
+        }
+        command.output().unwrap()
+    };
+
+    // A one-second lease, then let it lapse.
+    let created = start(None, "1", None);
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let snapshot: serde_json::Value = serde_json::from_slice(&created.stdout).unwrap();
+    let run_id = snapshot["run_id"].as_str().unwrap().to_owned();
+    let run_dir = std::path::PathBuf::from(snapshot["run_dir"].as_str().unwrap());
+    std::thread::sleep(std::time::Duration::from_millis(1200));
+
+    // The replacement claim dies between install and credential store.
+    let crashed = start(Some("during_head_install"), "1800", Some(&run_id));
+    assert_eq!(
+        crashed.status.code(),
+        Some(137),
+        "{}",
+        String::from_utf8_lossy(&crashed.stderr)
+    );
+    assert_eq!(crashed.status.signal(), None);
+
+    // The next exact start finishes the install and recovers the orphaned
+    // replacement through the private recovery nonce — no human, no command.
+    let recovered = start(None, "1800", Some(&run_id));
+    assert!(
+        recovered.status.success(),
+        "{}",
+        String::from_utf8_lossy(&recovered.stderr)
+    );
+    let snapshot: serde_json::Value = serde_json::from_slice(&recovered.stdout).unwrap();
+    assert_eq!(snapshot["outcome"], "started");
+    assert_eq!(
+        snapshot["participants"]["worker"]["claim"]["session_id"],
+        "claude-session"
+    );
+    let head: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(run_dir.join("baton.json")).unwrap()).unwrap();
+    let high = std::fs::read_dir(run_dir.join("history"))
+        .unwrap()
+        .flatten()
+        .count() as u64
+        - 1;
+    assert_eq!(head["revision"].as_u64().unwrap(), high);
+    let leftovers = [run_dir.clone(), run_dir.join("history")]
+        .iter()
+        .flat_map(|d| std::fs::read_dir(d).unwrap().flatten())
+        .filter(|e| {
+            let n = e.file_name().to_string_lossy().into_owned();
+            n.starts_with('.') && n.ends_with(".tmp")
+        })
+        .count();
+    assert_eq!(leftovers, 0);
+}

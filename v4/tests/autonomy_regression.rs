@@ -960,7 +960,7 @@ mod round_three {
     use dvandva_v4::{
         action::{Action, ReviewVerdict},
         claim,
-        model::{HumanDecision, HumanDecisionKind, WorkspaceIdentity},
+        model::{HumanDecision, WorkspaceIdentity},
         role_session, store,
         store::RunChannel,
         transition,
@@ -1115,23 +1115,52 @@ mod round_three {
             1,
         )
         .expect("a parked unreadable-policy run must be repairable");
-        assert_eq!(repaired.status, Status::Working);
-        assert_eq!(repaired.assignee, Assignee::Worker);
-        let decision: &HumanDecision = repaired.human_decision.as_ref().unwrap();
-        assert!(decision
-            .answer
-            .as_deref()
-            .unwrap()
-            .contains("resolved autonomously"));
-        assert_eq!(decision.kind, HumanDecisionKind::Scope);
+        // The capability problem is gone; the human-owned gate is not. A
+        // decision recorded under the released rules carries no provenance
+        // proving what caused it, so repair must not answer it.
         assert_eq!(
-            decision.version, 1,
-            "only a released-format decision is answered this way"
+            repaired.publication_policy.as_ref().unwrap(),
+            &PublicationPolicy::fixed()
         );
-        // Nothing is left for a human: the next actor is the worker.
-        let actions = next_action::classify(&repaired, Role::Worker, "Claude");
+        assert_eq!(repaired.status, Status::HumanDecision);
+        assert_eq!(repaired.assignee, Assignee::Human);
+        let decision: &HumanDecision = repaired.human_decision.as_ref().unwrap();
+        assert!(
+            decision.answer.is_none(),
+            "repair must not synthesize an answer"
+        );
+        assert_eq!(decision.version, 1);
+        // The contact role can now clear it under the decision's own rules —
+        // an answer-only resume, as the released client would send.
+        let credentials = dir.path().join("credentials");
+        role_session::claim(
+            &run_dir,
+            &credentials,
+            Role::Worker,
+            "claude-session",
+            1800,
+            repaired.revision,
+        )
+        .unwrap();
+        let token =
+            dvandva_v4::credential::load(&credentials, "claude-session", "run-a", Role::Worker)
+                .unwrap()
+                .token;
+        let resumed = transition::apply(
+            &channel,
+            Role::Worker,
+            "claude-session",
+            &token,
+            repaired.revision + 1,
+            Action::ResumeHumanDecision {
+                answer: "relay".into(),
+                scope_amendment: None,
+            },
+        )
+        .expect("the human's answer clears a released-format decision");
+        assert_eq!(resumed.status, Status::Working);
+        let actions = next_action::classify(&resumed, Role::Worker, "Claude");
         assert!(actions.next_actions.contains(&"work"));
-        assert!(!actions.legal_actions.contains(&"answer_human"));
     }
 
     /// [P1 compatibility] Checkpoints a 0.2 kernel accepted — `git` with
@@ -1555,13 +1584,17 @@ mod round_four {
             PublicationPolicy::fixed()
         );
 
-        let (_keep, caused) = park(true);
+        let (_keep, released) = park(true);
         assert_eq!(
-            caused.status,
-            Status::Working,
-            "the released-format incident resumes"
+            released.status,
+            Status::HumanDecision,
+            "a released-format decision is a human-owned gate too: repair fixes the policy only"
         );
-        assert!(caused.human_decision.unwrap().answer.is_some());
+        assert!(released.human_decision.unwrap().answer.is_none());
+        assert_eq!(
+            released.publication_policy.unwrap(),
+            PublicationPolicy::fixed()
+        );
     }
 
     /// [P1 ordering] A live append must advance the receipt sequence exactly
@@ -2001,6 +2034,110 @@ mod round_five {
         assert!(
             impostor.is_err(),
             "another credentials root must not recover the claim"
+        );
+    }
+
+    /// [Round six] A proposal that could not be applied is refused at
+    /// admission, so an autonomous run is never parked on an option nobody can
+    /// choose; padded-but-valid input is canonicalized, and every admitted
+    /// option resolves.
+    #[test]
+    fn an_unresolvable_proposal_is_refused_before_it_can_park_the_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let (channel, run_dir) = created_run(dir.path(), InteractionMode::Autonomous);
+        let token = worker_token(dir.path(), &run_dir);
+        let deliverable = |id: &str| DeliverableRequirement {
+            id: id.into(),
+            description: format!("Deliver {id}"),
+        };
+        let reference = |kind: &str, value: &str| dvandva_v4::model::ExternalRef {
+            kind: kind.into(),
+            value: value.into(),
+        };
+        let ask = |proposals: Vec<ScopeProposal>, revision: u64| {
+            transition::apply(
+                &channel,
+                Role::Worker,
+                "claude-session",
+                &token,
+                revision,
+                Action::RequestHumanDecision(HumanDecisionRequest {
+                    kind: HumanDecisionKind::Scope,
+                    question: "Which scope?".into(),
+                    evidence: ["two readings".into()].into(),
+                    options: ["first".into(), "second".into()].into(),
+                    proposals,
+                }),
+            )
+        };
+        let broken = [
+            ScopeProposal {
+                objective: "Duplicate deliverable ids".into(),
+                objective_refs: Vec::new(),
+                task_reference: None,
+                scope_deliverables: vec![deliverable("a"), deliverable("a")],
+            },
+            ScopeProposal {
+                objective: "Blank reference".into(),
+                objective_refs: vec![reference(" ", "x")],
+                task_reference: None,
+                scope_deliverables: vec![deliverable("a")],
+            },
+            ScopeProposal {
+                objective: "Blank task reference".into(),
+                objective_refs: Vec::new(),
+                task_reference: Some("   ".into()),
+                scope_deliverables: vec![deliverable("a")],
+            },
+        ];
+        for bad in broken {
+            let refused = ask(vec![proposal("Fine", "kernel"), bad], 1);
+            assert!(
+                matches!(
+                    refused,
+                    Err(transition::TransitionError::InvalidHumanDecision)
+                ),
+                "an unresolvable proposal must be refused at admission"
+            );
+            assert_eq!(channel.read().unwrap().status, Status::Working);
+        }
+
+        let parked = ask(
+            vec![
+                ScopeProposal {
+                    objective: "  Padded  ".into(),
+                    objective_refs: vec![reference(" issue ", " DEF-9 ")],
+                    task_reference: Some(" DEF-9 ".into()),
+                    scope_deliverables: vec![DeliverableRequirement {
+                        id: " k ".into(),
+                        description: " Keep ".into(),
+                    }],
+                },
+                proposal("Other", "guide"),
+            ],
+            1,
+        )
+        .unwrap();
+        let recorded = &parked.human_decision.as_ref().unwrap().proposals[0];
+        assert_eq!(recorded.objective, "Padded");
+        assert_eq!(recorded.scope_deliverables[0].id, "k");
+        assert_eq!(recorded.objective_refs[0].kind, "issue");
+        let resumed = transition::apply(
+            &channel,
+            Role::Worker,
+            "claude-session",
+            &token,
+            parked.revision,
+            Action::ResumeHumanDecision {
+                answer: "first".into(),
+                scope_amendment: None,
+            },
+        )
+        .expect("an admitted option always resolves");
+        assert_eq!(resumed.objective.summary, "Padded");
+        assert_eq!(
+            resumed.task.as_ref().unwrap().reference.as_deref(),
+            Some("DEF-9")
         );
     }
 }
