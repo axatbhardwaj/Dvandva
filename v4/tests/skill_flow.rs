@@ -492,9 +492,10 @@ fn setup_skill_sources_pin_v2_without_implicit_run_migration() {
     for required in [
         "0.3.0",
         "skills-v0.3.0",
-        "source and planned release target",
-        "installation is available only after",
-        "tag and release asset exist",
+        "release target",
+        "fails closed if either is missing",
+        "Linux x86_64 only",
+        "only Linux x86_64 is supported for now",
         "dvandva.run.v2",
         "facade API 2",
         "v1 read support is only for explicit migration",

@@ -542,8 +542,9 @@ RELEASE_TOKENS = [
     (
         "Skill-only Dvandva v4 kernel for setup-dvandva, vadi, and prativadi. "
         "Kernel $release_version writes dvandva.run.v2 with role API 2; legacy "
-        "v1 runs require the explicit one-way upgrade. The crate remains "
-        "unpublished and the archived v3 plugin remains retired."
+        "v1 runs require the explicit one-way upgrade. Linux x86_64 only, for "
+        "now. The crate remains unpublished and the archived v3 plugin remains "
+        "retired."
     ),
 ]
 RELEASE_REF_COMMAND = (
@@ -708,12 +709,14 @@ require_text 'scope_mismatch' "$workflow_doc"
 require_text 'request_checkpoint_supersession' "$workflow_doc"
 require_text 'withdraw_approval' "$workflow_doc"
 require_text 'Codex Sites' "$workflow_doc"
+require_text 'Linux x86_64 only' "$workflow_doc"
 require_text 'Claude' "$workflow_doc"
 require_text 'Human Decision' "$workflow_doc"
 
 readme_active="$test_root/readme-active.md"
 sed '/^## Retired v3 archive/,$d' "$repo_root/README.md" >"$readme_active"
 require_text 'skills-v0.3.0' "$readme_active"
+require_text 'Linux x86_64 only' "$readme_active"
 require_text 'dvandva.run.v2' "$readme_active"
 require_text 'role API 2' "$readme_active"
 require_text 'Act as prativadi and join Dvandva run <run-id>.' "$readme_active"
@@ -732,6 +735,7 @@ require_text 'never gates the run' "$claude_active"
 require_text 'report_progress' "$claude_active"
 
 require_text 'dvandva.run.v2' "$repo_root/v4/README.md"
+require_text 'Linux x86_64 only' "$repo_root/v4/README.md"
 require_text 'role API 2' "$repo_root/v4/README.md"
 require_text 'dedicated upgrade' "$repo_root/v4/README.md"
 require_text '--repository-id' "$repo_root/v4/README.md"

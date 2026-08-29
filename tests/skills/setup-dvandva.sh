@@ -673,4 +673,23 @@ expect_failure 'refusing unowned data' env DVANDVA_RELEASE_DIR="$new_release" \
 expect_failure 'refusing uninstall without owned manifest' \
   bash "$installer" uninstall --version 0.3.0
 
+# The kernel is Linux x86_64 only, for now: every other host or architecture is
+# refused before anything is downloaded, naming the limit.
+export XDG_DATA_HOME="$test_root/host-gate/data"
+export XDG_STATE_HOME="$test_root/host-gate/state"
+host_gate_bin="$test_root/host-gate-bin"
+mkdir -p "$host_gate_bin"
+printf '#!/usr/bin/env bash\ncase "$1" in -m) echo x86_64 ;; *) echo Darwin ;; esac\n' \
+  >"$host_gate_bin/uname"
+chmod +x "$host_gate_bin/uname"
+expect_failure 'only Linux x86_64 is supported for now (host: Darwin)' \
+  env PATH="$host_gate_bin:$PATH" DVANDVA_RELEASE_DIR="$new_release" \
+  bash "$installer" install --version 0.3.0
+printf '#!/usr/bin/env bash\ncase "$1" in -m) echo arm64 ;; *) echo Linux ;; esac\n' \
+  >"$host_gate_bin/uname"
+expect_failure 'unsupported architecture: arm64 (only x86_64 for now)' \
+  env PATH="$host_gate_bin:$PATH" DVANDVA_RELEASE_DIR="$new_release" \
+  bash "$installer" install --version 0.3.0
+test ! -e "$XDG_DATA_HOME/dvandva/bin/0.3.0"
+
 printf 'setup-dvandva installer tests: ok\n'

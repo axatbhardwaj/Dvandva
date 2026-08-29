@@ -9,13 +9,16 @@ disable-model-invocation: true
 Run the bundled `scripts/setup-dvandva.sh` for exactly the operation the user
 requested: `install`, `update`, `doctor`, or `uninstall`.
 
-Version `0.3.0` is the source and planned release target, with planned tag
-`skills-v0.3.0`, write schema `dvandva.run.v2`, and facade API 2. Remote
-installation is available only after the tag and release asset exist. The
-installer resolves both at invocation and fails closed until both exist; this
-source does not claim current availability. Report the script's evidence and do
-not reconstruct its download, checksum, ownership, compatibility, or
+Version `0.3.0` is the release target, tag `skills-v0.3.0`, write schema
+`dvandva.run.v2`, facade API 2. The installer resolves the tag and asset at
+invocation and fails closed if either is missing. Report the script's evidence
+and do not reconstruct its download, checksum, ownership, compatibility, or
 atomic-switch logic.
+
+The kernel is Linux x86_64 only, for now. On any other operating system or
+architecture the script refuses before downloading; report that outcome as the
+answer. Do not build the kernel from source, fetch a different asset, or
+substitute another binary to work around it.
 
 The kernel is private implementation for the `vadi` and `prativadi` skills. Do
 not add it to `PATH`, install the archived v3 crate or plugin, start a run, or
