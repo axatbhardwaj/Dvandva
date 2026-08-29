@@ -324,18 +324,18 @@ fn apply_locked(
             {
                 return Err(TransitionError::NotAnAutonomousDecision);
             }
+            // Every proposal is canonicalized here with exactly the rules that
+            // will apply it, so an admitted option can never fail to resolve.
+            let proposals = proposals
+                .into_iter()
+                .map(normalize_scope_proposal)
+                .collect::<Result<Vec<_>, _>>()?;
             if !proposals.is_empty() {
                 let normalized = proposals
                     .iter()
                     .map(|proposal| serde_json::to_string(proposal).unwrap_or_default())
                     .collect::<HashSet<_>>();
-                if proposals.len() != options.len()
-                    || normalized.len() != proposals.len()
-                    || proposals.iter().any(|proposal| {
-                        proposal.objective.trim().is_empty()
-                            || proposal.scope_deliverables.is_empty()
-                    })
-                {
+                if proposals.len() != options.len() || normalized.len() != proposals.len() {
                     return Err(TransitionError::InvalidHumanDecision);
                 }
             }
@@ -846,15 +846,17 @@ fn normalize_checkpoint(
     Ok(checkpoint)
 }
 
-fn apply_scope_amendment(
-    baton: &mut RunBaton,
-    amendment: ScopeAmendment,
-) -> Result<(), TransitionError> {
-    let objective = amendment.objective.trim().to_owned();
+/// The one canonical form for a scope change, whether proposed or applied.
+/// A proposal that does not canonicalize is refused at admission, so every
+/// option a human is offered is one the kernel can actually apply.
+pub fn normalize_scope_proposal(
+    proposal: ScopeAmendment,
+) -> Result<ScopeAmendment, TransitionError> {
+    let objective = proposal.objective.trim().to_owned();
     if objective.is_empty() {
         return Err(TransitionError::InvalidHumanDecision);
     }
-    let mut refs = amendment.objective_refs;
+    let mut refs = proposal.objective_refs;
     for reference in &mut refs {
         reference.kind = reference.kind.trim().to_owned();
         reference.value = reference.value.trim().to_owned();
@@ -862,14 +864,32 @@ fn apply_scope_amendment(
             return Err(TransitionError::InvalidHumanDecision);
         }
     }
-    let task_reference = amendment
+    let task_reference = proposal
         .task_reference
         .map(|reference| reference.trim().to_owned());
     if task_reference.as_ref().is_some_and(String::is_empty) {
         return Err(TransitionError::InvalidHumanDecision);
     }
-    let scope_deliverables = normalize_deliverables(amendment.scope_deliverables)
+    let scope_deliverables = normalize_deliverables(proposal.scope_deliverables)
         .map_err(|_| TransitionError::InvalidHumanDecision)?;
+    Ok(ScopeAmendment {
+        objective,
+        objective_refs: refs,
+        task_reference,
+        scope_deliverables,
+    })
+}
+
+fn apply_scope_amendment(
+    baton: &mut RunBaton,
+    amendment: ScopeAmendment,
+) -> Result<(), TransitionError> {
+    let ScopeAmendment {
+        objective,
+        objective_refs: refs,
+        task_reference,
+        scope_deliverables,
+    } = normalize_scope_proposal(amendment)?;
     baton.objective.summary = objective.clone();
     baton.objective.refs = refs;
     if let Some(task) = &mut baton.task {

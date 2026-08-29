@@ -333,31 +333,11 @@ impl RunChannel {
                 binding.deployment = None;
                 binding.review = None;
             }
-            // If this exact problem is what parked the run, the repair is its
-            // answer: resume the recorded pre-request role rather than leaving
-            // a human decision open that nobody needs to make.
-            if next.status == Status::HumanDecision {
-                if let Some(decision) = next.human_decision.as_mut() {
-                    // Only a decision recorded under the released rules, while the
-                    // policy was unreadable — the shape the released kernel left the
-                    // PR-914 run in. A current-version decision is never answered
-                    // here: this kernel refuses to park on a repairable condition,
-                    // so any current decision is a role's own question.
-                    let legacy_incident = decision.version < crate::model::DECISION_VERSION
-                        && !current
-                            .publication_policy
-                            .clone()
-                            .unwrap_or_else(crate::model::PublicationPolicy::fixed)
-                            .reviewer_can_read();
-                    let parked_by_this = decision.answer.is_none() && legacy_incident;
-                    if parked_by_this {
-                        decision.answer =
-                            Some("resolved autonomously: publication policy repaired".to_owned());
-                        next.status = decision.resume_status.clone();
-                        next.assignee = decision.resume_assignee.clone();
-                    }
-                }
-            }
+            // Repair fixes the capability problem and nothing else. A parked
+            // decision — even one recorded under the released rules while the
+            // policy was unreadable — carries no provenance proving what caused
+            // it, so it stays a human-owned gate: the contact role resumes it
+            // under the decision's own rules once the human answers.
             validate_baton(&next)?;
             // The repair edge is an ordinary v2 history edge and is held to the
             // same rules as every other transition.
@@ -1207,23 +1187,11 @@ fn valid_publication_policy_repair_edge(current: &RunBaton, next: &RunBaton) -> 
     {
         return false;
     }
-    let resumed_parked_decision = current.status == Status::HumanDecision
-        && current.human_decision.as_ref().is_some_and(|decision| {
-            decision.answer.is_none() && decision.version < crate::model::DECISION_VERSION
-        })
-        && next.human_decision.as_ref().is_some_and(|decision| {
-            decision.answer.is_some()
-                && next.status == decision.resume_status
-                && next.assignee == decision.resume_assignee
-        });
+    // A repair changes the policy and the current obligation's receipts, and
+    // nothing else — never a decision, a status, or an assignee.
     only_fields_changed(current, next, |expected| {
         expected.publication_policy = next.publication_policy.clone();
         expected.publication_binding = next.publication_binding.clone();
-        if resumed_parked_decision {
-            expected.human_decision = next.human_decision.clone();
-            expected.status = next.status.clone();
-            expected.assignee = next.assignee.clone();
-        }
     })
 }
 
@@ -1516,11 +1484,23 @@ fn valid_decision_admission(current: &RunBaton, decision: &crate::model::HumanDe
             .map(|proposal| serde_json::to_string(proposal).unwrap_or_default())
             .collect::<std::collections::HashSet<_>>()
             .len();
+        let canonical = decision.proposals.iter().all(|proposal| {
+            !proposal.objective.is_empty()
+                && proposal.objective.trim() == proposal.objective
+                && proposal.objective_refs.iter().all(|reference| {
+                    valid_exact_reference(&reference.kind)
+                        && valid_exact_reference(&reference.value)
+                })
+                && proposal
+                    .task_reference
+                    .as_deref()
+                    .is_none_or(valid_exact_reference)
+                && normalize_deliverables(proposal.scope_deliverables.clone())
+                    .is_ok_and(|normalized| normalized == proposal.scope_deliverables)
+        });
         if decision.proposals.len() != decision.options.len()
             || distinct != decision.proposals.len()
-            || decision.proposals.iter().any(|proposal| {
-                proposal.objective.trim().is_empty() || proposal.scope_deliverables.is_empty()
-            })
+            || !canonical
         {
             return false;
         }
