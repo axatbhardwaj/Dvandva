@@ -25,12 +25,17 @@ Then explicitly ask one session:
 $setup-dvandva install Dvandva.
 ```
 
-The intended `skills-v0.3.0` GitHub release provides
-`dvandva-kernel-linux-x86_64` and `SHA256SUMS`. Setup becomes usable only after
-that tag and asset exist. It verifies the digest and the complete kernel 0.3.0,
+The `skills-v0.3.0` GitHub release provides `dvandva-kernel-linux-x86_64` and
+`SHA256SUMS`. Setup verifies the digest and the complete kernel 0.3.0,
 `dvandva.run.v2`, role API 2 probe before installing under
 `${XDG_DATA_HOME:-$HOME/.local/share}/dvandva/`, outside `PATH`. The crate is
 non-publishable and no plugin or marketplace package is involved.
+
+**Linux x86_64 only, for now.** That is the only asset the release carries and
+the only host the installer accepts; on macOS, native Windows, or another
+architecture it fails closed before downloading anything. The kernel itself
+uses Linux-only system calls, so there is no other build to substitute. On
+Windows, run both sessions inside WSL2.
 
 Updates are explicit: update the three skills, then invoke
 `$setup-dvandva update`. Uninstall removes only manifest-owned binary data and

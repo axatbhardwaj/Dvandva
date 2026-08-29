@@ -1,10 +1,14 @@
 # Dvandva
 
-> **Dvandva v4 is the active skill-only interface.** The intended
-> `skills-v0.3.0` GitHub release pairs the private, non-publishable kernel
-> `0.3.0` with schema `dvandva.run.v2` and role API 2. Source checkout and tests
-> are development-only; setup install remains unavailable until that tag and
-> asset exist. The retired crate and plugin are not an installation path.
+> **Dvandva v4 is the active skill-only interface.** The `skills-v0.3.0`
+> GitHub release pairs the private, non-publishable kernel `0.3.0` with schema
+> `dvandva.run.v2` and role API 2. Source checkout and tests are
+> development-only. The retired crate and plugin are not an installation path.
+>
+> **Supported platform: Linux x86_64 only, for now.** The release ships one
+> kernel asset and the installer refuses every other operating system or
+> architecture. macOS and native Windows are not supported; on Windows, use
+> WSL2. T3 Code runs the role sessions on Linux, which is the tested path.
 
 ## Active v4 skill-only interface
 
@@ -16,8 +20,8 @@ npx --yes skills add axatbhardwaj/Dvandva --global \
   --skill setup-dvandva vadi prativadi
 ```
 
-After `skills-v0.3.0` is published, explicitly invoke `$setup-dvandva` with an
-install request. Setup verifies the GitHub asset's checksum and complete
+On a Linux x86_64 host, explicitly invoke `$setup-dvandva` with an install
+request. Setup verifies the GitHub asset's checksum and complete
 v2/API2 probe before installing it under XDG data and outside `PATH`. The
 kernel remains `publish = false`; no crate, plugin, or marketplace package is
 part of v4 distribution.

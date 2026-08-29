@@ -1,9 +1,8 @@
 # Installation contract
 
-The source and planned release target is `0.3.0` / `skills-v0.3.0`. Remote
-installation is available only after the tag and release asset exist. The
-installer resolves both at invocation and fails closed until both exist; this
-reference does not claim current availability. These are target commands:
+The release target is `0.3.0` / `skills-v0.3.0`. The installer resolves the
+tag and release asset at invocation and fails closed if either is missing.
+The operations:
 
 ```bash
 bash scripts/setup-dvandva.sh install --version 0.3.0
@@ -12,11 +11,16 @@ bash scripts/setup-dvandva.sh doctor --version 0.3.0
 bash scripts/setup-dvandva.sh uninstall --version 0.3.0
 ```
 
-Once published, these operations consume release `skills-v0.3.0`.
-Compatibility requires
+These operations consume release `skills-v0.3.0`. Compatibility requires
 write schema `dvandva.run.v2` and facade API 2. Kernel v1 read support is only
 for explicit migration by a role; setup never migrates runs during install,
 update, doctor, or uninstall.
+
+Supported host: Linux x86_64 only, for now. The release carries a single
+asset, `dvandva-kernel-linux-x86_64`; on any other operating system the script
+exits with `only Linux x86_64 is supported for now`, and on another architecture
+with `unsupported architecture`, before downloading anything. macOS, native
+Windows, and arm64 are not supported; Windows users run the sessions in WSL2.
 
 It installs the checksummed Linux release asset under
 `${XDG_DATA_HOME:-$HOME/.local/share}/dvandva/bin/<version>/`, then atomically
