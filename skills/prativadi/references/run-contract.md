@@ -73,9 +73,25 @@ the exact immutable checkpoint, whose complete deliverable manifest covers the
 canonical deliverable IDs exactly once. A `git` checkpoint materializes from its
 commit object names; an `analysis` checkpoint materializes through
 `dvandva-role.sh analysis SESSION RUN_DIR DIGEST`, which verifies each cited
-digest against the staged bytes before returning them. Never review branch `HEAD` or the
-vadi's mutable worktree. Do not apply worker-owned `submit_checkpoint`,
+digest against the staged bytes before returning them. Never select a review
+target from a moving branch `HEAD` or the vadi's mutable worktree. Do not apply
+worker-owned `submit_checkpoint`,
 `request_checkpoint_supersession`, `withdraw_approval`, or `finalize` actions.
+
+**REQUIRED SUB-SKILL:** Use `code-review` for every `git` checkpoint. Materialize
+the exact checkpoint as `HEAD` in an isolated checkout, then give `code-review`
+an immutable fixed-point commit SHA and the canonical task or spec reference.
+Prefer a comparison base explicitly named by the canonical scope; otherwise pin
+the merge-base with the repository's remote default branch. Never pass a
+symbolic branch or mutable worktree state as the fixed point.
+
+Treat the Standards and Spec reports as review evidence, not as the Dvandva
+verdict. Verify their findings against the checkpoint and adjudicate them before
+recording the bound review. An `analysis` checkpoint does not invoke
+`code-review`; inspect its facade-verified bytes on both axes natively. If
+`code-review` is unavailable, complete those same two axes as a native fallback
+and disclose the fallback under `What was verified`; companion availability
+never blocks an authorized review.
 
 Before a verdict, read or claim a fresh snapshot, then copy the exact current `checkpoint` coordinates.
 Never type, increment, or reuse them from an older snapshot. Bind every verdict
@@ -201,8 +217,10 @@ expired lease alone.
 
 The human starts the peer session with the returned prompt. Neither role
 invokes or wakes the other harness. User-created harness goals remain
-unchanged. Third-party and explicit-only skills, including Matt Pocock's
-skills, run only when the human explicitly invokes them in this session.
+unchanged. Third-party user-invoked workflow skills run only when the human
+explicitly invokes them in this session. The required model-invocable
+`code-review` companion above is local to prativadi and is not a peer-harness
+invocation.
 
 After each handoff, report these exact fields and, in the same turn, continue
 in a foreground local wait until terminal state or human stop:

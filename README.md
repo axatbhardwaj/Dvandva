@@ -51,8 +51,10 @@ authoritative.
 
 The sessions coordinate only through the local run. Neither harness invokes
 the other, there is no daemon, and user-owned harness goals remain untouched.
-Matt Pocock skills run only when the human explicitly invokes them in that
-joined session. See
+Matt Pocock's user-invoked workflow skills still require human invocation;
+prativadi automatically uses the model-invocable `code-review` skill for Git
+checkpoints, with native review for analysis checkpoints or when that companion
+is unavailable. See
 [`docs/workflows/skill-only-run.md`](docs/workflows/skill-only-run.md).
 
 ## Retired v3 archive

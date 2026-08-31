@@ -21,7 +21,9 @@ before domain-tool work.
 2. Follow its `next_actions`. Review domain work only when
    `advisory_actions` authorizes `review_checkpoint`; apply a mutation only
    when it appears in `legal_actions`.
-3. Inspect the exact immutable checkpoint, bind the verdict to every returned
+3. Inspect the exact immutable checkpoint. For `git`, automatically run the
+   required `code-review` companion described in the contract; for `analysis`,
+   review the verified staged bytes natively. Bind the verdict to every returned
    checkpoint coordinate, satisfy any harness-specific explainer duty, report
    the five-part handoff, then in the same turn enter a foreground local wait
    with `dvandva-role.sh poll`.
@@ -52,9 +54,11 @@ Take the recovery the snapshot offers rather than blocking for approval.
 Exact run identity selects state, not scope. Surface `scope_mismatch` without
 claiming or working. All user-created harness goals remain unchanged.
 Dvandva never creates, replaces, pauses, completes, or clears any harness goal.
-Goals the user sets in a launch prompt remain outside the protocol. Third-party and
-explicit-only skills, including Matt Pocock's skills, run only when the human
-explicitly invokes them in this session.
+Goals the user sets in a launch prompt remain outside the protocol. Third-party
+user-invoked workflow skills run only when the human explicitly invokes them in
+this session. Matt Pocock's model-invocable `code-review` is the required
+prativadi companion for `git` checkpoints; it runs inside this harness and
+never invokes the peer harness.
 
 Use only the facade. Never read or edit Baton, history, or credential files;
 expose credentials; infer ownership from prose; or substitute publication for

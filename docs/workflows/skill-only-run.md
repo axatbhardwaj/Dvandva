@@ -134,9 +134,14 @@ and approved Claude review bound together. A Sites deployment is optional and is
 not required at `done`. A Human Decision pauses the pair rather than completing
 it.
 
-## Explicit-only companion skills
+## Companion skills
 
-Matt Pocock workflow skills can operate inside either joined role session only
-when the human explicitly invokes the specific skill there. Dvandva never
-selects one implicitly. User-created harness goals remain untouched throughout
-the run.
+Matt Pocock's user-invoked workflow skills can operate inside either joined
+role session only when the human explicitly invokes the specific skill there.
+Prativadi automatically selects the separately model-invocable `code-review`
+skill for every immutable Git checkpoint. It supplies a pinned fixed-point SHA,
+the checkpoint as `HEAD`, and the canonical task or spec reference; its
+Standards and Spec reports are evidence for prativadi's checkpoint-bound
+verdict. Analysis checkpoints stay native. If `code-review` is unavailable,
+prativadi performs both axes natively and discloses that fallback. User-created
+harness goals remain untouched throughout the run.

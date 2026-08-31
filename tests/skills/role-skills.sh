@@ -303,7 +303,7 @@ for required in \
   'slow from dead' \
   'user-created harness goals remain unchanged' \
   'human starts the peer session' \
-  'explicitly invokes them in this session' \
+  'user-invoked workflow skills' \
   'What changed' \
   'What was verified' \
   'What is blocked' \

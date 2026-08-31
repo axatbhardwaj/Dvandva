@@ -56,7 +56,7 @@ fn assert_role_source_contract(role: &str) {
         "slow from dead",
         "user-created harness goals remain unchanged",
         "human starts the peer session",
-        "explicitly invokes them in this session",
+        "user-invoked workflow skills",
         "What changed",
         "What was verified",
         "What is blocked",
@@ -170,6 +170,32 @@ fn prativadi_skill_sources_define_the_complete_v2_contract() {
     assert!(contract.contains("scope_revision"));
     let synopsis = contract.split("```").nth(1).unwrap();
     assert!(!synopsis.contains("--new-run"));
+}
+
+#[test]
+fn prativadi_automatically_uses_code_review_for_git_checkpoints() {
+    let (skill, contract) = role_sources("prativadi");
+    let source = format!("{skill}\n{contract}")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    for required in [
+        "**REQUIRED SUB-SKILL:** Use `code-review` for every `git` checkpoint.",
+        "exact checkpoint as `HEAD`",
+        "immutable fixed-point commit SHA",
+        "canonical task or spec reference",
+        "review evidence",
+        "An `analysis` checkpoint does not invoke `code-review`",
+        "native fallback",
+    ] {
+        assert!(
+            source.contains(required),
+            "prativadi omitted automatic code-review behavior {required:?}"
+        );
+    }
+
+    assert!(!source.contains("including Matt Pocock's skills"));
 }
 
 fn documented_json_blocks(markdown: &str) -> Vec<String> {

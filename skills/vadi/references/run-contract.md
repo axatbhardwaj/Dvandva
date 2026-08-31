@@ -222,8 +222,8 @@ expired lease alone.
 
 The human starts the peer session with the returned prompt. Neither role
 invokes or wakes the other harness. User-created harness goals remain
-unchanged. Third-party and explicit-only skills, including Matt Pocock's
-skills, run only when the human explicitly invokes them in this session.
+unchanged. Third-party user-invoked workflow skills run only when the human
+explicitly invokes them in this session.
 
 After each handoff, report these exact fields and, in the same turn, continue
 in a foreground local wait until terminal state or human stop:
