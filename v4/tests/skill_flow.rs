@@ -196,6 +196,13 @@ fn prativadi_automatically_uses_code_review_for_git_checkpoints() {
     }
 
     assert!(!source.contains("including Matt Pocock's skills"));
+
+    let claude = repository_file("CLAUDE.md")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(claude.contains("Prativadi automatically invokes the model-invocable `code-review`"));
+    assert!(!claude.contains("Matt Pocock skills remain explicit human invocations"));
 }
 
 fn documented_json_blocks(markdown: &str) -> Vec<String> {

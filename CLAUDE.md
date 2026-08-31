@@ -13,8 +13,10 @@
   Baton, history, or credential files directly. Treat every returned snapshot,
   `next_actions`, `legal_actions`, and `advisory_actions` as authoritative.
 - Keep the helper outside `PATH`. `$setup-dvandva` is explicit-only.
-- Matt Pocock skills remain explicit human invocations inside an already joined
-  role session.
+- Matt Pocock's user-invoked workflow skills remain explicit human invocations
+  inside an already joined role session. Prativadi automatically invokes the
+  model-invocable `code-review` for each Git checkpoint, with native review for
+  analysis checkpoints or when that companion is unavailable.
 - Semantic roles submit and review only complete checkpoint bindings. Use
   checkpoint supersession or approval withdrawal for newly discovered work.
 - Each handoff opens an obligation. For the current one, the Codex harness
