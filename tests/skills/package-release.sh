@@ -37,14 +37,14 @@ printf '%s\n' \
   '    test "$#" -eq 4' \
   '    test "$2" = "--verify"' \
   '    test "$3" = "--hash"' \
-  '    test "$4" = "refs/tags/skills-v0.3.0"' \
+  '    test "$4" = "refs/tags/skills-v0.3.1"' \
   '    test "${FAKE_LOCAL_OBJECT+x}" = x || exit 1' \
   '    printf "%b" "$FAKE_LOCAL_OBJECT"' \
   '    ;;' \
   '  rev-parse)' \
   '    test "$#" -eq 3' \
   '    test "$2" = "--verify"' \
-  '    test "$3" = "refs/tags/skills-v0.3.0^{commit}"' \
+  '    test "$3" = "refs/tags/skills-v0.3.1^{commit}"' \
   '    test "${FAKE_LOCAL_PEELED+x}" = x || exit 1' \
   '    printf "%b" "$FAKE_LOCAL_PEELED"' \
   '    ;;' \
@@ -52,8 +52,8 @@ printf '%s\n' \
   '    test "$#" -eq 5' \
   '    test "$2" = "--tags"' \
   '    test "$3" = "origin"' \
-  '    test "$4" = "refs/tags/skills-v0.3.0"' \
-  '    test "$5" = "refs/tags/skills-v0.3.0^{}"' \
+  '    test "$4" = "refs/tags/skills-v0.3.1"' \
+  '    test "$5" = "refs/tags/skills-v0.3.1^{}"' \
   '    test "${FAKE_REMOTE_REFS+x}" = x || exit 1' \
   '    printf "%b" "$FAKE_REMOTE_REFS"' \
   '    ;;' \
@@ -74,7 +74,7 @@ expect_ref_accepted() {
   if ! PATH="$ref_fake_bin:$PATH" \
     FAKE_LOCAL_OBJECT="$local_object" FAKE_LOCAL_PEELED="$local_peeled" \
     FAKE_REMOTE_REFS="$remote_refs" GITHUB_SHA="$release_commit" \
-    bash "$ref_verifier" skills-v0.3.0 origin \
+    bash "$ref_verifier" skills-v0.3.1 origin \
     >"$test_root/$label.out" 2>&1; then
     fail "$label release ref was unexpectedly rejected"
   fi
@@ -89,7 +89,7 @@ expect_ref_rejected() {
   if PATH="$ref_fake_bin:$PATH" \
     FAKE_LOCAL_OBJECT="$local_object" FAKE_LOCAL_PEELED="$local_peeled" \
     FAKE_REMOTE_REFS="$remote_refs" GITHUB_SHA="$event_sha" \
-    bash "$ref_verifier" skills-v0.3.0 origin \
+    bash "$ref_verifier" skills-v0.3.1 origin \
     >"$test_root/$label.out" 2>&1; then
     fail "$label release ref was unexpectedly accepted"
   fi
@@ -98,45 +98,45 @@ expect_ref_rejected() {
 
 expect_ref_accepted lightweight-tag \
   "$release_commit\n" "$release_commit\n" \
-  "$release_commit\trefs/tags/skills-v0.3.0\n"
+  "$release_commit\trefs/tags/skills-v0.3.1\n"
 expect_ref_accepted annotated-tag \
   "$release_tag_object\n" "$release_commit\n" \
-  "$release_tag_object\trefs/tags/skills-v0.3.0\n$release_commit\trefs/tags/skills-v0.3.0^{}\n"
+  "$release_tag_object\trefs/tags/skills-v0.3.1\n$release_commit\trefs/tags/skills-v0.3.1^{}\n"
 expect_ref_rejected moved-local-object \
   "$moved_object\n" "$release_commit\n" "$release_commit" \
-  "$release_tag_object\trefs/tags/skills-v0.3.0\n$release_commit\trefs/tags/skills-v0.3.0^{}\n"
+  "$release_tag_object\trefs/tags/skills-v0.3.1\n$release_commit\trefs/tags/skills-v0.3.1^{}\n"
 expect_ref_rejected moved-local-commit \
   "$release_tag_object\n" "$moved_object\n" "$release_commit" \
-  "$release_tag_object\trefs/tags/skills-v0.3.0\n$release_commit\trefs/tags/skills-v0.3.0^{}\n"
+  "$release_tag_object\trefs/tags/skills-v0.3.1\n$release_commit\trefs/tags/skills-v0.3.1^{}\n"
 expect_ref_rejected moved-event \
   "$release_tag_object\n" "$release_commit\n" "$moved_object" \
-  "$release_tag_object\trefs/tags/skills-v0.3.0\n$release_commit\trefs/tags/skills-v0.3.0^{}\n"
+  "$release_tag_object\trefs/tags/skills-v0.3.1\n$release_commit\trefs/tags/skills-v0.3.1^{}\n"
 expect_ref_rejected moved-remote-object \
   "$release_tag_object\n" "$release_commit\n" "$release_commit" \
-  "$moved_object\trefs/tags/skills-v0.3.0\n$release_commit\trefs/tags/skills-v0.3.0^{}\n"
+  "$moved_object\trefs/tags/skills-v0.3.1\n$release_commit\trefs/tags/skills-v0.3.1^{}\n"
 expect_ref_rejected moved-remote-commit \
   "$release_tag_object\n" "$release_commit\n" "$release_commit" \
-  "$release_tag_object\trefs/tags/skills-v0.3.0\n$moved_object\trefs/tags/skills-v0.3.0^{}\n"
+  "$release_tag_object\trefs/tags/skills-v0.3.1\n$moved_object\trefs/tags/skills-v0.3.1^{}\n"
 expect_ref_rejected missing-local-object \
   '' "$release_commit\n" "$release_commit" \
-  "$release_commit\trefs/tags/skills-v0.3.0\n"
+  "$release_commit\trefs/tags/skills-v0.3.1\n"
 expect_ref_rejected missing-event \
   "$release_commit\n" "$release_commit\n" '' \
-  "$release_commit\trefs/tags/skills-v0.3.0\n"
+  "$release_commit\trefs/tags/skills-v0.3.1\n"
 expect_ref_rejected missing-remote \
   "$release_commit\n" "$release_commit\n" "$release_commit" ''
 expect_ref_rejected ambiguous-local \
   "$release_commit\n$moved_object\n" "$release_commit\n" "$release_commit" \
-  "$release_commit\trefs/tags/skills-v0.3.0\n"
+  "$release_commit\trefs/tags/skills-v0.3.1\n"
 expect_ref_rejected ambiguous-remote \
   "$release_commit\n" "$release_commit\n" "$release_commit" \
-  "$release_commit\trefs/tags/skills-v0.3.0\n$moved_object\trefs/tags/skills-v0.3.0\n"
+  "$release_commit\trefs/tags/skills-v0.3.1\n$moved_object\trefs/tags/skills-v0.3.1\n"
 expect_ref_rejected malformed-local \
   'not-an-object\n' "$release_commit\n" "$release_commit" \
-  "$release_commit\trefs/tags/skills-v0.3.0\n"
+  "$release_commit\trefs/tags/skills-v0.3.1\n"
 expect_ref_rejected malformed-remote \
   "$release_commit\n" "$release_commit\n" "$release_commit" \
-  "not-an-object\trefs/tags/skills-v0.3.0\n"
+  "not-an-object\trefs/tags/skills-v0.3.1\n"
 
 # A release ref must resolve to a commit, not merely to any Git object whose
 # identity happens to match the event payload.
@@ -150,13 +150,13 @@ git -C "$noncommit_repo" add fixture
 git -C "$noncommit_repo" commit -qm fixture
 tree_object="$(git -C "$noncommit_repo" rev-parse 'HEAD^{tree}')"
 blob_object="$(git -C "$noncommit_repo" rev-parse 'HEAD:fixture')"
-git -C "$noncommit_repo" update-ref refs/tags/skills-v0.3.0 "$tree_object"
+git -C "$noncommit_repo" update-ref refs/tags/skills-v0.3.1 "$tree_object"
 git -C "$noncommit_repo" update-ref refs/tags/skills-v0.2.1 "$blob_object"
 git init -q --bare "$noncommit_remote"
 git -C "$noncommit_repo" remote add origin "$noncommit_remote"
 git -C "$noncommit_repo" push -q origin \
-  refs/tags/skills-v0.3.0 refs/tags/skills-v0.2.1
-for noncommit_tag in skills-v0.3.0 skills-v0.2.1; do
+  refs/tags/skills-v0.3.1 refs/tags/skills-v0.2.1
+for noncommit_tag in skills-v0.3.1 skills-v0.2.1; do
   noncommit_object="$(git -C "$noncommit_repo" rev-parse "refs/tags/$noncommit_tag")"
   if (cd "$noncommit_repo" && GITHUB_SHA="$noncommit_object" \
     bash "$ref_verifier" "$noncommit_tag" origin) \
@@ -177,16 +177,16 @@ printf '%s\n' \
   'chmod 755 "$CARGO_TARGET_DIR/release/dvandva-v4"' \
   >"$fake_bin/cargo"
 printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"$fake_bin/strip"
-valid_probe='{"package":"dvandva-v4","version":"0.3.0","publish":false,"write_schema":"dvandva.run.v2","read_schemas":["dvandva.run.v2","dvandva.run.v1"],"role_api":2,"capabilities":{"upgrade_from_v1":true},"compatible":true}'
+valid_probe='{"package":"dvandva-v4","version":"0.3.1","publish":false,"write_schema":"dvandva.run.v2","read_schemas":["dvandva.run.v2","dvandva.run.v1"],"role_api":2,"capabilities":{"upgrade_from_v1":true},"compatible":true}'
 printf '%s\n' \
   '#!/usr/bin/env bash' \
   'set -euo pipefail' \
   'if test "${1:-}" = "--version"; then' \
-  '  printf "dvandva-v4 0.3.0\\n"' \
+  '  printf "dvandva-v4 0.3.1\\n"' \
   '  exit 0' \
   'fi' \
   'if test "${1:-}" = "probe"; then' \
-  "  printf '%s\\n' '{\"package\":\"dvandva-v4\",\"version\":\"0.3.0\",\"publish\":false,\"write_schema\":\"dvandva.run.v1\",\"read_schemas\":[\"dvandva.run.v1\"],\"role_api\":1,\"capabilities\":{\"upgrade_from_v1\":false},\"compatible\":true}'" \
+  "  printf '%s\\n' '{\"package\":\"dvandva-v4\",\"version\":\"0.3.1\",\"publish\":false,\"write_schema\":\"dvandva.run.v1\",\"read_schemas\":[\"dvandva.run.v1\"],\"role_api\":1,\"capabilities\":{\"upgrade_from_v1\":false},\"compatible\":true}'" \
   '  exit 0' \
   'fi' \
   'exit 2' \
@@ -196,7 +196,7 @@ chmod 755 "$fake_bin/cargo" "$fake_bin/strip" "$test_root/fake-kernel"
 incompatible="$test_root/incompatible"
 if PATH="$fake_bin:$PATH" FAKE_KERNEL="$test_root/fake-kernel" \
   CARGO_TARGET_DIR="$fake_target" \
-  bash "$packager" skills-v0.3.0 "$incompatible" \
+  bash "$packager" skills-v0.3.1 "$incompatible" \
   >"$test_root/incompatible.out" 2>&1; then
   fail 'correct-version v1/API1 kernel unexpectedly packaged'
 fi
@@ -220,7 +220,7 @@ chmod 755 "$test_root/wrong-version-kernel"
 wrong_binary="$test_root/wrong-binary"
 if PATH="$fake_bin:$PATH" FAKE_KERNEL="$test_root/wrong-version-kernel" \
   CARGO_TARGET_DIR="$test_root/wrong-binary-target" \
-  bash "$packager" skills-v0.3.0 "$wrong_binary" \
+  bash "$packager" skills-v0.3.1 "$wrong_binary" \
   >"$test_root/wrong-binary.out" 2>&1; then
   fail 'wrong-version kernel unexpectedly packaged'
 fi
@@ -236,14 +236,14 @@ printf '%s\n' \
   'if test "${1:-}" = "--version"; then' \
   '  if test -n "${VERSION_DIR_FILE:-}"; then dirname -- "$0" >"$VERSION_DIR_FILE"; fi' \
   '  case "${FAKE_VERSION_MODE:-valid}" in' \
-  '    valid|one_lf) printf "dvandva-v4 0.3.0\\n" ;;' \
-  '    exact) printf "dvandva-v4 0.3.0" ;;' \
-  '    nul) printf "dvandva-v4 0.3.0\\0\\n" ;;' \
-  '    invalid_utf8) printf "dvandva-v4 0.3.0\\377\\n" ;;' \
-  '    oversized) printf "dvandva-v4 0.3.0"; head -c 300 /dev/zero | tr "\\0" x ;;' \
-  '    extra_newline) printf "dvandva-v4 0.3.0\\n\\n" ;;' \
-  '    crlf) printf "dvandva-v4 0.3.0\\r\\n" ;;' \
-  '    nonzero) printf "dvandva-v4 0.3.0\\n"; exit 7 ;;' \
+  '    valid|one_lf) printf "dvandva-v4 0.3.1\\n" ;;' \
+  '    exact) printf "dvandva-v4 0.3.1" ;;' \
+  '    nul) printf "dvandva-v4 0.3.1\\0\\n" ;;' \
+  '    invalid_utf8) printf "dvandva-v4 0.3.1\\377\\n" ;;' \
+  '    oversized) printf "dvandva-v4 0.3.1"; head -c 300 /dev/zero | tr "\\0" x ;;' \
+  '    extra_newline) printf "dvandva-v4 0.3.1\\n\\n" ;;' \
+  '    crlf) printf "dvandva-v4 0.3.1\\r\\n" ;;' \
+  '    nonzero) printf "dvandva-v4 0.3.1\\n"; exit 7 ;;' \
   '    *) exit 2 ;;' \
   '  esac' \
   '  exit 0' \
@@ -251,8 +251,8 @@ printf '%s\n' \
   'test "${1:-}" = "probe" || exit 2' \
   'case "${FAKE_PROBE_MODE:-valid}" in' \
   "  valid) printf '%s\\n' '$valid_probe' ;;" \
-  "  root_duplicate) printf '%s\\n' '{\"package\":\"wrong\",\"package\":\"dvandva-v4\",\"version\":\"0.3.0\",\"publish\":false,\"write_schema\":\"dvandva.run.v2\",\"read_schemas\":[\"dvandva.run.v2\",\"dvandva.run.v1\"],\"role_api\":2,\"capabilities\":{\"upgrade_from_v1\":true},\"compatible\":true}' ;;" \
-  "  nested_duplicate) printf '%s\\n' '{\"package\":\"dvandva-v4\",\"version\":\"0.3.0\",\"publish\":false,\"write_schema\":\"dvandva.run.v2\",\"read_schemas\":[\"dvandva.run.v2\",\"dvandva.run.v1\"],\"role_api\":2,\"capabilities\":{\"upgrade_from_v1\":false,\"upgrade_from_v1\":true},\"compatible\":true}' ;;" \
+  "  root_duplicate) printf '%s\\n' '{\"package\":\"wrong\",\"package\":\"dvandva-v4\",\"version\":\"0.3.1\",\"publish\":false,\"write_schema\":\"dvandva.run.v2\",\"read_schemas\":[\"dvandva.run.v2\",\"dvandva.run.v1\"],\"role_api\":2,\"capabilities\":{\"upgrade_from_v1\":true},\"compatible\":true}' ;;" \
+  "  nested_duplicate) printf '%s\\n' '{\"package\":\"dvandva-v4\",\"version\":\"0.3.1\",\"publish\":false,\"write_schema\":\"dvandva.run.v2\",\"read_schemas\":[\"dvandva.run.v2\",\"dvandva.run.v1\"],\"role_api\":2,\"capabilities\":{\"upgrade_from_v1\":false,\"upgrade_from_v1\":true},\"compatible\":true}' ;;" \
   "  nul) printf '%s\\0' '$valid_probe' ;;" \
   "  oversized) printf '{'; head -c 17000 /dev/zero | tr '\\0' ' '; printf '%s' '${valid_probe:1}' ;;" \
   "  extra_newline) printf '%s\\n\\n' '$valid_probe' ;;" \
@@ -275,7 +275,7 @@ expect_rejected_version() {
   if PATH="$fake_bin:$PATH" FAKE_KERNEL="$test_root/adversarial-kernel" \
     FAKE_VERSION_MODE="$mode" VERSION_DIR_FILE="$version_dir_file" \
     CARGO_TARGET_DIR="$test_root/$label-target" \
-    bash "$packager" skills-v0.3.0 "$rejected_output" \
+    bash "$packager" skills-v0.3.1 "$rejected_output" \
     >"$rejected_log" 2>&1; then
     fail "$label version unexpectedly packaged"
   fi
@@ -313,7 +313,7 @@ expect_accepted_version() {
   if ! PATH="$fake_bin:$PATH" FAKE_KERNEL="$test_root/adversarial-kernel" \
     FAKE_VERSION_MODE="$mode" VERSION_DIR_FILE="$version_dir_file" \
     CARGO_TARGET_DIR="$test_root/$label-target" \
-    bash "$packager" skills-v0.3.0 "$accepted_output" \
+    bash "$packager" skills-v0.3.1 "$accepted_output" \
     >"$test_root/$label.out" 2>&1; then
     fail "$label version was unexpectedly rejected"
     return
@@ -347,7 +347,7 @@ expect_rejected_probe() {
 
   if PATH="$fake_bin:$PATH" FAKE_KERNEL="$test_root/adversarial-kernel" \
     FAKE_PROBE_MODE="$mode" CARGO_TARGET_DIR="$test_root/$label-target" \
-    bash "$packager" skills-v0.3.0 "$rejected_output" \
+    bash "$packager" skills-v0.3.1 "$rejected_output" \
     >"$rejected_log" 2>&1; then
     fail "$label probe unexpectedly packaged"
   fi
@@ -371,7 +371,7 @@ empty_output="$test_root/existing-empty"
 mkdir "$empty_output"
 if PATH="$fake_bin:$PATH" FAKE_KERNEL="$test_root/adversarial-kernel" \
   FAKE_PROBE_MODE=valid CARGO_TARGET_DIR="$test_root/existing-empty-target" \
-  bash "$packager" skills-v0.3.0 "$empty_output" \
+  bash "$packager" skills-v0.3.1 "$empty_output" \
   >"$test_root/existing-empty.out" 2>&1; then
   fail 'pre-existing empty output directory unexpectedly accepted'
 fi
@@ -386,7 +386,7 @@ mkdir "$symlink_target"
 ln -s "$symlink_target" "$symlink_output"
 if PATH="$fake_bin:$PATH" FAKE_KERNEL="$test_root/adversarial-kernel" \
   FAKE_PROBE_MODE=valid CARGO_TARGET_DIR="$test_root/symlink-target-build" \
-  bash "$packager" skills-v0.3.0 "$symlink_output" \
+  bash "$packager" skills-v0.3.1 "$symlink_output" \
   >"$test_root/symlink.out" 2>&1; then
   fail 'pre-existing output symlink unexpectedly accepted'
 fi
@@ -396,14 +396,14 @@ test -z "$(find "$symlink_target" -mindepth 1 -print -quit)" || \
   fail 'pre-existing output symlink target was modified'
 
 output="$test_root/output"
-CARGO_TARGET_DIR="$test_root/target" bash "$packager" skills-v0.3.0 "$output"
+CARGO_TARGET_DIR="$test_root/target" bash "$packager" skills-v0.3.1 "$output"
 
 test -x "$output/dvandva-kernel-linux-x86_64"
 test -f "$output/SHA256SUMS"
 test "$(find "$output" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" = \
   'SHA256SUMS dvandva-kernel-linux-x86_64 '
 (cd "$output" && sha256sum -c SHA256SUMS)
-test "$($output/dvandva-kernel-linux-x86_64 --version)" = 'dvandva-v4 0.3.0'
+test "$($output/dvandva-kernel-linux-x86_64 --version)" = 'dvandva-v4 0.3.1'
 "$output/dvandva-kernel-linux-x86_64" probe \
   --expected-schema dvandva.run.v2 --expected-role-api 2 \
   >"$test_root/probe.json"
@@ -430,7 +430,7 @@ assert set(probe) == {
 }
 assert probe == {
     "package": "dvandva-v4",
-    "version": "0.3.0",
+    "version": "0.3.1",
     "publish": False,
     "write_schema": "dvandva.run.v2",
     "read_schemas": ["dvandva.run.v2", "dvandva.run.v1"],
@@ -454,7 +454,7 @@ checksum_output="$test_root/checksum-output"
 if PATH="$checksum_bin:$PATH" FAKE_KERNEL="$output/dvandva-kernel-linux-x86_64" \
   CHECKSUM_PWD_FILE="$test_root/checksum.pwd" \
   CARGO_TARGET_DIR="$test_root/checksum-target" \
-  bash "$packager" skills-v0.3.0 "$checksum_output" \
+  bash "$packager" skills-v0.3.1 "$checksum_output" \
   >"$test_root/checksum.out" 2>&1; then
   fail 'checksum failure unexpectedly packaged'
 fi
@@ -488,7 +488,7 @@ chmod 755 "$collision_bin/mv"
 collision_output="$test_root/collision-output"
 if PATH="$collision_bin:$PATH" FAKE_KERNEL="$output/dvandva-kernel-linux-x86_64" \
   CARGO_TARGET_DIR="$test_root/collision-target" \
-  bash "$packager" skills-v0.3.0 "$collision_output" \
+  bash "$packager" skills-v0.3.1 "$collision_output" \
   >"$test_root/collision.out" 2>&1; then
   fail 'promotion collision unexpectedly packaged'
 fi
@@ -511,7 +511,7 @@ test ! -e "$wrong"
 nonempty="$test_root/nonempty"
 mkdir "$nonempty"
 touch "$nonempty/foreign"
-if CARGO_TARGET_DIR="$test_root/target" bash "$packager" skills-v0.3.0 "$nonempty" \
+if CARGO_TARGET_DIR="$test_root/target" bash "$packager" skills-v0.3.1 "$nonempty" \
   >"$test_root/nonempty.out" 2>&1; then
   printf 'non-empty destination unexpectedly accepted\n' >&2
   exit 1
@@ -703,7 +703,7 @@ reject_text 'cargo publish' "$repo_root/scripts/package-skills-release.sh"
 workflow_doc="$repo_root/docs/workflows/skill-only-run.md"
 require_text '--agent claude-code codex' "$workflow_doc"
 require_text '--skill setup-dvandva vadi prativadi' "$workflow_doc"
-require_text 'skills-v0.3.0' "$workflow_doc"
+require_text 'skills-v0.3.1' "$workflow_doc"
 require_text 'Act as prativadi and join Dvandva run <run-id>.' "$workflow_doc"
 require_text 'scope_mismatch' "$workflow_doc"
 require_text 'request_checkpoint_supersession' "$workflow_doc"
@@ -715,7 +715,7 @@ require_text 'Human Decision' "$workflow_doc"
 
 readme_active="$test_root/readme-active.md"
 sed '/^## Retired v3 archive/,$d' "$repo_root/README.md" >"$readme_active"
-require_text 'skills-v0.3.0' "$readme_active"
+require_text 'skills-v0.3.1' "$readme_active"
 require_text 'Linux x86_64 only' "$readme_active"
 require_text 'dvandva.run.v2' "$readme_active"
 require_text 'role API 2' "$readme_active"

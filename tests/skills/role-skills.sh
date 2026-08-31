@@ -42,7 +42,7 @@ test "$(bash "$vadi" session-id)" = "codex-session"
 generated="$(env -u CODEX_SESSION_ID bash "$vadi" session-id --generate)"
 [[ "$generated" =~ ^[0-9a-f-]{36}$ ]]
 probe="$(bash "$vadi" probe)"
-grep -Fq '"version": "0.3.0"' <<<"$probe"
+grep -Fq '"version": "0.3.1"' <<<"$probe"
 grep -Fq '"write_schema": "dvandva.run.v2"' <<<"$probe"
 grep -Fq '"read_schemas": [' <<<"$probe"
 grep -Fq '"role_api": 2' <<<"$probe"
@@ -53,15 +53,15 @@ grep -Fq '"publish": false' <<<"$probe"
 mv "$binary" "$binary.real"
 cat >"$binary" <<'ADVERSARIAL_KERNEL'
 #!/usr/bin/env bash
-valid_probe='{"package":"dvandva-v4","version":"0.3.0","publish":false,"write_schema":"dvandva.run.v2","read_schemas":["dvandva.run.v2","dvandva.run.v1"],"role_api":2,"capabilities":{"upgrade_from_v1":true},"compatible":true}'
+valid_probe='{"package":"dvandva-v4","version":"0.3.1","publish":false,"write_schema":"dvandva.run.v2","read_schemas":["dvandva.run.v2","dvandva.run.v1"],"role_api":2,"capabilities":{"upgrade_from_v1":true},"compatible":true}'
 if test "${1:-}" = "--version"; then
   case "${DVANDVA_FAKE_MODE:-valid}" in
-    valid|probe_*) printf 'dvandva-v4 0.3.0\n' ;;
-    version_nul) printf 'dvandva-v4 0.3.0\0\n' ;;
-    version_invalid_utf8) printf 'dvandva-v4 0.3.0\377\n' ;;
-    version_oversized) printf 'dvandva-v4 0.3.0'; head -c 300 /dev/zero | tr '\0' x ;;
-    version_extra_newline) printf 'dvandva-v4 0.3.0\n\n' ;;
-    version_nonzero) printf 'dvandva-v4 0.3.0\n'; exit 7 ;;
+    valid|probe_*) printf 'dvandva-v4 0.3.1\n' ;;
+    version_nul) printf 'dvandva-v4 0.3.1\0\n' ;;
+    version_invalid_utf8) printf 'dvandva-v4 0.3.1\377\n' ;;
+    version_oversized) printf 'dvandva-v4 0.3.1'; head -c 300 /dev/zero | tr '\0' x ;;
+    version_extra_newline) printf 'dvandva-v4 0.3.1\n\n' ;;
+    version_nonzero) printf 'dvandva-v4 0.3.1\n'; exit 7 ;;
   esac
   exit 0
 fi
@@ -97,14 +97,14 @@ mv "$binary.real" "$binary"
 mv "$binary" "$binary.real"
 cat >"$binary" <<'DECOY_KERNEL'
 #!/usr/bin/env bash
-if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.3.0\n'; exit 0; fi
+if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.3.1\n'; exit 0; fi
 if test "${1:-}" = "probe"; then
   printf '%s\n' '{' \
     '  "package": 7, "version": false, "publish": true, "write_schema": [],' \
     '  "read_schemas": "wrong", "role_api": "2",' \
     '  "capabilities": {"upgrade_from_v1": "true"}, "compatible": "true",' \
     '  "decoy": {' \
-    '    "package": "dvandva-v4", "version": "0.3.0", "publish": false,' \
+    '    "package": "dvandva-v4", "version": "0.3.1", "publish": false,' \
     '    "write_schema": "dvandva.run.v2",' \
     '    "read_schemas": ["dvandva.run.v2", "dvandva.run.v1"],' \
     '    "role_api": 2, "capabilities": {"upgrade_from_v1": true},' \
@@ -303,7 +303,7 @@ for required in \
   'slow from dead' \
   'user-created harness goals remain unchanged' \
   'human starts the peer session' \
-  'explicitly invokes them in this session' \
+  'user-invoked workflow skills' \
   'What changed' \
   'What was verified' \
   'What is blocked' \
@@ -366,8 +366,8 @@ do
 done
 
 for required in \
-  '0.3.0' \
-  'skills-v0.3.0' \
+  '0.3.1' \
+  'skills-v0.3.1' \
   'release target' \
   'fails closed if either is missing' \
   'Linux x86_64 only' \

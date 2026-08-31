@@ -2,6 +2,12 @@
 
 Date: 2026-08-26
 
+> **Historical research snapshot.** The active skill-only behavior is defined
+> in `docs/workflows/skill-only-run.md`. It keeps user-invoked workflow skills
+> human-invoked while prativadi automatically selects the separately
+> model-invocable `code-review` only after a complete Git delivery candidate is
+> submitted. The adapter proposed below is not part of the active interface.
+
 ## Conclusion
 
 The default two-lane run is technically feasible, but Dvandva must not depend

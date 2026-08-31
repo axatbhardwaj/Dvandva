@@ -21,10 +21,13 @@ before domain-tool work.
 2. Follow its `next_actions`. Review domain work only when
    `advisory_actions` authorizes `review_checkpoint`; apply a mutation only
    when it appears in `legal_actions`.
-3. Inspect the exact immutable checkpoint, bind the verdict to every returned
-   checkpoint coordinate, satisfy any harness-specific explainer duty, report
-   the five-part handoff, then in the same turn enter a foreground local wait
-   with `dvandva-role.sh poll`.
+3. Inspect the exact immutable, complete delivery checkpoint. For `git`, run the
+   required `code-review` companion once for that newly authorized candidate;
+   never run it against implementation-in-progress. For `analysis`, review the
+   verified staged bytes natively. Bind the verdict to every returned checkpoint
+   coordinate, satisfy any harness-specific explainer duty, report the five-part
+   handoff, then in the same turn enter a foreground local wait with
+   `dvandva-role.sh poll`.
 4. When `poll` returns `wait_outcome: idle_timeout`, call it again at once.
    On every other wake, repeat from a fresh snapshot. Stop only on terminal
    state or human stop.
@@ -52,9 +55,12 @@ Take the recovery the snapshot offers rather than blocking for approval.
 Exact run identity selects state, not scope. Surface `scope_mismatch` without
 claiming or working. All user-created harness goals remain unchanged.
 Dvandva never creates, replaces, pauses, completes, or clears any harness goal.
-Goals the user sets in a launch prompt remain outside the protocol. Third-party and
-explicit-only skills, including Matt Pocock's skills, run only when the human
-explicitly invokes them in this session.
+Goals the user sets in a launch prompt remain outside the protocol. Third-party
+user-invoked workflow skills run only when the human explicitly invokes them in
+this session. Matt Pocock's model-invocable `code-review` is the required
+prativadi companion for complete `git` delivery candidates; it runs inside this
+harness after the whole scoped implementation is checkpointed and never invokes
+the peer harness.
 
 Use only the facade. Never read or edit Baton, history, or credential files;
 expose credentials; infer ownership from prose; or substitute publication for

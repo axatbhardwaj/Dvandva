@@ -298,8 +298,11 @@ In particular:
   manifest, current findings/decisions, and plan as an up-to-date TODO list;
 - no skill creates, replaces, completes, pauses, or clears a harness goal.
 
-Third-party skills remain human-invoked. If the user explicitly invokes one
-inside an attached role session, its output still enters the same checkpoint
+Third-party user-invoked skills remain human-invoked. The separately
+model-invocable `code-review` is the narrow exception: after vadi submits the
+whole scoped Git work as a complete delivery candidate, prativadi invokes it
+once for that immutable checkpoint. It never runs against work-in-progress.
+Any explicitly invoked third-party output still enters the same checkpoint
 manifest and handoff gates.
 
 ## Invariants and terminal gate

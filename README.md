@@ -1,7 +1,7 @@
 # Dvandva
 
-> **Dvandva v4 is the active skill-only interface.** The `skills-v0.3.0`
-> GitHub release pairs the private, non-publishable kernel `0.3.0` with schema
+> **Dvandva v4 is the active skill-only interface.** The `skills-v0.3.1`
+> GitHub release pairs the private, non-publishable kernel `0.3.1` with schema
 > `dvandva.run.v2` and role API 2. Source checkout and tests are
 > development-only. The retired crate and plugin are not an installation path.
 >
@@ -51,8 +51,10 @@ authoritative.
 
 The sessions coordinate only through the local run. Neither harness invokes
 the other, there is no daemon, and user-owned harness goals remain untouched.
-Matt Pocock skills run only when the human explicitly invokes them in that
-joined session. See
+Matt Pocock's user-invoked workflow skills still require human invocation;
+prativadi automatically uses the model-invocable `code-review` skill for Git
+checkpoints, with native review for analysis checkpoints or when that companion
+is unavailable. See
 [`docs/workflows/skill-only-run.md`](docs/workflows/skill-only-run.md).
 
 ## Retired v3 archive

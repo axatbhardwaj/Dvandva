@@ -255,12 +255,19 @@ After writing a review, prativadi foreground-waits. Vadi wakes, revises, and
 submits a new checkpoint; prativadi wakes and reviews again. Neither role
 exits merely because its current turn ended.
 
-Matt Pocock's explicit-only workflow skills remain human-invoked. Dvandva
-does not call them implicitly. A human may explicitly invoke a Matt review or
-implementation skill in the already joined role session; the vadi/prativadi
-skill then records that work through the same Baton. Without such an explicit
-turn, prativadi performs its native adversarial review contract so the
-walkaway loop remains autonomous.
+Matt Pocock's user-invoked workflow skills remain human-invoked. Once vadi has
+finished the whole canonical implementation and submitted a complete Git
+delivery candidate, prativadi automatically invokes the separately
+model-invocable `code-review` once for that immutable checkpoint. It supplies
+the exact checkpoint as `HEAD`, a pinned fixed-point SHA, and the canonical task
+or spec. No Matt review runs against implementation-in-progress. Its Standards
+and Spec reports are evidence; prativadi still adjudicates and binds the
+Dvandva verdict. A changes-requested revision is reviewed only after vadi
+submits another complete candidate. Analysis checkpoints stay native. If the
+companion is unavailable, prativadi performs both axes natively and discloses
+the fallback, so the walkaway loop remains autonomous.
+The invocation-policy evidence is recorded in
+[`docs/workflows/skill-only-run.md`](../../workflows/skill-only-run.md).
 
 ## Human Decisions and termination
 

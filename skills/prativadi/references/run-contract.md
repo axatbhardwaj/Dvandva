@@ -73,13 +73,87 @@ the exact immutable checkpoint, whose complete deliverable manifest covers the
 canonical deliverable IDs exactly once. A `git` checkpoint materializes from its
 commit object names; an `analysis` checkpoint materializes through
 `dvandva-role.sh analysis SESSION RUN_DIR DIGEST`, which verifies each cited
-digest against the staged bytes before returning them. Never review branch `HEAD` or the
-vadi's mutable worktree. Do not apply worker-owned `submit_checkpoint`,
+digest against the staged bytes before returning them. Never select a review
+target from a moving branch `HEAD` or the vadi's mutable worktree. Do not apply
+worker-owned `submit_checkpoint`,
 `request_checkpoint_supersession`, `withdraw_approval`, or `finalize` actions.
+The authorized checkpoint is a post-implementation delivery candidate. Never
+invoke a companion against partial work, an implementation-in-progress, or a
+mutable branch; vadi does not submit those as checkpoints.
 
-Before a verdict, read or claim a fresh snapshot, then copy the exact current `checkpoint` coordinates.
-Never type, increment, or reuse them from an older snapshot. Bind every verdict
-to all three and discard a stale verdict:
+Capture the authorized snapshot's checkpoint identity, manifest digest, and
+scope revision before reviewing. For the Spec axis, materialize one immutable
+spec snapshot from the canonical objective, references, task, deliverables, and
+any exact referenced issue/spec bytes. Store it in a private file, compute its
+sha256, and pass that file rather than a mutable URL or live issue. Record the
+original reference and `spec_sha256`; if there is no external spec, the
+canonical scope snapshot itself is the spec.
+
+**REQUIRED WHEN AVAILABLE:** Invoke `code-review` once for each newly authorized
+complete `git` delivery candidate. It is available only when advertised in the
+current host session with model invocation enabled. Materialize the exact
+checkpoint as `HEAD` in an isolated checkout and verify `git rev-parse HEAD`
+equals the captured checkpoint identity. Give `code-review` an immutable
+fixed-point commit SHA and the immutable spec snapshot. Prefer a comparison
+base explicitly named by canonical scope; otherwise pin the merge-base with the
+repository's remote default branch. Never pass a symbolic branch, mutable spec,
+or mutable worktree state.
+
+The immutable snapshot is the sole authorized Spec source. Explicitly instruct
+`code-review` not to discover or fetch issue references from commit messages,
+URLs, branches, or other files, and require its Spec report to identify the
+supplied `spec_sha256`. If it uses any other source, omits that attestation, or
+cannot honor the restriction, discard both companion reports and perform both
+axes natively against the snapshot. Disclose `native-fallback` and the exact
+reason; never accept mutable live bytes as review evidence.
+
+Treat the Standards and Spec reports as review evidence, not as the Dvandva
+verdict. Verify their findings against the checkpoint and adjudicate every one
+before recording the bound review. An `analysis` checkpoint does not invoke
+`code-review`; inspect its facade-verified bytes on both axes natively. A
+companion is unavailable when it is absent, hidden, user-only, unreadable,
+rejected by the host, fails the sole-spec-source rule, or fails to return both
+reports. In that case, complete the same two axes as a native fallback without
+installing or changing skills.
+
+Put this compact block under `What was verified` in the current session's
+five-part handoff:
+
+```text
+review_mode: <matt-code-review|native-analysis|native-fallback>
+reviewed_checkpoint_identity: <captured checkpoint identity>
+reviewed_manifest_digest: <captured manifest digest>
+reviewed_scope_revision: <captured scope revision>
+fixed_point_sha: <full commit SHA|null for analysis>
+spec_reference: <canonical reference|canonical-scope>
+spec_sha256: <sha256 of exact spec snapshot bytes>
+axis_results: <Standards result>; <Spec result>
+finding_adjudication: <each finding accepted/rejected with checkpoint evidence>
+fallback_reason: <reason|null>
+```
+
+This is operator-visible session evidence, not Baton state or a peer transport.
+Do not claim that raw companion reports or rejected findings were staged in the
+explainer. `record_review` durably stores only the checkpoint-bound verdict and
+accepted actionable findings. Those bound fields are all the peer may rely on
+through the facade. Always disclose a native fallback; companion availability
+never blocks an authorized review. Remove the private spec snapshot after
+adjudication.
+
+This selection relies on the hosts' documented default invocation policy:
+[Codex skills](https://learn.chatgpt.com/docs/build-skills#how-chatgpt-and-codex-use-skills)
+are implicitly invocable unless `allow_implicit_invocation` is false, and
+[Claude Code skills](https://code.claude.com/docs/en/skills#control-who-invokes-a-skill)
+are model-invocable unless `disable-model-invocation` is true. Missing, hidden,
+or user-only installations still take the native fallback above.
+
+Before a verdict, read or claim a fresh snapshot. Compare all three captured
+coordinates with the current checkpoint and, for Git, verify `git rev-parse
+HEAD` still equals its identity. If any value differs, discard the reports and
+restart from the newly authorized checkpoint; never rebind old evidence by
+copying fresh coordinates onto it. Otherwise copy the matching current
+coordinates into the action. Never type, increment, or reuse them from an older
+snapshot. Bind every verdict to all three:
 
 ```json
 {"type":"record_review","verdict":"changes_requested","checkpoint_identity":"<snapshot.checkpoint.identity>","manifest_digest":"<snapshot.checkpoint.manifest_digest>","scope_revision":<snapshot.checkpoint.scope_revision>,"findings":["<actionable finding>"]}
@@ -201,8 +275,10 @@ expired lease alone.
 
 The human starts the peer session with the returned prompt. Neither role
 invokes or wakes the other harness. User-created harness goals remain
-unchanged. Third-party and explicit-only skills, including Matt Pocock's
-skills, run only when the human explicitly invokes them in this session.
+unchanged. Third-party user-invoked workflow skills run only when the human
+explicitly invokes them in this session. The required model-invocable
+`code-review` companion above is local to prativadi and is not a peer-harness
+invocation.
 
 After each handoff, report these exact fields and, in the same turn, continue
 in a foreground local wait until terminal state or human stop:
