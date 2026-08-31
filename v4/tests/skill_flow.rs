@@ -194,9 +194,14 @@ fn workflow_modes_define_distinct_review_and_authority_contracts() {
             "absent, use `implementation`",
             "Parents alone mutate Baton or GitHub",
             "maintaining_ready",
-            "continue GitHub polling",
+            "refresh live GitHub between bounded Baton waits",
+            "GitHub does not wake Baton",
             "drift reopens the fix and review loop",
             "Never merge",
+            "For every workflow",
+            "scope, intent, authority",
+            "authority, or permission",
+            "other uncertainty stay autonomous",
         ] {
             assert!(normalized.contains(required), "{role} omitted {required:?}");
         }
@@ -224,6 +229,10 @@ fn workflow_modes_define_distinct_review_and_authority_contracts() {
         "fresh merge authorization",
         "existing colleague reviewer",
         "never patch another author's PR",
+        "own-authored/owned scoped work",
+        "design, security, or secret-policy",
+        "review ID, exact PR, actor, state, reviewed commit/head, and body digest",
+        "then prativadi independently re-queries the same receipt",
     ] {
         assert!(
             vadi_normalized.contains(required),

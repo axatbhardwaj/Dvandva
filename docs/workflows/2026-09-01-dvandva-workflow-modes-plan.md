@@ -8,7 +8,7 @@
 
 **Tech Stack:** Markdown agent skills, Rust source-contract tests, Bash packaging tests
 
-**Spec:** `docs/superpowers/specs/2026-09-01-dvandva-workflow-modes-design.md`
+**Spec:** `docs/workflows/2026-09-01-dvandva-workflow-modes-design.md`
 
 ## Global Constraints
 
