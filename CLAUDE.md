@@ -15,8 +15,10 @@
 - Keep the helper outside `PATH`. `$setup-dvandva` is explicit-only.
 - Matt Pocock's user-invoked workflow skills remain explicit human invocations
   inside an already joined role session. Prativadi automatically invokes the
-  model-invocable `code-review` for each Git checkpoint, with native review for
-  analysis checkpoints or when that companion is unavailable.
+  model-invocable `code-review` once for each newly authorized complete Git
+  delivery candidate, after the whole scoped implementation is ready. Analysis
+  checkpoints and unavailable-companion cases use native review. Capability
+  evidence is recorded in `docs/workflows/skill-only-run.md`.
 - Semantic roles submit and review only complete checkpoint bindings. Use
   checkpoint supersession or approval withdrawal for newly discovered work.
 - Each handoff opens an obligation. For the current one, the Codex harness

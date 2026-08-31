@@ -158,6 +158,10 @@ fn vadi_skill_sources_define_the_complete_v2_contract() {
     ] {
         assert!(source.contains(required), "vadi omitted {required:?}");
     }
+    let normalized = source.split_whitespace().collect::<Vec<_>>().join(" ");
+    assert!(normalized.contains(
+        "Never submit partial, work-in-progress, or incremental implementation merely to obtain a review."
+    ));
 }
 
 #[test]
@@ -165,7 +169,7 @@ fn prativadi_skill_sources_define_the_complete_v2_contract() {
     assert_role_source_contract("prativadi");
     let (_, contract) = role_sources("prativadi");
     assert!(contract.contains("Prativadi never creates a run."));
-    assert!(contract.contains("copy the exact current `checkpoint` coordinates"));
+    assert!(contract.contains("copy the matching current"));
     assert!(contract.contains("manifest_digest"));
     assert!(contract.contains("scope_revision"));
     let synopsis = contract.split("```").nth(1).unwrap();
@@ -173,7 +177,7 @@ fn prativadi_skill_sources_define_the_complete_v2_contract() {
 }
 
 #[test]
-fn prativadi_automatically_uses_code_review_for_git_checkpoints() {
+fn prativadi_automatically_reviews_complete_git_delivery_candidates() {
     let (skill, contract) = role_sources("prativadi");
     let source = format!("{skill}\n{contract}")
         .split_whitespace()
@@ -181,10 +185,12 @@ fn prativadi_automatically_uses_code_review_for_git_checkpoints() {
         .join(" ");
 
     for required in [
-        "**REQUIRED SUB-SKILL:** Use `code-review` for every `git` checkpoint.",
+        "**REQUIRED WHEN AVAILABLE:** Invoke `code-review` once for each newly authorized complete `git` delivery candidate.",
+        "Never invoke a companion against partial work",
+        "never run it against implementation-in-progress",
         "exact checkpoint as `HEAD`",
         "immutable fixed-point commit SHA",
-        "canonical task or spec reference",
+        "immutable spec snapshot",
         "review evidence",
         "An `analysis` checkpoint does not invoke `code-review`",
         "native fallback",
@@ -203,6 +209,95 @@ fn prativadi_automatically_uses_code_review_for_git_checkpoints() {
         .join(" ");
     assert!(claude.contains("Prativadi automatically invokes the model-invocable `code-review`"));
     assert!(!claude.contains("Matt Pocock skills remain explicit human invocations"));
+}
+
+#[test]
+fn prativadi_code_review_claim_is_source_backed_and_pressure_tested() {
+    let (_, contract) = role_sources("prativadi");
+    let workflow = repository_file("docs/workflows/skill-only-run.md");
+    let evidence = format!("{contract}\n{workflow}");
+    for required in [
+        "https://learn.chatgpt.com/docs/build-skills",
+        "https://code.claude.com/docs/en/skills",
+        "installed policy check: model invocation allowed",
+        "docs/case-studies/2026-09-01-prativadi-code-review-pressure-test.md",
+    ] {
+        assert!(
+            evidence.contains(required),
+            "automatic code-review claim omitted evidence {required:?}"
+        );
+    }
+
+    let approved_design =
+        repository_file("docs/superpowers/specs/2026-08-27-skill-only-run-interface-design.md")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+    assert!(approved_design.contains("model-invocable `code-review`"));
+    assert!(!approved_design.contains(
+        "Without such an explicit turn, prativadi performs its native adversarial review"
+    ));
+    let hardened_design = repository_file(
+        "docs/superpowers/specs/2026-08-27-v0-2-run-protocol-hardening-design.md",
+    )
+    .split_whitespace()
+    .collect::<Vec<_>>()
+    .join(" ");
+    assert!(hardened_design.contains("model-invocable `code-review` is the narrow exception"));
+    assert!(hardened_design.contains("It never runs against work-in-progress."));
+
+    let pressure =
+        repository_file("docs/case-studies/2026-09-01-prativadi-code-review-pressure-test.md");
+    for required in [
+        "RED baseline",
+        "GREEN guidance",
+        "Complete Git candidate, companion available",
+        "Analysis checkpoint",
+        "Complete Git candidate, companion unavailable",
+        "does not prove host availability",
+    ] {
+        assert!(
+            pressure.contains(required),
+            "pressure evidence omitted {required:?}"
+        );
+    }
+}
+
+#[test]
+fn prativadi_review_inputs_and_verdict_are_immutably_bound() {
+    let (_, contract) = role_sources("prativadi");
+    let source = contract.split_whitespace().collect::<Vec<_>>().join(" ");
+    for required in [
+        "**REQUIRED WHEN AVAILABLE:** Invoke `code-review` once for each newly authorized complete `git` delivery candidate.",
+        "advertised in the current host session",
+        "immutable spec snapshot",
+        "spec_sha256",
+        "review_mode",
+        "reviewed_checkpoint_identity",
+        "reviewed_manifest_digest",
+        "reviewed_scope_revision",
+        "fixed_point_sha",
+        "axis_results",
+        "finding_adjudication",
+        "git rev-parse HEAD",
+        "Compare all three captured coordinates",
+        "discard the reports and restart",
+        "not Baton state or a peer transport",
+        "`record_review` durably stores only the checkpoint-bound verdict",
+    ] {
+        assert!(
+            source.contains(required),
+            "review evidence omitted {required:?}"
+        );
+    }
+
+    let workflow = repository_file("docs/workflows/skill-only-run.md")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    assert!(workflow.contains("Dvandva setup installs only the three Dvandva skills"));
+    assert!(workflow.contains("mandatory when the host advertises it"));
+    assert!(workflow.contains("Raw companion reports and rejected findings"));
 }
 
 fn documented_json_blocks(markdown: &str) -> Vec<String> {

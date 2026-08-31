@@ -19,6 +19,12 @@ npx --yes skills add axatbhardwaj/Dvandva --global \
   --skill setup-dvandva vadi prativadi
 ```
 
+Dvandva setup installs only the three Dvandva skills above and their private
+kernel. It does not install or update Matt Pocock's separate skills. When the
+host advertises Matt's model-invocable `code-review`, prativadi must use it once
+for each newly authorized complete Git delivery candidate; otherwise the
+declared native fallback keeps Dvandva standalone.
+
 Then explicitly ask one session:
 
 ```text
@@ -86,6 +92,12 @@ derives its manifest digest and scope revision. Prativadi first reconciles the
 declared scope with the human objective, then binds its verdict to checkpoint
 identity, manifest digest, and scope revision.
 
+The checkpoint is submitted only after the whole canonical implementation and
+its verification are complete. Partial or work-in-progress implementation is
+not checkpointed for Matt review. If prativadi requests changes, vadi fixes
+them and submits a new complete candidate; prativadi then runs `code-review`
+once against that new immutable `HEAD` and the original pinned fixed point.
+
 New required work has two stale-work paths:
 
 - During `reviewing`, vadi applies `request_checkpoint_supersession`; approval
@@ -138,10 +150,34 @@ it.
 
 Matt Pocock's user-invoked workflow skills can operate inside either joined
 role session only when the human explicitly invokes the specific skill there.
-Prativadi automatically selects the separately model-invocable `code-review`
-skill for every immutable Git checkpoint. It supplies a pinned fixed-point SHA,
-the checkpoint as `HEAD`, and the canonical task or spec reference; its
-Standards and Spec reports are evidence for prativadi's checkpoint-bound
-verdict. Analysis checkpoints stay native. If `code-review` is unavailable,
-prativadi performs both axes natively and discloses that fallback. User-created
-harness goals remain untouched throughout the run.
+The separately installed `code-review` is mandatory when the host advertises it
+as model-invocable, but only for a complete Git delivery candidate after the
+whole scoped implementation is ready. Prativadi supplies a pinned fixed-point
+SHA, the checkpoint as `HEAD`, and a sha256-bound local snapshot of the
+canonical task/spec bytes.
+Its Standards and Spec reports are evidence for prativadi's independently
+adjudicated, checkpoint-bound verdict. Prativadi summarizes provenance under
+`What was verified`; the Baton durably records only the accepted findings and
+verdict bound to the checkpoint. Raw companion reports and rejected findings
+are session evidence, not protocol state or a peer transport. Analysis
+checkpoints stay native. An absent, hidden, user-only, unreadable, rejected, or
+incomplete companion takes the disclosed native fallback. Prativadi never
+installs or reconfigures it mid-run. User-created harness goals remain untouched
+throughout the run.
+
+The host behavior is documented by
+[OpenAI's Codex skill invocation policy](https://learn.chatgpt.com/docs/build-skills#how-chatgpt-and-codex-use-skills)
+and [Claude Code's skill invocation policy](https://code.claude.com/docs/en/skills#control-who-invokes-a-skill).
+The installed Matt skill was rechecked on 2026-09-01 with:
+
+```bash
+task_skill_root="$HOME/.agents/skills/code-review"
+test -f "$task_skill_root/SKILL.md"
+test -f "$task_skill_root/agents/openai.yaml"
+! rg -n '^disable-model-invocation:[[:space:]]*true$' "$task_skill_root/SKILL.md"
+! rg -n 'allow_implicit_invocation:[[:space:]]*false' "$task_skill_root/agents/openai.yaml"
+printf 'installed policy check: model invocation allowed\n'
+```
+
+The RED/GREEN fresh-agent scenarios are recorded in
+[`docs/case-studies/2026-09-01-prativadi-code-review-pressure-test.md`](../case-studies/2026-09-01-prativadi-code-review-pressure-test.md).

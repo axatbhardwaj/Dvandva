@@ -68,6 +68,10 @@ with mode 0600, passes its path as `ACTION_FILE`, and deletes it after `apply`.
 
 A checkpoint contains one complete deliverable manifest. It covers the
 canonical deliverable IDs exactly once and includes non-empty verification.
+Submit it only after implementation and verification for the whole canonical
+scope are complete. Never submit partial, work-in-progress, or incremental
+implementation merely to obtain a review. A revision after requested changes
+is another complete delivery candidate, not an intermediate checkpoint.
 Use immutable artifacts, not a branch or mutable `HEAD`. Checkpoints are typed:
 `git` binds full-length commit object names, and `analysis` binds sha256 content
 digests for deliverables that produce a review, audit, or finding rather than a
