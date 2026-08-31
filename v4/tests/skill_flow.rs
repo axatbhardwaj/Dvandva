@@ -177,6 +177,49 @@ fn prativadi_skill_sources_define_the_complete_v2_contract() {
 }
 
 #[test]
+fn workflow_modes_define_distinct_review_and_authority_contracts() {
+    let (vadi_skill, vadi_contract) = role_sources("vadi");
+    let (prativadi_skill, prativadi_contract) = role_sources("prativadi");
+    let vadi = format!("{vadi_skill}\n{vadi_contract}");
+    let prativadi = format!("{prativadi_skill}\n{prativadi_contract}");
+    let combined = format!("{vadi}\n{prativadi}");
+    let vadi_normalized = vadi.split_whitespace().collect::<Vec<_>>().join(" ");
+    let prativadi_normalized = prativadi.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    for workflow in ["implementation", "babysit", "pr_review"] {
+        assert!(combined.contains(workflow), "workflow omitted {workflow:?}");
+    }
+    for required in [
+        "fresh merge authorization",
+        "existing colleague reviewer",
+        "never patch another author's PR",
+    ] {
+        assert!(
+            vadi_normalized.contains(required),
+            "vadi omitted {required:?}"
+        );
+    }
+    for required in [
+        "internal sanity filter",
+        "independent first pass",
+        "GitHub receipt",
+    ] {
+        assert!(
+            prativadi_normalized.contains(required),
+            "prativadi omitted {required:?}"
+        );
+    }
+
+    let fable = combined
+        .find("Fable adjudication")
+        .expect("Fable adjudication omitted");
+    let escalation = combined
+        .find("irreversible human escalation")
+        .expect("irreversible human escalation omitted");
+    assert!(fable < escalation, "Fable must precede human escalation");
+}
+
+#[test]
 fn prativadi_automatically_reviews_complete_git_delivery_candidates() {
     let (skill, contract) = role_sources("prativadi");
     let source = format!("{skill}\n{contract}")

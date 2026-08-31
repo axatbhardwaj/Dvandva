@@ -63,6 +63,33 @@ changes-requested explainer takes `stage_explainer` again, and a wait timeout
 (`wait_outcome: idle_timeout`) takes a fresh snapshot and another wait. The
 kernel never leaves `request_human_decision` as the only way forward.
 
+## Workflow selection and prativadi lifecycle
+
+Read objective ref `workflow=implementation|babysit|pr_review`; when it is
+absent, use `implementation`. The existing checkpoint, supersession, explainer,
+Human Decision, polling, and Matt `code-review` rules remain in force. Parents
+alone mutate Baton or GitHub; read-only evidence may use subagents.
+
+In `implementation`, review each newly authorized complete checkpoint under
+the existing immutable two-axis rules. Never treat work in progress as a
+candidate.
+
+In `babysit`, prativadi is an internal sanity filter, not the real reviewer.
+Independently check each exact fix head and its CI evidence before vadi
+re-requests the existing colleague reviewer. Unresolved findings block that
+request, but neither internal approval nor thread resolution is colleague
+acceptance; new feedback, a changed head, or a failed gate reopens the loop.
+
+In `pr_review`, make an independent first pass without seeing vadi's report,
+covering the diff, spec, standards, regressions, security edges, and practical
+failure modes. Then compare and adjudicate every vadi finding into the final
+`APPROVE` or `REQUEST_CHANGES` that vadi submits. After the write, both parents
+independently query and verify the same GitHub receipt: review ID, PR, actor,
+state, reviewed commit, and body digest. Head drift before both confirmations
+invalidates the attempt and restarts the review. A Dvandva approval in
+`pr_review` approves the receipt-bearing review artifact; the formal external
+verdict may be `REQUEST_CHANGES` and still completes after confirmed submission.
+
 ## Checkpoint and review bindings
 
 For every `apply` action, the role writes its JSON to a private temporary file
