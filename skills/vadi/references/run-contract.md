@@ -83,6 +83,9 @@ reviewed head, required CI, mergeability, external approvals, no live requested
 changes, dispositioned threads, current stack/base state, and no pending work.
 Never merge autonomously: even when ready, merge needs fresh merge authorization
 from the human, including explicit authority for every affected stack PR.
+After colleague approval, progress from `merge_ready` to `maintaining_ready` and
+continue GitHub polling; head, base, CI, approval, requested-change, or thread
+drift reopens the fix and review loop.
 
 In `pr_review`, create one independent run per external PR. It is read-only
 except for submitting the formal GitHub review, and vadi must never patch

@@ -79,6 +79,10 @@ Independently check each exact fix head and its CI evidence before vadi
 re-requests the existing colleague reviewer. Unresolved findings block that
 request, but neither internal approval nor thread resolution is colleague
 acceptance; new feedback, a changed head, or a failed gate reopens the loop.
+After colleague approval, progress from `merge_ready` to `maintaining_ready` and
+continue GitHub polling; head, base, CI, approval, requested-change, or thread
+drift reopens the fix and review loop. Never merge without fresh human
+authorization.
 
 In `pr_review`, make an independent first pass without seeing vadi's report,
 covering the diff, spec, standards, regressions, security edges, and practical
@@ -89,6 +93,11 @@ state, reviewed commit, and body digest. Head drift before both confirmations
 invalidates the attempt and restarts the review. A Dvandva approval in
 `pr_review` approves the receipt-bearing review artifact; the formal external
 verdict may be `REQUEST_CHANGES` and still completes after confirmed submission.
+
+Before `request_human_decision` for unresolved irreversible uncertainty,
+exchange evidence, attempt an available scoped fix, and use available local
+Fable adjudication before irreversible human escalation. Fable is advisory and
+never a Baton participant.
 
 ## Checkpoint and review bindings
 

@@ -182,12 +182,33 @@ fn workflow_modes_define_distinct_review_and_authority_contracts() {
     let (prativadi_skill, prativadi_contract) = role_sources("prativadi");
     let vadi = format!("{vadi_skill}\n{vadi_contract}");
     let prativadi = format!("{prativadi_skill}\n{prativadi_contract}");
-    let combined = format!("{vadi}\n{prativadi}");
     let vadi_normalized = vadi.split_whitespace().collect::<Vec<_>>().join(" ");
     let prativadi_normalized = prativadi.split_whitespace().collect::<Vec<_>>().join(" ");
 
-    for workflow in ["implementation", "babysit", "pr_review"] {
-        assert!(combined.contains(workflow), "workflow omitted {workflow:?}");
+    for (role, source, normalized) in [
+        ("vadi", &vadi, &vadi_normalized),
+        ("prativadi", &prativadi, &prativadi_normalized),
+    ] {
+        for required in [
+            "workflow=implementation|babysit|pr_review",
+            "absent, use `implementation`",
+            "Parents alone mutate Baton or GitHub",
+            "maintaining_ready",
+            "continue GitHub polling",
+            "Never merge",
+        ] {
+            assert!(normalized.contains(required), "{role} omitted {required:?}");
+        }
+        let fable = source
+            .find("Fable adjudication")
+            .expect("Fable adjudication omitted");
+        let escalation = source
+            .find("irreversible human escalation")
+            .expect("irreversible human escalation omitted");
+        assert!(
+            fable < escalation,
+            "{role} must use Fable before human escalation"
+        );
     }
     for required in [
         "fresh merge authorization",
@@ -209,14 +230,6 @@ fn workflow_modes_define_distinct_review_and_authority_contracts() {
             "prativadi omitted {required:?}"
         );
     }
-
-    let fable = combined
-        .find("Fable adjudication")
-        .expect("Fable adjudication omitted");
-    let escalation = combined
-        .find("irreversible human escalation")
-        .expect("irreversible human escalation omitted");
-    assert!(fable < escalation, "Fable must precede human escalation");
 }
 
 #[test]
