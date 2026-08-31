@@ -1,17 +1,17 @@
 # Installation contract
 
-The release target is `0.3.0` / `skills-v0.3.0`. The installer resolves the
+The release target is `0.3.1` / `skills-v0.3.1`. The installer resolves the
 tag and release asset at invocation and fails closed if either is missing.
 The operations:
 
 ```bash
-bash scripts/setup-dvandva.sh install --version 0.3.0
-bash scripts/setup-dvandva.sh update --version 0.3.0
-bash scripts/setup-dvandva.sh doctor --version 0.3.0
-bash scripts/setup-dvandva.sh uninstall --version 0.3.0
+bash scripts/setup-dvandva.sh install --version 0.3.1
+bash scripts/setup-dvandva.sh update --version 0.3.1
+bash scripts/setup-dvandva.sh doctor --version 0.3.1
+bash scripts/setup-dvandva.sh uninstall --version 0.3.1
 ```
 
-These operations consume release `skills-v0.3.0`. Compatibility requires
+These operations consume release `skills-v0.3.1`. Compatibility requires
 write schema `dvandva.run.v2` and facade API 2. Kernel v1 read support is only
 for explicit migration by a role; setup never migrates runs during install,
 update, doctor, or uninstall.
@@ -35,6 +35,6 @@ schema compatibility probe. `uninstall` refuses unowned data and preserves the
 runs directory. A destructive purge requires the user's explicit request and:
 
 ```bash
-bash scripts/setup-dvandva.sh uninstall --version 0.3.0 \
+bash scripts/setup-dvandva.sh uninstall --version 0.3.1 \
   --purge-runs --yes-purge-runs
 ```
