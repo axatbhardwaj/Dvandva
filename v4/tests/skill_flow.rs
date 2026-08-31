@@ -228,9 +228,9 @@ fn workflow_modes_define_distinct_review_and_authority_contracts() {
         );
     }
     for required in [
-        "fresh merge authorization",
         "existing colleague reviewer",
         "never patch another author's PR",
+        "constructive report on intent, behavior, integration, tests, maintainability, and practical failures",
         "own-authored/owned scoped work",
         "design is intent",
         "security and secret-policy are scope or authority",
