@@ -165,6 +165,12 @@ incomplete companion takes the disclosed native fallback. Prativadi never
 installs or reconfigures it mid-run. User-created harness goals remain untouched
 throughout the run.
 
+The supplied snapshot is the sole authorized Spec source. Prativadi tells the
+companion not to discover or fetch issue references or other specs and requires
+the Spec report to attest the supplied digest. Any other source or missing
+attestation invalidates both companion reports and triggers the disclosed native
+fallback against the immutable snapshot.
+
 The host behavior is documented by
 [OpenAI's Codex skill invocation policy](https://learn.chatgpt.com/docs/build-skills#how-chatgpt-and-codex-use-skills)
 and [Claude Code's skill invocation policy](https://code.claude.com/docs/en/skills#control-who-invokes-a-skill).

@@ -99,13 +99,22 @@ base explicitly named by canonical scope; otherwise pin the merge-base with the
 repository's remote default branch. Never pass a symbolic branch, mutable spec,
 or mutable worktree state.
 
+The immutable snapshot is the sole authorized Spec source. Explicitly instruct
+`code-review` not to discover or fetch issue references from commit messages,
+URLs, branches, or other files, and require its Spec report to identify the
+supplied `spec_sha256`. If it uses any other source, omits that attestation, or
+cannot honor the restriction, discard both companion reports and perform both
+axes natively against the snapshot. Disclose `native-fallback` and the exact
+reason; never accept mutable live bytes as review evidence.
+
 Treat the Standards and Spec reports as review evidence, not as the Dvandva
 verdict. Verify their findings against the checkpoint and adjudicate every one
 before recording the bound review. An `analysis` checkpoint does not invoke
 `code-review`; inspect its facade-verified bytes on both axes natively. A
 companion is unavailable when it is absent, hidden, user-only, unreadable,
-rejected by the host, or fails to return both reports. In that case, complete
-the same two axes as a native fallback without installing or changing skills.
+rejected by the host, fails the sole-spec-source rule, or fails to return both
+reports. In that case, complete the same two axes as a native fallback without
+installing or changing skills.
 
 Put this compact block under `What was verified` in the current session's
 five-part handoff:

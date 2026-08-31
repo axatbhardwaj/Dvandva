@@ -237,12 +237,11 @@ fn prativadi_code_review_claim_is_source_backed_and_pressure_tested() {
     assert!(!approved_design.contains(
         "Without such an explicit turn, prativadi performs its native adversarial review"
     ));
-    let hardened_design = repository_file(
-        "docs/superpowers/specs/2026-08-27-v0-2-run-protocol-hardening-design.md",
-    )
-    .split_whitespace()
-    .collect::<Vec<_>>()
-    .join(" ");
+    let hardened_design =
+        repository_file("docs/superpowers/specs/2026-08-27-v0-2-run-protocol-hardening-design.md")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
     assert!(hardened_design.contains("model-invocable `code-review` is the narrow exception"));
     assert!(hardened_design.contains("It never runs against work-in-progress."));
 
@@ -254,7 +253,7 @@ fn prativadi_code_review_claim_is_source_backed_and_pressure_tested() {
         "Complete Git candidate, companion available",
         "Analysis checkpoint",
         "Complete Git candidate, companion unavailable",
-        "does not prove host availability",
+        "do not prove host availability",
     ] {
         assert!(
             pressure.contains(required),
@@ -280,6 +279,9 @@ fn prativadi_review_inputs_and_verdict_are_immutably_bound() {
         "axis_results",
         "finding_adjudication",
         "git rev-parse HEAD",
+        "sole authorized Spec source",
+        "not to discover or fetch issue references",
+        "discard both companion reports and perform both axes natively",
         "Compare all three captured coordinates",
         "discard the reports and restart",
         "not Baton state or a peer transport",
@@ -298,6 +300,20 @@ fn prativadi_review_inputs_and_verdict_are_immutably_bound() {
     assert!(workflow.contains("Dvandva setup installs only the three Dvandva skills"));
     assert!(workflow.contains("mandatory when the host advertises it"));
     assert!(workflow.contains("Raw companion reports and rejected findings"));
+
+    let retained =
+        repository_file("docs/case-studies/evidence/2026-09-01-prativadi-final-retest.md");
+    for required in [
+        "## Sanitized prompt",
+        "## Sanitized result transcript",
+        "e2564b5cb53ec4aed8616071dbf05846588c7dfc4eecfabeb2a61d39edb914e6",
+        "51fb22ed9556a2c0e81a0009cb9b179a5485bd12d9ad17f4ed591e8b22155228",
+    ] {
+        assert!(
+            retained.contains(required),
+            "retained evidence omitted {required:?}"
+        );
+    }
 }
 
 fn documented_json_blocks(markdown: &str) -> Vec<String> {
