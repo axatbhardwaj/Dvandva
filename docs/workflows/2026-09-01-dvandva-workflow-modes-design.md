@@ -117,3 +117,5 @@ Focused source-contract tests must prove the default, explicit workflow names,
 the two distinct review lenses, the no-patch/no-automerge boundaries, fresh
 merge authority, colleague re-review semantics, two-party receipt confirmation,
 and parent-only mutations. Existing role-skill and v4 tests must remain green.
+
+Tool and Fable evidence: [workflow-mode GitHub evidence](../research/2026-09-01-workflow-mode-github-evidence.md).

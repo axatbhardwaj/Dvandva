@@ -199,9 +199,11 @@ fn workflow_modes_define_distinct_review_and_authority_contracts() {
             "drift reopens the fix and review loop",
             "Never merge",
             "For every workflow",
-            "scope, intent, authority",
-            "authority, or permission",
             "other uncertainty stay autonomous",
+            "scope, intent, or authority",
+            "Authority is permission the human alone can grant",
+            "unavailable capability is not a Human Decision",
+            "never new kinds",
         ] {
             assert!(normalized.contains(required), "{role} omitted {required:?}");
         }
@@ -230,9 +232,12 @@ fn workflow_modes_define_distinct_review_and_authority_contracts() {
         "existing colleague reviewer",
         "never patch another author's PR",
         "own-authored/owned scoped work",
-        "design, security, or secret-policy",
+        "design is intent",
+        "security and secret-policy are scope or authority",
         "review ID, exact PR, actor, state, reviewed commit/head, and body digest",
         "then prativadi independently re-queries the same receipt",
+        "submits prativadi's adjudicated `APPROVE` or `REQUEST_CHANGES` exact and unmodified",
+        "exact internally reviewed head, CI, mergeability, external approvals, no live requested changes, dispositioned threads, current stack/base, and no pending work",
     ] {
         assert!(
             vadi_normalized.contains(required),
@@ -243,6 +248,7 @@ fn workflow_modes_define_distinct_review_and_authority_contracts() {
         "internal sanity filter",
         "independent first pass",
         "GitHub receipt",
+        "prativadi independently re-queries the same GitHub receipt: review ID, exact PR, actor, state, reviewed commit/head, and body digest",
     ] {
         assert!(
             prativadi_normalized.contains(required),

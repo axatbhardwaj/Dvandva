@@ -1,6 +1,6 @@
 ---
 name: prativadi
-description: Act as prativadi for a paired Dvandva run. Use when the user says act as prativadi, join the current run as prativadi, review as prativadi, or explicitly invokes $prativadi. Do not trigger for ordinary solo review.
+description: Act as prativadi for a paired Dvandva run, including implementation, own-PR babysit, or external pr_review. Use when the user says act as prativadi, join the current run as prativadi, review as prativadi, or explicitly invokes $prativadi. Do not trigger for ordinary solo review.
 ---
 
 # Prativadi

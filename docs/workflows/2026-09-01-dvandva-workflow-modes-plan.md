@@ -1,7 +1,5 @@
 # Dvandva Workflow Modes Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
-
 **Goal:** Add default implementation, own-PR babysit, and external PR-review workflows to the active role skills.
 
 **Architecture:** Keep `vadi` and `prativadi` as the sole role interfaces. Select behavior from the Baton objective's `workflow` reference, defaulting to `implementation`; keep GitHub semantics in role contracts and bind external attestations through the existing final explainer gate.
