@@ -195,10 +195,20 @@ fn workflow_modes_define_distinct_review_and_authority_contracts() {
             "Parents alone mutate Baton or GitHub",
             "maintaining_ready",
             "continue GitHub polling",
+            "drift reopens the fix and review loop",
             "Never merge",
         ] {
             assert!(normalized.contains(required), "{role} omitted {required:?}");
         }
+        let authorization = if role == "vadi" {
+            "fresh merge authorization from the human"
+        } else {
+            "fresh human authorization"
+        };
+        assert!(
+            normalized.contains(authorization),
+            "{role} omitted {authorization:?}"
+        );
         let fable = source
             .find("Fable adjudication")
             .expect("Fable adjudication omitted");
