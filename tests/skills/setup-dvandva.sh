@@ -10,13 +10,20 @@ grep -Fq 'fetch-depth: 0' "$repo_root/.github/workflows/skills-release.yml"
 mkdir -p "$test_root/old"
 git -C "$repo_root" archive skills-v0.1.1 v4 skills/setup-dvandva | \
   tar -x -C "$test_root/old"
+mkdir -p "$test_root/previous"
+git -C "$repo_root" archive skills-v0.3.0 v4 skills/setup-dvandva | \
+  tar -x -C "$test_root/previous"
 CARGO_TARGET_DIR="$test_root/old-target" cargo build --quiet --locked \
   --manifest-path "$test_root/old/v4/Cargo.toml"
+CARGO_TARGET_DIR="$test_root/previous-target" cargo build --quiet --locked \
+  --manifest-path "$test_root/previous/v4/Cargo.toml"
 CARGO_TARGET_DIR="$test_root/new-target" cargo build --quiet --locked \
   --manifest-path "$repo_root/v4/Cargo.toml"
 old_binary="$test_root/old-target/debug/dvandva-v4"
+previous_binary="$test_root/previous-target/debug/dvandva-v4"
 new_binary="$test_root/new-target/debug/dvandva-v4"
 test "$($old_binary --version)" = 'dvandva-v4 0.1.1'
+test "$($previous_binary --version)" = 'dvandva-v4 0.3.0'
 test "$($new_binary --version)" = 'dvandva-v4 0.3.1'
 
 make_release() {
@@ -65,13 +72,16 @@ ADVERSARIAL_KERNEL
 }
 
 old_release="$test_root/release-0.1.1"
+previous_release="$test_root/release-0.3.0"
 new_release="$test_root/release-0.3.1"
 make_release "$old_release" "$old_binary"
+make_release "$previous_release" "$previous_binary"
 make_release "$new_release" "$new_binary"
 
 export XDG_DATA_HOME="$test_root/data"
 export XDG_STATE_HOME="$test_root/state"
 old_installer="$test_root/old/skills/setup-dvandva/scripts/setup-dvandva.sh"
+previous_installer="$test_root/previous/skills/setup-dvandva/scripts/setup-dvandva.sh"
 installer="${INSTALLER_UNDER_TEST:-$repo_root/skills/setup-dvandva/scripts/setup-dvandva.sh}"
 
 expect_failure() {
@@ -84,6 +94,26 @@ expect_failure() {
   fi
   grep -Fq "$pattern" <<<"$output"
 }
+
+# The immediately previous release updates in place without touching run state.
+(
+  export XDG_DATA_HOME="$test_root/previous-update/data"
+  export XDG_STATE_HOME="$test_root/previous-update/state"
+  DVANDVA_RELEASE_DIR="$previous_release" bash "$previous_installer" \
+    install --version 0.3.0 >/dev/null
+  previous_runs="$XDG_STATE_HOME/dvandva/runs"
+  mkdir -p "$previous_runs"
+  printf 'preserve exact previous release\n' >"$previous_runs/keep-0.3.0"
+  previous_runs_digest="$(find "$previous_runs" -printf '%P %y %m %s %T@\n' | sort)"
+
+  DVANDVA_RELEASE_DIR="$new_release" bash "$installer" \
+    update --version 0.3.1 >/dev/null
+  test "$(readlink "$XDG_DATA_HOME/dvandva/bin/current")" = '0.3.1'
+  test "$previous_runs_digest" = \
+    "$(find "$previous_runs" -printf '%P %y %m %s %T@\n' | sort)"
+  bash "$installer" doctor --version 0.3.1 | \
+    grep -Fq 'healthy version=0.3.1'
+)
 
 adversarial_handshake_case() (
   local kind="$1" expected_error="$2" case_root="$test_root/handshake-$1"
