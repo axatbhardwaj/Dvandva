@@ -259,9 +259,9 @@ impl PublicationPolicy {
     }
 
     /// Whether the designated reviewing harness can actually read bytes the
-    /// designated publisher places on this channel. A policy that fails this
+    /// explainer author places on this local channel. A policy that fails this
     /// check can never reach an explainer review and must be rejected at start
-    /// rather than after the publisher has already deployed.
+    /// rather than after the author has staged unusable bytes.
     pub fn reviewer_can_read(&self) -> bool {
         match (self.channel.as_str(), self.access.as_str()) {
             // Run-directory artifacts are local files both harnesses can open.

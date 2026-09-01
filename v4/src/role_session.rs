@@ -85,8 +85,8 @@ pub enum RoleStartResult {
 }
 
 /// A run whose publication policy names a reviewer that cannot read the
-/// publisher's channel can never reach an explainer review. Surface it before
-/// any claim, rather than after the publisher has already spent a deployment.
+/// explainer author's local channel can never reach review. Surface it before
+/// any claim, rather than after the author has staged unusable bytes.
 #[derive(Debug, Serialize)]
 pub struct UnreadablePublicationRole {
     pub outcome: &'static str,
@@ -422,7 +422,7 @@ fn is_revision_conflict(error: &RoleSessionError) -> bool {
 }
 
 /// Capability preflight: refuse to join a run whose reviewer cannot read the
-/// channel its publisher must use.
+/// local channel its explainer author must use.
 fn publication_preflight(candidate: &crate::discovery::RunCandidate) -> Option<RoleStartResult> {
     let baton = RunChannel::open(&candidate.run_dir).read().ok()?;
     let policy = baton
@@ -440,7 +440,7 @@ fn publication_preflight(candidate: &crate::discovery::RunCandidate) -> Option<R
             revision: baton.revision,
             publication_policy: policy,
             reason:
-                "the reviewing harness cannot read the publisher's channel at this access level",
+                "the reviewing harness cannot read the explainer's local channel at this access level",
             next_action: "repair_publication_policy",
             next_actions: ["repair_publication_policy"],
             actionable: true,
@@ -1101,8 +1101,8 @@ pub fn reclaim(
 }
 
 /// Swap an unreadable publication policy for the canonical channel both
-/// harnesses can read, and reset the current obligation's receipts so the
-/// publisher restages against the new channel. Never touches semantic scope.
+/// harnesses can read, and reset the current obligation's receipts so vadi
+/// restages against the new channel. Never touches semantic scope.
 pub fn repair_publication_policy(
     run_dir: &Path,
     credentials_root: &Path,

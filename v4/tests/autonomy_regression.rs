@@ -428,6 +428,128 @@ fn a_pre_staging_baton_still_loads_and_can_be_repaired() {
     assert_eq!(binding.site_id.as_deref(), Some("appgprj_deadbeef"));
 }
 
+/// v0.3.2 allowed Sites publication immediately after staging. A stored
+/// stage -> publish -> review chain must remain repairable even though current
+/// live writes require review before publication.
+#[test]
+fn a_publish_before_review_v0_3_2_chain_can_be_repaired() {
+    use dvandva_v4::store::RunChannel;
+
+    let dir = tempfile::tempdir().unwrap();
+    let run_dir = dir.path().join("run-a");
+    std::fs::create_dir_all(run_dir.join("history")).unwrap();
+    let obligation = serde_json::json!({
+        "handoff_revision": 0,
+        "kind": "run_started",
+        "scope_revision": 0
+    });
+    let digest = "8".repeat(64);
+    let mut root = serde_json::json!({
+        "schema": "dvandva.run.v2",
+        "run_id": "run-a",
+        "objective": {"summary": "Fix the protocol"},
+        "workspace": {
+            "repository_id": "github.com/axatbhardwaj/dvandva",
+            "origin": "https://github.com/axatbhardwaj/Dvandva",
+            "worktree": null
+        },
+        "task": {"reference": null, "summary": "Fix the protocol"},
+        "participants": {
+            "worker": {"harness": "Codex", "claim": null},
+            "reviewer": {"harness": "Claude", "claim": null}
+        },
+        "status": "working",
+        "assignee": "worker",
+        "revision": 0,
+        "scope_revision": 0,
+        "scope_deliverables": [{"id": "kernel", "description": "Fix the kernel"}],
+        "checkpoint": null,
+        "review": null,
+        "publication_policy": {
+            "publisher_harness": "Codex",
+            "channel": "codex_sites",
+            "access": "owner_only",
+            "reviewer_harness": "Claude"
+        },
+        "publication_binding": {
+            "site_id": null,
+            "obligation": obligation,
+            "deployment": null,
+            "review": null
+        },
+        "human_decision": null,
+        "predecessor_run_id": null,
+        "terminal": null,
+        "recovery": null
+    });
+    let mut revisions = vec![root.clone()];
+
+    root["revision"] = serde_json::json!(1);
+    root["publication_binding"]["artifact"] = serde_json::json!({
+        "obligation": obligation,
+        "source_digest": digest,
+        "path": format!("explainer/{digest}.html"),
+        "media_type": "text/html",
+        "byte_length": 1,
+        "channel": "run_artifact",
+        "access": "run_private",
+        "publisher_harness": "Codex"
+    });
+    revisions.push(root.clone());
+
+    root["revision"] = serde_json::json!(2);
+    root["publication_binding"]["site_id"] = serde_json::json!("appgprj_deadbeef");
+    root["publication_binding"]["deployment"] = serde_json::json!({
+        "obligation": obligation,
+        "source_digest": digest,
+        "site_id": "appgprj_deadbeef",
+        "site_version": "1",
+        "url": "https://example.chatgpt.site",
+        "channel": "codex_sites",
+        "access": "owner_only",
+        "publisher_harness": "Codex"
+    });
+    revisions.push(root.clone());
+
+    root["revision"] = serde_json::json!(3);
+    root["publication_binding"]["review"] = serde_json::json!({
+        "obligation": obligation,
+        "source_digest": digest,
+        "verdict": "approved",
+        "findings": [],
+        "reviewer_harness": "Claude"
+    });
+    revisions.push(root.clone());
+
+    for (revision, baton) in revisions.iter().enumerate() {
+        let bytes = serde_json::to_vec_pretty(baton).unwrap();
+        std::fs::write(run_dir.join(format!("history/{revision:020}.json")), &bytes).unwrap();
+    }
+    std::fs::write(
+        run_dir.join("baton.json"),
+        serde_json::to_vec_pretty(revisions.last().unwrap()).unwrap(),
+    )
+    .unwrap();
+
+    let channel = RunChannel::open(&run_dir);
+    assert_eq!(channel.read().unwrap().revision, 3);
+    let repaired = dvandva_v4::role_session::repair_publication_policy(
+        &run_dir,
+        &dir.path().join("credentials"),
+        Role::Worker,
+        "codex-session",
+        "codex",
+        "claude",
+        3,
+    )
+    .expect("a released publish-before-review chain must remain repairable");
+    assert_eq!(repaired.revision, 4);
+    assert_eq!(
+        repaired.publication_policy,
+        Some(PublicationPolicy::for_participants("Codex", "Claude"))
+    );
+}
+
 /// A worker that has handed a checkpoint to the reviewer must rest. Escape
 /// hatches stay available but are never wake reasons, or the foreground wait
 /// returns immediately and the role spins for the whole review.

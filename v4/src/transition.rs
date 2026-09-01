@@ -299,16 +299,16 @@ fn apply_locked(
             if !effective_policy(baton).reviewer_can_read() {
                 return Err(TransitionError::AutonomousRecoveryAvailable);
             }
-            // Likewise a changes-requested explainer: the publisher's recovery
-            // is to restage, and asking a human to bless a rewrite instead is
+            // Likewise a changes-requested explainer: vadi's recovery is to
+            // restage, and asking a human to bless a rewrite instead is
             // the approval wait the protocol exists to avoid.
-            let publisher_owes_restage = baton
+            let author_owes_restage = baton
                 .publication_binding
                 .as_ref()
                 .and_then(|binding| binding.review.as_ref())
                 .is_some_and(|review| review.verdict == "changes_requested")
                 && role == Role::Worker;
-            if publisher_owes_restage {
+            if author_owes_restage {
                 return Err(TransitionError::AutonomousRecoveryAvailable);
             }
             let options = options

@@ -1173,8 +1173,8 @@ fn valid_v2_edge_kind(current: &RunBaton, next: &RunBaton) -> bool {
 }
 
 /// Control-plane repair: an unreadable policy is replaced by the canonical
-/// readable one and the current obligation's receipts are dropped so the
-/// publisher restages onto the channel the reviewer can actually open.
+/// readable one and the current obligation's receipts are dropped so vadi
+/// restages onto the channel the reviewer can actually open.
 fn valid_publication_policy_repair_edge(current: &RunBaton, next: &RunBaton) -> bool {
     if is_terminal(current) {
         return false;
@@ -1241,8 +1241,13 @@ fn valid_publication_receipt_edge(
             && next_binding.review.is_none();
     }
     if current_binding.deployment != next_binding.deployment {
-        if legacy_unsequenced && current_binding.artifact.is_none() {
+        // Released kernels allowed an unsequenced Site receipt before the
+        // local review. Preserve that stored edge so repair can walk the old
+        // chain; live appends are never legacy_unsequenced and still require
+        // exact local approval before publication.
+        if legacy_unsequenced && current_binding.review.is_none() {
             return next_binding.deployment.is_some()
+                && next.has_codex_participant()
                 && current_binding.review == next_binding.review;
         }
         return current.local_explainer_approved(current_binding)
