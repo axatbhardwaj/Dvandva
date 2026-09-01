@@ -539,19 +539,25 @@ fn apply_locked(
             if binding.obligation != obligation {
                 return Err(TransitionError::StalePublicationBinding);
             }
-            // An exact replay — the same bytes already staged for this
-            // obligation — changes nothing and is a no-op whatever sequence it
-            // was prepared against, so a retried stage never fails as stale.
+            // An exact replay by the same author changes nothing and is a no-op
+            // whatever sequence it was prepared against. If an upgraded run's
+            // worker restages bytes authored under the old fixed harness policy,
+            // the digest stays stable but the author receipt must be rewritten.
             let incoming_digest = source_digest(&source_path)?;
+            let publisher_harness = caller_harness(baton, role).to_owned();
             if binding.artifact.as_ref().is_some_and(|artifact| {
-                artifact.obligation == obligation && artifact.source_digest == incoming_digest
+                artifact.obligation == obligation
+                    && artifact.source_digest == incoming_digest
+                    && artifact
+                        .publisher_harness
+                        .trim()
+                        .eq_ignore_ascii_case(publisher_harness.trim())
             }) {
                 return Ok(());
             }
             require_receipt_seq(binding, after_seq)?;
             let (source_digest, byte_length) =
                 stage_explainer_bytes(channel.directory(), &source_path)?;
-            let publisher_harness = caller_harness(baton, role).to_owned();
             let binding = baton
                 .publication_binding
                 .as_mut()

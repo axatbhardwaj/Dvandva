@@ -125,10 +125,10 @@ receipts are required at finalization; without Codex, Sites publication is
 skipped and local approval is sufficient. A policy whose reviewer cannot read
 its local channel is refused at `start` and repaired with `repair-policy`; the
 reviewer is never asked to authenticate to the Site.
-For upgrade compatibility, a receipt written before `0.3.3` remains valid
-against the fixed publication policy stored with that run; staging and review
-are checked independently so an upgrade between those two writes cannot strand
-the obligation.
+For upgrade compatibility, a complete author/reviewer receipt pair written
+before `0.3.3` remains valid against the fixed policy stored with that run. If
+the upgrade lands between staging and review, current vadi restages the same
+digest under the role-derived policy before current prativadi reviews it.
 
 ## Terminal checks
 

@@ -609,6 +609,10 @@ impl RunBaton {
                     && review.source_digest == artifact.source_digest
                     && review.verdict == "approved"
                     && review.findings.is_empty()
+                    && !artifact
+                        .publisher_harness
+                        .trim()
+                        .eq_ignore_ascii_case(review.reviewer_harness.trim())
                     && artifact_policy_matches
                     && review_policy_matches
             })

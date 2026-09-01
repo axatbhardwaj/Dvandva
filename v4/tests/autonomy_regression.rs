@@ -237,9 +237,12 @@ fn reverse_cast_receipts_can_span_the_v0_3_2_upgrade_boundary() {
         reviewer_harness: "Codex".into(),
     });
 
-    assert!(run.local_explainer_approved(run.publication_binding.as_ref().unwrap()));
+    assert!(!run.local_explainer_approved(run.publication_binding.as_ref().unwrap()));
+    let claude_worker = next_action::classify(&run, Role::Worker, "Claude");
+    assert!(claude_worker.legal_actions.contains(&"stage_explainer"));
     let codex_reviewer = next_action::classify(&run, Role::Reviewer, "Codex");
-    assert!(codex_reviewer.legal_actions.contains(&"publish_explainer"));
+    assert!(!codex_reviewer.legal_actions.contains(&"publish_explainer"));
+    assert!(!codex_reviewer.legal_actions.contains(&"review_explainer"));
 }
 
 #[test]
@@ -259,6 +262,10 @@ fn a_pairing_without_codex_skips_the_sites_receipt() {
     assert_eq!(run.participants.reviewer.harness, "grok");
     run.status = Status::Finalizing;
     run.assignee = Assignee::Worker;
+    assert_eq!(
+        next_action::classify(&run, Role::Worker, "fable").blocking_reason,
+        Some("finalize awaits current explainer approval")
+    );
     let binding = run.publication_binding.as_mut().unwrap();
     let obligation = binding.obligation.clone();
     let digest = "c".repeat(64);

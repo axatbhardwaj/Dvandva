@@ -56,8 +56,8 @@ The default implementation casting is Codex vadi and Claude prativadi:
 Codex session A: Act as vadi and implement DEF-123 with deliverable implementation.
 ```
 
-Either harness may host either role when the user explicitly reverses the
-casting, but one run must use different harness families.
+Any two distinct, non-blank harness names may fill the two roles; the user may
+explicitly reverse the usual Codex/Claude casting.
 
 Before domain work, vadi surfaces the returned run ID, canonical objective and
 scope, status/assignee, actions, and this exact prompt:

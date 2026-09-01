@@ -21,8 +21,9 @@ matching Sites receipt. If neither participant is Codex, Sites publication is
 skipped and the local approval is sufficient. This supersedes only ADR 0004's
 publishing-harness staging rule and optional-publication clause; its
 local-channel trust boundary remains intact.
-Receipts written before `0.3.3` remain valid against the fixed publication
-policy stored with the run, with staging and review validated independently so
-an upgrade between the two writes stays actionable.
+A complete receipt pair written before `0.3.3` remains valid against the fixed
+policy stored with the run. When an upgrade falls between staging and review,
+current vadi restages the same digest before current prativadi reviews it, so
+the two-party gate never becomes self-approval.
 Kernel `0.3.3` carries the role-owned author/reviewer rules and conditional
 Codex Sites gate; the write schema remains `dvandva.run.v2` and role API 2.

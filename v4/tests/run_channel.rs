@@ -4796,8 +4796,37 @@ fn persisted_reverse_cast_receipts_can_cross_the_v0_3_2_upgrade_boundary() {
     root.publication_policy = Some(dvandva_v4::model::PublicationPolicy::fixed());
     let channel = RunChannel::open(dir.path());
     channel.create(&root).unwrap();
-    let _worker = claim_role(dir.path(), "worker", "worker-claude", 0);
+    let worker = claim_role(dir.path(), "worker", "worker-claude", 0);
     let reviewer = claim_role(dir.path(), "reviewer", "reviewer-codex", 1);
+
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-claude",
+        &worker,
+        2,
+        "checkpoint.json",
+        checkpoint_submission(
+            "upgrade-checkpoint",
+            serde_json::json!([{
+                "id": "implementation",
+                "artifacts": [{"kind": "commit", "value": "upgrade-checkpoint"}]
+            }]),
+        ),
+    )
+    .success();
+    let checkpoint = checkpoint_binding(dir.path());
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-codex",
+        &reviewer,
+        3,
+        "checkpoint-review.json",
+        review_action("approved", &checkpoint, serde_json::json!([])),
+    )
+    .success();
+    assert_eq!(read_baton(dir.path())["status"], "finalizing");
 
     let html = b"<html><body>upgrade boundary</body></html>";
     let digest = format!("{:x}", Sha256::digest(html));
@@ -4815,7 +4844,7 @@ fn persisted_reverse_cast_receipts_can_cross_the_v0_3_2_upgrade_boundary() {
     let current = channel.read().unwrap();
     let mut legacy_staged = serde_json::to_value(&current).unwrap();
     let obligation = legacy_staged["publication_binding"]["obligation"].clone();
-    legacy_staged["revision"] = serde_json::json!(3);
+    legacy_staged["revision"] = serde_json::json!(5);
     legacy_staged["publication_binding"]["artifact"] = serde_json::json!({
         "obligation": obligation,
         "source_digest": digest,
@@ -4828,7 +4857,7 @@ fn persisted_reverse_cast_receipts_can_cross_the_v0_3_2_upgrade_boundary() {
     });
     legacy_staged["publication_binding"]["receipt_seq"] = serde_json::json!(1);
     let legacy_staged: RunBaton = serde_json::from_value(legacy_staged).unwrap();
-    channel.compare_and_swap(2, &legacy_staged).unwrap();
+    channel.compare_and_swap(4, &legacy_staged).unwrap();
 
     let staged = RunChannel::open(dir.path()).read().unwrap();
     assert_eq!(
@@ -4849,7 +4878,7 @@ fn persisted_reverse_cast_receipts_can_cross_the_v0_3_2_upgrade_boundary() {
         "reviewer",
         "reviewer-codex",
         &reviewer,
-        3,
+        5,
         "approve-after-upgrade.json",
         explainer_review_action(
             &current_obligation(dir.path()),
@@ -4860,11 +4889,80 @@ fn persisted_reverse_cast_receipts_can_cross_the_v0_3_2_upgrade_boundary() {
     )
     .success();
 
+    let mixed = RunChannel::open(dir.path()).read().unwrap();
+    assert!(!mixed.local_explainer_approved(mixed.publication_binding.as_ref().unwrap()));
+    let worker_next = dvandva_v4::next_action::classify(&mixed, Role::Worker, "Claude");
+    assert!(worker_next.legal_actions.contains(&"stage_explainer"));
+    let reviewer_next = dvandva_v4::next_action::classify(&mixed, Role::Reviewer, "Codex");
+    assert!(!reviewer_next.legal_actions.contains(&"review_explainer"));
+    assert!(!reviewer_next.legal_actions.contains(&"publish_explainer"));
+
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-claude",
+        &worker,
+        6,
+        "restage-after-upgrade.json",
+        serde_json::json!({
+            "type": "stage_explainer",
+            "obligation": current_obligation(dir.path()),
+            "source_path": artifact_path
+        }),
+    )
+    .success();
+    let restaged_artifact = read_baton(dir.path())["publication_binding"]["artifact"].clone();
+    assert_eq!(restaged_artifact["source_digest"], digest);
+    assert_eq!(restaged_artifact["publisher_harness"], "Claude");
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-codex",
+        &reviewer,
+        7,
+        "approve-restaged.json",
+        explainer_review_action(
+            &current_obligation(dir.path()),
+            &restaged_artifact,
+            "approved",
+            serde_json::json!([]),
+        ),
+    )
+    .success();
+
     let approved = RunChannel::open(dir.path()).read().unwrap();
     assert!(approved.local_explainer_approved(approved.publication_binding.as_ref().unwrap()));
     let next = dvandva_v4::next_action::classify(&approved, Role::Reviewer, "Codex");
     assert!(next.legal_actions.contains(&"publish_explainer"));
-    assert!(next.actionable);
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-codex",
+        &reviewer,
+        8,
+        "publish-after-upgrade.json",
+        explainer_publication_action(
+            &current_obligation(dir.path()),
+            &digest,
+            "site-run-reverse",
+            "version-final",
+            "https://sites.openai.test/site-run-reverse/version-final",
+        ),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-claude",
+        &worker,
+        9,
+        "finalize-after-upgrade.json",
+        serde_json::json!({"type": "finalize"}),
+    )
+    .success();
+    let done = RunChannel::open(dir.path()).read().unwrap();
+    assert_eq!(done.status, dvandva_v4::model::Status::Done);
+    assert_eq!(done.terminal.unwrap().outcome, "done");
 }
 
 #[test]

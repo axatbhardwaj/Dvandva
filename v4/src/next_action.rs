@@ -72,8 +72,11 @@ pub fn classify(baton: &RunBaton, role: Role, participant_harness: &str) -> Next
                 if publication_gate_satisfied(baton) {
                     legal.push("finalize");
                 } else {
-                    blocking_reason =
-                        Some("finalize awaits current explainer publication and approval");
+                    blocking_reason = Some(if baton.has_codex_participant() {
+                        "finalize awaits current explainer publication and approval"
+                    } else {
+                        "finalize awaits current explainer approval"
+                    });
                 }
             }
             _ => {}
@@ -141,15 +144,24 @@ fn result(
     }
 }
 
-/// The publisher owes fresh explainer bytes whenever none are staged against the
-/// current obligation, or the reviewer asked for changes.
+/// Vadi owes fresh explainer bytes whenever none are staged against the current
+/// obligation, the reviewer asked for changes, or an upgraded run has only a
+/// legacy-author receipt without a complete legacy approval pair.
 fn publication_needs_artifact(baton: &RunBaton) -> bool {
     baton.publication_binding.as_ref().is_some_and(|binding| {
+        let effective = baton.effective_publication_policy();
         binding.artifact.is_none()
             || binding
                 .review
                 .as_ref()
                 .is_some_and(|review| review.verdict == "changes_requested")
+            || binding.artifact.as_ref().is_some_and(|artifact| {
+                !artifact
+                    .publisher_harness
+                    .trim()
+                    .eq_ignore_ascii_case(effective.publisher_harness.trim())
+                    && !baton.local_explainer_approved(binding)
+            })
     })
 }
 
@@ -171,7 +183,8 @@ fn publication_can_publish_site(baton: &RunBaton) -> bool {
 
 fn publication_needs_review(baton: &RunBaton) -> bool {
     baton.publication_binding.as_ref().is_some_and(|binding| {
-        binding.artifact.is_some()
+        !publication_needs_artifact(baton)
+            && binding.artifact.is_some()
             && binding
                 .review
                 .as_ref()
