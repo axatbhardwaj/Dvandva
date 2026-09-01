@@ -6,16 +6,18 @@ use thiserror::Error;
 pub const LEGACY_SCHEMA: &str = "dvandva.run.v1";
 pub const SCHEMA: &str = "dvandva.run.v2";
 pub const ROLE_API: u32 = 2;
-pub const EXPLAINER_PUBLISHER_HARNESS: &str = "Codex";
-pub const EXPLAINER_REVIEWER_HARNESS: &str = "Claude";
+pub const CODEX_HARNESS: &str = "Codex";
 /// Digest-bound explainer bytes staged inside the run directory. Both harnesses
 /// run locally against the same run directory, so both can read this channel.
 pub const EXPLAINER_CHANNEL: &str = "run_artifact";
 pub const EXPLAINER_ACCESS: &str = "run_private";
+/// Human-facing rendering required only when a run contains Codex.
+pub const SITES_CHANNEL: &str = "codex_sites";
+pub const SITES_ACCESS: &str = "owner_only";
 /// Recognized but reviewer-unreadable: an owner-only Codex Site is gated behind
 /// the publisher owner's session, which the reviewing harness cannot present.
-pub const LEGACY_EXPLAINER_CHANNEL: &str = "codex_sites";
-pub const LEGACY_EXPLAINER_ACCESS: &str = "owner_only";
+pub const LEGACY_EXPLAINER_CHANNEL: &str = SITES_CHANNEL;
+pub const LEGACY_EXPLAINER_ACCESS: &str = SITES_ACCESS;
 pub const EXPLAINER_ARTIFACT_DIR: &str = "explainer";
 pub const ANALYSIS_ARTIFACT_DIR: &str = "analysis";
 pub const EXPLAINER_MEDIA_TYPE: &str = "text/html";
@@ -27,7 +29,7 @@ pub enum ModelError {
     InvalidDeliverables,
     #[error("duplicate required deliverable id: {0}")]
     DuplicateDeliverable(String),
-    #[error("participants must contain exactly one Codex and one Claude harness")]
+    #[error("participants must name two non-blank, distinct harnesses")]
     InvalidParticipants,
 }
 
@@ -237,27 +239,37 @@ impl PublicationPolicy {
 
     pub fn fixed() -> Self {
         Self {
-            publisher_harness: EXPLAINER_PUBLISHER_HARNESS.to_owned(),
+            publisher_harness: CODEX_HARNESS.to_owned(),
             channel: EXPLAINER_CHANNEL.to_owned(),
             access: EXPLAINER_ACCESS.to_owned(),
-            reviewer_harness: EXPLAINER_REVIEWER_HARNESS.to_owned(),
+            reviewer_harness: "Claude".to_owned(),
+        }
+    }
+
+    /// New runs bind the local artifact to the semantic roles: vadi authors it
+    /// and prativadi reviews it. Sites publication is a separate Codex-only
+    /// responsibility and is not encoded in this local-channel policy.
+    pub fn for_participants(worker_harness: &str, reviewer_harness: &str) -> Self {
+        Self {
+            publisher_harness: worker_harness.to_owned(),
+            channel: EXPLAINER_CHANNEL.to_owned(),
+            access: EXPLAINER_ACCESS.to_owned(),
+            reviewer_harness: reviewer_harness.to_owned(),
         }
     }
 
     /// Whether the designated reviewing harness can actually read bytes the
-    /// designated publisher places on this channel. A policy that fails this
+    /// explainer author places on this local channel. A policy that fails this
     /// check can never reach an explainer review and must be rejected at start
-    /// rather than after the publisher has already deployed.
+    /// rather than after the author has staged unusable bytes.
     pub fn reviewer_can_read(&self) -> bool {
         match (self.channel.as_str(), self.access.as_str()) {
             // Run-directory artifacts are local files both harnesses can open.
             (EXPLAINER_CHANNEL, EXPLAINER_ACCESS) => true,
-            // An owner-only Site is readable only by the publisher's own owner
-            // session, so it works only when publisher and reviewer coincide.
-            (LEGACY_EXPLAINER_CHANNEL, LEGACY_EXPLAINER_ACCESS) => self
-                .publisher_harness
-                .trim()
-                .eq_ignore_ascii_case(self.reviewer_harness.trim()),
+            // An owner-only Site is not a two-party review channel. Even if a
+            // malformed policy repeats one harness in both fields, accepting it
+            // would collapse author and reviewer into self-approval.
+            (LEGACY_EXPLAINER_CHANNEL, LEGACY_EXPLAINER_ACCESS) => false,
             _ => false,
         }
     }
@@ -297,9 +309,8 @@ pub struct PublicationDeployment {
 }
 
 /// Digest-bound explainer bytes staged inside the run directory. This is the
-/// artifact the reviewing harness actually reads and the gate actually binds;
-/// `PublicationDeployment` is an optional human-facing rendering of the same
-/// bytes.
+/// artifact the reviewing harness reads. When Codex participates, finalization
+/// also requires a private Sites deployment of the same digest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExplainerArtifact {
     pub obligation: HandoffObligation,
@@ -543,6 +554,96 @@ pub struct RunBaton {
 }
 
 impl RunBaton {
+    pub fn effective_publication_policy(&self) -> PublicationPolicy {
+        let stored = self
+            .publication_policy
+            .clone()
+            .unwrap_or_else(PublicationPolicy::fixed);
+        if stored.channel == EXPLAINER_CHANNEL && stored.access == EXPLAINER_ACCESS {
+            PublicationPolicy::for_participants(
+                &self.participants.worker.harness,
+                &self.participants.reviewer.harness,
+            )
+        } else {
+            stored
+        }
+    }
+
+    pub fn has_codex_participant(&self) -> bool {
+        self.participants
+            .worker
+            .harness
+            .eq_ignore_ascii_case(CODEX_HARNESS)
+            || self
+                .participants
+                .reviewer
+                .harness
+                .eq_ignore_ascii_case(CODEX_HARNESS)
+    }
+
+    /// Whether the exact local bytes have matching author and approval receipts
+    /// for this obligation. New receipts follow the role-derived policy. A
+    /// complete older receipt pair may instead match the readable local policy
+    /// stored with its run; incomplete mixed-policy pairs fail this predicate so
+    /// current vadi restages before current prativadi reviews.
+    pub fn local_explainer_approved(&self, binding: &PublicationBinding) -> bool {
+        let effective = self.effective_publication_policy();
+        binding.artifact.as_ref().is_some_and(|artifact| {
+            binding.review.as_ref().is_some_and(|review| {
+                let stored_local_policy = self.publication_policy.as_ref().filter(|stored| {
+                    stored.channel == EXPLAINER_CHANNEL && stored.access == EXPLAINER_ACCESS
+                });
+                let artifact_policy_matches = artifact.channel == EXPLAINER_CHANNEL
+                    && artifact.access == EXPLAINER_ACCESS
+                    && (artifact.publisher_harness == effective.publisher_harness
+                        || stored_local_policy.is_some_and(|stored| {
+                            artifact.publisher_harness == stored.publisher_harness
+                        }));
+                let review_policy_matches = review.reviewer_harness == effective.reviewer_harness
+                    || stored_local_policy
+                        .is_some_and(|stored| review.reviewer_harness == stored.reviewer_harness);
+                artifact.obligation == binding.obligation
+                    && review.obligation == binding.obligation
+                    && review.source_digest == artifact.source_digest
+                    && review.verdict == "approved"
+                    && review.findings.is_empty()
+                    && !artifact
+                        .publisher_harness
+                        .trim()
+                        .eq_ignore_ascii_case(review.reviewer_harness.trim())
+                    && artifact_policy_matches
+                    && review_policy_matches
+            })
+        })
+    }
+
+    /// Complete finalization predicate for one handoff. Local approval always
+    /// gates; a matching owner-only Site additionally gates when Codex is one
+    /// of the two participants.
+    pub fn publication_gate_satisfied(
+        &self,
+        binding: &PublicationBinding,
+        expected: Option<(&HandoffKind, &CheckpointBinding)>,
+    ) -> bool {
+        expected.is_none_or(|(kind, checkpoint)| {
+            &binding.obligation.kind == kind
+                && binding.obligation.checkpoint.as_ref() == Some(checkpoint)
+        }) && self.local_explainer_approved(binding)
+            && (!self.has_codex_participant()
+                || binding.artifact.as_ref().is_some_and(|artifact| {
+                    binding.deployment.as_ref().is_some_and(|deployment| {
+                        deployment.obligation == binding.obligation
+                            && deployment.source_digest == artifact.source_digest
+                            && binding.site_id.as_ref() == Some(&deployment.site_id)
+                            && deployment.channel == SITES_CHANNEL
+                            && deployment.access == SITES_ACCESS
+                            && deployment
+                                .publisher_harness
+                                .eq_ignore_ascii_case(CODEX_HARNESS)
+                    })
+                }))
+    }
+
     pub fn new(
         run_id: impl Into<String>,
         objective: impl Into<String>,
@@ -553,6 +654,8 @@ impl RunBaton {
         let (worker_harness, reviewer_harness) =
             normalize_participants(worker_harness.into(), reviewer_harness.into())?;
         let scope_deliverables = normalize_deliverables(scope_deliverables)?;
+        let publication_policy =
+            PublicationPolicy::for_participants(&worker_harness, &reviewer_harness);
         Ok(Self {
             schema: SCHEMA.to_owned(),
             run_id: run_id.into(),
@@ -586,7 +689,7 @@ impl RunBaton {
             review: None,
             pending_checkpoint_supersession: None,
             publication: None,
-            publication_policy: Some(PublicationPolicy::fixed()),
+            publication_policy: Some(publication_policy),
             publication_binding: Some(create_handoff_obligation(HandoffKind::RunStarted, 0, 0)),
             human_decision: None,
             predecessor_run_id: None,
@@ -715,14 +818,18 @@ pub fn normalize_participants(
     worker_harness: String,
     reviewer_harness: String,
 ) -> Result<(String, String), ModelError> {
-    let normalize = |value: String| match value.trim().to_ascii_lowercase().as_str() {
-        "codex" => Some("Codex".to_owned()),
-        "claude" => Some("Claude".to_owned()),
-        _ => None,
+    let normalize = |value: String| {
+        let normalized = value.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "" => None,
+            "codex" => Some("Codex".to_owned()),
+            "claude" => Some("Claude".to_owned()),
+            _ => Some(normalized),
+        }
     };
     let worker = normalize(worker_harness).ok_or(ModelError::InvalidParticipants)?;
     let reviewer = normalize(reviewer_harness).ok_or(ModelError::InvalidParticipants)?;
-    if worker == reviewer {
+    if worker.eq_ignore_ascii_case(&reviewer) {
         return Err(ModelError::InvalidParticipants);
     }
     Ok((worker, reviewer))

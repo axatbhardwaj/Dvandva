@@ -42,7 +42,7 @@ test "$(bash "$vadi" session-id)" = "codex-session"
 generated="$(env -u CODEX_SESSION_ID bash "$vadi" session-id --generate)"
 [[ "$generated" =~ ^[0-9a-f-]{36}$ ]]
 probe="$(bash "$vadi" probe)"
-grep -Fq '"version": "0.3.2"' <<<"$probe"
+grep -Fq '"version": "0.3.3"' <<<"$probe"
 grep -Fq '"write_schema": "dvandva.run.v2"' <<<"$probe"
 grep -Fq '"read_schemas": [' <<<"$probe"
 grep -Fq '"role_api": 2' <<<"$probe"
@@ -53,15 +53,15 @@ grep -Fq '"publish": false' <<<"$probe"
 mv "$binary" "$binary.real"
 cat >"$binary" <<'ADVERSARIAL_KERNEL'
 #!/usr/bin/env bash
-valid_probe='{"package":"dvandva-v4","version":"0.3.2","publish":false,"write_schema":"dvandva.run.v2","read_schemas":["dvandva.run.v2","dvandva.run.v1"],"role_api":2,"capabilities":{"upgrade_from_v1":true},"compatible":true}'
+valid_probe='{"package":"dvandva-v4","version":"0.3.3","publish":false,"write_schema":"dvandva.run.v2","read_schemas":["dvandva.run.v2","dvandva.run.v1"],"role_api":2,"capabilities":{"upgrade_from_v1":true},"compatible":true}'
 if test "${1:-}" = "--version"; then
   case "${DVANDVA_FAKE_MODE:-valid}" in
-    valid|probe_*) printf 'dvandva-v4 0.3.2\n' ;;
-    version_nul) printf 'dvandva-v4 0.3.2\0\n' ;;
-    version_invalid_utf8) printf 'dvandva-v4 0.3.2\377\n' ;;
-    version_oversized) printf 'dvandva-v4 0.3.2'; head -c 300 /dev/zero | tr '\0' x ;;
-    version_extra_newline) printf 'dvandva-v4 0.3.2\n\n' ;;
-    version_nonzero) printf 'dvandva-v4 0.3.2\n'; exit 7 ;;
+    valid|probe_*) printf 'dvandva-v4 0.3.3\n' ;;
+    version_nul) printf 'dvandva-v4 0.3.3\0\n' ;;
+    version_invalid_utf8) printf 'dvandva-v4 0.3.3\377\n' ;;
+    version_oversized) printf 'dvandva-v4 0.3.3'; head -c 300 /dev/zero | tr '\0' x ;;
+    version_extra_newline) printf 'dvandva-v4 0.3.3\n\n' ;;
+    version_nonzero) printf 'dvandva-v4 0.3.3\n'; exit 7 ;;
   esac
   exit 0
 fi
@@ -97,14 +97,14 @@ mv "$binary.real" "$binary"
 mv "$binary" "$binary.real"
 cat >"$binary" <<'DECOY_KERNEL'
 #!/usr/bin/env bash
-if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.3.2\n'; exit 0; fi
+if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.3.3\n'; exit 0; fi
 if test "${1:-}" = "probe"; then
   printf '%s\n' '{' \
     '  "package": 7, "version": false, "publish": true, "write_schema": [],' \
     '  "read_schemas": "wrong", "role_api": "2",' \
     '  "capabilities": {"upgrade_from_v1": "true"}, "compatible": "true",' \
     '  "decoy": {' \
-    '    "package": "dvandva-v4", "version": "0.3.2", "publish": false,' \
+    '    "package": "dvandva-v4", "version": "0.3.3", "publish": false,' \
     '    "write_schema": "dvandva.run.v2",' \
     '    "read_schemas": ["dvandva.run.v2", "dvandva.run.v1"],' \
     '    "role_api": 2, "capabilities": {"upgrade_from_v1": true},' \
@@ -194,6 +194,68 @@ bash "$vadi" upgrade legacy-session "$legacy_dir" codex claude 0 | grep -Fq '"sc
 bash "$vadi" claim legacy-session "$legacy_dir" 1 | grep -Fq '"revision": 2'
 bash "$vadi" read legacy-session "$legacy_dir" | grep -Fq '"status": "revising"'
 
+# A Codex-looking alias is intentionally not the canonical Codex identity. The
+# supported facade carries that pair through both local explainer handoffs to
+# terminal state without a Sites receipt.
+export DVANDVA_LEASE_SECONDS=300
+no_codex_worker="$(bash "$vadi" start alias-worker codex-cli claude "$workspace" \
+  'Complete without Sites' NO-CODEX --new-run \
+  --required-deliverable implementation='Complete without Sites')"
+no_codex_run_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])' \
+  <<<"$no_codex_worker")"
+no_codex_dir="$XDG_STATE_HOME/dvandva/runs/$no_codex_run_id"
+no_codex_reviewer="$(bash "$prativadi" start alias-reviewer claude codex-cli "$workspace" \
+  --run-id "$no_codex_run_id")"
+grep -Fq '"harness": "codex-cli"' <<<"$no_codex_worker"
+grep -Fq '"harness": "Claude"' <<<"$no_codex_reviewer"
+
+no_codex_source="$test_root/no-codex.html"
+no_codex_action="$test_root/no-codex-action.json"
+(umask 077; printf '%s\n' '<!doctype html><title>Non-Codex status</title>' >"$no_codex_source")
+(umask 077; printf '%s\n' \
+  "{\"type\":\"stage_explainer\",\"obligation\":{\"handoff_revision\":0,\"kind\":\"run_started\",\"scope_revision\":0},\"after_seq\":0,\"source_path\":\"$no_codex_source\"}" \
+  >"$no_codex_action")
+no_codex_staged="$(bash "$vadi" apply alias-worker "$no_codex_dir" 2 "$no_codex_action")"
+no_codex_digest="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["publication_binding"]["artifact"]["source_digest"])' \
+  <<<"$no_codex_staged")"
+printf '%s\n' \
+  "{\"type\":\"record_explainer_review\",\"obligation\":{\"handoff_revision\":0,\"kind\":\"run_started\",\"scope_revision\":0},\"after_seq\":1,\"source_digest\":\"$no_codex_digest\",\"verdict\":\"approved\",\"findings\":[]}" \
+  >"$no_codex_action"
+bash "$prativadi" apply alias-reviewer "$no_codex_dir" 3 "$no_codex_action" >/dev/null
+
+no_codex_checkpoint=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+printf '%s\n' \
+  "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"git\",\"identity\":\"$no_codex_checkpoint\",\"deliverables\":[{\"id\":\"implementation\",\"artifacts\":[{\"kind\":\"commit\",\"value\":\"$no_codex_checkpoint\"}]}],\"verification\":[\"tests passed\"]}}" \
+  >"$no_codex_action"
+no_codex_submitted="$(bash "$vadi" apply alias-worker "$no_codex_dir" 4 "$no_codex_action")"
+no_codex_manifest="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' \
+  <<<"$no_codex_submitted")"
+printf '%s\n' \
+  "{\"type\":\"record_review\",\"verdict\":\"approved\",\"checkpoint_identity\":\"$no_codex_checkpoint\",\"manifest_digest\":\"$no_codex_manifest\",\"scope_revision\":0,\"findings\":[]}" \
+  >"$no_codex_action"
+bash "$prativadi" apply alias-reviewer "$no_codex_dir" 5 "$no_codex_action" >/dev/null
+
+printf '%s\n' '<!doctype html><title>Non-Codex complete</title>' >"$no_codex_source"
+printf '%s\n' \
+  "{\"type\":\"stage_explainer\",\"obligation\":{\"handoff_revision\":6,\"kind\":\"reviewer_to_worker\",\"scope_revision\":0,\"checkpoint\":{\"checkpoint_identity\":\"$no_codex_checkpoint\",\"manifest_digest\":\"$no_codex_manifest\",\"scope_revision\":0}},\"after_seq\":0,\"source_path\":\"$no_codex_source\"}" \
+  >"$no_codex_action"
+no_codex_final_stage="$(bash "$vadi" apply alias-worker "$no_codex_dir" 6 "$no_codex_action")"
+no_codex_final_digest="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["publication_binding"]["artifact"]["source_digest"])' \
+  <<<"$no_codex_final_stage")"
+printf '%s\n' \
+  "{\"type\":\"record_explainer_review\",\"obligation\":{\"handoff_revision\":6,\"kind\":\"reviewer_to_worker\",\"scope_revision\":0,\"checkpoint\":{\"checkpoint_identity\":\"$no_codex_checkpoint\",\"manifest_digest\":\"$no_codex_manifest\",\"scope_revision\":0}},\"after_seq\":1,\"source_digest\":\"$no_codex_final_digest\",\"verdict\":\"approved\",\"findings\":[]}" \
+  >"$no_codex_action"
+no_codex_approved="$(bash "$prativadi" apply alias-reviewer "$no_codex_dir" 7 "$no_codex_action")"
+grep -Fq '"deployment": null' <<<"$no_codex_approved"
+no_codex_finalizer="$(bash "$vadi" read alias-worker "$no_codex_dir")"
+grep -Fq '"finalize"' <<<"$no_codex_finalizer"
+printf '%s\n' '{"type":"finalize"}' >"$no_codex_action"
+no_codex_done="$(bash "$vadi" apply alias-worker "$no_codex_dir" 8 "$no_codex_action")"
+grep -Fq '"status": "done"' <<<"$no_codex_done"
+grep -Fq '"outcome": "done"' <<<"$no_codex_done"
+unlink "$no_codex_action"
+unlink "$no_codex_source"
+
 cmp "$vadi" "$prativadi"
 
 grep -Fq 'act as vadi' "$repo_root/skills/vadi/SKILL.md"
@@ -236,8 +298,9 @@ do
     'request_checkpoint_supersession' \
     'accept_checkpoint_supersession' \
     'withdraw_approval' \
-    'Codex harness stages' \
-    'Claude harness reviews' \
+    'Vadi stages' \
+    'prativadi reviews' \
+    'If neither participant is Codex' \
     'user-created harness goals remain unchanged' \
     'human starts the peer session' \
     'foreground local wait' \
@@ -283,16 +346,22 @@ for required in \
   'request_checkpoint_supersession' \
   'accept_checkpoint_supersession' \
   'withdraw_approval' \
-  'Codex harness stages' \
-  'Claude harness reviews' \
-  'regardless of semantic casting' \
+  'Vadi stages' \
+  'prativadi reviews' \
+  'regardless of which harness fills either role' \
+  'For `run_started`' \
   'the gate binds a digest, not a URL' \
   'canonical scope, complete manifest, findings and decisions, and a current plan/TODO' \
   'stage_explainer' \
   'explainer/<source_digest>.html' \
   'stable Site ID' \
   'new Site version' \
-  'never gates the run' \
+  'required work for whichever participant is Codex' \
+  'If neither participant is Codex' \
+  'status page' \
+  'sites:sites-building' \
+  'sites:sites-hosting' \
+  'When Codex participates, finalization requires both' \
   'Never record a verdict on bytes you did not read' \
   'Claude Artifact' \
   'generic publisher' \
@@ -366,8 +435,8 @@ do
 done
 
 for required in \
-  '0.3.2' \
-  'skills-v0.3.2' \
+  '0.3.3' \
+  'skills-v0.3.3' \
   'release target' \
   'fails closed if either is missing' \
   'Linux x86_64 only' \

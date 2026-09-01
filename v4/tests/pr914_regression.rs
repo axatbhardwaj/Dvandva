@@ -264,33 +264,49 @@ impl Fixture {
         digest
     }
 
-    /// The publisher stages bytes and the reviewer approves exactly those bytes.
+    /// Vadi stages bytes, prativadi approves them locally, and whichever role
+    /// is Codex records the matching private Sites deployment.
     fn approve_explainer(&self, label: &str) {
         let baton = self.read("worker");
         let obligation = baton["publication_binding"]["obligation"].clone();
         let source = self._root.path().join(format!("explainer-{label}.html"));
         std::fs::write(&source, format!("<h1>{label}</h1>")).unwrap();
         let staged = self.apply(
-            publisher_role(&baton),
+            "worker",
             baton["revision"].as_u64().unwrap(),
             serde_json::json!({
                 "type": "stage_explainer",
                 "after_seq": baton["publication_binding"]["receipt_seq"],
-                "obligation": obligation,
+                "obligation": obligation.clone(),
                 "source_path": source.to_str().unwrap()
             }),
         );
         let digest = staged["publication_binding"]["artifact"]["source_digest"].clone();
-        self.apply(
-            reviewer_role(&baton),
+        let reviewed = self.apply(
+            "reviewer",
             staged["revision"].as_u64().unwrap(),
             serde_json::json!({
                 "type": "record_explainer_review",
                 "after_seq": staged["publication_binding"]["receipt_seq"],
-                "obligation": obligation,
-                "source_digest": digest,
+                "obligation": obligation.clone(),
+                "source_digest": digest.clone(),
                 "verdict": "approved",
                 "findings": []
+            }),
+        );
+        self.apply(
+            codex_role(&baton),
+            reviewed["revision"].as_u64().unwrap(),
+            serde_json::json!({
+                "type": "record_explainer_publication",
+                "after_seq": reviewed["publication_binding"]["receipt_seq"],
+                "obligation": obligation,
+                "source_digest": digest,
+                "site_id": "site-run",
+                "site_version": label,
+                "url": format!("https://sites.openai.test/site-run/{label}"),
+                "channel": "codex_sites",
+                "access": "owner_only"
             }),
         );
     }
@@ -310,23 +326,13 @@ fn session_for(role: &str) -> &'static str {
     }
 }
 
-/// Which protocol role currently sits on the publishing harness. Casting is the
-/// human's choice; the publication policy is not.
-fn publisher_role(baton: &serde_json::Value) -> &'static str {
-    let publisher = baton["publication_policy"]["publisher_harness"]
-        .as_str()
-        .unwrap();
-    if baton["participants"]["worker"]["harness"] == publisher {
+/// Sites publication follows the Codex harness, independently of semantic
+/// vadi/prativadi casting.
+fn codex_role(baton: &serde_json::Value) -> &'static str {
+    if baton["participants"]["worker"]["harness"] == "Codex" {
         "worker"
     } else {
         "reviewer"
-    }
-}
-
-fn reviewer_role(baton: &serde_json::Value) -> &'static str {
-    match publisher_role(baton) {
-        "worker" => "reviewer",
-        _ => "worker",
     }
 }
 
@@ -583,7 +589,7 @@ fn an_obligation_bound_write_survives_an_unrelated_heartbeat() {
     let source = fixture._root.path().join("explainer.html");
     std::fs::write(&source, b"<h1>explainer</h1>").unwrap();
     let staged = fixture.apply(
-        "reviewer",
+        "worker",
         prepared_revision,
         serde_json::json!({
             "type": "stage_explainer",
@@ -622,24 +628,21 @@ fn an_obligation_bound_write_survives_an_unrelated_heartbeat() {
         "--credentials-root",
         fixture.credentials.to_str().unwrap(),
     ]));
-    let published = fixture.apply(
+    let reviewed = fixture.apply(
         "reviewer",
         prepared_revision,
         serde_json::json!({
-            "type": "record_explainer_publication",
+            "type": "record_explainer_review",
             "after_seq": 1,
-            "obligation": obligation,
-            "source_digest": digest,
-            "site_id": "site-run",
-            "site_version": "1",
-            "url": "https://example.chatgpt.site",
-            "channel": "codex_sites",
-            "access": "owner_only"
+            "obligation": obligation.clone(),
+            "source_digest": digest.clone(),
+            "verdict": "approved",
+            "findings": []
         }),
     );
     assert_eq!(
-        published["publication_binding"]["deployment"]["source_digest"],
-        digest
+        reviewed["publication_binding"]["review"]["verdict"],
+        "approved"
     );
 
     run_json(command().args([
@@ -660,21 +663,24 @@ fn an_obligation_bound_write_survives_an_unrelated_heartbeat() {
         "--credentials-root",
         fixture.credentials.to_str().unwrap(),
     ]));
-    let reviewed = fixture.apply(
-        "worker",
+    let published = fixture.apply(
+        "reviewer",
         prepared_revision,
         serde_json::json!({
-            "type": "record_explainer_review",
+            "type": "record_explainer_publication",
             "after_seq": 2,
             "obligation": obligation,
-            "source_digest": digest,
-            "verdict": "approved",
-            "findings": []
+            "source_digest": digest.clone(),
+            "site_id": "site-run",
+            "site_version": "1",
+            "url": "https://example.chatgpt.site",
+            "channel": "codex_sites",
+            "access": "owner_only"
         }),
     );
     assert_eq!(
-        reviewed["publication_binding"]["review"]["verdict"],
-        "approved"
+        published["publication_binding"]["deployment"]["source_digest"],
+        digest
     );
 
     // An ordinary semantic mutation still takes its revision precondition.
@@ -746,7 +752,7 @@ fn a_checkpoint_is_submittable_before_any_explainer_exists() {
     let finalizing = fixture.read("worker");
     assert_eq!(
         finalizing["blocking_reason"],
-        "finalize awaits current explainer approval"
+        "finalize awaits current explainer publication and approval"
     );
 }
 
@@ -760,7 +766,7 @@ fn relayed_explainer_bytes_are_verified_against_the_recorded_digest() {
     let source = fixture._root.path().join("explainer.html");
     std::fs::write(&source, b"<h1>canonical explainer</h1>").unwrap();
     let staged = fixture.apply(
-        "reviewer",
+        "worker",
         baton["revision"].as_u64().unwrap(),
         serde_json::json!({
             "type": "stage_explainer",

@@ -36,16 +36,22 @@ fn assert_role_source_contract(role: &str) {
         "request_checkpoint_supersession",
         "accept_checkpoint_supersession",
         "withdraw_approval",
-        "Codex harness stages",
-        "Claude harness reviews",
-        "regardless of semantic casting",
+        "Vadi stages",
+        "prativadi reviews",
+        "regardless of which harness fills either role",
+        "For `run_started`",
         "the gate binds a digest, not a URL",
         "canonical scope, complete manifest, findings and decisions, and a current plan/TODO",
         "stage_explainer",
         "explainer/<source_digest>.html",
         "stable Site ID",
         "new Site version",
-        "never gates the run",
+        "required work for whichever participant is Codex",
+        "If neither participant is Codex",
+        "status page",
+        "sites:sites-building",
+        "sites:sites-hosting",
+        "When Codex participates, finalization requires both",
         "Never record a verdict on bytes you did not read",
         "Claude Artifact",
         "generic publisher",
@@ -715,8 +721,8 @@ fn setup_skill_sources_pin_v2_without_implicit_run_migration() {
         repository_file("skills/setup-dvandva/references/installation.md")
     );
     for required in [
-        "0.3.2",
-        "skills-v0.3.2",
+        "0.3.3",
+        "skills-v0.3.3",
         "release target",
         "fails closed if either is missing",
         "Linux x86_64 only",
@@ -761,7 +767,7 @@ fn version_and_probe_report_the_installation_contract() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("dvandva-v4 0.3.2"));
+        .stdout(predicate::str::contains("dvandva-v4 0.3.3"));
 
     let output = command()
         .args([
@@ -780,7 +786,7 @@ fn version_and_probe_report_the_installation_contract() {
     );
     let probe: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(probe["package"], "dvandva-v4");
-    assert_eq!(probe["version"], "0.3.2");
+    assert_eq!(probe["version"], "0.3.3");
     assert_eq!(probe["write_schema"], "dvandva.run.v2");
     assert_eq!(probe["role_api"], 2);
     assert_eq!(probe["publish"], false);
@@ -913,15 +919,30 @@ impl Flow<'_> {
         );
         let artifact = staged["publication_binding"]["artifact"].clone();
         let mut review = documented_action("prativadi", "record_explainer_review");
-        review["obligation"] = obligation;
+        review["obligation"] = obligation.clone();
         review["after_seq"] = staged["publication_binding"]["receipt_seq"].clone();
         review["source_digest"] = artifact["source_digest"].clone();
-        self.apply(
+        let reviewed = self.apply(
             "reviewer",
             "reviewer-session",
             revision + 1,
             &format!("review-{site_version}.json"),
             review,
+        );
+        let mut publication = documented_action("vadi", "record_explainer_publication");
+        publication["obligation"] = obligation;
+        publication["after_seq"] = reviewed["publication_binding"]["receipt_seq"].clone();
+        publication["source_digest"] = artifact["source_digest"].clone();
+        publication["site_id"] = serde_json::json!("site-run");
+        publication["site_version"] = serde_json::json!(site_version);
+        publication["url"] =
+            serde_json::json!(format!("https://sites.openai.test/site-run/{site_version}"));
+        self.apply(
+            "worker",
+            "worker-session",
+            revision + 2,
+            &format!("publish-{site_version}.json"),
+            publication,
         )
     }
 }
@@ -1003,7 +1024,7 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
     let reviewing_a = flow.apply(
         "worker",
         "worker-session",
-        4,
+        5,
         "checkpoint-a.json",
         documented_checkpoint(checkpoint_a, vec!["cargo test"]),
     );
@@ -1017,12 +1038,12 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
         .unwrap()
         .contains(&serde_json::json!("stage_explainer")));
 
-    flow.approve_explainer(5, "deployment-2");
+    flow.approve_explainer(6, "deployment-2");
 
     let revising = flow.apply(
         "reviewer",
         "reviewer-session",
-        7,
+        9,
         "request-changes.json",
         documented_review(
             "changes_requested",
@@ -1032,40 +1053,40 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
     );
     assert_eq!(revising["status"], "revising");
 
-    flow.approve_explainer(8, "deployment-3");
+    flow.approve_explainer(10, "deployment-3");
 
     let reviewing_b = flow.apply(
         "worker",
         "worker-session",
-        10,
+        13,
         "checkpoint-b.json",
         documented_checkpoint(checkpoint_b, vec!["cargo test", "contention test"]),
     );
     assert_eq!(reviewing_b["checkpoint"]["identity"], checkpoint_b);
 
-    flow.approve_explainer(11, "deployment-4");
+    flow.approve_explainer(14, "deployment-4");
 
     let approved = flow.apply(
         "reviewer",
         "reviewer-session",
-        13,
+        17,
         "approve.json",
         documented_review("approved", &reviewing_b["checkpoint"], vec![]),
     );
     assert_eq!(approved["status"], "finalizing");
 
-    flow.approve_explainer(14, "deployment-5");
+    flow.approve_explainer(18, "deployment-5");
 
     let done = flow.apply(
         "worker",
         "worker-session",
-        16,
+        21,
         "finalize.json",
         documented_action("vadi", "finalize"),
     );
     assert_eq!(done["status"], "done");
     assert_eq!(done["next_actions"], serde_json::json!(["stop"]));
-    assert_eq!(done["revision"], 17);
+    assert_eq!(done["revision"], 22);
     assert_eq!(done["checkpoint"]["identity"], checkpoint_b);
     assert_eq!(done["review"]["checkpoint_identity"], checkpoint_b);
 

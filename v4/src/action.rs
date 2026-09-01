@@ -43,9 +43,9 @@ pub enum Action {
         #[serde(default)]
         refs: Vec<ExternalRef>,
     },
-    /// Stage the explainer's bytes into the run directory. The kernel hashes the
-    /// file at `source_path`, copies it to a content-addressed location both
-    /// harnesses can read, and binds the digest to the current obligation.
+    /// Vadi stages the explainer's bytes into the run directory. The kernel
+    /// hashes the file, copies it to a content-addressed location both roles can
+    /// read, and binds the digest to the current obligation.
     StageExplainer {
         obligation: HandoffObligation,
         /// The `publication_binding.receipt_seq` this write was prepared
@@ -55,8 +55,9 @@ pub enum Action {
         after_seq: Option<u64>,
         source_path: PathBuf,
     },
-    /// Record the optional human-facing Site that renders the staged bytes. Never
-    /// gates the run; the digest must match the staged artifact.
+    /// The Codex participant records the private status Site that renders the
+    /// locally approved bytes. The digest must match vadi's artifact and
+    /// prativadi's review.
     RecordExplainerPublication {
         obligation: HandoffObligation,
         /// The `publication_binding.receipt_seq` this write was prepared

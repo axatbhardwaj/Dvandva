@@ -24,7 +24,7 @@ previous_binary="$test_root/previous-target/debug/dvandva-v4"
 new_binary="$test_root/new-target/debug/dvandva-v4"
 test "$($old_binary --version)" = 'dvandva-v4 0.1.1'
 test "$($previous_binary --version)" = 'dvandva-v4 0.3.1'
-test "$($new_binary --version)" = 'dvandva-v4 0.3.2'
+test "$($new_binary --version)" = 'dvandva-v4 0.3.3'
 
 make_release() {
   local directory="$1" source="$2"
@@ -40,15 +40,15 @@ make_adversarial_release() {
     printf '#!/usr/bin/env bash\nkind=%q\n' "$kind"
     cat <<'ADVERSARIAL_KERNEL'
 set -euo pipefail
-valid_probe='{"package":"dvandva-v4","version":"0.3.2","publish":false,"write_schema":"dvandva.run.v2","read_schemas":["dvandva.run.v2","dvandva.run.v1"],"role_api":2,"capabilities":{"upgrade_from_v1":true},"compatible":true}'
+valid_probe='{"package":"dvandva-v4","version":"0.3.3","publish":false,"write_schema":"dvandva.run.v2","read_schemas":["dvandva.run.v2","dvandva.run.v1"],"role_api":2,"capabilities":{"upgrade_from_v1":true},"compatible":true}'
 if test "${1:-}" = "--version"; then
   case "$kind" in
-    version-nul) printf 'dvandva-v4 0.3.2\0\n' ;;
-    version-invalid-utf8) printf 'dvandva-v4 0.3.2\377\n' ;;
-    version-oversize) printf 'dvandva-v4 0.3.2'; head -c 300 /dev/zero | tr '\0' x ;;
-    version-extra-newline) printf 'dvandva-v4 0.3.2\n\n' ;;
-    version-nonzero) printf 'dvandva-v4 0.3.2\n'; exit 7 ;;
-    *) printf 'dvandva-v4 0.3.2\n' ;;
+    version-nul) printf 'dvandva-v4 0.3.3\0\n' ;;
+    version-invalid-utf8) printf 'dvandva-v4 0.3.3\377\n' ;;
+    version-oversize) printf 'dvandva-v4 0.3.3'; head -c 300 /dev/zero | tr '\0' x ;;
+    version-extra-newline) printf 'dvandva-v4 0.3.3\n\n' ;;
+    version-nonzero) printf 'dvandva-v4 0.3.3\n'; exit 7 ;;
+    *) printf 'dvandva-v4 0.3.3\n' ;;
   esac
   exit 0
 fi
@@ -73,7 +73,7 @@ ADVERSARIAL_KERNEL
 
 old_release="$test_root/release-0.1.1"
 previous_release="$test_root/release-0.3.1"
-new_release="$test_root/release-0.3.2"
+new_release="$test_root/release-0.3.3"
 make_release "$old_release" "$old_binary"
 make_release "$previous_release" "$previous_binary"
 make_release "$new_release" "$new_binary"
@@ -107,12 +107,12 @@ expect_failure() {
   previous_runs_digest="$(find "$previous_runs" -printf '%P %y %m %s %T@\n' | sort)"
 
   DVANDVA_RELEASE_DIR="$new_release" bash "$installer" \
-    update --version 0.3.2 >/dev/null
-  test "$(readlink "$XDG_DATA_HOME/dvandva/bin/current")" = '0.3.2'
+    update --version 0.3.3 >/dev/null
+  test "$(readlink "$XDG_DATA_HOME/dvandva/bin/current")" = '0.3.3'
   test "$previous_runs_digest" = \
     "$(find "$previous_runs" -printf '%P %y %m %s %T@\n' | sort)"
-  bash "$installer" doctor --version 0.3.2 | \
-    grep -Fq 'healthy version=0.3.2'
+  bash "$installer" doctor --version 0.3.3 | \
+    grep -Fq 'healthy version=0.3.3'
 )
 
 adversarial_handshake_case() (
@@ -125,15 +125,15 @@ adversarial_handshake_case() (
   make_adversarial_release "$release" "$kind"
 
   expect_failure "$expected_error" env TMPDIR="$temporary_root" \
-    DVANDVA_RELEASE_DIR="$release" bash "$installer" install --version 0.3.2
+    DVANDVA_RELEASE_DIR="$release" bash "$installer" install --version 0.3.3
   test ! -e "$XDG_DATA_HOME/dvandva"
   test -z "$(find "$temporary_root" -mindepth 1 -print)"
 
   # A rejected first attempt must not make the invocation-created root look
   # foreign to a valid retry.
   TMPDIR="$temporary_root" DVANDVA_RELEASE_DIR="$new_release" \
-    bash "$installer" install --version 0.3.2 >/dev/null
-  test "$(readlink "$XDG_DATA_HOME/dvandva/bin/current")" = '0.3.2'
+    bash "$installer" install --version 0.3.3 >/dev/null
+  test "$(readlink "$XDG_DATA_HOME/dvandva/bin/current")" = '0.3.3'
 )
 
 for handshake_kind in \
@@ -152,7 +152,7 @@ purge_path_safety_case() (
   export XDG_DATA_HOME="$case_root/data"
   export XDG_STATE_HOME="$case_root/state"
   DVANDVA_RELEASE_DIR="$new_release" bash "$installer" \
-    install --version 0.3.2 >/dev/null
+    install --version 0.3.3 >/dev/null
   local case_data="$XDG_DATA_HOME/dvandva"
   local external="$case_root/external"
   mkdir -p "$external"
@@ -177,12 +177,12 @@ purge_path_safety_case() (
       ;;
   esac
 
-  expect_failure 'refusing unsafe' bash "$installer" uninstall --version 0.3.2 \
+  expect_failure 'refusing unsafe' bash "$installer" uninstall --version 0.3.3 \
     --purge-runs --yes-purge-runs
   # Purge validation happens before uninstall: the owned installation and all
   # foreign state remain byte-for-byte present.
   test -f "$case_data/installation.json"
-  test "$(readlink "$case_data/bin/current")" = '0.3.2'
+  test "$(readlink "$case_data/bin/current")" = '0.3.3'
   test "$(cat "$external/foreign")" = 'foreign state'
   case "$kind" in
     state-root-symlink) test -L "$XDG_STATE_HOME/dvandva" ;;
@@ -212,19 +212,19 @@ before_runs="$(find "$runs" -printf '%P %y %m %s %T@\n' | sort)"
 wrong_version_release="$test_root/wrong-version"
 make_release "$wrong_version_release" "$old_binary"
 expect_failure 'version_mismatch' env DVANDVA_RELEASE_DIR="$wrong_version_release" \
-  bash "$installer" update --version 0.3.2
+  bash "$installer" update --version 0.3.3
 test "$(readlink "$current")" = '0.1.1'
 test "$before_runs" = "$(find "$runs" -printf '%P %y %m %s %T@\n' | sort)"
-test -z "$(find "$XDG_DATA_HOME/dvandva/bin" -maxdepth 1 -name '.0.3.2.*.tmp' -print)"
+test -z "$(find "$XDG_DATA_HOME/dvandva/bin" -maxdepth 1 -name '.0.3.3.*.tmp' -print)"
 
-# A controlled 0.3.2 probe stub with the wrong schema/API is also rejected.
+# A controlled 0.3.3 probe stub with the wrong schema/API is also rejected.
 wrong_probe_release="$test_root/wrong-probe"
 mkdir -p "$wrong_probe_release"
 cat >"$wrong_probe_release/$asset" <<'WRONG_PROBE'
 #!/usr/bin/env bash
-if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.3.2\n'; exit 0; fi
+if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.3.3\n'; exit 0; fi
 if test "${1:-}" = "probe"; then
-  printf '{"package":"dvandva-v4","version":"0.3.2","write_schema":"dvandva.run.v1","read_schemas":["dvandva.run.v1"],"role_api":1,"capabilities":{"upgrade_from_v1":false},"compatible":false}\n'
+  printf '{"package":"dvandva-v4","version":"0.3.3","write_schema":"dvandva.run.v1","read_schemas":["dvandva.run.v1"],"role_api":1,"capabilities":{"upgrade_from_v1":false},"compatible":false}\n'
   exit 1
 fi
 exit 99
@@ -232,7 +232,7 @@ WRONG_PROBE
 chmod 755 "$wrong_probe_release/$asset"
 (cd "$wrong_probe_release" && sha256sum "$asset" >SHA256SUMS)
 expect_failure 'probe_mismatch' env DVANDVA_RELEASE_DIR="$wrong_probe_release" \
-  bash "$installer" update --version 0.3.2
+  bash "$installer" update --version 0.3.3
 test "$(readlink "$current")" = '0.1.1'
 test "$before_runs" = "$(find "$runs" -printf '%P %y %m %s %T@\n' | sort)"
 
@@ -241,14 +241,14 @@ decoy_release="$test_root/decoy-probe"
 mkdir -p "$decoy_release"
 cat >"$decoy_release/$asset" <<'DECOY_PROBE'
 #!/usr/bin/env bash
-if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.3.2\n'; exit 0; fi
+if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.3.3\n'; exit 0; fi
 if test "${1:-}" = "probe"; then
   printf '%s\n' '{' \
     '  "package": 7, "version": false, "publish": true, "write_schema": [],' \
     '  "read_schemas": "wrong", "role_api": "2",' \
     '  "capabilities": {"upgrade_from_v1": "true"}, "compatible": "true",' \
     '  "decoy": {' \
-    '    "package": "dvandva-v4", "version": "0.3.2", "publish": false,' \
+    '    "package": "dvandva-v4", "version": "0.3.3", "publish": false,' \
     '    "write_schema": "dvandva.run.v2",' \
     '    "read_schemas": ["dvandva.run.v2", "dvandva.run.v1"],' \
     '    "role_api": 2, "capabilities": {"upgrade_from_v1": true},' \
@@ -261,18 +261,18 @@ DECOY_PROBE
 chmod 755 "$decoy_release/$asset"
 (cd "$decoy_release" && sha256sum "$asset" >SHA256SUMS)
 expect_failure 'probe_mismatch' env DVANDVA_RELEASE_DIR="$decoy_release" \
-  bash "$installer" update --version 0.3.2
+  bash "$installer" update --version 0.3.3
 test "$(readlink "$current")" = '0.1.1'
-test ! -e "$XDG_DATA_HOME/dvandva/bin/0.3.2"
+test ! -e "$XDG_DATA_HOME/dvandva/bin/0.3.3"
 
 # An exit-zero candidate that claims publish=true is not a private kernel.
 wrong_publish_release="$test_root/wrong-publish"
 mkdir -p "$wrong_publish_release"
 cat >"$wrong_publish_release/$asset" <<'WRONG_PUBLISH'
 #!/usr/bin/env bash
-if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.3.2\n'; exit 0; fi
+if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.3.3\n'; exit 0; fi
 if test "${1:-}" = "probe"; then
-  printf '%s\n' '{"package": "dvandva-v4", "version": "0.3.2", "publish": true, "write_schema": "dvandva.run.v2", "read_schemas": ["dvandva.run.v2", "dvandva.run.v1"], "role_api": 2, "capabilities": {"upgrade_from_v1": true}, "compatible": true}'
+  printf '%s\n' '{"package": "dvandva-v4", "version": "0.3.3", "publish": true, "write_schema": "dvandva.run.v2", "read_schemas": ["dvandva.run.v2", "dvandva.run.v1"], "role_api": 2, "capabilities": {"upgrade_from_v1": true}, "compatible": true}'
   exit 0
 fi
 exit 99
@@ -280,18 +280,18 @@ WRONG_PUBLISH
 chmod 755 "$wrong_publish_release/$asset"
 (cd "$wrong_publish_release" && sha256sum "$asset" >SHA256SUMS)
 expect_failure 'probe_mismatch' env DVANDVA_RELEASE_DIR="$wrong_publish_release" \
-  bash "$installer" update --version 0.3.2
+  bash "$installer" update --version 0.3.3
 test "$(readlink "$current")" = '0.1.1'
-test ! -e "$XDG_DATA_HOME/dvandva/bin/0.3.2"
+test ! -e "$XDG_DATA_HOME/dvandva/bin/0.3.3"
 
 # Validation also runs for a pre-existing version directory.
-mkdir -p "$XDG_DATA_HOME/dvandva/bin/0.3.2"
-cp "$wrong_probe_release/$asset" "$XDG_DATA_HOME/dvandva/bin/0.3.2/dvandva-kernel"
-printf 'dvandva-skill-v1\n' >"$XDG_DATA_HOME/dvandva/bin/0.3.2/.owner"
+mkdir -p "$XDG_DATA_HOME/dvandva/bin/0.3.3"
+cp "$wrong_probe_release/$asset" "$XDG_DATA_HOME/dvandva/bin/0.3.3/dvandva-kernel"
+printf 'dvandva-skill-v1\n' >"$XDG_DATA_HOME/dvandva/bin/0.3.3/.owner"
 expect_failure 'probe_mismatch' env DVANDVA_RELEASE_DIR="$wrong_probe_release" \
-  bash "$installer" update --version 0.3.2
+  bash "$installer" update --version 0.3.3
 test "$(readlink "$current")" = '0.1.1'
-rm -rf -- "$XDG_DATA_HOME/dvandva/bin/0.3.2"
+rm -rf -- "$XDG_DATA_HOME/dvandva/bin/0.3.3"
 
 path_safety_case() (
   local kind="$1" case_root="$test_root/path-$1"
@@ -300,7 +300,7 @@ path_safety_case() (
   DVANDVA_RELEASE_DIR="$old_release" bash "$old_installer" \
     install --version 0.1.1 >/dev/null
   local case_bin="$XDG_DATA_HOME/dvandva/bin"
-  local candidate="$case_bin/0.3.2"
+  local candidate="$case_bin/0.3.3"
   case "$kind" in
     unowned)
       mkdir "$candidate"
@@ -330,7 +330,7 @@ path_safety_case() (
       ;;
   esac
   expect_failure 'unsafe existing version' env DVANDVA_RELEASE_DIR="$new_release" \
-    bash "$installer" update --version 0.3.2
+    bash "$installer" update --version 0.3.3
   test "$(readlink "$case_bin/current")" = '0.1.1'
 )
 
@@ -347,7 +347,7 @@ empty_unowned_data_root_case() (
   local before
   before="$(stat -c '%d:%i:%a:%s:%Y' "$XDG_DATA_HOME/dvandva")"
   expect_failure 'refusing unowned data' env DVANDVA_RELEASE_DIR="$new_release" \
-    bash "$installer" install --version 0.3.2
+    bash "$installer" install --version 0.3.3
   test "$before" = "$(stat -c '%d:%i:%a:%s:%Y' "$XDG_DATA_HOME/dvandva")"
   test -z "$(find "$XDG_DATA_HOME/dvandva" -mindepth 1 -print)"
 )
@@ -359,7 +359,7 @@ empty_unowned_data_root_case() (
   mkdir -p "$XDG_DATA_HOME" "$test_root/data-root-symlink/target"
   ln -s "$test_root/data-root-symlink/target" "$XDG_DATA_HOME/dvandva"
   expect_failure 'unsafe data root' env DVANDVA_RELEASE_DIR="$new_release" \
-    bash "$installer" install --version 0.3.2
+    bash "$installer" install --version 0.3.3
   test -z "$(find "$test_root/data-root-symlink/target" -mindepth 1 -print)"
 )
 (
@@ -370,7 +370,7 @@ empty_unowned_data_root_case() (
   mv "$XDG_DATA_HOME/dvandva/bin" "$XDG_DATA_HOME/dvandva/bin-real"
   ln -s bin-real "$XDG_DATA_HOME/dvandva/bin"
   expect_failure 'unsafe bin root' env DVANDVA_RELEASE_DIR="$new_release" \
-    bash "$installer" update --version 0.3.2
+    bash "$installer" update --version 0.3.3
   test "$(readlink "$XDG_DATA_HOME/dvandva/bin/current")" = '0.1.1'
 )
 
@@ -384,7 +384,7 @@ empty_unowned_data_root_case() (
   old_manifest_digest="$(sha256sum "$case_data/installation.json" | cut -d' ' -f1)"
   chmod 500 "$case_data"
   if env DVANDVA_RELEASE_DIR="$new_release" bash "$installer" \
-    update --version 0.3.2 >"$test_root/manifest-failure.out" 2>&1; then
+    update --version 0.3.3 >"$test_root/manifest-failure.out" 2>&1; then
     printf 'manifest write failure unexpectedly installed the update\n' >&2
     exit 1
   fi
@@ -392,13 +392,13 @@ empty_unowned_data_root_case() (
   test "$(readlink "$case_data/bin/current")" = '0.1.1'
   test "$old_manifest_digest" = \
     "$(sha256sum "$case_data/installation.json" | cut -d' ' -f1)"
-  test ! -e "$case_data/bin/0.3.2"
+  test ! -e "$case_data/bin/0.3.3"
   test -z "$(find "$case_data" -name '*.tmp' -print)"
 )
 
-installed="$(env DVANDVA_RELEASE_DIR="$new_release" bash "$installer" update --version 0.3.2)"
-test "$(readlink "$current")" = '0.3.2'
-test "$($current/dvandva-kernel --version)" = 'dvandva-v4 0.3.2'
+installed="$(env DVANDVA_RELEASE_DIR="$new_release" bash "$installer" update --version 0.3.3)"
+test "$(readlink "$current")" = '0.3.3'
+test "$($current/dvandva-kernel --version)" = 'dvandva-v4 0.3.3'
 grep -Fq 'write_schema=dvandva.run.v2' <<<"$installed"
 grep -Fq 'role_api=2' <<<"$installed"
 grep -Fq 'read_schemas=dvandva.run.v2,dvandva.run.v1' <<<"$installed"
@@ -411,7 +411,7 @@ cp "$XDG_DATA_HOME/dvandva/installation.json" "$test_root/manifest.good"
 cat >"$XDG_DATA_HOME/dvandva/installation.json" <<'MANIFEST_DECOY'
 {
   "owner": "foreign-owner",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "write_schema": "dvandva.run.v2",
   "read_schemas": "dvandva.run.v2,dvandva.run.v1",
   "role_api": 2,
@@ -422,14 +422,14 @@ cat >"$XDG_DATA_HOME/dvandva/installation.json" <<'MANIFEST_DECOY'
   "decoy": {"owner": "dvandva-skill-v1"}
 }
 MANIFEST_DECOY
-expect_failure 'installation_manifest_missing' bash "$installer" doctor --version 0.3.2
+expect_failure 'installation_manifest_missing' bash "$installer" doctor --version 0.3.3
 printf '%s\n' '{"owner":"dvandva-skill-v1"}' \
   >"$XDG_DATA_HOME/dvandva/installation.json"
-expect_failure 'installation_manifest_missing' bash "$installer" doctor --version 0.3.2
+expect_failure 'installation_manifest_missing' bash "$installer" doctor --version 0.3.3
 cp "$test_root/manifest.good" "$XDG_DATA_HOME/dvandva/installation.json"
 
-healthy="$(bash "$installer" doctor --version 0.3.2)"
-grep -Fq 'healthy version=0.3.2' <<<"$healthy"
+healthy="$(bash "$installer" doctor --version 0.3.3)"
+grep -Fq 'healthy version=0.3.3' <<<"$healthy"
 grep -Fq 'write_schema=dvandva.run.v2' <<<"$healthy"
 grep -Fq 'role_api=2' <<<"$healthy"
 grep -Fq 'read_schemas=dvandva.run.v2,dvandva.run.v1' <<<"$healthy"
@@ -460,13 +460,13 @@ rollback_case() (
   local case_data="$XDG_DATA_HOME/dvandva" before_manifest="$case_root/manifest.before"
   cp "$case_data/installation.json" "$before_manifest"
   if test "$kind" = preexisting; then
-    mkdir "$case_data/bin/0.3.2"
-    cp "$new_binary" "$case_data/bin/0.3.2/dvandva-kernel"
-    printf 'dvandva-skill-v1\n' >"$case_data/bin/0.3.2/.owner"
+    mkdir "$case_data/bin/0.3.3"
+    cp "$new_binary" "$case_data/bin/0.3.3/dvandva-kernel"
+    printf 'dvandva-skill-v1\n' >"$case_data/bin/0.3.3/.owner"
   fi
   if env \
     PATH="$rollback_bin:$PATH" MV_FAIL_MARKER="$case_root/mv.failed" \
-    DVANDVA_RELEASE_DIR="$new_release" bash "$installer" update --version 0.3.2 \
+    DVANDVA_RELEASE_DIR="$new_release" bash "$installer" update --version 0.3.3 \
     >"$case_root/update.out" 2>&1; then
     printf 'current commit failure unexpectedly installed the update\n' >&2
     exit 1
@@ -475,7 +475,7 @@ rollback_case() (
   test "$(readlink "$case_data/bin/current")" = '0.1.1'
   cmp "$before_manifest" "$case_data/installation.json"
   if test "$kind" = fresh; then
-    test ! -e "$case_data/bin/0.3.2"
+    test ! -e "$case_data/bin/0.3.3"
     grep -Fq 'rollback_uncertain evidence=' "$case_root/update.out"
     mapfile -t transaction_evidence < <(
       find "$case_data" -maxdepth 1 -type d -name '.install-txn.*' -print
@@ -484,11 +484,11 @@ rollback_case() (
     test -x "${transaction_evidence[0]}/promoted-install/dvandva-kernel"
     test -f "${transaction_evidence[0]}/old-manifest"
   else
-    test -x "$case_data/bin/0.3.2/dvandva-kernel"
+    test -x "$case_data/bin/0.3.3/dvandva-kernel"
     ! grep -Fq 'rollback_uncertain evidence=' "$case_root/update.out"
     test -z "$(find "$case_data" -maxdepth 1 -type d -name '.install-txn.*' -print)"
   fi
-  test -z "$(find "$case_data/bin" -maxdepth 1 -name '.0.3.2.*.tmp' -print)"
+  test -z "$(find "$case_data/bin" -maxdepth 1 -name '.0.3.3.*.tmp' -print)"
 )
 
 rollback_case fresh
@@ -523,10 +523,10 @@ rollback_path_swap_case() (
   if env PATH="$rollback_swap_bin:$PATH" \
     MV_FAIL_MARKER="$test_root/rollback-swap.mv-failed" \
     SWAP_MARKER="$test_root/rollback-swap.stat-swapped" \
-    SWAP_TARGET="$case_data/bin/0.3.2" \
+    SWAP_TARGET="$case_data/bin/0.3.3" \
     SWAPPED_PROMOTED="$case_data/bin/invocation-promoted" \
     DVANDVA_RELEASE_DIR="$new_release" bash "$installer" \
-    update --version 0.3.2 >"$test_root/rollback-swap.out" 2>&1; then
+    update --version 0.3.3 >"$test_root/rollback-swap.out" 2>&1; then
     printf 'path-swapped rollback unexpectedly installed the update\n' >&2
     exit 1
   fi
@@ -576,7 +576,7 @@ rollback_quarantine_swap_case() (
     QUARANTINE_SWAP_MARKER="$test_root/rollback-quarantine-swap.rm-swapped" \
     SWAPPED_QUARANTINE="$case_data/bin/invocation-quarantined" \
     DVANDVA_RELEASE_DIR="$new_release" bash "$installer" \
-    update --version 0.3.2 >"$test_root/rollback-quarantine-swap.out" 2>&1; then
+    update --version 0.3.3 >"$test_root/rollback-quarantine-swap.out" 2>&1; then
     printf 'quarantine-swapped rollback unexpectedly installed the update\n' >&2
     exit 1
   fi
@@ -617,15 +617,15 @@ chmod 755 "$promotion_term_bin/mv"
   case_data="$XDG_DATA_HOME/dvandva"
   cp "$case_data/installation.json" "$test_root/promotion-term.manifest"
   if env PATH="$promotion_term_bin:$PATH" \
-    PROMOTION_TARGET="$case_data/bin/0.3.2" \
+    PROMOTION_TARGET="$case_data/bin/0.3.3" \
     DVANDVA_RELEASE_DIR="$new_release" bash "$installer" \
-    update --version 0.3.2 >"$test_root/promotion-term.out" 2>&1; then
+    update --version 0.3.3 >"$test_root/promotion-term.out" 2>&1; then
     printf 'TERM after promotion unexpectedly installed the update\n' >&2
     exit 1
   fi
   test "$(readlink "$case_data/bin/current")" = '0.1.1'
   cmp "$test_root/promotion-term.manifest" "$case_data/installation.json"
-  test ! -e "$case_data/bin/0.3.2"
+  test ! -e "$case_data/bin/0.3.3"
   grep -Fq 'rollback_uncertain evidence=' "$test_root/promotion-term.out"
   mapfile -t transaction_evidence < <(
     find "$case_data" -maxdepth 1 -type d -name '.install-txn.*' -print
@@ -633,7 +633,7 @@ chmod 755 "$promotion_term_bin/mv"
   test "${#transaction_evidence[@]}" -eq 1
   test -x "${transaction_evidence[0]}/promoted-install/dvandva-kernel"
   test -f "${transaction_evidence[0]}/old-manifest"
-  test -z "$(find "$case_data/bin" -maxdepth 1 -name '.0.3.2.*.tmp' -print)"
+  test -z "$(find "$case_data/bin" -maxdepth 1 -name '.0.3.3.*.tmp' -print)"
 )
 
 # Concurrent installers serialize: both succeed and no staging directory nests.
@@ -641,10 +641,10 @@ concurrent_release="$test_root/concurrent-release"
 mkdir -p "$concurrent_release"
 cat >"$concurrent_release/$asset" <<'SLOW_KERNEL'
 #!/usr/bin/env bash
-if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.3.2\n'; exit 0; fi
+if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.3.3\n'; exit 0; fi
 if test "${1:-}" = "probe"; then
   sleep 1
-  printf '%s\n' '{"package":"dvandva-v4","version":"0.3.2","publish":false,"write_schema":"dvandva.run.v2","read_schemas":["dvandva.run.v2","dvandva.run.v1"],"role_api":2,"capabilities":{"upgrade_from_v1":true},"compatible":true}'
+  printf '%s\n' '{"package":"dvandva-v4","version":"0.3.3","publish":false,"write_schema":"dvandva.run.v2","read_schemas":["dvandva.run.v2","dvandva.run.v1"],"role_api":2,"capabilities":{"upgrade_from_v1":true},"compatible":true}'
   exit 0
 fi
 exit 99
@@ -657,7 +657,7 @@ mkdir -p "$concurrent_data"
 exec 8>>"$concurrent_data/.dvandva-install.lock"
 flock -x 8
 env XDG_DATA_HOME="$concurrent_data" XDG_STATE_HOME="$concurrent_state" \
-  DVANDVA_RELEASE_DIR="$concurrent_release" bash "$installer" install --version 0.3.2 \
+  DVANDVA_RELEASE_DIR="$concurrent_release" bash "$installer" install --version 0.3.3 \
   >"$test_root/concurrent-a.out" 2>&1 &
 first_pid=$!
 sleep 1
@@ -667,10 +667,10 @@ flock -u 8
 exec 8>&-
 wait "$first_pid"
 env XDG_DATA_HOME="$concurrent_data" XDG_STATE_HOME="$concurrent_state" \
-  DVANDVA_RELEASE_DIR="$concurrent_release" bash "$installer" install --version 0.3.2 \
+  DVANDVA_RELEASE_DIR="$concurrent_release" bash "$installer" install --version 0.3.3 \
   >"$test_root/concurrent-b.out" 2>&1
-test "$(readlink "$concurrent_data/dvandva/bin/current")" = '0.3.2'
-test "$(find "$concurrent_data/dvandva/bin/0.3.2" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" = \
+test "$(readlink "$concurrent_data/dvandva/bin/current")" = '0.3.3'
+test "$(find "$concurrent_data/dvandva/bin/0.3.3" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort | tr '\n' ' ')" = \
   '.owner dvandva-kernel '
 test -z "$(find "$concurrent_data/dvandva" -name '*.tmp' -print)"
 
@@ -678,19 +678,19 @@ test -z "$(find "$concurrent_data/dvandva" -name '*.tmp' -print)"
 cp "$new_release/SHA256SUMS" "$test_root/sums.good"
 printf '%064d  %s\n' 0 "$asset" >"$new_release/SHA256SUMS"
 expect_failure 'checksum_mismatch' env DVANDVA_RELEASE_DIR="$new_release" \
-  bash "$installer" update --version 0.3.2
-test "$(readlink "$current")" = '0.3.2'
+  bash "$installer" update --version 0.3.3
+test "$(readlink "$current")" = '0.3.3'
 mv "$test_root/sums.good" "$new_release/SHA256SUMS"
 
 # Uninstall preserves runs unless the explicit destructive pair is supplied.
-bash "$installer" uninstall --version 0.3.2 | grep -Fq 'preserved_runs=true'
+bash "$installer" uninstall --version 0.3.3 | grep -Fq 'preserved_runs=true'
 test -f "$runs/keep-me"
 test ! -e "$XDG_DATA_HOME/dvandva"
 
 # An owned uninstall leaves an absent root, so a normal reinstall remains valid.
-DVANDVA_RELEASE_DIR="$new_release" bash "$installer" install --version 0.3.2 >/dev/null
-test "$(readlink "$current")" = '0.3.2'
-bash "$installer" uninstall --version 0.3.2 >/dev/null
+DVANDVA_RELEASE_DIR="$new_release" bash "$installer" install --version 0.3.3 >/dev/null
+test "$(readlink "$current")" = '0.3.3'
+bash "$installer" uninstall --version 0.3.3 >/dev/null
 test ! -e "$XDG_DATA_HOME/dvandva"
 test -f "$runs/keep-me"
 
@@ -699,9 +699,9 @@ export XDG_STATE_HOME="$test_root/unowned/state"
 mkdir -p "$XDG_DATA_HOME/dvandva"
 touch "$XDG_DATA_HOME/dvandva/foreign"
 expect_failure 'refusing unowned data' env DVANDVA_RELEASE_DIR="$new_release" \
-  bash "$installer" install --version 0.3.2
+  bash "$installer" install --version 0.3.3
 expect_failure 'refusing uninstall without owned manifest' \
-  bash "$installer" uninstall --version 0.3.2
+  bash "$installer" uninstall --version 0.3.3
 
 # The kernel is Linux x86_64 only, for now: every other host or architecture is
 # refused before anything is downloaded, naming the limit.
@@ -714,12 +714,12 @@ printf '#!/usr/bin/env bash\ncase "$1" in -m) echo x86_64 ;; *) echo Darwin ;; e
 chmod +x "$host_gate_bin/uname"
 expect_failure 'only Linux x86_64 is supported for now (host: Darwin)' \
   env PATH="$host_gate_bin:$PATH" DVANDVA_RELEASE_DIR="$new_release" \
-  bash "$installer" install --version 0.3.2
+  bash "$installer" install --version 0.3.3
 printf '#!/usr/bin/env bash\ncase "$1" in -m) echo arm64 ;; *) echo Linux ;; esac\n' \
   >"$host_gate_bin/uname"
 expect_failure 'unsupported architecture: arm64 (only x86_64 for now)' \
   env PATH="$host_gate_bin:$PATH" DVANDVA_RELEASE_DIR="$new_release" \
-  bash "$installer" install --version 0.3.2
-test ! -e "$XDG_DATA_HOME/dvandva/bin/0.3.2"
+  bash "$installer" install --version 0.3.3
+test ! -e "$XDG_DATA_HOME/dvandva/bin/0.3.3"
 
 printf 'setup-dvandva installer tests: ok\n'

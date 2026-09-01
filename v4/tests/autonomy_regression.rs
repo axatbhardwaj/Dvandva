@@ -8,8 +8,9 @@ use std::os::unix::fs::PermissionsExt;
 use dvandva_v4::{
     claim::Role,
     model::{
-        Assignee, DeliverableRequirement, HandoffKind, PublicationPolicy, RunBaton, Status,
-        EXPLAINER_ACCESS, EXPLAINER_CHANNEL, LEGACY_EXPLAINER_ACCESS, LEGACY_EXPLAINER_CHANNEL,
+        Assignee, DeliverableRequirement, ExplainerArtifact, HandoffKind, PublicationDeployment,
+        PublicationPolicy, PublicationReview, RunBaton, Status, EXPLAINER_ACCESS,
+        EXPLAINER_CHANNEL, LEGACY_EXPLAINER_ACCESS, LEGACY_EXPLAINER_CHANNEL,
     },
     next_action,
 };
@@ -83,13 +84,13 @@ fn an_unreadable_policy_is_recognized_without_asking_a_human() {
     assert!(owner_only.is_recognized());
     assert!(!owner_only.reviewer_can_read());
 
-    // The same Site is readable when the publisher is also the reviewer, which
-    // is why the mismatch is a property of the pairing, not of Sites as such.
+    // Self-review does not make an owner-only Site reviewer-readable; the
+    // two-party gate always reviews the local artifact before publication.
     let self_reviewed = PublicationPolicy {
         reviewer_harness: "Codex".into(),
         ..owner_only.clone()
     };
-    assert!(self_reviewed.reviewer_can_read());
+    assert!(!self_reviewed.reviewer_can_read());
 
     let unknown = PublicationPolicy {
         channel: "somewhere-else".into(),
@@ -114,11 +115,184 @@ fn reporting_progress_never_makes_an_idle_role_actionable() {
         "a role with nothing but liveness and the human escape must keep waiting"
     );
 
-    // The publisher, by contrast, genuinely owes staged bytes and is actionable.
+    // Vadi, by contrast, genuinely owes staged bytes and is actionable,
+    // regardless of whether that role is Claude or Codex.
     idle.publication_binding.as_mut().unwrap().obligation.kind = HandoffKind::RunStarted;
-    let publisher = next_action::classify(&idle, Role::Reviewer, "Codex");
-    assert!(publisher.legal_actions.contains(&"stage_explainer"));
+    let author = next_action::classify(&idle, Role::Worker, "Claude");
+    assert!(author.legal_actions.contains(&"stage_explainer"));
+    assert!(author.actionable);
+}
+
+#[test]
+fn approved_local_bytes_make_private_sites_publication_actionable_and_required() {
+    let mut run = baton();
+    run.status = Status::Finalizing;
+    run.assignee = Assignee::Worker;
+    let binding = run.publication_binding.as_mut().unwrap();
+    let obligation = binding.obligation.clone();
+    let digest = "a".repeat(64);
+    binding.artifact = Some(ExplainerArtifact {
+        obligation: obligation.clone(),
+        source_digest: digest.clone(),
+        path: format!("explainer/{digest}.html"),
+        media_type: "text/html".into(),
+        byte_length: 32,
+        channel: EXPLAINER_CHANNEL.into(),
+        access: EXPLAINER_ACCESS.into(),
+        publisher_harness: "Claude".into(),
+    });
+
+    let before_review = next_action::classify(&run, Role::Reviewer, "Codex");
+    assert!(!before_review.legal_actions.contains(&"publish_explainer"));
+
+    run.publication_binding.as_mut().unwrap().review = Some(PublicationReview {
+        obligation: obligation.clone(),
+        source_digest: digest.clone(),
+        verdict: "approved".into(),
+        findings: vec![],
+        reviewer_harness: "Codex".into(),
+    });
+    let publisher = next_action::classify(&run, Role::Reviewer, "Codex");
+    assert!(publisher.legal_actions.contains(&"publish_explainer"));
     assert!(publisher.actionable);
+
+    let blocked_finalizer = next_action::classify(&run, Role::Worker, "Claude");
+    assert!(!blocked_finalizer.legal_actions.contains(&"finalize"));
+    assert_eq!(
+        blocked_finalizer.blocking_reason,
+        Some("finalize awaits current explainer publication and approval")
+    );
+
+    let binding = run.publication_binding.as_mut().unwrap();
+    binding.site_id = Some("site-run".into());
+    binding.deployment = Some(PublicationDeployment {
+        obligation,
+        source_digest: digest,
+        site_id: "site-run".into(),
+        site_version: "version-1".into(),
+        url: "https://sites.openai.test/site-run/version-1".into(),
+        channel: LEGACY_EXPLAINER_CHANNEL.into(),
+        access: LEGACY_EXPLAINER_ACCESS.into(),
+        publisher_harness: "Codex".into(),
+    });
+    let finalizer = next_action::classify(&run, Role::Worker, "Claude");
+    assert!(finalizer.legal_actions.contains(&"finalize"));
+}
+
+#[test]
+fn approved_reverse_cast_receipts_from_v0_3_2_remain_actionable() {
+    let mut run = baton();
+    run.publication_policy = Some(PublicationPolicy::fixed());
+    run.status = Status::Finalizing;
+    run.assignee = Assignee::Worker;
+    let binding = run.publication_binding.as_mut().unwrap();
+    let obligation = binding.obligation.clone();
+    let digest = "b".repeat(64);
+    binding.artifact = Some(ExplainerArtifact {
+        obligation: obligation.clone(),
+        source_digest: digest.clone(),
+        path: format!("explainer/{digest}.html"),
+        media_type: "text/html".into(),
+        byte_length: 32,
+        channel: EXPLAINER_CHANNEL.into(),
+        access: EXPLAINER_ACCESS.into(),
+        publisher_harness: "Codex".into(),
+    });
+    binding.review = Some(PublicationReview {
+        obligation,
+        source_digest: digest,
+        verdict: "approved".into(),
+        findings: vec![],
+        reviewer_harness: "Claude".into(),
+    });
+
+    assert!(run.local_explainer_approved(run.publication_binding.as_ref().unwrap()));
+    let codex_reviewer = next_action::classify(&run, Role::Reviewer, "Codex");
+    assert!(codex_reviewer.legal_actions.contains(&"publish_explainer"));
+    assert!(codex_reviewer.actionable);
+}
+
+#[test]
+fn reverse_cast_receipts_can_span_the_v0_3_2_upgrade_boundary() {
+    let mut run = baton();
+    run.publication_policy = Some(PublicationPolicy::fixed());
+    let binding = run.publication_binding.as_mut().unwrap();
+    let obligation = binding.obligation.clone();
+    let digest = "d".repeat(64);
+    binding.artifact = Some(ExplainerArtifact {
+        obligation: obligation.clone(),
+        source_digest: digest.clone(),
+        path: format!("explainer/{digest}.html"),
+        media_type: "text/html".into(),
+        byte_length: 32,
+        channel: EXPLAINER_CHANNEL.into(),
+        access: EXPLAINER_ACCESS.into(),
+        publisher_harness: "Codex".into(),
+    });
+    binding.review = Some(PublicationReview {
+        obligation,
+        source_digest: digest,
+        verdict: "approved".into(),
+        findings: vec![],
+        reviewer_harness: "Codex".into(),
+    });
+
+    assert!(!run.local_explainer_approved(run.publication_binding.as_ref().unwrap()));
+    let claude_worker = next_action::classify(&run, Role::Worker, "Claude");
+    assert!(claude_worker.legal_actions.contains(&"stage_explainer"));
+    let codex_reviewer = next_action::classify(&run, Role::Reviewer, "Codex");
+    assert!(!codex_reviewer.legal_actions.contains(&"publish_explainer"));
+    assert!(!codex_reviewer.legal_actions.contains(&"review_explainer"));
+}
+
+#[test]
+fn a_pairing_without_codex_skips_the_sites_receipt() {
+    let mut run = RunBaton::new(
+        "run-no-codex",
+        "Objective",
+        "Fable",
+        "Grok",
+        vec![DeliverableRequirement {
+            id: "kernel".into(),
+            description: "Fix the kernel".into(),
+        }],
+    )
+    .expect("non-Codex harness pairings are constructible");
+    assert_eq!(run.participants.worker.harness, "fable");
+    assert_eq!(run.participants.reviewer.harness, "grok");
+    run.status = Status::Finalizing;
+    run.assignee = Assignee::Worker;
+    assert_eq!(
+        next_action::classify(&run, Role::Worker, "fable").blocking_reason,
+        Some("finalize awaits current explainer approval")
+    );
+    let binding = run.publication_binding.as_mut().unwrap();
+    let obligation = binding.obligation.clone();
+    let digest = "c".repeat(64);
+    binding.artifact = Some(ExplainerArtifact {
+        obligation: obligation.clone(),
+        source_digest: digest.clone(),
+        path: format!("explainer/{digest}.html"),
+        media_type: "text/html".into(),
+        byte_length: 32,
+        channel: EXPLAINER_CHANNEL.into(),
+        access: EXPLAINER_ACCESS.into(),
+        publisher_harness: "fable".into(),
+    });
+    binding.review = Some(PublicationReview {
+        obligation,
+        source_digest: digest,
+        verdict: "approved".into(),
+        findings: vec![],
+        reviewer_harness: "grok".into(),
+    });
+
+    let finalizer = next_action::classify(&run, Role::Worker, "fable");
+    assert!(finalizer.legal_actions.contains(&"finalize"));
+    assert!(!finalizer.legal_actions.contains(&"publish_explainer"));
+    assert!(!next_action::classify(&run, Role::Reviewer, "grok")
+        .legal_actions
+        .contains(&"publish_explainer"));
 }
 
 /// A run created before explainer staging existed must still load, so it can
@@ -244,7 +418,7 @@ fn a_pre_staging_baton_still_loads_and_can_be_repaired() {
     .is_err());
     assert_eq!(
         repaired.publication_policy,
-        Some(PublicationPolicy::fixed())
+        Some(PublicationPolicy::for_participants("Claude", "Codex"))
     );
     let binding = repaired.publication_binding.as_ref().unwrap();
     assert!(binding.artifact.is_none());
@@ -252,6 +426,132 @@ fn a_pre_staging_baton_still_loads_and_can_be_repaired() {
     assert!(binding.review.is_none());
     // The stable Site ID survives, so a later rendering keeps one identity.
     assert_eq!(binding.site_id.as_deref(), Some("appgprj_deadbeef"));
+}
+
+/// v0.3.2 allowed Sites publication immediately after staging. A stored
+/// stage -> publish -> review chain must remain repairable even though current
+/// live writes require review before publication.
+#[test]
+fn a_publish_before_review_v0_3_2_chain_can_be_repaired() {
+    use dvandva_v4::store::RunChannel;
+
+    let dir = tempfile::tempdir().unwrap();
+    let run_dir = dir.path().join("run-a");
+    std::fs::create_dir_all(run_dir.join("history")).unwrap();
+    let obligation = serde_json::json!({
+        "handoff_revision": 0,
+        "kind": "run_started",
+        "scope_revision": 0
+    });
+    let digest = "8".repeat(64);
+    let mut root = serde_json::json!({
+        "schema": "dvandva.run.v2",
+        "run_id": "run-a",
+        "objective": {"summary": "Fix the protocol"},
+        "workspace": {
+            "repository_id": "github.com/axatbhardwaj/dvandva",
+            "origin": "https://github.com/axatbhardwaj/Dvandva",
+            "worktree": null
+        },
+        "task": {"reference": null, "summary": "Fix the protocol"},
+        "participants": {
+            "worker": {"harness": "Codex", "claim": null},
+            "reviewer": {"harness": "Claude", "claim": null}
+        },
+        "status": "working",
+        "assignee": "worker",
+        "revision": 0,
+        "scope_revision": 0,
+        "scope_deliverables": [{"id": "kernel", "description": "Fix the kernel"}],
+        "checkpoint": null,
+        "review": null,
+        "publication_policy": {
+            "publisher_harness": "Codex",
+            "channel": "codex_sites",
+            "access": "owner_only",
+            "reviewer_harness": "Claude"
+        },
+        "publication_binding": {
+            "site_id": null,
+            "obligation": obligation,
+            "receipt_seq": 0,
+            "deployment": null,
+            "review": null
+        },
+        "human_decision": null,
+        "predecessor_run_id": null,
+        "terminal": null,
+        "recovery": null
+    });
+    let mut revisions = vec![root.clone()];
+
+    root["revision"] = serde_json::json!(1);
+    root["publication_binding"]["receipt_seq"] = serde_json::json!(1);
+    root["publication_binding"]["artifact"] = serde_json::json!({
+        "obligation": obligation,
+        "source_digest": digest,
+        "path": format!("explainer/{digest}.html"),
+        "media_type": "text/html",
+        "byte_length": 1,
+        "channel": "run_artifact",
+        "access": "run_private",
+        "publisher_harness": "Codex"
+    });
+    revisions.push(root.clone());
+
+    root["revision"] = serde_json::json!(2);
+    root["publication_binding"]["receipt_seq"] = serde_json::json!(2);
+    root["publication_binding"]["site_id"] = serde_json::json!("appgprj_deadbeef");
+    root["publication_binding"]["deployment"] = serde_json::json!({
+        "obligation": obligation,
+        "source_digest": digest,
+        "site_id": "appgprj_deadbeef",
+        "site_version": "1",
+        "url": "https://example.chatgpt.site",
+        "channel": "codex_sites",
+        "access": "owner_only",
+        "publisher_harness": "Codex"
+    });
+    revisions.push(root.clone());
+
+    root["revision"] = serde_json::json!(3);
+    root["publication_binding"]["receipt_seq"] = serde_json::json!(3);
+    root["publication_binding"]["review"] = serde_json::json!({
+        "obligation": obligation,
+        "source_digest": digest,
+        "verdict": "approved",
+        "findings": [],
+        "reviewer_harness": "Claude"
+    });
+    revisions.push(root.clone());
+
+    for (revision, baton) in revisions.iter().enumerate() {
+        let bytes = serde_json::to_vec_pretty(baton).unwrap();
+        std::fs::write(run_dir.join(format!("history/{revision:020}.json")), &bytes).unwrap();
+    }
+    std::fs::write(
+        run_dir.join("baton.json"),
+        serde_json::to_vec_pretty(revisions.last().unwrap()).unwrap(),
+    )
+    .unwrap();
+
+    let channel = RunChannel::open(&run_dir);
+    assert_eq!(channel.read().unwrap().revision, 3);
+    let repaired = dvandva_v4::role_session::repair_publication_policy(
+        &run_dir,
+        &dir.path().join("credentials"),
+        Role::Worker,
+        "codex-session",
+        "codex",
+        "claude",
+        3,
+    )
+    .expect("a released publish-before-review chain must remain repairable");
+    assert_eq!(repaired.revision, 4);
+    assert_eq!(
+        repaired.publication_policy,
+        Some(PublicationPolicy::for_participants("Codex", "Claude"))
+    );
 }
 
 /// A worker that has handed a checkpoint to the reviewer must rest. Escape
@@ -262,6 +562,19 @@ fn escape_hatches_never_make_a_waiting_role_actionable() {
     let mut reviewing = baton();
     reviewing.status = Status::Reviewing;
     reviewing.assignee = Assignee::Reviewer;
+    let binding = reviewing.publication_binding.as_mut().unwrap();
+    let obligation = binding.obligation.clone();
+    let digest = "a".repeat(64);
+    binding.artifact = Some(ExplainerArtifact {
+        obligation,
+        source_digest: digest.clone(),
+        path: format!("explainer/{digest}.html"),
+        media_type: "text/html".into(),
+        byte_length: 32,
+        channel: EXPLAINER_CHANNEL.into(),
+        access: EXPLAINER_ACCESS.into(),
+        publisher_harness: "Claude".into(),
+    });
     let worker = next_action::classify(&reviewing, Role::Worker, "Claude");
     assert!(
         worker
@@ -277,6 +590,26 @@ fn escape_hatches_never_make_a_waiting_role_actionable() {
     let mut finalizing = baton();
     finalizing.status = Status::Finalizing;
     finalizing.assignee = Assignee::Worker;
+    let binding = finalizing.publication_binding.as_mut().unwrap();
+    let obligation = binding.obligation.clone();
+    let digest = "b".repeat(64);
+    binding.artifact = Some(ExplainerArtifact {
+        obligation: obligation.clone(),
+        source_digest: digest.clone(),
+        path: format!("explainer/{digest}.html"),
+        media_type: "text/html".into(),
+        byte_length: 32,
+        channel: EXPLAINER_CHANNEL.into(),
+        access: EXPLAINER_ACCESS.into(),
+        publisher_harness: "Claude".into(),
+    });
+    binding.review = Some(PublicationReview {
+        obligation,
+        source_digest: digest,
+        verdict: "approved".into(),
+        findings: vec![],
+        reviewer_harness: "Codex".into(),
+    });
     let ungated = next_action::classify(&finalizing, Role::Worker, "Claude");
     assert!(ungated.legal_actions.contains(&"withdraw_approval"));
     assert!(!ungated.legal_actions.contains(&"finalize"));
@@ -286,7 +619,7 @@ fn escape_hatches_never_make_a_waiting_role_actionable() {
     );
     assert_eq!(
         ungated.blocking_reason,
-        Some("finalize awaits current explainer approval")
+        Some("finalize awaits current explainer publication and approval")
     );
 }
 
@@ -1120,7 +1453,7 @@ mod round_three {
         // proving what caused it, so repair must not answer it.
         assert_eq!(
             repaired.publication_policy.as_ref().unwrap(),
-            &PublicationPolicy::fixed()
+            &PublicationPolicy::for_participants("Claude", "Codex")
         );
         assert_eq!(repaired.status, Status::HumanDecision);
         assert_eq!(repaired.assignee, Assignee::Human);
@@ -1581,7 +1914,7 @@ mod round_four {
         assert!(unrelated.human_decision.unwrap().answer.is_none());
         assert_eq!(
             unrelated.publication_policy.unwrap(),
-            PublicationPolicy::fixed()
+            PublicationPolicy::for_participants("Claude", "Codex")
         );
 
         let (_keep, released) = park(true);
@@ -1593,7 +1926,7 @@ mod round_four {
         assert!(released.human_decision.unwrap().answer.is_none());
         assert_eq!(
             released.publication_policy.unwrap(),
-            PublicationPolicy::fixed()
+            PublicationPolicy::for_participants("Claude", "Codex")
         );
     }
 

@@ -2636,11 +2636,16 @@ fn snapshot_classifier_keeps_semantic_and_harness_duties_independent() {
     .unwrap();
     assert_eq!(
         next_action::classify(&reverse, Role::Worker, "Claude").next_actions,
-        vec!["work", "submit_checkpoint", "report_progress"]
+        vec![
+            "work",
+            "submit_checkpoint",
+            "stage_explainer",
+            "report_progress"
+        ]
     );
     assert_eq!(
         next_action::classify(&reverse, Role::Reviewer, "Codex").next_actions,
-        vec!["stage_explainer", "report_progress"]
+        vec!["wait", "report_progress"]
     );
 
     let mut stale = normal;

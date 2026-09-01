@@ -37,6 +37,13 @@ stalls the protocol for the peer. Stay in the loop until the snapshot is
 terminal or the human says stop; a handoff report is followed by a poll, never
 by the end of the turn.
 
+Review vadi's initial `run_started` HTML before domain work continues. Read the
+local bytes through the facade, request concrete changes when needed, and bind
+approval to the replacement digest. If this participant is Codex,
+`publish_explainer` is then required actionable work: publish the approved
+digest as the run's stable private status Site. If neither participant is
+Codex, skip Sites publication.
+
 `request_human_decision` is the sole documented exception to `next_actions`:
 choose it from `legal_actions` only for a decision that is the human's alone —
 `scope`, `intent`, or `authority` — never for protocol approval. A decision is

@@ -2,7 +2,7 @@ use serde::Serialize;
 
 use crate::{
     claim::Role,
-    model::{Assignee, PublicationPolicy, RunBaton, Status},
+    model::{Assignee, RunBaton, Status, CODEX_HARNESS},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -72,7 +72,11 @@ pub fn classify(baton: &RunBaton, role: Role, participant_harness: &str) -> Next
                 if publication_gate_satisfied(baton) {
                     legal.push("finalize");
                 } else {
-                    blocking_reason = Some("finalize awaits current explainer approval");
+                    blocking_reason = Some(if baton.has_codex_participant() {
+                        "finalize awaits current explainer publication and approval"
+                    } else {
+                        "finalize awaits current explainer approval"
+                    });
                 }
             }
             _ => {}
@@ -80,18 +84,14 @@ pub fn classify(baton: &RunBaton, role: Role, participant_harness: &str) -> Next
     }
 
     let harness = participant_harness.trim();
-    let policy = effective_policy(baton);
-    if harness.eq_ignore_ascii_case(policy.publisher_harness.trim()) {
-        if publication_needs_artifact(baton) {
-            legal.push("stage_explainer");
-        }
-        if publication_can_publish_site(baton) {
-            legal.push("publish_explainer");
-        }
-    } else if harness.eq_ignore_ascii_case(policy.reviewer_harness.trim())
-        && publication_needs_review(baton)
-    {
+    if role == Role::Worker && publication_needs_artifact(baton) {
+        legal.push("stage_explainer");
+    }
+    if role == Role::Reviewer && publication_needs_review(baton) {
         legal.push("review_explainer");
+    }
+    if harness.eq_ignore_ascii_case(CODEX_HARNESS) && publication_can_publish_site(baton) {
+        legal.push("publish_explainer");
     }
 
     if advisory.is_empty() && legal.is_empty() {
@@ -131,8 +131,6 @@ fn result(
                 | "report_progress"
                 | "request_checkpoint_supersession"
                 | "withdraw_approval"
-                // Optional: the run never waits on a human-facing rendering.
-                | "publish_explainer"
         )
     });
     NextActions {
@@ -146,42 +144,47 @@ fn result(
     }
 }
 
-fn effective_policy(baton: &RunBaton) -> PublicationPolicy {
-    baton
-        .publication_policy
-        .clone()
-        .unwrap_or_else(PublicationPolicy::fixed)
-}
-
-/// The publisher owes fresh explainer bytes whenever none are staged against the
-/// current obligation, or the reviewer asked for changes.
+/// Vadi owes fresh explainer bytes whenever none are staged against the current
+/// obligation, the reviewer asked for changes, or an upgraded run has only a
+/// legacy-author receipt without a complete legacy approval pair.
 fn publication_needs_artifact(baton: &RunBaton) -> bool {
     baton.publication_binding.as_ref().is_some_and(|binding| {
+        let effective = baton.effective_publication_policy();
         binding.artifact.is_none()
             || binding
                 .review
                 .as_ref()
                 .is_some_and(|review| review.verdict == "changes_requested")
+            || binding.artifact.as_ref().is_some_and(|artifact| {
+                !artifact
+                    .publisher_harness
+                    .trim()
+                    .eq_ignore_ascii_case(effective.publisher_harness.trim())
+                    && !baton.local_explainer_approved(binding)
+            })
     })
 }
 
-/// Recording the optional human-facing Site is possible only once the bytes it
-/// renders are staged, and only while those bytes are not already rendered.
-/// Advertising it unconditionally kept the publisher permanently awake.
+/// Private Sites publication is mechanical work for whichever participant is
+/// Codex after prativadi approves the local digest. Advertising it earlier
+/// would publish unreviewed bytes; advertising it after the matching receipt
+/// would spin the publisher.
 fn publication_can_publish_site(baton: &RunBaton) -> bool {
     baton.publication_binding.as_ref().is_some_and(|binding| {
         binding.artifact.as_ref().is_some_and(|artifact| {
-            binding.deployment.as_ref().is_none_or(|deployment| {
-                deployment.source_digest != artifact.source_digest
-                    || deployment.obligation != binding.obligation
-            })
+            baton.local_explainer_approved(binding)
+                && binding.deployment.as_ref().is_none_or(|deployment| {
+                    deployment.source_digest != artifact.source_digest
+                        || deployment.obligation != binding.obligation
+                })
         })
     })
 }
 
 fn publication_needs_review(baton: &RunBaton) -> bool {
     baton.publication_binding.as_ref().is_some_and(|binding| {
-        binding.artifact.is_some()
+        !publication_needs_artifact(baton)
+            && binding.artifact.is_some()
             && binding
                 .review
                 .as_ref()
@@ -193,23 +196,11 @@ fn publication_needs_review(baton: &RunBaton) -> bool {
     })
 }
 
-/// The finalization gate: the reviewing harness has approved the exact staged
-/// bytes bound to the current obligation.
+/// The local approval is always required. A matching private Sites receipt is
+/// additionally required only when this pairing contains Codex.
 fn publication_gate_satisfied(baton: &RunBaton) -> bool {
-    let policy = effective_policy(baton);
-    baton.publication_binding.as_ref().is_some_and(|binding| {
-        binding.artifact.as_ref().is_some_and(|artifact| {
-            binding.review.as_ref().is_some_and(|review| {
-                artifact.obligation == binding.obligation
-                    && review.obligation == binding.obligation
-                    && review.source_digest == artifact.source_digest
-                    && review.verdict == "approved"
-                    && review.findings.is_empty()
-                    && artifact.channel == policy.channel
-                    && artifact.access == policy.access
-                    && artifact.publisher_harness == policy.publisher_harness
-                    && review.reviewer_harness == policy.reviewer_harness
-            })
-        })
-    })
+    baton
+        .publication_binding
+        .as_ref()
+        .is_some_and(|binding| baton.publication_gate_satisfied(binding, None))
 }

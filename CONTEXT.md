@@ -6,8 +6,9 @@ harness sessions. The v3 product and its distribution are a retired archive.
 ## Language
 
 **Run Pair**:
-One worker Role Session and one reviewer Role Session from different harness
-families. Semantic roles do not determine harness-specific publication duty.
+One worker Role Session and one reviewer Role Session with distinct, non-blank
+harness names. Vadi authors the local explainer and prativadi reviews it; only
+the Sites deployment duty is harness-specific to a Codex participant.
 
 **Role Session**:
 One independently started harness session participating as worker or reviewer.
@@ -70,20 +71,31 @@ Protocol Upgrade, scope amendment, accepted Checkpoint Supersession, and
 Approval Withdrawal.
 
 **Explainer Artifact**:
-The explainer's bytes, staged by the publishing harness into the run directory
-at `explainer/<source_digest>.html` and bound by sha256 to one Handoff. Both
-harnesses read it locally, so it is the artifact the Publication Gate binds.
+The explainer's bytes, staged by vadi into the run directory at
+`explainer/<source_digest>.html` and bound by sha256 to one Handoff. Both roles
+read it locally, so it is the artifact the Publication Gate binds.
+
+**Explainer Site**:
+The owner-only ChatGPT Sites rendering of an approved Explainer Artifact. It is
+the user's stable status page. Whichever participant is Codex publishes it;
+prativadi reviews the local artifact rather than this deployment.
 
 **Publication Gate**:
-The requirement that the Codex harness stages the Explainer Artifact and the
-Claude harness reviews those exact bytes for the same Handoff before the run
-finalizes. These duties do not follow Worker or Reviewer casting. A Codex Site
-is an optional rendering of the same bytes and satisfies nothing on its own.
+The requirement that vadi stages the Explainer Artifact and prativadi reviews
+those exact bytes. When the pairing contains Codex, that participant also
+records the matching Explainer Site for the same Handoff before finalization;
+without Codex, Sites publication is skipped and local approval is sufficient.
 
 **Publication Policy**:
-The publisher harness, channel, access level, and reviewer harness for a run. A
-policy whose reviewer cannot read its channel is refused at `start`, because it
-can never reach a review.
+The local explainer channel and access level, plus role-derived author and
+reviewer harness fields retained in the Baton for compatibility. For a readable
+local policy, the kernel derives the effective author from vadi and reviewer
+from prativadi; these are distinct from the Codex participant that publishes the
+Explainer Site. A policy whose reviewer cannot read its channel is refused at
+`start`, because it can never reach a review.
+For upgraded runs, a complete pre-`0.3.3` receipt pair may retain the fixed
+harness policy stored with the run. An incomplete legacy author receipt is
+restaged by current vadi before current prativadi reviews it.
 
 **Participant Progress**:
 A role's last self-reported phase and time, published with `report_progress`,

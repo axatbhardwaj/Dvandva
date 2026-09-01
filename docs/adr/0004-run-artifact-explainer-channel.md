@@ -4,6 +4,11 @@ status: accepted
 
 # Bind the explainer gate to run-directory bytes, not a Codex Site
 
+> **Superseded in part by
+> [ADR 0005](0005-require-private-sites-explainer-mirror.md).** Vadi now stages
+> the local artifact, prativadi reviews it, and an approved digest must be
+> mirrored to the private status Site when Codex participates.
+
 ADR 0003 fixed publication to one stable owner-only Codex Site per run,
 published by the authenticated Codex participant and reviewed at each handoff by
 the authenticated Claude participant, and said a different publication policy

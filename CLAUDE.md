@@ -21,12 +21,15 @@
   evidence is recorded in `docs/workflows/skill-only-run.md`.
 - Semantic roles submit and review only complete checkpoint bindings. Use
   checkpoint supersession or approval withdrawal for newly discovered work.
-- Each handoff opens an obligation. For the current one, the Codex harness
-  stages the run's digest-bound explainer, including its plan/TODO list, and
-  the Claude harness reviews those exact staged bytes, regardless of which
-  harness is vadi. A new handoff replaces the obligation; finalization requires
-  the current one staged and reviewed. A Codex Sites deployment renders the
-  same bytes for humans and never gates the run.
+- Each handoff opens an obligation. Vadi stages the run's digest-bound HTML,
+  including its plan/TODO list, and prativadi reviews those exact local bytes.
+  At run start, vadi proposes this first status-page artifact before continuing
+  domain work and incorporates any requested changes. After approval, whichever
+  participant is Codex mechanically publishes the same digest to one stable,
+  owner-only ChatGPT Site per run. That Site is the user's progress page; local
+  bytes remain canonical for review. If no participant is Codex, skip Sites
+  publication and use the local approval alone. A new handoff replaces the
+  current obligation; finalization requires the current applicable receipts.
 - Only `finalize` waits on the explainer. Checkpoint submission, review,
   supersession, and approval withdrawal never do.
 - Publish progress with `report_progress` before and during long authorized

@@ -7,6 +7,7 @@ use dvandva_v4::transition::{self, TransitionError};
 use fs2::FileExt;
 use predicates::prelude::*;
 use sha2::{Digest, Sha256};
+use std::os::unix::fs::PermissionsExt;
 
 fn command() -> Command {
     Command::new(env!("CARGO_BIN_EXE_dvandva-v4"))
@@ -293,9 +294,6 @@ fn approve_current_explainer(
         stage,
     )
     .success();
-    // The Site rendering is optional and never gates; tests that exercise it
-    // publish explicitly. The gate binds the staged bytes.
-    let _ = &digest;
     let baton = read_baton(dir);
     let artifact = baton["publication_binding"]["artifact"].clone();
     apply_action(
@@ -308,17 +306,61 @@ fn approve_current_explainer(
         explainer_review_action(&obligation, &artifact, "approved", serde_json::json!([])),
     )
     .success();
+    let _ = digest;
+}
+
+fn publish_current_explainer(dir: &std::path::Path, codex: (&str, &str, &str), site_version: &str) {
+    let (codex_role, codex_session, codex_token) = codex;
+    let baton = read_baton(dir);
+    let revision = baton["revision"].as_u64().unwrap();
+    let obligation = baton["publication_binding"]["obligation"].clone();
+    let digest = baton["publication_binding"]["artifact"]["source_digest"]
+        .as_str()
+        .unwrap();
+    apply_action(
+        dir,
+        codex_role,
+        codex_session,
+        codex_token,
+        revision,
+        &format!("publish-{site_version}.json"),
+        explainer_publication_action(
+            &obligation,
+            digest,
+            "site-run",
+            site_version,
+            &format!("https://sites.openai.test/site-run/{site_version}"),
+        ),
+    )
+    .success();
 }
 
 fn claim_pair_and_approve_run_started(dir: &std::path::Path) -> (String, String) {
     let worker = claim_role(dir, "worker", "worker-1", 0);
     let reviewer = claim_role(dir, "reviewer", "reviewer-1", 1);
-    approve_current_explainer(
+    let obligation = current_obligation(dir);
+    let (stage, _) = stage_explainer_action(dir, &obligation, "run-started");
+    apply_action(
         dir,
-        ("worker", "worker-1", &worker),
-        ("reviewer", "reviewer-1", &reviewer),
-        "run-started",
-    );
+        "worker",
+        "worker-1",
+        &worker,
+        2,
+        "stage-run-started.json",
+        stage,
+    )
+    .success();
+    let artifact = read_baton(dir)["publication_binding"]["artifact"].clone();
+    apply_action(
+        dir,
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        3,
+        "review-run-started.json",
+        explainer_review_action(&obligation, &artifact, "approved", serde_json::json!([])),
+    )
+    .success();
     (worker, reviewer)
 }
 
@@ -589,11 +631,11 @@ fn migration_init_rejects_invalid_scope_and_participant_topology() {
             "github.com/axatbhardwaj/dvandva",
         ];
         if expected.is_empty() {
-            args[8] = "cursor";
+            args[8] = " ";
         }
         args.extend(extra);
         let expected = if expected.is_empty() {
-            "exactly one Codex"
+            "non-blank, distinct harnesses"
         } else {
             expected
         };
@@ -1428,7 +1470,7 @@ fn migration_upgrade_rejects_terminal_busy_and_invalid_topology() {
             "--current-harness",
             "codex",
             "--peer-harness",
-            "cursor",
+            "codex",
             "--expected-revision",
             "0",
             "--credentials-root",
@@ -1960,7 +2002,39 @@ fn init_rejects_same_harness_family() {
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("exactly one Codex and one Claude"));
+        .stderr(predicate::str::contains("non-blank, distinct harnesses"));
+}
+
+#[test]
+fn init_accepts_distinct_non_codex_harnesses() {
+    let dir = tempfile::tempdir().unwrap();
+    command()
+        .args([
+            "init",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--run-id",
+            "run-no-codex",
+            "--objective",
+            "Implement without a Codex participant",
+            "--worker",
+            "Fable",
+            "--reviewer",
+            "Grok",
+            "--repository-id",
+            "github.com/axatbhardwaj/dvandva",
+            "--required-deliverable",
+            "implementation=Implement the flow",
+        ])
+        .assert()
+        .success();
+
+    command()
+        .args(["read", "--run-dir", dir.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""harness": "fable""#))
+        .stdout(predicate::str::contains(r#""harness": "grok""#));
 }
 
 #[test]
@@ -2569,11 +2643,16 @@ fn complete_review_fix_loop_reaches_done() {
         ("reviewer", "reviewer-1", &reviewer_token),
         "complete-approved",
     );
+    publish_current_explainer(
+        dir.path(),
+        ("worker", "worker-1", &worker_token),
+        "complete-approved",
+    );
     apply(
         "worker",
         "worker-1",
         &worker_token,
-        "16",
+        "17",
         write_action(
             dir.path(),
             "finalize.json",
@@ -4324,18 +4403,64 @@ fn publication_obligation_rolls_at_every_handoff_and_gates_only_finalize() {
     .stderr(predicate::str::contains(
         r#""error":"explainer_not_staged""#,
     ));
-    approve_current_explainer(
+    let obligation = current_obligation(dir.path());
+    let (stage, digest) = stage_explainer_action(dir.path(), &obligation, "final");
+    apply_action(
         dir.path(),
-        ("worker", "worker-1", &worker),
-        ("reviewer", "reviewer-1", &reviewer),
-        "final",
-    );
+        "worker",
+        "worker-1",
+        &worker,
+        6,
+        "stage-final.json",
+        stage,
+    )
+    .success();
+    let artifact = read_baton(dir.path())["publication_binding"]["artifact"].clone();
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        7,
+        "review-final.json",
+        explainer_review_action(&obligation, &artifact, "approved", serde_json::json!([])),
+    )
+    .success();
+    apply_action_raw(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        8,
+        "blocked-unpublished-finalize.json",
+        serde_json::json!({"type": "finalize"}),
+    )
+    .failure()
+    .stderr(predicate::str::contains(
+        r#""error":"explainer_not_published""#,
+    ));
     apply_action(
         dir.path(),
         "worker",
         "worker-1",
         &worker,
         8,
+        "publish-final.json",
+        explainer_publication_action(
+            &obligation,
+            &digest,
+            "site-run",
+            "final",
+            "https://sites.openai.test/site-run/final",
+        ),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        9,
         "finalize.json",
         serde_json::json!({"type": "finalize"}),
     )
@@ -4363,7 +4488,7 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
     )
     .failure()
     .stderr(predicate::str::contains(
-        r#""error":"wrong_publisher_harness""#,
+        r#""error":"wrong_explainer_author""#,
     ));
     for (index, source) in ["missing.html", "empty.html"].into_iter().enumerate() {
         let path = dir.path().join(source);
@@ -4439,7 +4564,8 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
         .join(format!("explainer/{digest}.html"))
         .is_file());
 
-    // The Site is an optional rendering: it must name the staged bytes exactly.
+    // Sites is a mechanical publication of locally approved bytes. Publishing
+    // before prativadi approves the local digest must fail closed.
     let valid_site = explainer_publication_action(
         &obligation,
         &digest,
@@ -4447,6 +4573,90 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
         "deployment-1",
         "https://sites.openai.test/site-run-a/deployment-1",
     );
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        3,
+        "site-before-review.json",
+        valid_site.clone(),
+    )
+    .failure()
+    .stderr(predicate::str::contains(
+        r#""error":"explainer_not_approved""#,
+    ));
+
+    let approved =
+        explainer_review_action(&obligation, &artifact, "approved", serde_json::json!([]));
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        3,
+        "wrong-reviewer.json",
+        approved.clone(),
+    )
+    .failure()
+    .stderr(predicate::str::contains(
+        r#""error":"wrong_reviewer_harness""#,
+    ));
+    let mut stale_review = approved.clone();
+    stale_review["source_digest"] = serde_json::json!("b".repeat(64));
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        3,
+        "stale-review.json",
+        stale_review,
+    )
+    .failure()
+    .stderr(predicate::str::contains(
+        r#""error":"stale_publication_binding""#,
+    ));
+    let mut approved_with_findings = approved.clone();
+    approved_with_findings["findings"] = serde_json::json!(["blocking"]);
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        3,
+        "approved-with-findings.json",
+        approved_with_findings,
+    )
+    .failure()
+    .stderr(predicate::str::contains(r#""error":"blocking_findings""#));
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        3,
+        "changes-without-findings.json",
+        explainer_review_action(
+            &obligation,
+            &artifact,
+            "changes_requested",
+            serde_json::json!([]),
+        ),
+    )
+    .failure()
+    .stderr(predicate::str::contains(r#""error":"missing_findings""#));
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-1",
+        &reviewer,
+        3,
+        "approved.json",
+        approved,
+    )
+    .success();
+
     let mut wrong_digest = valid_site.clone();
     wrong_digest["source_digest"] = serde_json::json!("b".repeat(64));
     apply_action(
@@ -4454,7 +4664,7 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
         "worker",
         "worker-1",
         &worker,
-        3,
+        4,
         "site-wrong-digest.json",
         wrong_digest,
     )
@@ -4473,7 +4683,7 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
             "worker",
             "worker-1",
             &worker,
-            3,
+            4,
             &format!("invalid-site-{index}.json"),
             action,
         )
@@ -4482,12 +4692,27 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
             r#""error":"invalid_explainer_publication""#,
         ));
     }
+    let mut wrong_channel = valid_site.clone();
+    wrong_channel["channel"] = serde_json::json!("generic_host");
     apply_action(
         dir.path(),
         "worker",
         "worker-1",
         &worker,
-        3,
+        4,
+        "site-wrong-channel.json",
+        wrong_channel,
+    )
+    .failure()
+    .stderr(predicate::str::contains(
+        r#""error":"invalid_explainer_publication""#,
+    ));
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-1",
+        &worker,
+        4,
         "valid-site.json",
         valid_site,
     )
@@ -4497,76 +4722,6 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
     assert_eq!(deployment["source_digest"], digest);
     assert_eq!(deployment["channel"], "codex_sites");
     assert_eq!(deployment["access"], "owner_only");
-
-    let approved =
-        explainer_review_action(&obligation, &artifact, "approved", serde_json::json!([]));
-    apply_action(
-        dir.path(),
-        "worker",
-        "worker-1",
-        &worker,
-        4,
-        "wrong-reviewer.json",
-        approved.clone(),
-    )
-    .failure()
-    .stderr(predicate::str::contains(
-        r#""error":"wrong_reviewer_harness""#,
-    ));
-    let mut stale_review = approved.clone();
-    stale_review["source_digest"] = serde_json::json!("b".repeat(64));
-    apply_action(
-        dir.path(),
-        "reviewer",
-        "reviewer-1",
-        &reviewer,
-        4,
-        "stale-review.json",
-        stale_review,
-    )
-    .failure()
-    .stderr(predicate::str::contains(
-        r#""error":"stale_publication_binding""#,
-    ));
-    let mut approved_with_findings = approved.clone();
-    approved_with_findings["findings"] = serde_json::json!(["blocking"]);
-    apply_action(
-        dir.path(),
-        "reviewer",
-        "reviewer-1",
-        &reviewer,
-        4,
-        "approved-with-findings.json",
-        approved_with_findings,
-    )
-    .failure()
-    .stderr(predicate::str::contains(r#""error":"blocking_findings""#));
-    apply_action(
-        dir.path(),
-        "reviewer",
-        "reviewer-1",
-        &reviewer,
-        4,
-        "changes-without-findings.json",
-        explainer_review_action(
-            &obligation,
-            &artifact,
-            "changes_requested",
-            serde_json::json!([]),
-        ),
-    )
-    .failure()
-    .stderr(predicate::str::contains(r#""error":"missing_findings""#));
-    apply_action(
-        dir.path(),
-        "reviewer",
-        "reviewer-1",
-        &reviewer,
-        4,
-        "approved.json",
-        approved,
-    )
-    .success();
 
     // One stable Site ID per run; a new version of the same bytes keeps the
     // approval, because the reviewer's verdict binds the bytes, not the URL.
@@ -4622,6 +4777,324 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
     assert!(baton["publication_binding"]["deployment"].is_null());
     assert!(baton["publication_binding"]["review"].is_null());
     assert_eq!(baton["publication_binding"]["obligation"], obligation);
+}
+
+#[test]
+fn persisted_reverse_cast_receipts_can_cross_the_v0_3_2_upgrade_boundary() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut root = RunBaton::new(
+        "run-reverse",
+        "Implement the upgrade boundary",
+        "Claude",
+        "Codex",
+        vec![DeliverableRequirement {
+            id: "implementation".into(),
+            description: "Implement the upgrade boundary".into(),
+        }],
+    )
+    .unwrap();
+    root.publication_policy = Some(dvandva_v4::model::PublicationPolicy::fixed());
+    let channel = RunChannel::open(dir.path());
+    channel.create(&root).unwrap();
+    let worker = claim_role(dir.path(), "worker", "worker-claude", 0);
+    let reviewer = claim_role(dir.path(), "reviewer", "reviewer-codex", 1);
+
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-claude",
+        &worker,
+        2,
+        "checkpoint.json",
+        checkpoint_submission(
+            "upgrade-checkpoint",
+            serde_json::json!([{
+                "id": "implementation",
+                "artifacts": [{"kind": "commit", "value": "upgrade-checkpoint"}]
+            }]),
+        ),
+    )
+    .success();
+    let checkpoint = checkpoint_binding(dir.path());
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-codex",
+        &reviewer,
+        3,
+        "checkpoint-review.json",
+        review_action("approved", &checkpoint, serde_json::json!([])),
+    )
+    .success();
+    assert_eq!(read_baton(dir.path())["status"], "finalizing");
+
+    let html = b"<html><body>upgrade boundary</body></html>";
+    let digest = format!("{:x}", Sha256::digest(html));
+    let relative_path = format!("explainer/{digest}.html");
+    std::fs::create_dir_all(dir.path().join("explainer")).unwrap();
+    let artifact_path = dir.path().join(&relative_path);
+    std::fs::write(&artifact_path, html).unwrap();
+    let mut permissions = std::fs::metadata(&artifact_path).unwrap().permissions();
+    permissions.set_mode(0o600);
+    std::fs::set_permissions(&artifact_path, permissions).unwrap();
+
+    // Persist the state a 0.3.2 reverse-cast run could leave behind: Codex
+    // staged under the fixed harness policy, then the kernel upgraded before
+    // the now-role-derived Codex reviewer recorded its verdict.
+    let current = channel.read().unwrap();
+    let mut legacy_staged = serde_json::to_value(&current).unwrap();
+    let obligation = legacy_staged["publication_binding"]["obligation"].clone();
+    legacy_staged["revision"] = serde_json::json!(5);
+    legacy_staged["publication_binding"]["artifact"] = serde_json::json!({
+        "obligation": obligation,
+        "source_digest": digest,
+        "path": relative_path,
+        "media_type": "text/html",
+        "byte_length": html.len(),
+        "channel": "run_artifact",
+        "access": "run_private",
+        "publisher_harness": "Codex"
+    });
+    legacy_staged["publication_binding"]["receipt_seq"] = serde_json::json!(1);
+    let legacy_staged: RunBaton = serde_json::from_value(legacy_staged).unwrap();
+    channel.compare_and_swap(4, &legacy_staged).unwrap();
+
+    let staged = RunChannel::open(dir.path()).read().unwrap();
+    assert_eq!(
+        staged
+            .publication_binding
+            .as_ref()
+            .unwrap()
+            .artifact
+            .as_ref()
+            .unwrap()
+            .publisher_harness,
+        "Codex"
+    );
+
+    let artifact = read_baton(dir.path())["publication_binding"]["artifact"].clone();
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-codex",
+        &reviewer,
+        5,
+        "approve-after-upgrade.json",
+        explainer_review_action(
+            &current_obligation(dir.path()),
+            &artifact,
+            "approved",
+            serde_json::json!([]),
+        ),
+    )
+    .success();
+
+    let mixed = RunChannel::open(dir.path()).read().unwrap();
+    assert!(!mixed.local_explainer_approved(mixed.publication_binding.as_ref().unwrap()));
+    let worker_next = dvandva_v4::next_action::classify(&mixed, Role::Worker, "Claude");
+    assert!(worker_next.legal_actions.contains(&"stage_explainer"));
+    let reviewer_next = dvandva_v4::next_action::classify(&mixed, Role::Reviewer, "Codex");
+    assert!(!reviewer_next.legal_actions.contains(&"review_explainer"));
+    assert!(!reviewer_next.legal_actions.contains(&"publish_explainer"));
+
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-claude",
+        &worker,
+        6,
+        "restage-after-upgrade.json",
+        serde_json::json!({
+            "type": "stage_explainer",
+            "obligation": current_obligation(dir.path()),
+            "source_path": artifact_path
+        }),
+    )
+    .success();
+    let restaged_artifact = read_baton(dir.path())["publication_binding"]["artifact"].clone();
+    assert_eq!(restaged_artifact["source_digest"], digest);
+    assert_eq!(restaged_artifact["publisher_harness"], "Claude");
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-codex",
+        &reviewer,
+        7,
+        "approve-restaged.json",
+        explainer_review_action(
+            &current_obligation(dir.path()),
+            &restaged_artifact,
+            "approved",
+            serde_json::json!([]),
+        ),
+    )
+    .success();
+
+    let approved = RunChannel::open(dir.path()).read().unwrap();
+    assert!(approved.local_explainer_approved(approved.publication_binding.as_ref().unwrap()));
+    let next = dvandva_v4::next_action::classify(&approved, Role::Reviewer, "Codex");
+    assert!(next.legal_actions.contains(&"publish_explainer"));
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-codex",
+        &reviewer,
+        8,
+        "publish-after-upgrade.json",
+        explainer_publication_action(
+            &current_obligation(dir.path()),
+            &digest,
+            "site-run-reverse",
+            "version-final",
+            "https://sites.openai.test/site-run-reverse/version-final",
+        ),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-claude",
+        &worker,
+        9,
+        "finalize-after-upgrade.json",
+        serde_json::json!({"type": "finalize"}),
+    )
+    .success();
+    let done = RunChannel::open(dir.path()).read().unwrap();
+    assert_eq!(done.status, dvandva_v4::model::Status::Done);
+    assert_eq!(done.terminal.unwrap().outcome, "done");
+}
+
+#[test]
+fn persisted_non_codex_pair_finalizes_without_a_sites_receipt() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = RunBaton::new(
+        "run-no-codex",
+        "Complete without Sites",
+        "Fable",
+        "Grok",
+        vec![DeliverableRequirement {
+            id: "implementation".into(),
+            description: "Complete without Sites".into(),
+        }],
+    )
+    .unwrap();
+    let channel = RunChannel::open(dir.path());
+    channel.create(&root).unwrap();
+    let worker = claim_role(dir.path(), "worker", "worker-fable", 0);
+    let reviewer = claim_role(dir.path(), "reviewer", "reviewer-grok", 1);
+
+    let obligation = current_obligation(dir.path());
+    let (stage, _) = stage_explainer_action(dir.path(), &obligation, "initial-no-codex");
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-fable",
+        &worker,
+        2,
+        "initial-stage.json",
+        stage,
+    )
+    .success();
+    let artifact = read_baton(dir.path())["publication_binding"]["artifact"].clone();
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-grok",
+        &reviewer,
+        3,
+        "initial-review.json",
+        explainer_review_action(
+            &current_obligation(dir.path()),
+            &artifact,
+            "approved",
+            serde_json::json!([]),
+        ),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-fable",
+        &worker,
+        4,
+        "checkpoint.json",
+        checkpoint_submission(
+            "no-codex-checkpoint",
+            serde_json::json!([{
+                "id": "implementation",
+                "artifacts": [{"kind": "commit", "value": "no-codex-checkpoint"}]
+            }]),
+        ),
+    )
+    .success();
+    let checkpoint = checkpoint_binding(dir.path());
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-grok",
+        &reviewer,
+        5,
+        "checkpoint-review.json",
+        review_action("approved", &checkpoint, serde_json::json!([])),
+    )
+    .success();
+
+    let final_obligation = current_obligation(dir.path());
+    let (final_stage, _) = stage_explainer_action(dir.path(), &final_obligation, "final-no-codex");
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-fable",
+        &worker,
+        6,
+        "final-stage.json",
+        final_stage,
+    )
+    .success();
+    let final_artifact = read_baton(dir.path())["publication_binding"]["artifact"].clone();
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-grok",
+        &reviewer,
+        7,
+        "final-review.json",
+        explainer_review_action(
+            &current_obligation(dir.path()),
+            &final_artifact,
+            "approved",
+            serde_json::json!([]),
+        ),
+    )
+    .success();
+    let approved = channel.read().unwrap();
+    assert!(!approved.has_codex_participant());
+    assert!(approved
+        .publication_binding
+        .as_ref()
+        .unwrap()
+        .deployment
+        .is_none());
+    assert!(
+        dvandva_v4::next_action::classify(&approved, Role::Worker, "fable")
+            .legal_actions
+            .contains(&"finalize")
+    );
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-fable",
+        &worker,
+        8,
+        "finalize.json",
+        serde_json::json!({"type": "finalize"}),
+    )
+    .success();
+    assert_eq!(
+        channel.read().unwrap().status,
+        dvandva_v4::model::Status::Done
+    );
 }
 
 #[test]
@@ -5517,7 +5990,19 @@ fn publication_old_checkpoint_approval_cannot_finalize_the_current_checkpoint() 
         ("reviewer", "reviewer-1", &reviewer),
         "deployment-old-approved",
     );
-    let old_approved_binding = read_baton(dir.path())["publication_binding"].clone();
+    let mut old_approved_binding = read_baton(dir.path())["publication_binding"].clone();
+    let old_digest = old_approved_binding["artifact"]["source_digest"].clone();
+    old_approved_binding["site_id"] = serde_json::json!("site-run");
+    old_approved_binding["deployment"] = serde_json::json!({
+        "obligation": old_approved_binding["obligation"].clone(),
+        "source_digest": old_digest,
+        "site_id": "site-run",
+        "site_version": "deployment-old-approved",
+        "url": "https://sites.openai.test/site-run/deployment-old-approved",
+        "channel": "codex_sites",
+        "access": "owner_only",
+        "publisher_harness": "Codex"
+    });
     apply_action_raw(
         dir.path(),
         "worker",
@@ -5678,29 +6163,14 @@ fn publication_changes_requested_is_substate_only_and_legacy_numeric_is_rejected
         stage,
     )
     .success();
-    apply_action(
-        dir.path(),
-        "worker",
-        "worker-1",
-        &worker,
-        3,
-        "deploy.json",
-        explainer_publication_action(
-            &obligation,
-            &digest,
-            "site-run-a",
-            "deployment-1",
-            "https://sites.openai.test/site-run-a/deployment-1",
-        ),
-    )
-    .success();
+    let _ = digest;
     let artifact = read_baton(dir.path())["publication_binding"]["artifact"].clone();
     apply_action(
         dir.path(),
         "reviewer",
         "reviewer-1",
         &reviewer,
-        4,
+        3,
         "changes.json",
         explainer_review_action(
             &obligation,
@@ -5726,7 +6196,7 @@ fn publication_changes_requested_is_substate_only_and_legacy_numeric_is_rejected
         "worker",
         "worker-1",
         &worker,
-        5,
+        4,
         "still-available.json",
         checkpoint_submission(
             "checkpoint-a",
@@ -5739,7 +6209,7 @@ fn publication_changes_requested_is_substate_only_and_legacy_numeric_is_rejected
 }
 
 #[test]
-fn reverse_casting_keeps_codex_publisher_and_claude_explainer_reviewer() {
+fn reverse_casting_keeps_role_owned_review_and_codex_owned_sites_publication() {
     let dir = tempfile::tempdir().unwrap();
     command()
         .args([
@@ -5767,12 +6237,72 @@ fn reverse_casting_keeps_codex_publisher_and_claude_explainer_reviewer() {
     let (stage_action, _digest) = stage_explainer_action(dir.path(), &obligation, "reverse");
     apply_action(
         dir.path(),
+        "reviewer",
+        "codex-reviewer",
+        &reviewer,
+        2,
+        "prativadi-cannot-author.json",
+        stage_action.clone(),
+    )
+    .failure()
+    .stderr(predicate::str::contains(
+        r#""error":"wrong_explainer_author""#,
+    ));
+    apply_action(
+        dir.path(),
         "worker",
         "claude-worker",
         &worker,
         2,
-        "claude-cannot-publish.json",
-        stage_action.clone(),
+        "vadi-authors.json",
+        stage_action,
+    )
+    .success();
+    let artifact = read_baton(dir.path())["publication_binding"]["artifact"].clone();
+    let approval =
+        explainer_review_action(&obligation, &artifact, "approved", serde_json::json!([]));
+    apply_action(
+        dir.path(),
+        "worker",
+        "claude-worker",
+        &worker,
+        3,
+        "vadi-cannot-review.json",
+        approval.clone(),
+    )
+    .failure()
+    .stderr(predicate::str::contains(
+        r#""error":"wrong_reviewer_harness""#,
+    ));
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "codex-reviewer",
+        &reviewer,
+        3,
+        "prativadi-reviews.json",
+        approval,
+    )
+    .success();
+    let baton = read_baton(dir.path());
+    let digest = baton["publication_binding"]["artifact"]["source_digest"]
+        .as_str()
+        .unwrap();
+    let publication = explainer_publication_action(
+        &obligation,
+        digest,
+        "site-reverse",
+        "initial",
+        "https://sites.openai.test/site-reverse/initial",
+    );
+    apply_action(
+        dir.path(),
+        "worker",
+        "claude-worker",
+        &worker,
+        4,
+        "non-codex-cannot-publish.json",
+        publication.clone(),
     )
     .failure()
     .stderr(predicate::str::contains(
@@ -5783,43 +6313,17 @@ fn reverse_casting_keeps_codex_publisher_and_claude_explainer_reviewer() {
         "reviewer",
         "codex-reviewer",
         &reviewer,
-        2,
-        "codex-publishes.json",
-        stage_action,
-    )
-    .success();
-    let artifact = read_baton(dir.path())["publication_binding"]["artifact"].clone();
-    let approval =
-        explainer_review_action(&obligation, &artifact, "approved", serde_json::json!([]));
-    apply_action(
-        dir.path(),
-        "reviewer",
-        "codex-reviewer",
-        &reviewer,
-        3,
-        "codex-cannot-review.json",
-        approval.clone(),
-    )
-    .failure()
-    .stderr(predicate::str::contains(
-        r#""error":"wrong_reviewer_harness""#,
-    ));
-    apply_action(
-        dir.path(),
-        "worker",
-        "claude-worker",
-        &worker,
-        3,
-        "claude-reviews.json",
-        approval,
-    )
-    .success();
-    apply_action(
-        dir.path(),
-        "worker",
-        "claude-worker",
-        &worker,
         4,
+        "codex-publishes.json",
+        publication,
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "worker",
+        "claude-worker",
+        &worker,
+        5,
         "checkpoint.json",
         checkpoint_submission(
             "checkpoint-a",

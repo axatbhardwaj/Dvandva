@@ -22,7 +22,7 @@ mkdir -p "$HOME"
 npx --yes skills add "$repo_root" --copy --global \
   --agent claude-code codex --skill setup-dvandva vadi prativadi -y >/dev/null
 bash "$HOME/.agents/skills/setup-dvandva/scripts/setup-dvandva.sh" \
-  install --version 0.3.2 >/dev/null
+  install --version 0.3.3 >/dev/null
 
 for role in vadi prativadi; do
   cmp "$repo_root/skills/$role/scripts/dvandva-role.sh" \
@@ -108,20 +108,21 @@ obligation_json() {
   python3 -c 'import json,sys; print(json.dumps(json.load(open(sys.argv[1]))["publication_binding"]["obligation"],separators=(",",":")))' "$1/baton.json"
 }
 
-# The publisher stages digest-bound bytes into the run directory, the reviewer
-# reads exactly those bytes back through the facade, then approves them. The
-# Codex Site is an optional rendering and is not exercised here.
+# Vadi stages digest-bound bytes, prativadi approves those exact local bytes,
+# then whichever participant is Codex records the matching owner-only Sites
+# deployment receipt.
 approve_explainer() {
-  local publisher="$1" publisher_session="$2" reviewer="$3" reviewer_session="$4"
-  local run_dir="$5" revision="$6" site_id="$7" site_version="$8"
-  local obligation source staged source_digest relayed reviewed
+  local author="$1" author_session="$2" reviewer="$3" reviewer_session="$4"
+  local sites_publisher="$5" sites_session="$6" run_dir="$7" revision="$8"
+  local site_id="$9" site_version="${10}"
+  local obligation source staged source_digest relayed reviewed published
   obligation="$(obligation_json "$run_dir")"
   source="$test_root/explainer-$site_id-$site_version.html"
   printf '<h1>%s %s</h1>\n' "$site_id" "$site_version" >"$source"
-  staged="$(apply_action "$publisher" "$publisher_session" "$run_dir" "$revision" \
+  staged="$(apply_action "$author" "$author_session" "$run_dir" "$revision" \
     "stage-$site_version" \
     "{\"type\":\"stage_explainer\",\"obligation\":$obligation,\"after_seq\":$(receipt_seq "$run_dir"),\"source_path\":\"$source\"}")"
-  python3 -c 'import json,sys; artifact=json.load(sys.stdin)["publication_binding"]["artifact"]; assert artifact["publisher_harness"] == "Codex"; assert artifact["channel"] == "run_artifact"; assert artifact["access"] == "run_private"' <<<"$staged"
+  python3 -c 'import json,sys; baton=json.load(sys.stdin); artifact=baton["publication_binding"]["artifact"]; assert artifact["publisher_harness"] == baton["participants"]["worker"]["harness"]; assert artifact["channel"] == "run_artifact"; assert artifact["access"] == "run_private"' <<<"$staged"
   source_digest="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["publication_binding"]["artifact"]["source_digest"])' <<<"$staged")"
 
   # The reviewing harness must be able to read the bytes it is about to approve.
@@ -132,7 +133,11 @@ approve_explainer() {
   reviewed="$(apply_action "$reviewer" "$reviewer_session" "$run_dir" "$((revision + 1))" \
     "review-$site_version" \
     "{\"type\":\"record_explainer_review\",\"obligation\":$obligation,\"after_seq\":$(receipt_seq "$run_dir"),\"source_digest\":\"$source_digest\",\"verdict\":\"approved\",\"findings\":[]}")"
-  python3 -c 'import json,sys; binding=json.load(sys.stdin)["publication_binding"]; review=binding["review"]; assert review["reviewer_harness"] == "Claude"; assert review["source_digest"] == binding["artifact"]["source_digest"]' <<<"$reviewed"
+  python3 -c 'import json,sys; baton=json.load(sys.stdin); binding=baton["publication_binding"]; review=binding["review"]; assert review["reviewer_harness"] == baton["participants"]["reviewer"]["harness"]; assert review["source_digest"] == binding["artifact"]["source_digest"]' <<<"$reviewed"
+  published="$(apply_action "$sites_publisher" "$sites_session" "$run_dir" "$((revision + 2))" \
+    "publish-$site_version" \
+    "{\"type\":\"record_explainer_publication\",\"obligation\":$obligation,\"after_seq\":$(receipt_seq "$run_dir"),\"source_digest\":\"$source_digest\",\"site_id\":\"$site_id\",\"site_version\":\"$site_version\",\"url\":\"https://sites.openai.test/$site_id/$site_version\",\"channel\":\"codex_sites\",\"access\":\"owner_only\"}")"
+  python3 -c 'import json,sys; binding=json.load(sys.stdin)["publication_binding"]; deployment=binding["deployment"]; assert deployment["publisher_harness"] == "Codex"; assert deployment["source_digest"] == binding["artifact"]["source_digest"]; assert deployment["channel"] == "codex_sites"; assert deployment["access"] == "owner_only"' <<<"$published"
   test -n "$source_digest"
 }
 
@@ -153,42 +158,40 @@ run_casting() {
     "$peer_for_reviewer" "$workspace" --run-id "$run_id")"
   grep -Fq "\"run_id\": \"$run_id\"" <<<"$joined"
 
-  local publisher publisher_session explainer_reviewer explainer_reviewer_session
+  local sites_publisher sites_session
   if test "$worker_harness" = codex; then
-    publisher="$worker"; publisher_session="$worker_session"
-    explainer_reviewer="$reviewer"; explainer_reviewer_session="$reviewer_session"
+    sites_publisher="$worker"; sites_session="$worker_session"
   else
-    publisher="$reviewer"; publisher_session="$reviewer_session"
-    explainer_reviewer="$worker"; explainer_reviewer_session="$worker_session"
+    sites_publisher="$reviewer"; sites_session="$reviewer_session"
   fi
 
-  approve_explainer "$publisher" "$publisher_session" "$explainer_reviewer" \
-    "$explainer_reviewer_session" "$run_dir" 2 "$site_id" deployment-1
+  approve_explainer "$worker" "$worker_session" "$reviewer" "$reviewer_session" \
+    "$sites_publisher" "$sites_session" "$run_dir" 2 "$site_id" deployment-1
   # Git checkpoints bind full-length object names, so the per-casting suffix
   # has to stay inside the hex alphabet.
   local nibble
   case "$label" in normal) nibble=1 ;; reverse) nibble=2 ;; *) nibble=f ;; esac
   checkpoint_a="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$nibble"
   checkpoint_b="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb$nibble"
-  reviewing_a="$(apply_action "$worker" "$worker_session" "$run_dir" 4 checkpoint-a-$label \
+  reviewing_a="$(apply_action "$worker" "$worker_session" "$run_dir" 5 checkpoint-a-$label \
     "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"git\",\"identity\":\"$checkpoint_a\",\"deliverables\":[{\"id\":\"implementation\",\"artifacts\":[{\"kind\":\"commit\",\"value\":\"$checkpoint_a\"}]}],\"verification\":[\"cargo test\"]}}")"
   digest_a="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' <<<"$reviewing_a")"
-  approve_explainer "$publisher" "$publisher_session" "$explainer_reviewer" \
-    "$explainer_reviewer_session" "$run_dir" 5 "$site_id" deployment-2
-  apply_action "$reviewer" "$reviewer_session" "$run_dir" 7 changes-$label \
+  approve_explainer "$worker" "$worker_session" "$reviewer" "$reviewer_session" \
+    "$sites_publisher" "$sites_session" "$run_dir" 6 "$site_id" deployment-2
+  apply_action "$reviewer" "$reviewer_session" "$run_dir" 9 changes-$label \
     "{\"type\":\"record_review\",\"verdict\":\"changes_requested\",\"checkpoint_identity\":\"$checkpoint_a\",\"manifest_digest\":\"$digest_a\",\"scope_revision\":0,\"findings\":[\"Add contention coverage\"]}" >/dev/null
-  approve_explainer "$publisher" "$publisher_session" "$explainer_reviewer" \
-    "$explainer_reviewer_session" "$run_dir" 8 "$site_id" deployment-3
-  reviewing_b="$(apply_action "$worker" "$worker_session" "$run_dir" 10 checkpoint-b-$label \
+  approve_explainer "$worker" "$worker_session" "$reviewer" "$reviewer_session" \
+    "$sites_publisher" "$sites_session" "$run_dir" 10 "$site_id" deployment-3
+  reviewing_b="$(apply_action "$worker" "$worker_session" "$run_dir" 13 checkpoint-b-$label \
     "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"git\",\"identity\":\"$checkpoint_b\",\"deliverables\":[{\"id\":\"implementation\",\"artifacts\":[{\"kind\":\"commit\",\"value\":\"$checkpoint_b\"}]}],\"verification\":[\"cargo test\",\"contention test\"]}}")"
   digest_b="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' <<<"$reviewing_b")"
-  approve_explainer "$publisher" "$publisher_session" "$explainer_reviewer" \
-    "$explainer_reviewer_session" "$run_dir" 11 "$site_id" deployment-4
-  apply_action "$reviewer" "$reviewer_session" "$run_dir" 13 approve-$label \
+  approve_explainer "$worker" "$worker_session" "$reviewer" "$reviewer_session" \
+    "$sites_publisher" "$sites_session" "$run_dir" 14 "$site_id" deployment-4
+  apply_action "$reviewer" "$reviewer_session" "$run_dir" 17 approve-$label \
     "{\"type\":\"record_review\",\"verdict\":\"approved\",\"checkpoint_identity\":\"$checkpoint_b\",\"manifest_digest\":\"$digest_b\",\"scope_revision\":0,\"findings\":[]}" >/dev/null
-  approve_explainer "$publisher" "$publisher_session" "$explainer_reviewer" \
-    "$explainer_reviewer_session" "$run_dir" 14 "$site_id" deployment-5
-  terminal="$(apply_action "$worker" "$worker_session" "$run_dir" 16 finalize-$label \
+  approve_explainer "$worker" "$worker_session" "$reviewer" "$reviewer_session" \
+    "$sites_publisher" "$sites_session" "$run_dir" 18 "$site_id" deployment-5
+  terminal="$(apply_action "$worker" "$worker_session" "$run_dir" 21 finalize-$label \
     '{"type":"finalize"}')"
   grep -Fq '"status": "done"' <<<"$terminal"
   grep -Fq "\"identity\": \"$checkpoint_b\"" <<<"$terminal"
@@ -211,10 +214,8 @@ for staged in sorted((run_dir / "explainer").iterdir()):
     if staged.stem != actual:
         raise SystemExit(f"staged {staged.name} hashes to {actual}")
 CHECK
-  grep -Rq '"publisher_harness": "Codex"' "$run_dir/history"
-  grep -Rq '"reviewer_harness": "Claude"' "$run_dir/history"
-  worker_wait="$(bash "$worker" wait "$worker_session" "$run_dir" 16 500)"
-  reviewer_wait="$(bash "$reviewer" wait "$reviewer_session" "$run_dir" 16 500)"
+  worker_wait="$(bash "$worker" wait "$worker_session" "$run_dir" 21 500)"
+  reviewer_wait="$(bash "$reviewer" wait "$reviewer_session" "$run_dir" 21 500)"
   python3 -c '
 import json, sys
 worker, reviewer = (json.loads(value) for value in sys.stdin.read().split("\n---\n"))
@@ -272,7 +273,7 @@ assert mismatch["candidates"][0]["run_id"] == sys.argv[1]
   python3 -c 'import json,sys; joined=json.load(sys.stdin); assert joined["run_id"] == sys.argv[1] and joined["revision"] == 2' \
     "$run_id" <<<"$joined"
   approve_explainer "$worker" "$worker_session" "$reviewer" \
-    "$reviewer_session" "$run_dir" 2 "$site_id" incident-1
+    "$reviewer_session" "$worker" "$worker_session" "$run_dir" 2 "$site_id" incident-1
 
   checkpoint_a="$(stage_analysis "$worker" "$worker_session" "$run_dir" review)"
   identity_a="$(analysis_identity "$checkpoint_a")"
@@ -281,7 +282,7 @@ assert mismatch["candidates"][0]["run_id"] == sys.argv[1]
   digest_a="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' \
     <<<"$reviewing_a")"
   approve_explainer "$worker" "$worker_session" "$reviewer" \
-    "$reviewer_session" "$run_dir" "$(rev "$run_dir")" "$site_id" incident-2
+    "$reviewer_session" "$worker" "$worker_session" "$run_dir" "$(rev "$run_dir")" "$site_id" incident-2
 
   request="$(apply_action "$worker" "$worker_session" "$run_dir" "$(rev "$run_dir")" incident-request \
     '{"type":"request_checkpoint_supersession","reason":"Required reuse analysis is absent"}')"
@@ -311,7 +312,7 @@ assert mismatch["candidates"][0]["run_id"] == sys.argv[1]
   python3 -c 'import json,sys; baton=json.load(sys.stdin); assert baton["status"] == "revising" and baton["assignee"] == "worker"' \
     <<<"$accepted"
   approve_explainer "$worker" "$worker_session" "$reviewer" \
-    "$reviewer_session" "$run_dir" "$(rev "$run_dir")" "$site_id" incident-3
+    "$reviewer_session" "$worker" "$worker_session" "$run_dir" "$(rev "$run_dir")" "$site_id" incident-3
 
   checkpoint_b="$(stage_analysis "$worker" "$worker_session" "$run_dir" reuse)"
   checkpoint_b_extra="$(stage_analysis "$worker" "$worker_session" "$run_dir" reuse-extra)"
@@ -321,11 +322,11 @@ assert mismatch["candidates"][0]["run_id"] == sys.argv[1]
   digest_b="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' \
     <<<"$reviewing_b")"
   approve_explainer "$worker" "$worker_session" "$reviewer" \
-    "$reviewer_session" "$run_dir" "$(rev "$run_dir")" "$site_id" incident-4
+    "$reviewer_session" "$worker" "$worker_session" "$run_dir" "$(rev "$run_dir")" "$site_id" incident-4
   apply_action "$reviewer" "$reviewer_session" "$run_dir" "$(rev "$run_dir")" incident-approve-b \
     "{\"type\":\"record_review\",\"verdict\":\"approved\",\"checkpoint_identity\":\"$identity_b\",\"manifest_digest\":\"$digest_b\",\"scope_revision\":0,\"findings\":[]}" >/dev/null
   approve_explainer "$worker" "$worker_session" "$reviewer" \
-    "$reviewer_session" "$run_dir" "$(rev "$run_dir")" "$site_id" incident-5
+    "$reviewer_session" "$worker" "$worker_session" "$run_dir" "$(rev "$run_dir")" "$site_id" incident-5
   terminal="$(apply_action "$worker" "$worker_session" "$run_dir" "$(rev "$run_dir")" \
     incident-finalize '{"type":"finalize"}')"
 
@@ -353,13 +354,13 @@ assert [entry[0]["kind"] for entry in receipts] == [
 assert len({entry[1]["source_digest"] for entry in receipts}) == 5
 assert all(entry[1]["channel"] == "run_artifact" for entry in receipts)
 assert all(entry[1]["access"] == "run_private" for entry in receipts)
-assert all(entry[1]["publisher_harness"] == "Codex" for entry in receipts)
-assert all(entry[2]["reviewer_harness"] == "Claude" for entry in receipts)
+baton = json.loads(pathlib.Path(run_dir, "baton.json").read_text())
+assert all(entry[1]["publisher_harness"] == baton["participants"]["worker"]["harness"] for entry in receipts)
+assert all(entry[2]["reviewer_harness"] == baton["participants"]["reviewer"]["harness"] for entry in receipts)
 assert all(entry[2]["source_digest"] == entry[1]["source_digest"] for entry in receipts)
 for _, artifact, _ in receipts:
     staged = pathlib.Path(run_dir, artifact["path"]).read_bytes()
     assert hashlib.sha256(staged).hexdigest() == artifact["source_digest"]
-baton = json.loads(pathlib.Path(run_dir, "baton.json").read_text())
 expected = {"identity": checkpoint, "manifest_digest": digest, "scope_revision": 0}
 assert {key: baton["checkpoint"][key] for key in expected} == expected
 assert baton["review"]["checkpoint_identity"] == checkpoint

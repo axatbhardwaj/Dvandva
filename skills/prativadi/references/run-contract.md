@@ -19,6 +19,10 @@ claim SESSION RUN_DIR EXPECTED_REVISION
 reclaim SESSION RUN_DIR EXPECTED_REVISION
 ```
 
+Harness identity is protocol data. A Codex participant must use the harness
+name `codex` (case-insensitive); aliases such as `codex-cli`, `gpt`, or
+`openai` take the no-Codex branch and skip Sites publication.
+
 ## Start and snapshot contract
 
 Exact joins pass only `--run-id` unless the human explicitly supplied objective,
@@ -37,7 +41,7 @@ work.
 
 For `publication_unreadable`, run `repair-policy` with the exact returned run
 directory and revision; it installs the readable channel and clears the current
-obligation's receipts so the publisher restages.
+obligation's receipts so vadi restages.
 
 For `upgrade_required`, run `upgrade` with the exact returned run directory,
 harnesses, and revision. Upgrade clears claims: use its returned revision with
@@ -59,9 +63,10 @@ Protocol-internal problems never block on human approval, because the human may
 be absent. Every one has a deterministic recovery to take instead:
 `publication_unreadable` takes `repair-policy`, `upgrade_required` takes
 `upgrade`, an expired own claim takes exact `start --run-id`, a
-changes-requested explainer takes `stage_explainer` again, and a wait timeout
-(`wait_outcome: idle_timeout`) takes a fresh snapshot and another wait. The
-kernel never leaves `request_human_decision` as the only way forward.
+changes-requested explainer waits for vadi to `stage_explainer` again and then
+reviews the replacement digest, and a wait timeout (`wait_outcome:
+idle_timeout`) takes a fresh snapshot and another wait. The kernel never leaves
+`request_human_decision` as the only way forward.
 
 ## Workflow selection and prativadi lifecycle
 
@@ -221,19 +226,23 @@ not returned by the Human Decision object and must never be inferred:
 
 ## Explainer obligation
 
-Each semantic handoff opens an obligation. For the current one, the
-Codex harness stages the explainer's bytes into the run directory and the
-Claude harness reviews those exact bytes, regardless of semantic casting. Staging is first: the gate binds a digest, not a URL.
+Each semantic handoff opens an obligation. Vadi stages the explainer's bytes
+into the run directory and prativadi reviews those exact bytes, regardless of which harness fills either role. Staging is first: the gate binds a digest, not a URL. For `run_started`, review this initial HTML before vadi continues domain
+work; request concrete changes and review each replacement digest until clean.
+On an upgraded run, a complete pre-`0.3.3` receipt pair remains valid against
+the stored fixed policy. If only the legacy author receipt exists, wait for
+current vadi to restage before reviewing.
 A new handoff replaces the current obligation, so the gate requires the current
 obligation to be staged and reviewed, not every obligation the run has opened.
 The explainer carries this exact content:
 canonical scope, complete manifest, findings and decisions, and a current plan/TODO.
 
-For `stage_explainer`, write the explainer HTML to a private path and
-copy `publication_binding.obligation` unchanged from the fresh snapshot. The kernel
-hashes the bytes, stores them at `explainer/<source_digest>.html` inside the run
-directory, and binds that digest to the obligation. Staging different bytes
-discards any earlier rendering and review of the obligation:
+For peer-owned `stage_explainer`, vadi writes the explainer HTML to a private
+path and copies `publication_binding.obligation` unchanged from the fresh
+snapshot. The kernel hashes the bytes, stores them at
+`explainer/<source_digest>.html` inside the run directory, and binds that digest
+to the obligation. Staging different bytes discards any earlier rendering and
+review of the obligation:
 
 ```json
 {"type":"stage_explainer","obligation":"<snapshot.publication_binding.obligation>","after_seq":<snapshot.publication_binding.receipt_seq>,"source_path":"<absolute path to the explainer HTML>"}
@@ -245,22 +254,43 @@ advance it, so an unrelated peer heartbeat or progress report never invalidates
 a prepared write, while a delayed or out-of-order receipt is refused instead of
 overwriting newer state. Re-applying an identical receipt is a no-op.
 
-For `review_explainer`, read the staged bytes through the facade with
-`dvandva-role.sh explainer`, which verifies the digest for you, then copy the
-same obligation and `publication_binding.artifact.source_digest` unchanged:
+For prativadi-owned `review_explainer`, read the staged bytes through the facade
+with `dvandva-role.sh explainer`, which verifies the digest for you, then copy `publication_binding.obligation` unchanged along with
+`publication_binding.artifact.source_digest`:
 
 ```json
 {"type":"record_explainer_review","obligation":"<snapshot.publication_binding.obligation>","after_seq":<snapshot.publication_binding.receipt_seq>,"source_digest":"<snapshot.publication_binding.artifact.source_digest>","verdict":"approved","findings":[]}
 ```
 
-`publish_explainer` is optional and never gates the run. It records a
-human-facing Codex Site that renders the already-staged bytes; its
-`source_digest` must equal the staged digest. Reuse one stable Site ID for the
-run and record a new Site version for each deployment:
+After prativadi records an approved local review, `publish_explainer` is
+required work for whichever participant is Codex and wakes that participant.
+If neither participant is Codex, skip Sites publication. Otherwise treat it as
+a mechanical adapter:
+
+1. Refresh the snapshot, then use `dvandva-role.sh explainer` to materialize the
+   verified staged bytes into a private, isolated Sites checkout. Keep the exact
+   HTML as the status page's rendered source; packaging may add hosting machinery
+   but may not rewrite the reviewed content.
+2. Invoke the host's `sites:sites-building` and `sites:sites-hosting`
+   capabilities. Reuse `publication_binding.site_id` when present; otherwise
+   create one Site exactly once. Push the exact source state, save one version,
+   deploy it owner-only with the private deployment operation, and poll that
+   deployment to terminal success.
+3. Refresh the facade again. Record only the connector-returned Site ID, saved
+   version, and production URL, bound to the still-current obligation, receipt
+   sequence, and local digest. Reuse one stable Site ID for the run and record a
+   new Site version for each approved digest:
 
 ```json
 {"type":"record_explainer_publication","obligation":"<snapshot.publication_binding.obligation>","after_seq":<snapshot.publication_binding.receipt_seq>,"source_digest":"<snapshot.publication_binding.artifact.source_digest>","site_id":"<stable run Site ID>","site_version":"<new version>","url":"<exact deployment URL>","channel":"codex_sites","access":"owner_only"}
 ```
+
+When Codex participates, finalization requires both the approved local digest
+and this matching private Sites receipt. Without Codex, local approval is
+sufficient. A connector failure remains Codex-owned publication work: report
+the exact non-secret failure, retry only errors identified as temporary, and
+leave the run active. Never record a guessed receipt, publish to broader access,
+substitute generic hosting, or ask prativadi to review through the Site.
 
 Never record a verdict on bytes you did not read. Recording an unread approval,
 or substituting a Claude Artifact, generic publisher, or any other
