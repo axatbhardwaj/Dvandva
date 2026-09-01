@@ -160,15 +160,11 @@ fn publication_needs_artifact(baton: &RunBaton) -> bool {
 fn publication_can_publish_site(baton: &RunBaton) -> bool {
     baton.publication_binding.as_ref().is_some_and(|binding| {
         binding.artifact.as_ref().is_some_and(|artifact| {
-            binding.review.as_ref().is_some_and(|review| {
-                review.obligation == binding.obligation
-                    && review.source_digest == artifact.source_digest
-                    && review.verdict == "approved"
-                    && review.findings.is_empty()
-            }) && binding.deployment.as_ref().is_none_or(|deployment| {
-                deployment.source_digest != artifact.source_digest
-                    || deployment.obligation != binding.obligation
-            })
+            baton.local_explainer_approved(binding)
+                && binding.deployment.as_ref().is_none_or(|deployment| {
+                    deployment.source_digest != artifact.source_digest
+                        || deployment.obligation != binding.obligation
+                })
         })
     })
 }

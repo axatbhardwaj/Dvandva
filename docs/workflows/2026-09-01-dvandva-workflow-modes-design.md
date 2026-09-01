@@ -89,9 +89,12 @@ uses the existing digest-bound final explainer instead of expanding the kernel:
 
 1. the acting role queries GitHub after its write and records the receipt;
 2. the peer independently queries GitHub and checks the same coordinates;
-3. the Codex harness stages the receipt-bearing explainer;
-4. the Claude harness approves those exact bytes only after its live check;
-5. finalization remains blocked until that two-harness gate is satisfied.
+3. vadi stages the receipt-bearing explainer;
+4. prativadi approves those exact bytes only after its live check;
+5. when Codex participates, that harness publishes the approved digest to the
+   private status Site; and
+6. finalization remains blocked until the role-owned local gate and any required
+   Codex Sites receipt are satisfied.
 
 The kernel enforces the receipt handshake and immutable bytes, while the role
 contracts own the semantic GitHub checks. No workflow may claim schema-level

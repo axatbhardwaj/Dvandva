@@ -19,6 +19,7 @@ the URL.
 When a pairing contains Codex, finalization requires the local approval and the
 matching Sites receipt. If neither participant is Codex, Sites publication is
 skipped and the local approval is sufficient. This supersedes only ADR 0004's
-optional-publication clause; its local-channel trust boundary remains intact.
+publishing-harness staging rule and optional-publication clause; its
+local-channel trust boundary remains intact.
 Kernel `0.3.3` carries the role-owned author/reviewer rules and conditional
 Codex Sites gate; the write schema remains `dvandva.run.v2` and role API 2.

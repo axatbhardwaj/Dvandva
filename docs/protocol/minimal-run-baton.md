@@ -72,9 +72,9 @@ checkpoint.
   clears both claims.
 
 The kernel derives a participant's harness from its authenticated claim. New
-and upgraded runs require exactly one normalized Codex participant and one
-normalized Claude participant. Credential replacement and protocol upgrade
-fence stale claims.
+and upgraded runs require two distinct, non-blank normalized harness names.
+`Codex` and `Claude` retain canonical title case; other names normalize to
+lowercase. Credential replacement and protocol upgrade fence stale claims.
 
 ## Commands
 

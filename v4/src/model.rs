@@ -11,7 +11,7 @@ pub const CODEX_HARNESS: &str = "Codex";
 /// run locally against the same run directory, so both can read this channel.
 pub const EXPLAINER_CHANNEL: &str = "run_artifact";
 pub const EXPLAINER_ACCESS: &str = "run_private";
-/// Required human-facing rendering of locally reviewed explainer bytes.
+/// Human-facing rendering required only when a run contains Codex.
 pub const SITES_CHANNEL: &str = "codex_sites";
 pub const SITES_ACCESS: &str = "owner_only";
 /// Recognized but reviewer-unreadable: an owner-only Codex Site is gated behind
@@ -311,8 +311,8 @@ pub struct PublicationDeployment {
 }
 
 /// Digest-bound explainer bytes staged inside the run directory. This is the
-/// artifact the reviewing harness reads. Finalization also requires a private
-/// Sites deployment of the same digest.
+/// artifact the reviewing harness reads. When Codex participates, finalization
+/// also requires a private Sites deployment of the same digest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExplainerArtifact {
     pub obligation: HandoffObligation,
@@ -587,18 +587,27 @@ impl RunBaton {
     /// obligation. All consumers use this predicate so policy interpretation
     /// cannot drift between action routing, transitions, and history checks.
     pub fn local_explainer_approved(&self, binding: &PublicationBinding) -> bool {
-        let policy = self.effective_publication_policy();
+        let effective = self.effective_publication_policy();
         binding.artifact.as_ref().is_some_and(|artifact| {
             binding.review.as_ref().is_some_and(|review| {
+                let receipts_match = |policy: &PublicationPolicy| {
+                    artifact.channel == policy.channel
+                        && artifact.access == policy.access
+                        && artifact.publisher_harness == policy.publisher_harness
+                        && review.reviewer_harness == policy.reviewer_harness
+                };
+                let stored_legacy_policy_matches =
+                    self.publication_policy.as_ref().is_some_and(|stored| {
+                        stored.channel == EXPLAINER_CHANNEL
+                            && stored.access == EXPLAINER_ACCESS
+                            && receipts_match(stored)
+                    });
                 artifact.obligation == binding.obligation
                     && review.obligation == binding.obligation
                     && review.source_digest == artifact.source_digest
                     && review.verdict == "approved"
                     && review.findings.is_empty()
-                    && artifact.channel == policy.channel
-                    && artifact.access == policy.access
-                    && artifact.publisher_harness == policy.publisher_harness
-                    && review.reviewer_harness == policy.reviewer_harness
+                    && (receipts_match(&effective) || stored_legacy_policy_matches)
             })
         })
     }

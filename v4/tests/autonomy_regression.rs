@@ -180,6 +180,39 @@ fn approved_local_bytes_make_private_sites_publication_actionable_and_required()
 }
 
 #[test]
+fn approved_reverse_cast_receipts_from_v0_3_2_remain_actionable() {
+    let mut run = baton();
+    run.publication_policy = Some(PublicationPolicy::fixed());
+    run.status = Status::Finalizing;
+    run.assignee = Assignee::Worker;
+    let binding = run.publication_binding.as_mut().unwrap();
+    let obligation = binding.obligation.clone();
+    let digest = "b".repeat(64);
+    binding.artifact = Some(ExplainerArtifact {
+        obligation: obligation.clone(),
+        source_digest: digest.clone(),
+        path: format!("explainer/{digest}.html"),
+        media_type: "text/html".into(),
+        byte_length: 32,
+        channel: EXPLAINER_CHANNEL.into(),
+        access: EXPLAINER_ACCESS.into(),
+        publisher_harness: "Codex".into(),
+    });
+    binding.review = Some(PublicationReview {
+        obligation,
+        source_digest: digest,
+        verdict: "approved".into(),
+        findings: vec![],
+        reviewer_harness: "Claude".into(),
+    });
+
+    assert!(run.local_explainer_approved(run.publication_binding.as_ref().unwrap()));
+    let codex_reviewer = next_action::classify(&run, Role::Reviewer, "Codex");
+    assert!(codex_reviewer.legal_actions.contains(&"publish_explainer"));
+    assert!(codex_reviewer.actionable);
+}
+
+#[test]
 fn a_pairing_without_codex_skips_the_sites_receipt() {
     let mut run = RunBaton::new(
         "run-no-codex",

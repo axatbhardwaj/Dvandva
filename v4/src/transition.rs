@@ -587,7 +587,7 @@ fn apply_locked(
             let publisher_harness = caller_harness(baton, role).to_owned();
             let binding = baton
                 .publication_binding
-                .as_mut()
+                .as_ref()
                 .ok_or(TransitionError::PublicationStale)?;
             if binding.obligation != obligation {
                 return Err(TransitionError::StalePublicationBinding);
@@ -614,14 +614,7 @@ fn apply_locked(
             if artifact.obligation != obligation || artifact.source_digest != source_digest {
                 return Err(TransitionError::StalePublicationBinding);
             }
-            let review = binding
-                .review
-                .as_ref()
-                .ok_or(TransitionError::ExplainerNotApproved)?;
-            if review.obligation != obligation || review.source_digest != source_digest {
-                return Err(TransitionError::StalePublicationBinding);
-            }
-            if review.verdict != "approved" || !review.findings.is_empty() {
+            if !baton.local_explainer_approved(binding) {
                 return Err(TransitionError::ExplainerNotApproved);
             }
             if !valid_sha256(&source_digest)
@@ -642,6 +635,10 @@ fn apply_locked(
             {
                 return Err(TransitionError::SiteIdMismatch);
             }
+            let binding = baton
+                .publication_binding
+                .as_mut()
+                .ok_or(TransitionError::PublicationStale)?;
             binding.site_id = Some(site_id.clone());
             binding.deployment = Some(PublicationDeployment {
                 obligation,

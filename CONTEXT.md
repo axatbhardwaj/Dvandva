@@ -6,8 +6,9 @@ harness sessions. The v3 product and its distribution are a retired archive.
 ## Language
 
 **Run Pair**:
-One worker Role Session and one reviewer Role Session from different harness
-families. Semantic roles do not determine harness-specific publication duty.
+One worker Role Session and one reviewer Role Session with distinct, non-blank
+harness names. Vadi authors the local explainer and prativadi reviews it; only
+the Sites deployment duty is harness-specific to a Codex participant.
 
 **Role Session**:
 One independently started harness session participating as worker or reviewer.
