@@ -19,6 +19,10 @@ claim SESSION RUN_DIR EXPECTED_REVISION
 reclaim SESSION RUN_DIR EXPECTED_REVISION
 ```
 
+Harness identity is protocol data. A Codex participant must use the harness
+name `codex` (case-insensitive); aliases such as `codex-cli`, `gpt`, or
+`openai` take the no-Codex branch and skip Sites publication.
+
 ## Start and snapshot contract
 
 New runs require the human's objective and every required deliverable.

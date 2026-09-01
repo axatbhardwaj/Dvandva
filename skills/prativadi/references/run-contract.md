@@ -19,6 +19,10 @@ claim SESSION RUN_DIR EXPECTED_REVISION
 reclaim SESSION RUN_DIR EXPECTED_REVISION
 ```
 
+Harness identity is protocol data. A Codex participant must use the harness
+name `codex` (case-insensitive); aliases such as `codex-cli`, `gpt`, or
+`openai` take the no-Codex branch and skip Sites publication.
+
 ## Start and snapshot contract
 
 Exact joins pass only `--run-id` unless the human explicitly supplied objective,
@@ -59,9 +63,10 @@ Protocol-internal problems never block on human approval, because the human may
 be absent. Every one has a deterministic recovery to take instead:
 `publication_unreadable` takes `repair-policy`, `upgrade_required` takes
 `upgrade`, an expired own claim takes exact `start --run-id`, a
-changes-requested explainer takes `stage_explainer` again, and a wait timeout
-(`wait_outcome: idle_timeout`) takes a fresh snapshot and another wait. The
-kernel never leaves `request_human_decision` as the only way forward.
+changes-requested explainer waits for vadi to `stage_explainer` again and then
+reviews the replacement digest, and a wait timeout (`wait_outcome:
+idle_timeout`) takes a fresh snapshot and another wait. The kernel never leaves
+`request_human_decision` as the only way forward.
 
 ## Workflow selection and prativadi lifecycle
 

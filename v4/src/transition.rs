@@ -1077,10 +1077,6 @@ fn require_explainer_reviewer(role: Role) -> Result<(), TransitionError> {
     Ok(())
 }
 
-/// Copy vadi's explainer bytes into a content-addressed file under the
-/// run directory and return their digest and length. Content addressing makes
-/// re-staging identical bytes a no-op and keeps every prior obligation's bytes
-/// readable for audit.
 /// Copy caller-supplied bytes into a content-addressed, mode-restricted file
 /// under the run directory and return their digest.
 fn stage_content_addressed(

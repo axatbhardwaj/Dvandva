@@ -48,6 +48,10 @@ grep -Fq '"read_schemas": [' <<<"$probe"
 grep -Fq '"role_api": 2' <<<"$probe"
 grep -Fq '"upgrade_from_v1": true' <<<"$probe"
 grep -Fq '"publish": false' <<<"$probe"
+for facade in "$vadi" "$prativadi"; do
+  expect_failure 'Codex participants must use harness name codex' \
+    bash "$facade" start
+done
 
 # Handshake validation preserves raw bytes, size, and producer status.
 mv "$binary" "$binary.real"

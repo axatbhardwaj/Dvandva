@@ -84,8 +84,8 @@ fn an_unreadable_policy_is_recognized_without_asking_a_human() {
     assert!(owner_only.is_recognized());
     assert!(!owner_only.reviewer_can_read());
 
-    // The same Site is readable when the publisher is also the reviewer, which
-    // is why the mismatch is a property of the pairing, not of Sites as such.
+    // Self-review does not make an owner-only Site reviewer-readable; the
+    // two-party gate always reviews the local artifact before publication.
     let self_reviewed = PublicationPolicy {
         reviewer_harness: "Codex".into(),
         ..owner_only.clone()

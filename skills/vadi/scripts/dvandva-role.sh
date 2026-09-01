@@ -171,7 +171,7 @@ validate_harness_pair() {
 
 start_role() {
   test "$#" -ge 4 || {
-    printf 'usage: dvandva-role.sh start SESSION HARNESS PEER WORKSPACE [OBJECTIVE [TASK]] [--objective-ref KIND=VALUE] [--required-deliverable ID=DESCRIPTION] [--wait|--new-run|--run-id ID] [--autonomous]\n' >&2
+    printf 'usage: dvandva-role.sh start SESSION HARNESS PEER WORKSPACE [OBJECTIVE [TASK]] [--objective-ref KIND=VALUE] [--required-deliverable ID=DESCRIPTION] [--wait|--new-run|--run-id ID] [--autonomous]\nCodex participants must use harness name codex (case-insensitive); aliases take the no-Codex branch and skip Sites publication.\n' >&2
     exit 2
   }
   local session="$1" harness="$2" peer="$3" workspace="$4"
