@@ -307,9 +307,7 @@ fn apply_locked(
                 .as_ref()
                 .and_then(|binding| binding.review.as_ref())
                 .is_some_and(|review| review.verdict == "changes_requested")
-                && caller_harness(baton, role)
-                    .trim()
-                    .eq_ignore_ascii_case(effective_policy(baton).publisher_harness.trim());
+                && role == Role::Worker;
             if publisher_owes_restage {
                 return Err(TransitionError::AutonomousRecoveryAvailable);
             }

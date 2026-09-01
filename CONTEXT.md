@@ -93,6 +93,8 @@ local policy, the kernel derives the effective author from vadi and reviewer
 from prativadi; these are distinct from the Codex participant that publishes the
 Explainer Site. A policy whose reviewer cannot read its channel is refused at
 `start`, because it can never reach a review.
+For upgraded runs, each pre-`0.3.3` receipt may retain the fixed harness policy
+stored with the run, including an upgrade between staging and review.
 
 **Participant Progress**:
 A role's last self-reported phase and time, published with `report_progress`,

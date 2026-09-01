@@ -583,31 +583,34 @@ impl RunBaton {
                 .eq_ignore_ascii_case(CODEX_HARNESS)
     }
 
-    /// Whether prativadi approved the exact local bytes vadi staged for this
-    /// obligation. All consumers use this predicate so policy interpretation
-    /// cannot drift between action routing, transitions, and history checks.
+    /// Whether the exact local bytes have matching author and approval receipts
+    /// for this obligation. New receipts follow the role-derived policy. During
+    /// a 0.3.2 upgrade, each already-written receipt may instead match the fixed
+    /// policy stored with that run, including when the upgrade happened between
+    /// staging and review.
     pub fn local_explainer_approved(&self, binding: &PublicationBinding) -> bool {
         let effective = self.effective_publication_policy();
         binding.artifact.as_ref().is_some_and(|artifact| {
             binding.review.as_ref().is_some_and(|review| {
-                let receipts_match = |policy: &PublicationPolicy| {
-                    artifact.channel == policy.channel
-                        && artifact.access == policy.access
-                        && artifact.publisher_harness == policy.publisher_harness
-                        && review.reviewer_harness == policy.reviewer_harness
-                };
-                let stored_legacy_policy_matches =
-                    self.publication_policy.as_ref().is_some_and(|stored| {
-                        stored.channel == EXPLAINER_CHANNEL
-                            && stored.access == EXPLAINER_ACCESS
-                            && receipts_match(stored)
-                    });
+                let stored_legacy_policy = self.publication_policy.as_ref().filter(|stored| {
+                    stored.channel == EXPLAINER_CHANNEL && stored.access == EXPLAINER_ACCESS
+                });
+                let artifact_policy_matches = artifact.channel == EXPLAINER_CHANNEL
+                    && artifact.access == EXPLAINER_ACCESS
+                    && (artifact.publisher_harness == effective.publisher_harness
+                        || stored_legacy_policy.is_some_and(|stored| {
+                            artifact.publisher_harness == stored.publisher_harness
+                        }));
+                let review_policy_matches = review.reviewer_harness == effective.reviewer_harness
+                    || stored_legacy_policy
+                        .is_some_and(|stored| review.reviewer_harness == stored.reviewer_harness);
                 artifact.obligation == binding.obligation
                     && review.obligation == binding.obligation
                     && review.source_digest == artifact.source_digest
                     && review.verdict == "approved"
                     && review.findings.is_empty()
-                    && (receipts_match(&effective) || stored_legacy_policy_matches)
+                    && artifact_policy_matches
+                    && review_policy_matches
             })
         })
     }

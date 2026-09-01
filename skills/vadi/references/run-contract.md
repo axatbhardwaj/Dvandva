@@ -169,6 +169,8 @@ not returned by the Human Decision object and must never be inferred:
 Each semantic handoff opens an obligation. Vadi stages the explainer's bytes
 into the run directory and prativadi reviews those exact bytes, regardless of which harness fills either role. Staging is first: the gate binds a digest, not a URL. For `run_started`, vadi proposes this initial HTML before continuing
 domain work and incorporates every requested change until prativadi approves.
+On an upgraded run, the kernel also accepts each pre-`0.3.3` receipt against
+the fixed harness policy stored when that receipt was written.
 A new handoff replaces the current obligation, so the gate requires the current
 obligation to be staged and reviewed, not every obligation the run has opened.
 The explainer carries this exact content:

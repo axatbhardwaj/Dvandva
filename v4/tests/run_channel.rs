@@ -7,6 +7,7 @@ use dvandva_v4::transition::{self, TransitionError};
 use fs2::FileExt;
 use predicates::prelude::*;
 use sha2::{Digest, Sha256};
+use std::os::unix::fs::PermissionsExt;
 
 fn command() -> Command {
     Command::new(env!("CARGO_BIN_EXE_dvandva-v4"))
@@ -4776,6 +4777,94 @@ fn publication_receipts_are_exact_authorized_and_keep_one_stable_site() {
     assert!(baton["publication_binding"]["deployment"].is_null());
     assert!(baton["publication_binding"]["review"].is_null());
     assert_eq!(baton["publication_binding"]["obligation"], obligation);
+}
+
+#[test]
+fn persisted_reverse_cast_receipts_can_cross_the_v0_3_2_upgrade_boundary() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut root = RunBaton::new(
+        "run-reverse",
+        "Implement the upgrade boundary",
+        "Claude",
+        "Codex",
+        vec![DeliverableRequirement {
+            id: "implementation".into(),
+            description: "Implement the upgrade boundary".into(),
+        }],
+    )
+    .unwrap();
+    root.publication_policy = Some(dvandva_v4::model::PublicationPolicy::fixed());
+    let channel = RunChannel::open(dir.path());
+    channel.create(&root).unwrap();
+    let _worker = claim_role(dir.path(), "worker", "worker-claude", 0);
+    let reviewer = claim_role(dir.path(), "reviewer", "reviewer-codex", 1);
+
+    let html = b"<html><body>upgrade boundary</body></html>";
+    let digest = format!("{:x}", Sha256::digest(html));
+    let relative_path = format!("explainer/{digest}.html");
+    std::fs::create_dir_all(dir.path().join("explainer")).unwrap();
+    let artifact_path = dir.path().join(&relative_path);
+    std::fs::write(&artifact_path, html).unwrap();
+    let mut permissions = std::fs::metadata(&artifact_path).unwrap().permissions();
+    permissions.set_mode(0o600);
+    std::fs::set_permissions(&artifact_path, permissions).unwrap();
+
+    // Persist the state a 0.3.2 reverse-cast run could leave behind: Codex
+    // staged under the fixed harness policy, then the kernel upgraded before
+    // the now-role-derived Codex reviewer recorded its verdict.
+    let current = channel.read().unwrap();
+    let mut legacy_staged = serde_json::to_value(&current).unwrap();
+    let obligation = legacy_staged["publication_binding"]["obligation"].clone();
+    legacy_staged["revision"] = serde_json::json!(3);
+    legacy_staged["publication_binding"]["artifact"] = serde_json::json!({
+        "obligation": obligation,
+        "source_digest": digest,
+        "path": relative_path,
+        "media_type": "text/html",
+        "byte_length": html.len(),
+        "channel": "run_artifact",
+        "access": "run_private",
+        "publisher_harness": "Codex"
+    });
+    legacy_staged["publication_binding"]["receipt_seq"] = serde_json::json!(1);
+    let legacy_staged: RunBaton = serde_json::from_value(legacy_staged).unwrap();
+    channel.compare_and_swap(2, &legacy_staged).unwrap();
+
+    let staged = RunChannel::open(dir.path()).read().unwrap();
+    assert_eq!(
+        staged
+            .publication_binding
+            .as_ref()
+            .unwrap()
+            .artifact
+            .as_ref()
+            .unwrap()
+            .publisher_harness,
+        "Codex"
+    );
+
+    let artifact = read_baton(dir.path())["publication_binding"]["artifact"].clone();
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-codex",
+        &reviewer,
+        3,
+        "approve-after-upgrade.json",
+        explainer_review_action(
+            &current_obligation(dir.path()),
+            &artifact,
+            "approved",
+            serde_json::json!([]),
+        ),
+    )
+    .success();
+
+    let approved = RunChannel::open(dir.path()).read().unwrap();
+    assert!(approved.local_explainer_approved(approved.publication_binding.as_ref().unwrap()));
+    let next = dvandva_v4::next_action::classify(&approved, Role::Reviewer, "Codex");
+    assert!(next.legal_actions.contains(&"publish_explainer"));
+    assert!(next.actionable);
 }
 
 #[test]
