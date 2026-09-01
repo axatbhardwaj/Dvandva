@@ -6,16 +6,18 @@ use thiserror::Error;
 pub const LEGACY_SCHEMA: &str = "dvandva.run.v1";
 pub const SCHEMA: &str = "dvandva.run.v2";
 pub const ROLE_API: u32 = 2;
-pub const EXPLAINER_PUBLISHER_HARNESS: &str = "Codex";
-pub const EXPLAINER_REVIEWER_HARNESS: &str = "Claude";
+pub const CODEX_HARNESS: &str = "Codex";
 /// Digest-bound explainer bytes staged inside the run directory. Both harnesses
 /// run locally against the same run directory, so both can read this channel.
 pub const EXPLAINER_CHANNEL: &str = "run_artifact";
 pub const EXPLAINER_ACCESS: &str = "run_private";
+/// Required human-facing rendering of locally reviewed explainer bytes.
+pub const SITES_CHANNEL: &str = "codex_sites";
+pub const SITES_ACCESS: &str = "owner_only";
 /// Recognized but reviewer-unreadable: an owner-only Codex Site is gated behind
 /// the publisher owner's session, which the reviewing harness cannot present.
-pub const LEGACY_EXPLAINER_CHANNEL: &str = "codex_sites";
-pub const LEGACY_EXPLAINER_ACCESS: &str = "owner_only";
+pub const LEGACY_EXPLAINER_CHANNEL: &str = SITES_CHANNEL;
+pub const LEGACY_EXPLAINER_ACCESS: &str = SITES_ACCESS;
 pub const EXPLAINER_ARTIFACT_DIR: &str = "explainer";
 pub const ANALYSIS_ARTIFACT_DIR: &str = "analysis";
 pub const EXPLAINER_MEDIA_TYPE: &str = "text/html";
@@ -237,10 +239,22 @@ impl PublicationPolicy {
 
     pub fn fixed() -> Self {
         Self {
-            publisher_harness: EXPLAINER_PUBLISHER_HARNESS.to_owned(),
+            publisher_harness: CODEX_HARNESS.to_owned(),
             channel: EXPLAINER_CHANNEL.to_owned(),
             access: EXPLAINER_ACCESS.to_owned(),
-            reviewer_harness: EXPLAINER_REVIEWER_HARNESS.to_owned(),
+            reviewer_harness: "Claude".to_owned(),
+        }
+    }
+
+    /// New runs bind the local artifact to the semantic roles: vadi authors it
+    /// and prativadi reviews it. Sites publication is a separate Codex-only
+    /// responsibility and is not encoded in this local-channel policy.
+    pub fn for_participants(worker_harness: &str, reviewer_harness: &str) -> Self {
+        Self {
+            publisher_harness: worker_harness.to_owned(),
+            channel: EXPLAINER_CHANNEL.to_owned(),
+            access: EXPLAINER_ACCESS.to_owned(),
+            reviewer_harness: reviewer_harness.to_owned(),
         }
     }
 
@@ -297,9 +311,8 @@ pub struct PublicationDeployment {
 }
 
 /// Digest-bound explainer bytes staged inside the run directory. This is the
-/// artifact the reviewing harness actually reads and the gate actually binds;
-/// `PublicationDeployment` is an optional human-facing rendering of the same
-/// bytes.
+/// artifact the reviewing harness reads. Finalization also requires a private
+/// Sites deployment of the same digest.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ExplainerArtifact {
     pub obligation: HandoffObligation,
@@ -543,6 +556,33 @@ pub struct RunBaton {
 }
 
 impl RunBaton {
+    pub fn effective_publication_policy(&self) -> PublicationPolicy {
+        let stored = self
+            .publication_policy
+            .clone()
+            .unwrap_or_else(PublicationPolicy::fixed);
+        if stored.channel == EXPLAINER_CHANNEL && stored.access == EXPLAINER_ACCESS {
+            PublicationPolicy::for_participants(
+                &self.participants.worker.harness,
+                &self.participants.reviewer.harness,
+            )
+        } else {
+            stored
+        }
+    }
+
+    pub fn has_codex_participant(&self) -> bool {
+        self.participants
+            .worker
+            .harness
+            .eq_ignore_ascii_case(CODEX_HARNESS)
+            || self
+                .participants
+                .reviewer
+                .harness
+                .eq_ignore_ascii_case(CODEX_HARNESS)
+    }
+
     pub fn new(
         run_id: impl Into<String>,
         objective: impl Into<String>,
@@ -553,6 +593,8 @@ impl RunBaton {
         let (worker_harness, reviewer_harness) =
             normalize_participants(worker_harness.into(), reviewer_harness.into())?;
         let scope_deliverables = normalize_deliverables(scope_deliverables)?;
+        let publication_policy =
+            PublicationPolicy::for_participants(&worker_harness, &reviewer_harness);
         Ok(Self {
             schema: SCHEMA.to_owned(),
             run_id: run_id.into(),
@@ -586,7 +628,7 @@ impl RunBaton {
             review: None,
             pending_checkpoint_supersession: None,
             publication: None,
-            publication_policy: Some(PublicationPolicy::fixed()),
+            publication_policy: Some(publication_policy),
             publication_binding: Some(create_handoff_obligation(HandoffKind::RunStarted, 0, 0)),
             human_decision: None,
             predecessor_run_id: None,

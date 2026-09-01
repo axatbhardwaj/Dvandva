@@ -14,8 +14,8 @@ use crate::{
         CheckpointBinding, CheckpointSubmission, CheckpointSupersession, ExplainerArtifact,
         HandoffKind, HumanDecision, ParticipantProgress, ProgressPhase, PublicationDeployment,
         PublicationPolicy, PublicationReview, ReviewReceipt, RunBaton, Status, TaskIdentity,
-        TerminalProvenance, EXPLAINER_ACCESS, EXPLAINER_ARTIFACT_DIR, EXPLAINER_CHANNEL,
-        EXPLAINER_MEDIA_TYPE, MAX_EXPLAINER_BYTES,
+        TerminalProvenance, CODEX_HARNESS, EXPLAINER_ACCESS, EXPLAINER_ARTIFACT_DIR,
+        EXPLAINER_CHANNEL, EXPLAINER_MEDIA_TYPE, MAX_EXPLAINER_BYTES, SITES_ACCESS, SITES_CHANNEL,
     },
     store::{RunChannel, StoreError},
 };
@@ -52,9 +52,11 @@ pub enum TransitionError {
     WrongContact,
     #[error("legacy numeric publication is unsupported for v2 runs")]
     LegacyPublicationUnsupported,
-    #[error("only the Codex-harness participant may publish the explainer")]
+    #[error("only a Codex participant may publish the approved explainer to Sites")]
     WrongPublisherHarness,
-    #[error("only the Claude-harness participant may review the explainer")]
+    #[error("only vadi may author the local explainer")]
+    WrongExplainerAuthor,
+    #[error("only prativadi may review the local explainer")]
     WrongReviewerHarness,
     #[error("explainer publication metadata is invalid")]
     InvalidExplainerPublication,
@@ -68,6 +70,10 @@ pub enum TransitionError {
     InvalidExplainerSource,
     #[error("no explainer bytes are staged for the current obligation")]
     ExplainerNotStaged,
+    #[error("the local explainer bytes are not approved for publication")]
+    ExplainerNotApproved,
+    #[error("the approved explainer bytes have not been published to a private Site")]
+    ExplainerNotPublished,
     #[error("progress detail must be non-blank when present")]
     InvalidProgress,
     #[error("checkpoint artifacts are not immutable for this checkpoint kind")]
@@ -527,7 +533,7 @@ fn apply_locked(
             after_seq,
             source_path,
         } => {
-            require_publisher(baton, role)?;
+            require_explainer_author(role)?;
             let binding = baton
                 .publication_binding
                 .as_ref()
@@ -577,7 +583,7 @@ fn apply_locked(
             channel: site_channel,
             access,
         } => {
-            require_publisher(baton, role)?;
+            require_sites_publisher(baton, role)?;
             let publisher_harness = caller_harness(baton, role).to_owned();
             let binding = baton
                 .publication_binding
@@ -608,12 +614,24 @@ fn apply_locked(
             if artifact.obligation != obligation || artifact.source_digest != source_digest {
                 return Err(TransitionError::StalePublicationBinding);
             }
+            let review = binding
+                .review
+                .as_ref()
+                .ok_or(TransitionError::ExplainerNotApproved)?;
+            if review.obligation != obligation || review.source_digest != source_digest {
+                return Err(TransitionError::StalePublicationBinding);
+            }
+            if review.verdict != "approved" || !review.findings.is_empty() {
+                return Err(TransitionError::ExplainerNotApproved);
+            }
             if !valid_sha256(&source_digest)
                 || !valid_exact_reference(&site_id)
                 || !valid_exact_reference(&site_version)
                 || !valid_exact_reference(&url)
                 || !valid_exact_reference(&site_channel)
                 || !valid_exact_reference(&access)
+                || site_channel != SITES_CHANNEL
+                || access != SITES_ACCESS
             {
                 return Err(TransitionError::InvalidExplainerPublication);
             }
@@ -644,7 +662,7 @@ fn apply_locked(
             verdict,
             findings,
         } => {
-            require_reviewer(baton, role)?;
+            require_explainer_reviewer(role)?;
             let reviewer_harness = caller_harness(baton, role).to_owned();
             let binding = baton
                 .publication_binding
@@ -937,9 +955,9 @@ fn replace_handoff_obligation(
     baton.publication_binding = Some(binding);
 }
 
-/// The finalization gate. It binds the reviewer's approval to the exact staged
-/// bytes for the current obligation. The optional Site rendering is deliberately
-/// not consulted: it is never the artifact the reviewer read.
+/// The finalization gate. Prativadi approves vadi's exact local bytes. When the
+/// pairing contains Codex, that participant must also publish the same digest
+/// to the run's private status Site.
 fn require_publication_gate(
     baton: &RunBaton,
     expected: Option<(&HandoffKind, &CheckpointBinding)>,
@@ -971,6 +989,23 @@ fn require_publication_gate(
         || review.reviewer_harness != policy.reviewer_harness
     {
         return Err(TransitionError::PublicationStale);
+    }
+    if baton.has_codex_participant() {
+        let deployment = binding
+            .deployment
+            .as_ref()
+            .ok_or(TransitionError::ExplainerNotPublished)?;
+        if deployment.obligation != binding.obligation
+            || deployment.source_digest != artifact.source_digest
+            || binding.site_id.as_ref() != Some(&deployment.site_id)
+            || deployment.channel != SITES_CHANNEL
+            || deployment.access != SITES_ACCESS
+            || !deployment
+                .publisher_harness
+                .eq_ignore_ascii_case(CODEX_HARNESS)
+        {
+            return Err(TransitionError::PublicationStale);
+        }
     }
     Ok(())
 }
@@ -1046,35 +1081,31 @@ fn source_digest(path: &std::path::Path) -> Result<String, TransitionError> {
 }
 
 pub(crate) fn effective_policy(baton: &RunBaton) -> PublicationPolicy {
-    baton
-        .publication_policy
-        .clone()
-        .unwrap_or_else(PublicationPolicy::fixed)
+    baton.effective_publication_policy()
 }
 
-fn require_publisher(baton: &RunBaton, role: Role) -> Result<(), TransitionError> {
-    let policy = effective_policy(baton);
-    if !caller_harness(baton, role)
-        .trim()
-        .eq_ignore_ascii_case(policy.publisher_harness.trim())
-    {
+fn require_explainer_author(role: Role) -> Result<(), TransitionError> {
+    if role != Role::Worker {
+        return Err(TransitionError::WrongExplainerAuthor);
+    }
+    Ok(())
+}
+
+fn require_sites_publisher(baton: &RunBaton, role: Role) -> Result<(), TransitionError> {
+    if !caller_harness(baton, role).eq_ignore_ascii_case(CODEX_HARNESS) {
         return Err(TransitionError::WrongPublisherHarness);
     }
     Ok(())
 }
 
-fn require_reviewer(baton: &RunBaton, role: Role) -> Result<(), TransitionError> {
-    let policy = effective_policy(baton);
-    if !caller_harness(baton, role)
-        .trim()
-        .eq_ignore_ascii_case(policy.reviewer_harness.trim())
-    {
+fn require_explainer_reviewer(role: Role) -> Result<(), TransitionError> {
+    if role != Role::Reviewer {
         return Err(TransitionError::WrongReviewerHarness);
     }
     Ok(())
 }
 
-/// Copy the publisher's explainer bytes into a content-addressed file under the
+/// Copy vadi's explainer bytes into a content-addressed file under the
 /// run directory and return their digest and length. Content addressing makes
 /// re-staging identical bytes a no-op and keeps every prior obligation's bytes
 /// readable for audit.

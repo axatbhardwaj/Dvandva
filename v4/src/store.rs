@@ -17,7 +17,8 @@ use crate::model::{
     normalize_participants, valid_exact_reference, valid_sha256, Assignee, Checkpoint,
     DeliverableRequirement, HandoffKind, LegacyPublication, MigrationProvenance, ParticipantClaim,
     PublicationBinding, PublicationPolicy, RecoveryProvenance, RunBaton, Status,
-    TerminalProvenance, LEGACY_SCHEMA, SCHEMA,
+    TerminalProvenance, CODEX_HARNESS, EXPLAINER_ACCESS, EXPLAINER_CHANNEL, LEGACY_SCHEMA, SCHEMA,
+    SITES_ACCESS, SITES_CHANNEL,
 };
 
 #[derive(Debug, Error)]
@@ -327,7 +328,10 @@ impl RunChannel {
             }
             let mut next = current.clone();
             next.revision = current.revision + 1;
-            next.publication_policy = Some(crate::model::PublicationPolicy::fixed());
+            next.publication_policy = Some(PublicationPolicy::for_participants(
+                &next.participants.worker.harness,
+                &next.participants.reviewer.harness,
+            ));
             if let Some(binding) = next.publication_binding.as_mut() {
                 binding.artifact = None;
                 binding.deployment = None;
@@ -712,7 +716,10 @@ fn migrate_legacy_baton_at(
     next.review = None;
     next.pending_checkpoint_supersession = None;
     next.publication = None;
-    next.publication_policy = Some(PublicationPolicy::fixed());
+    next.publication_policy = Some(PublicationPolicy::for_participants(
+        &next.participants.worker.harness,
+        &next.participants.reviewer.harness,
+    ));
     next.publication_binding = Some(create_handoff_obligation(
         HandoffKind::ProtocolUpgraded,
         next.revision,
@@ -952,7 +959,11 @@ fn valid_publication_binding(binding: &crate::model::PublicationBinding) -> bool
             || !valid_exact_reference(&deployment.url)
             || !valid_exact_reference(&deployment.channel)
             || !valid_exact_reference(&deployment.access)
-            || deployment.publisher_harness != artifact.publisher_harness
+            || deployment.channel != SITES_CHANNEL
+            || deployment.access != SITES_ACCESS
+            || !deployment
+                .publisher_harness
+                .eq_ignore_ascii_case(CODEX_HARNESS)
         {
             return false;
         }
@@ -1174,7 +1185,11 @@ fn valid_publication_policy_repair_edge(current: &RunBaton, next: &RunBaton) -> 
         .clone()
         .unwrap_or_else(crate::model::PublicationPolicy::fixed);
     if current_policy.reviewer_can_read()
-        || next.publication_policy != Some(crate::model::PublicationPolicy::fixed())
+        || next.publication_policy
+            != Some(PublicationPolicy::for_participants(
+                &current.participants.worker.harness,
+                &current.participants.reviewer.harness,
+            ))
     {
         return false;
     }
@@ -1227,7 +1242,21 @@ fn valid_publication_receipt_edge(
             && next_binding.review.is_none();
     }
     if current_binding.deployment != next_binding.deployment {
-        return next_binding.deployment.is_some() && current_binding.review == next_binding.review;
+        if legacy_unsequenced && current_binding.artifact.is_none() {
+            return next_binding.deployment.is_some()
+                && current_binding.review == next_binding.review;
+        }
+        let locally_approved = current_binding.review.as_ref().is_some_and(|review| {
+            current_binding.artifact.as_ref().is_some_and(|artifact| {
+                review.obligation == current_binding.obligation
+                    && review.source_digest == artifact.source_digest
+                    && review.verdict == "approved"
+                    && review.findings.is_empty()
+            })
+        });
+        return locally_approved
+            && next_binding.deployment.is_some()
+            && current_binding.review == next_binding.review;
     }
     // A verdict already bound to these exact bytes is final until the bytes
     // change: nothing may flip changes_requested to approved in place.
@@ -1615,7 +1644,11 @@ fn valid_finalize_edge(current: &RunBaton, next: &RunBaton, binding: &Publicatio
         || current.pending_checkpoint_supersession.is_some()
         || review.verdict != "approved"
         || review.binding() != checkpoint
-        || !approved_publication_gate(binding, Some((&HandoffKind::ReviewerToWorker, &checkpoint)))
+        || !approved_publication_gate(
+            current,
+            binding,
+            Some((&HandoffKind::ReviewerToWorker, &checkpoint)),
+        )
         || next.status != Status::Done
         || next.assignee != Assignee::None
         || next.terminal
@@ -1916,16 +1949,39 @@ fn expected_checkpoint_clearing_transition(current: &RunBaton, next: &RunBaton) 
 }
 
 fn approved_publication_gate(
+    baton: &RunBaton,
     binding: &PublicationBinding,
     expected: Option<(&HandoffKind, &crate::model::CheckpointBinding)>,
 ) -> bool {
+    let policy = baton.effective_publication_policy();
     expected.is_none_or(|(kind, checkpoint)| {
         &binding.obligation.kind == kind
             && binding.obligation.checkpoint.as_ref() == Some(checkpoint)
-    }) && binding
-        .review
-        .as_ref()
-        .is_some_and(|review| review.verdict == "approved" && review.findings.is_empty())
+    }) && binding.artifact.as_ref().is_some_and(|artifact| {
+        binding.review.as_ref().is_some_and(|review| {
+            let locally_approved = artifact.obligation == binding.obligation
+                && review.obligation == binding.obligation
+                && review.source_digest == artifact.source_digest
+                && review.verdict == "approved"
+                && review.findings.is_empty()
+                && artifact.channel == EXPLAINER_CHANNEL
+                && artifact.access == EXPLAINER_ACCESS
+                && artifact.publisher_harness == policy.publisher_harness
+                && review.reviewer_harness == policy.reviewer_harness;
+            locally_approved
+                && (!baton.has_codex_participant()
+                    || binding.deployment.as_ref().is_some_and(|deployment| {
+                        deployment.obligation == binding.obligation
+                            && deployment.source_digest == artifact.source_digest
+                            && binding.site_id.as_ref() == Some(&deployment.site_id)
+                            && deployment.channel == SITES_CHANNEL
+                            && deployment.access == SITES_ACCESS
+                            && deployment
+                                .publisher_harness
+                                .eq_ignore_ascii_case(CODEX_HARNESS)
+                    }))
+        })
+    })
 }
 
 fn validate_supported_schema(schema: &str) -> Result<(), StoreError> {

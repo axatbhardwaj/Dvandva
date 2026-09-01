@@ -8,8 +8,9 @@ use std::os::unix::fs::PermissionsExt;
 use dvandva_v4::{
     claim::Role,
     model::{
-        Assignee, DeliverableRequirement, HandoffKind, PublicationPolicy, RunBaton, Status,
-        EXPLAINER_ACCESS, EXPLAINER_CHANNEL, LEGACY_EXPLAINER_ACCESS, LEGACY_EXPLAINER_CHANNEL,
+        Assignee, DeliverableRequirement, ExplainerArtifact, HandoffKind, PublicationDeployment,
+        PublicationPolicy, PublicationReview, RunBaton, Status, EXPLAINER_ACCESS,
+        EXPLAINER_CHANNEL, LEGACY_EXPLAINER_ACCESS, LEGACY_EXPLAINER_CHANNEL,
     },
     next_action,
 };
@@ -114,11 +115,105 @@ fn reporting_progress_never_makes_an_idle_role_actionable() {
         "a role with nothing but liveness and the human escape must keep waiting"
     );
 
-    // The publisher, by contrast, genuinely owes staged bytes and is actionable.
+    // Vadi, by contrast, genuinely owes staged bytes and is actionable,
+    // regardless of whether that role is Claude or Codex.
     idle.publication_binding.as_mut().unwrap().obligation.kind = HandoffKind::RunStarted;
-    let publisher = next_action::classify(&idle, Role::Reviewer, "Codex");
-    assert!(publisher.legal_actions.contains(&"stage_explainer"));
+    let author = next_action::classify(&idle, Role::Worker, "Claude");
+    assert!(author.legal_actions.contains(&"stage_explainer"));
+    assert!(author.actionable);
+}
+
+#[test]
+fn approved_local_bytes_make_private_sites_publication_actionable_and_required() {
+    let mut run = baton();
+    run.status = Status::Finalizing;
+    run.assignee = Assignee::Worker;
+    let binding = run.publication_binding.as_mut().unwrap();
+    let obligation = binding.obligation.clone();
+    let digest = "a".repeat(64);
+    binding.artifact = Some(ExplainerArtifact {
+        obligation: obligation.clone(),
+        source_digest: digest.clone(),
+        path: format!("explainer/{digest}.html"),
+        media_type: "text/html".into(),
+        byte_length: 32,
+        channel: EXPLAINER_CHANNEL.into(),
+        access: EXPLAINER_ACCESS.into(),
+        publisher_harness: "Claude".into(),
+    });
+
+    let before_review = next_action::classify(&run, Role::Reviewer, "Codex");
+    assert!(!before_review.legal_actions.contains(&"publish_explainer"));
+
+    run.publication_binding.as_mut().unwrap().review = Some(PublicationReview {
+        obligation: obligation.clone(),
+        source_digest: digest.clone(),
+        verdict: "approved".into(),
+        findings: vec![],
+        reviewer_harness: "Codex".into(),
+    });
+    let publisher = next_action::classify(&run, Role::Reviewer, "Codex");
+    assert!(publisher.legal_actions.contains(&"publish_explainer"));
     assert!(publisher.actionable);
+
+    let blocked_finalizer = next_action::classify(&run, Role::Worker, "Claude");
+    assert!(!blocked_finalizer.legal_actions.contains(&"finalize"));
+    assert_eq!(
+        blocked_finalizer.blocking_reason,
+        Some("finalize awaits current explainer publication and approval")
+    );
+
+    let binding = run.publication_binding.as_mut().unwrap();
+    binding.site_id = Some("site-run".into());
+    binding.deployment = Some(PublicationDeployment {
+        obligation,
+        source_digest: digest,
+        site_id: "site-run".into(),
+        site_version: "version-1".into(),
+        url: "https://sites.openai.test/site-run/version-1".into(),
+        channel: LEGACY_EXPLAINER_CHANNEL.into(),
+        access: LEGACY_EXPLAINER_ACCESS.into(),
+        publisher_harness: "Codex".into(),
+    });
+    let finalizer = next_action::classify(&run, Role::Worker, "Claude");
+    assert!(finalizer.legal_actions.contains(&"finalize"));
+}
+
+#[test]
+fn a_pairing_without_codex_skips_the_sites_receipt() {
+    let mut run = baton();
+    run.participants.worker.harness = "Fable".into();
+    run.participants.reviewer.harness = "Grok".into();
+    run.publication_policy = Some(PublicationPolicy::for_participants("Fable", "Grok"));
+    run.status = Status::Finalizing;
+    run.assignee = Assignee::Worker;
+    let binding = run.publication_binding.as_mut().unwrap();
+    let obligation = binding.obligation.clone();
+    let digest = "c".repeat(64);
+    binding.artifact = Some(ExplainerArtifact {
+        obligation: obligation.clone(),
+        source_digest: digest.clone(),
+        path: format!("explainer/{digest}.html"),
+        media_type: "text/html".into(),
+        byte_length: 32,
+        channel: EXPLAINER_CHANNEL.into(),
+        access: EXPLAINER_ACCESS.into(),
+        publisher_harness: "Fable".into(),
+    });
+    binding.review = Some(PublicationReview {
+        obligation,
+        source_digest: digest,
+        verdict: "approved".into(),
+        findings: vec![],
+        reviewer_harness: "Grok".into(),
+    });
+
+    let finalizer = next_action::classify(&run, Role::Worker, "Fable");
+    assert!(finalizer.legal_actions.contains(&"finalize"));
+    assert!(!finalizer.legal_actions.contains(&"publish_explainer"));
+    assert!(!next_action::classify(&run, Role::Reviewer, "Grok")
+        .legal_actions
+        .contains(&"publish_explainer"));
 }
 
 /// A run created before explainer staging existed must still load, so it can
@@ -244,7 +339,7 @@ fn a_pre_staging_baton_still_loads_and_can_be_repaired() {
     .is_err());
     assert_eq!(
         repaired.publication_policy,
-        Some(PublicationPolicy::fixed())
+        Some(PublicationPolicy::for_participants("Claude", "Codex"))
     );
     let binding = repaired.publication_binding.as_ref().unwrap();
     assert!(binding.artifact.is_none());
@@ -262,6 +357,19 @@ fn escape_hatches_never_make_a_waiting_role_actionable() {
     let mut reviewing = baton();
     reviewing.status = Status::Reviewing;
     reviewing.assignee = Assignee::Reviewer;
+    let binding = reviewing.publication_binding.as_mut().unwrap();
+    let obligation = binding.obligation.clone();
+    let digest = "a".repeat(64);
+    binding.artifact = Some(ExplainerArtifact {
+        obligation,
+        source_digest: digest.clone(),
+        path: format!("explainer/{digest}.html"),
+        media_type: "text/html".into(),
+        byte_length: 32,
+        channel: EXPLAINER_CHANNEL.into(),
+        access: EXPLAINER_ACCESS.into(),
+        publisher_harness: "Claude".into(),
+    });
     let worker = next_action::classify(&reviewing, Role::Worker, "Claude");
     assert!(
         worker
@@ -277,6 +385,26 @@ fn escape_hatches_never_make_a_waiting_role_actionable() {
     let mut finalizing = baton();
     finalizing.status = Status::Finalizing;
     finalizing.assignee = Assignee::Worker;
+    let binding = finalizing.publication_binding.as_mut().unwrap();
+    let obligation = binding.obligation.clone();
+    let digest = "b".repeat(64);
+    binding.artifact = Some(ExplainerArtifact {
+        obligation: obligation.clone(),
+        source_digest: digest.clone(),
+        path: format!("explainer/{digest}.html"),
+        media_type: "text/html".into(),
+        byte_length: 32,
+        channel: EXPLAINER_CHANNEL.into(),
+        access: EXPLAINER_ACCESS.into(),
+        publisher_harness: "Claude".into(),
+    });
+    binding.review = Some(PublicationReview {
+        obligation,
+        source_digest: digest,
+        verdict: "approved".into(),
+        findings: vec![],
+        reviewer_harness: "Codex".into(),
+    });
     let ungated = next_action::classify(&finalizing, Role::Worker, "Claude");
     assert!(ungated.legal_actions.contains(&"withdraw_approval"));
     assert!(!ungated.legal_actions.contains(&"finalize"));
@@ -286,7 +414,7 @@ fn escape_hatches_never_make_a_waiting_role_actionable() {
     );
     assert_eq!(
         ungated.blocking_reason,
-        Some("finalize awaits current explainer approval")
+        Some("finalize awaits current explainer publication and approval")
     );
 }
 
@@ -1120,7 +1248,7 @@ mod round_three {
         // proving what caused it, so repair must not answer it.
         assert_eq!(
             repaired.publication_policy.as_ref().unwrap(),
-            &PublicationPolicy::fixed()
+            &PublicationPolicy::for_participants("Claude", "Codex")
         );
         assert_eq!(repaired.status, Status::HumanDecision);
         assert_eq!(repaired.assignee, Assignee::Human);
@@ -1581,7 +1709,7 @@ mod round_four {
         assert!(unrelated.human_decision.unwrap().answer.is_none());
         assert_eq!(
             unrelated.publication_policy.unwrap(),
-            PublicationPolicy::fixed()
+            PublicationPolicy::for_participants("Claude", "Codex")
         );
 
         let (_keep, released) = park(true);
@@ -1593,7 +1721,7 @@ mod round_four {
         assert!(released.human_decision.unwrap().answer.is_none());
         assert_eq!(
             released.publication_policy.unwrap(),
-            PublicationPolicy::fixed()
+            PublicationPolicy::for_participants("Claude", "Codex")
         );
     }
 
