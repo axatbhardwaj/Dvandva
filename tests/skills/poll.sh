@@ -73,6 +73,25 @@ fi
 test "$(field '["status"]' <<<"$handed")" = reviewing
 revision="$(field '["revision"]' <<<"$handed")"
 
+# Each handoff opens an explainer obligation that vadi alone owes, so the
+# worker is still actionable right after the checkpoint. Discharge it here so
+# the wait below is about polling rather than about pending staging work.
+printf '%s\n' '<!doctype html><title>poll</title>' >"$test_root/poll.html"
+printf '%s' "$handed" >"$test_root/handed.json"
+python3 - "$test_root/handed.json" "$test_root/poll.html" "$test_root/stage.json" <<'STAGE'
+import json, sys
+binding = json.load(open(sys.argv[1]))["publication_binding"]
+json.dump({
+    "type": "stage_explainer",
+    "obligation": binding["obligation"],
+    "after_seq": binding["receipt_seq"],
+    "source_path": sys.argv[2],
+}, open(sys.argv[3], "w"))
+STAGE
+staged="$(apply "$vadi" worker-session "$run_dir" "$revision" "$(cat "$test_root/stage.json")")"
+test "$(field '["actionable"]' <<<"$staged")" = False
+revision="$(field '["revision"]' <<<"$staged")"
+
 # 1. Idle re-entry and the MAX_MS budget: with a 300ms kernel chunk and a
 #    1500ms budget, poll re-enters several times and returns idle at the budget.
 before="$(now_ms)"
@@ -128,6 +147,23 @@ handed="$(apply "$vadi" worker-session "$run_dir" "$revision" \
   "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"git\",\"identity\":\"$commit_b\",\"deliverables\":[{\"id\":\"kernel\",\"artifacts\":[{\"kind\":\"commit\",\"value\":\"$commit_b\"}]}],\"verification\":[\"poll test\"]}}")"
 test "$(field '["status"]' <<<"$handed")" = reviewing
 revision="$(field '["revision"]' <<<"$handed")"
+
+# Discharge this handoff's explainer obligation too, so the worker is waiting
+# on the peer rather than on its own staging work.
+printf '%s' "$handed" >"$test_root/handed-b.json"
+python3 - "$test_root/handed-b.json" "$test_root/poll.html" "$test_root/stage-b.json" <<'STAGE'
+import json, sys
+binding = json.load(open(sys.argv[1]))["publication_binding"]
+json.dump({
+    "type": "stage_explainer",
+    "obligation": binding["obligation"],
+    "after_seq": binding["receipt_seq"],
+    "source_path": sys.argv[2],
+}, open(sys.argv[3], "w"))
+STAGE
+staged="$(apply "$vadi" worker-session "$run_dir" "$revision" "$(cat "$test_root/stage-b.json")")"
+test "$(field '["actionable"]' <<<"$staged")" = False
+revision="$(field '["revision"]' <<<"$staged")"
 DVANDVA_POLL_CHUNK_MS=500 DVANDVA_LEASE_SECONDS=4 bash "$vadi" poll worker-session "$run_dir" "$revision" 20000 >"$test_root/terminal.json" &
 poller=$!
 sleep 1
