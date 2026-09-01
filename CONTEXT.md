@@ -27,6 +27,12 @@ The authoritative evolving record of one Run Pair.
 The agreed objective, references, task identity, and required deliverables for
 one run.
 
+**Workflow**:
+The role-contract mode: `implementation` delivers the canonical scope,
+`babysit` maintains an own PR, and `pr_review` submits an external review.
+`fix_ready`, `internally_cleared`, `rereview_requested`, `merge_ready`, and
+`maintaining_ready` are role-contract prose, not Baton status values.
+
 **Scope Revision**:
 The identity of one declared Canonical Scope version. A human-approved
 amendment makes every earlier scope-bound checkpoint, Handoff, and review stale.

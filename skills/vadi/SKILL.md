@@ -1,6 +1,6 @@
 ---
 name: vadi
-description: Act as vadi for a paired Dvandva run. Use when the user says act as vadi, implement as vadi, resume a vadi run, or explicitly invokes $vadi. Do not trigger for ordinary solo implementation.
+description: Act as vadi for a paired Dvandva run, including implementation, own-PR babysit, or external pr_review. Use when the user says act as vadi, implement as vadi, resume a vadi run, or explicitly invokes $vadi. Do not trigger for ordinary solo implementation.
 ---
 
 # Vadi

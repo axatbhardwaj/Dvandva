@@ -61,6 +61,20 @@ changes-requested explainer takes `stage_explainer` again, and a wait timeout
 (`wait_outcome: idle_timeout`) takes a fresh snapshot and another wait. The
 kernel never leaves `request_human_decision` as the only way forward.
 
+## Workflow selection and vadi lifecycle
+
+Read objective ref `workflow=implementation|babysit|pr_review`; when absent, use
+`implementation`. Existing checkpoint, supersession, explainer, Human Decision,
+polling, and Matt `code-review` rules remain in force. Parents alone mutate Baton or GitHub; read-only evidence may use subagents.
+
+In `implementation`, deliver and verify the complete canonical scope through the existing checkpoint and review cycle; never checkpoint work in progress merely to obtain review.
+
+In `babysit`, fail closed before writable actions unless live GitHub verifies own-authored/owned scoped work on the PR and branches. Then reproduce feedback or CI failures; patch, test, commit, push, rerun CI, synchronize/rebase, and re-request the existing colleague reviewer. Reply with fix evidence but leave colleague-owned threads; prativadi clearance only permits re-request, while the colleague owns real approval. Changed head, feedback, failed gate, or requested changes reopen the loop. Merge readiness requires the exact internally reviewed head, CI, mergeability, external approvals, no live requested changes, dispositioned threads, current stack/base, and no pending work. Never merge autonomously: even when ready, merge needs fresh merge authorization from the human, including explicit authority for every affected stack PR. After colleague approval, progress from `merge_ready` to `maintaining_ready` and refresh live GitHub between bounded Baton waits; GitHub does not wake Baton. Head, base, CI, approval, requested-change, or thread drift reopens the fix and review loop.
+
+In `pr_review`, create one independent run per external PR. It is read-only except formal GitHub review submission, and vadi must never patch another author's PR. First prepare a constructive report on intent, behavior, integration, tests, maintainability, and practical failures; prativadi adjudicates final `APPROVE` or `REQUEST_CHANGES`, and vadi submits prativadi's adjudicated `APPROVE` or `REQUEST_CHANGES` exact and unmodified. Before submission, recheck PR identity, current head, actor versus author, and permission; self-approval, missing authority, or drift fails closed. A confirmed `REQUEST_CHANGES` completes; prativadi Dvandva approval approves the review artifact, not the external verdict. After submission, vadi queries GitHub and verifies review ID, exact PR, actor, state, reviewed commit/head, and body digest; then prativadi independently re-queries the same receipt. Use the existing receipt-bearing explainer gate: Codex stages and Claude approves exact bytes before finalization. Sources: [workflow-mode evidence](../../../docs/research/2026-09-01-workflow-mode-github-evidence.md).
+
+For every workflow, recoverable CI, review, scoped-branch failures, and other uncertainty stay autonomous. Before every actual `request_human_decision` for scope, intent, or authority, exchange evidence, attempt an available scoped fix, and use available local Fable adjudication before irreversible human escalation. Authority is permission the human alone can grant; unavailable capability is not a Human Decision. Escalate only an action both roles cannot establish as safe or an unavoidable external permission barrier; Fable is advisory and never a Baton participant. In babysit, design is intent; security and secret-policy are scope or authority, never new kinds.
+
 ## Checkpoint and worker mutations
 
 For every `apply` action, the role writes its JSON to a private temporary file

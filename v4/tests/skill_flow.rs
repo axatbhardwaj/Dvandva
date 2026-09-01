@@ -177,6 +177,87 @@ fn prativadi_skill_sources_define_the_complete_v2_contract() {
 }
 
 #[test]
+fn workflow_modes_define_distinct_review_and_authority_contracts() {
+    let (vadi_skill, vadi_contract) = role_sources("vadi");
+    let (prativadi_skill, prativadi_contract) = role_sources("prativadi");
+    let vadi = format!("{vadi_skill}\n{vadi_contract}");
+    let prativadi = format!("{prativadi_skill}\n{prativadi_contract}");
+    let vadi_normalized = vadi.split_whitespace().collect::<Vec<_>>().join(" ");
+    let prativadi_normalized = prativadi.split_whitespace().collect::<Vec<_>>().join(" ");
+
+    for (role, source, normalized) in [
+        ("vadi", &vadi, &vadi_normalized),
+        ("prativadi", &prativadi, &prativadi_normalized),
+    ] {
+        for required in [
+            "workflow=implementation|babysit|pr_review",
+            "absent, use `implementation`",
+            "Parents alone mutate Baton or GitHub",
+            "maintaining_ready",
+            "refresh live GitHub between bounded Baton waits",
+            "GitHub does not wake Baton",
+            "drift reopens the fix and review loop",
+            "Never merge",
+            "For every workflow",
+            "other uncertainty stay autonomous",
+            "scope, intent, or authority",
+            "Authority is permission the human alone can grant",
+            "unavailable capability is not a Human Decision",
+            "never new kinds",
+        ] {
+            assert!(normalized.contains(required), "{role} omitted {required:?}");
+        }
+        let authorization = if role == "vadi" {
+            "fresh merge authorization from the human"
+        } else {
+            "fresh human authorization"
+        };
+        assert!(
+            normalized.contains(authorization),
+            "{role} omitted {authorization:?}"
+        );
+        let fable = source
+            .find("Fable adjudication")
+            .expect("Fable adjudication omitted");
+        let escalation = source
+            .find("irreversible human escalation")
+            .expect("irreversible human escalation omitted");
+        assert!(
+            fable < escalation,
+            "{role} must use Fable before human escalation"
+        );
+    }
+    for required in [
+        "existing colleague reviewer",
+        "never patch another author's PR",
+        "constructive report on intent, behavior, integration, tests, maintainability, and practical failures",
+        "own-authored/owned scoped work",
+        "design is intent",
+        "security and secret-policy are scope or authority",
+        "review ID, exact PR, actor, state, reviewed commit/head, and body digest",
+        "then prativadi independently re-queries the same receipt",
+        "submits prativadi's adjudicated `APPROVE` or `REQUEST_CHANGES` exact and unmodified",
+        "exact internally reviewed head, CI, mergeability, external approvals, no live requested changes, dispositioned threads, current stack/base, and no pending work",
+    ] {
+        assert!(
+            vadi_normalized.contains(required),
+            "vadi omitted {required:?}"
+        );
+    }
+    for required in [
+        "internal sanity filter",
+        "independent first pass",
+        "GitHub receipt",
+        "prativadi independently re-queries the same GitHub receipt: review ID, exact PR, actor, state, reviewed commit/head, and body digest",
+    ] {
+        assert!(
+            prativadi_normalized.contains(required),
+            "prativadi omitted {required:?}"
+        );
+    }
+}
+
+#[test]
 fn prativadi_automatically_reviews_complete_git_delivery_candidates() {
     let (skill, contract) = role_sources("prativadi");
     let source = format!("{skill}\n{contract}")
@@ -634,8 +715,8 @@ fn setup_skill_sources_pin_v2_without_implicit_run_migration() {
         repository_file("skills/setup-dvandva/references/installation.md")
     );
     for required in [
-        "0.3.1",
-        "skills-v0.3.1",
+        "0.3.2",
+        "skills-v0.3.2",
         "release target",
         "fails closed if either is missing",
         "Linux x86_64 only",
@@ -680,7 +761,7 @@ fn version_and_probe_report_the_installation_contract() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("dvandva-v4 0.3.1"));
+        .stdout(predicate::str::contains("dvandva-v4 0.3.2"));
 
     let output = command()
         .args([
@@ -699,7 +780,7 @@ fn version_and_probe_report_the_installation_contract() {
     );
     let probe: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(probe["package"], "dvandva-v4");
-    assert_eq!(probe["version"], "0.3.1");
+    assert_eq!(probe["version"], "0.3.2");
     assert_eq!(probe["write_schema"], "dvandva.run.v2");
     assert_eq!(probe["role_api"], 2);
     assert_eq!(probe["publish"], false);

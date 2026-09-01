@@ -31,8 +31,8 @@ Then explicitly ask one session:
 $setup-dvandva install Dvandva.
 ```
 
-The `skills-v0.3.1` GitHub release provides `dvandva-kernel-linux-x86_64` and
-`SHA256SUMS`. Setup verifies the digest and the complete kernel 0.3.1,
+The `skills-v0.3.2` GitHub release provides `dvandva-kernel-linux-x86_64` and
+`SHA256SUMS`. Setup verifies the digest and the complete kernel 0.3.2,
 `dvandva.run.v2`, role API 2 probe before installing under
 `${XDG_DATA_HOME:-$HOME/.local/share}/dvandva/`, outside `PATH`. The crate is
 non-publishable and no plugin or marketplace package is involved.
