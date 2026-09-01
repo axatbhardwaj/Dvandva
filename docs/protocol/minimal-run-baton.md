@@ -99,11 +99,11 @@ the role calls it again at once on an idle return rather than ending its turn. T
 
 ## Rolling explainer gate
 
-Each semantic handoff opens an obligation. For the run's current obligation the
-Codex-harness participant stages the explainer's bytes into the run directory,
-and the Claude-harness participant reads those exact bytes back through the
-facade and reviews them, independent of worker/reviewer casting. The explainer contains canonical scope, the complete
-manifest, findings and decisions, and a current plan/TODO.
+Each semantic handoff opens an obligation. For the run's current obligation,
+vadi stages the explainer's bytes into the run directory and prativadi reads
+those exact bytes back through the facade and reviews them. The explainer
+contains canonical scope, the complete manifest, findings and decisions, and a
+current plan/TODO.
 
 A new handoff replaces the current obligation, so the gate binds the current
 obligation rather than the run's whole history of them. The staged artifact is
@@ -111,17 +111,20 @@ content-addressed at `explainer/<source_digest>.html` and echoes the pending
 handoff kind and revision, `scope_revision`, and the optional three-coordinate
 checkpoint binding. Each receipt advances `receipt_seq`, which receipts declare
 as `after_seq` so an out-of-order one is refused rather than applied. A review binds that digest, and staging
-different bytes clears the earlier review. The gate binds bytes, not a location:
-an unread approval, a Claude Artifact, a mutable URL, or a public or generic
-host cannot satisfy it, and finalization rehashes the staged bytes rather than
-trusting the receipt.
+different bytes clears the earlier review and deployment. Prativadi's verdict
+binds bytes, not a location: an unread approval, a Claude Artifact, or a mutable
+URL cannot replace the local review, and finalization rehashes the staged bytes
+rather than trusting either receipt.
 
-A Codex Sites deployment is an optional human-facing rendering of the
-already-staged bytes and must name the same digest; it satisfies nothing on its
-own. A publication policy whose reviewer cannot read its channel is refused at
-`start` and repaired with `repair-policy`, so a capability mismatch is a
-protocol-internal problem with a deterministic recovery rather than a Human
-Decision that blocks indefinitely.
+At the run-start handoff, vadi proposes this initial status page before
+continuing domain work and revises
+it until approved. Then whichever participant is Codex mechanically deploys the
+same digest to one stable, owner-only ChatGPT Site per run. Later approved
+handoffs update that user-facing progress URL. When Codex participates, both
+receipts are required at finalization; without Codex, Sites publication is
+skipped and local approval is sufficient. A policy whose reviewer cannot read
+its local channel is refused at `start` and repaired with `repair-policy`; the
+reviewer is never asked to authenticate to the Site.
 
 ## Terminal checks
 
@@ -129,7 +132,7 @@ Decision that blocks indefinitely.
 `manifest_digest`, and `scope_revision` match the semantic approval; no pending
 supersession or Human Decision; the current handoff's staged explainer bytes,
 still hashing to their recorded digest; and the matching approved Claude
-explainer review. Finalization records that provenance. It is the only
+explainer review plus owner-only Sites deployment. Finalization records that provenance. It is the only
 transition the explainer gates: checkpoint submission, review, supersession, and
 approval withdrawal never wait on it. Terminal state is immutable, and both role loops stop
 only after observing the same terminal Baton identity.

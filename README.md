@@ -1,7 +1,7 @@
 # Dvandva
 
-> **Dvandva v4 is the active skill-only interface.** The `skills-v0.3.2`
-> GitHub release pairs the private, non-publishable kernel `0.3.2` with schema
+> **Dvandva v4 is the active skill-only interface.** The `skills-v0.3.3`
+> GitHub release pairs the private, non-publishable kernel `0.3.3` with schema
 > `dvandva.run.v2` and role API 2. Source checkout and tests are
 > development-only. The retired crate and plugin are not an installation path.
 >
@@ -39,15 +39,16 @@ Act as prativadi and join Dvandva run <run-id>.
 ```
 
 The vadi submits one complete immutable checkpoint for canonical scope. Each
-handoff opens an obligation; for the run's current obligation, the Codex-harness
-participant stages the explainer's bytes into the run directory and the
-Claude-harness participant reads and reviews those exact digest-bound bytes,
-independent of which harness is vadi. A new handoff replaces the obligation, so
-the enforced guarantee is that the current one is staged and reviewed before
-finalization. A Codex Sites deployment is an optional human-facing rendering of
-the same bytes. Only finalization waits on that gate, so a finished deliverable
-can always be checkpointed. The explainer plan is the live TODO list; the Baton remains
-authoritative.
+handoff opens an obligation: vadi stages the local digest-bound HTML and
+prativadi reviews it. At run start, vadi proposes the first artifact before
+continuing domain work and incorporates requested changes. Once approved,
+whichever participant is Codex publishes the same digest through ChatGPT Sites
+to one stable, owner-only status page the user can revisit for progress. If a pairing has
+no Codex participant, Sites publication is skipped and local approval is the
+gate. A new handoff replaces the obligation, so finalization checks only the
+current applicable receipts. Only finalization waits on that gate, so a finished
+deliverable can always be checkpointed. The explainer plan is the live TODO
+list; the Baton remains authoritative.
 
 The sessions coordinate only through the local run. Neither harness invokes
 the other, there is no daemon, and user-owned harness goals remain untouched.

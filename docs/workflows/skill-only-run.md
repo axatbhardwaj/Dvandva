@@ -31,8 +31,8 @@ Then explicitly ask one session:
 $setup-dvandva install Dvandva.
 ```
 
-The `skills-v0.3.2` GitHub release provides `dvandva-kernel-linux-x86_64` and
-`SHA256SUMS`. Setup verifies the digest and the complete kernel 0.3.2,
+The `skills-v0.3.3` GitHub release provides `dvandva-kernel-linux-x86_64` and
+`SHA256SUMS`. Setup verifies the digest and the complete kernel 0.3.3,
 `dvandva.run.v2`, role API 2 probe before installing under
 `${XDG_DATA_HOME:-$HOME/.local/share}/dvandva/`, outside `PATH`. The crate is
 non-publishable and no plugin or marketplace package is involved.
@@ -114,21 +114,23 @@ and only a human-approved scope amendment can change canonical scope.
 
 ## Published explainer
 
-Each handoff opens an obligation. The Codex-harness participant stages the
-explainer's bytes for the current obligation with `stage_explainer`, and the
-Claude-harness participant reads those exact bytes back through
-`dvandva-role.sh explainer` and reviews them, regardless of vadi/prativadi
-casting. A new handoff replaces the current obligation, so what the gate
-requires is that the run's current obligation is staged and reviewed — not that
-every obligation the run ever opened was. The explainer carries canonical
-scope, complete manifest, findings and decisions, and a current plan/TODO list.
+Each handoff opens an obligation. Vadi stages the explainer's bytes for the
+current obligation with `stage_explainer`; prativadi reads those exact bytes
+back through `dvandva-role.sh explainer` and reviews them. At `run_started`,
+vadi proposes this first HTML before continuing domain work and revises it until
+prativadi approves. A new handoff replaces the current obligation, so the gate
+checks the current artifact and receipts rather than every historical one. The
+explainer carries canonical scope, complete manifest, findings and decisions,
+and a current plan/TODO list.
 
-The gate binds a sha256 digest, not a URL, so both harnesses can always reach
-the artifact. Staging different bytes invalidates the earlier review.
-A Codex Sites deployment is an optional human-facing rendering of the
-already-staged bytes; it must name the same digest and never satisfies the gate. Recording an
-unread approval, or substituting a Claude Artifact, mutable URL, or generic
-hosting, cannot satisfy the gate. The page never coordinates wake-up.
+The gate binds a sha256 digest, not a URL, so both roles can always reach the
+artifact. Staging different bytes invalidates the earlier review. After
+prativadi approval, whichever participant is Codex mechanically deploys that
+digest to one stable, owner-only ChatGPT Site per run. It is the user's status
+page and later approved handoffs update the same URL. When Codex participates,
+finalization requires both receipts; without Codex, publication is skipped and
+the local approval is sufficient. Substituting a mutable URL or generic host is
+invalid. The page never coordinates wake-up.
 
 Only `finalize` waits on this gate. A finished deliverable can always be
 checkpointed, and the recovery paths — supersession and approval withdrawal —
@@ -142,9 +144,8 @@ turn is not a wait — it lets the lease lapse and stalls the peer. Both roles
 refresh the facade snapshot after waking. A role stops only for explicit human
 stop, `abandoned`, or after observing `done` with the current scope, complete
 checkpoint, exact semantic approval, and the current obligation's staged bytes
-and approved Claude review bound together. A Sites deployment is optional and is
-not required at `done`. A Human Decision pauses the pair rather than completing
-it.
+and approved Claude review plus matching owner-only Sites deployment bound
+together. A Human Decision pauses the pair rather than completing it.
 
 ## Companion skills
 

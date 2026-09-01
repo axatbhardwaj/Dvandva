@@ -70,15 +70,20 @@ Protocol Upgrade, scope amendment, accepted Checkpoint Supersession, and
 Approval Withdrawal.
 
 **Explainer Artifact**:
-The explainer's bytes, staged by the publishing harness into the run directory
-at `explainer/<source_digest>.html` and bound by sha256 to one Handoff. Both
-harnesses read it locally, so it is the artifact the Publication Gate binds.
+The explainer's bytes, staged by vadi into the run directory at
+`explainer/<source_digest>.html` and bound by sha256 to one Handoff. Both roles
+read it locally, so it is the artifact the Publication Gate binds.
+
+**Explainer Site**:
+The owner-only ChatGPT Sites rendering of an approved Explainer Artifact. It is
+the user's stable status page. Whichever participant is Codex publishes it;
+prativadi reviews the local artifact rather than this deployment.
 
 **Publication Gate**:
-The requirement that the Codex harness stages the Explainer Artifact and the
-Claude harness reviews those exact bytes for the same Handoff before the run
-finalizes. These duties do not follow Worker or Reviewer casting. A Codex Site
-is an optional rendering of the same bytes and satisfies nothing on its own.
+The requirement that vadi stages the Explainer Artifact and prativadi reviews
+those exact bytes. When the pairing contains Codex, that participant also
+records the matching Explainer Site for the same Handoff before finalization;
+without Codex, Sites publication is skipped and local approval is sufficient.
 
 **Publication Policy**:
 The publisher harness, channel, access level, and reviewer harness for a run. A
