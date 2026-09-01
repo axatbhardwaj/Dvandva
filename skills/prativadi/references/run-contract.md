@@ -41,7 +41,7 @@ work.
 
 For `publication_unreadable`, run `repair-policy` with the exact returned run
 directory and revision; it installs the readable channel and clears the current
-obligation's receipts so the publisher restages.
+obligation's receipts so vadi restages.
 
 For `upgrade_required`, run `upgrade` with the exact returned run directory,
 harnesses, and revision. Upgrade clears claims: use its returned revision with

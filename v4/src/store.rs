@@ -1241,11 +1241,17 @@ fn valid_publication_receipt_edge(
             && next_binding.review.is_none();
     }
     if current_binding.deployment != next_binding.deployment {
-        // Released kernels allowed an unsequenced Site receipt before the
-        // local review. Preserve that stored edge so repair can walk the old
-        // chain; live appends are never legacy_unsequenced and still require
-        // exact local approval before publication.
-        if legacy_unsequenced && current_binding.review.is_none() {
+        // Released v0.3.x kernels allowed a Site receipt after staging but
+        // before local review. Preserve that exact stored edge so repair and
+        // recovery can walk the old chain. Live appends never enter this arm
+        // and still require exact local approval before publication.
+        let stored_publish_before_review = validating_stored_edge()
+            && current_binding.artifact.is_some()
+            && current_binding.deployment.is_none()
+            && current_binding.review.is_none();
+        if (legacy_unsequenced && current_binding.artifact.is_none())
+            || stored_publish_before_review
+        {
             return next_binding.deployment.is_some()
                 && next.has_codex_participant()
                 && current_binding.review == next_binding.review;

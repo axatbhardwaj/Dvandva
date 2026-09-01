@@ -474,6 +474,7 @@ fn a_publish_before_review_v0_3_2_chain_can_be_repaired() {
         "publication_binding": {
             "site_id": null,
             "obligation": obligation,
+            "receipt_seq": 0,
             "deployment": null,
             "review": null
         },
@@ -485,6 +486,7 @@ fn a_publish_before_review_v0_3_2_chain_can_be_repaired() {
     let mut revisions = vec![root.clone()];
 
     root["revision"] = serde_json::json!(1);
+    root["publication_binding"]["receipt_seq"] = serde_json::json!(1);
     root["publication_binding"]["artifact"] = serde_json::json!({
         "obligation": obligation,
         "source_digest": digest,
@@ -498,6 +500,7 @@ fn a_publish_before_review_v0_3_2_chain_can_be_repaired() {
     revisions.push(root.clone());
 
     root["revision"] = serde_json::json!(2);
+    root["publication_binding"]["receipt_seq"] = serde_json::json!(2);
     root["publication_binding"]["site_id"] = serde_json::json!("appgprj_deadbeef");
     root["publication_binding"]["deployment"] = serde_json::json!({
         "obligation": obligation,
@@ -512,6 +515,7 @@ fn a_publish_before_review_v0_3_2_chain_can_be_repaired() {
     revisions.push(root.clone());
 
     root["revision"] = serde_json::json!(3);
+    root["publication_binding"]["receipt_seq"] = serde_json::json!(3);
     root["publication_binding"]["review"] = serde_json::json!({
         "obligation": obligation,
         "source_digest": digest,
