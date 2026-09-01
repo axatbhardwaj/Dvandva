@@ -266,12 +266,10 @@ impl PublicationPolicy {
         match (self.channel.as_str(), self.access.as_str()) {
             // Run-directory artifacts are local files both harnesses can open.
             (EXPLAINER_CHANNEL, EXPLAINER_ACCESS) => true,
-            // An owner-only Site is readable only by the publisher's own owner
-            // session, so it works only when publisher and reviewer coincide.
-            (LEGACY_EXPLAINER_CHANNEL, LEGACY_EXPLAINER_ACCESS) => self
-                .publisher_harness
-                .trim()
-                .eq_ignore_ascii_case(self.reviewer_harness.trim()),
+            // An owner-only Site is not a two-party review channel. Even if a
+            // malformed policy repeats one harness in both fields, accepting it
+            // would collapse author and reviewer into self-approval.
+            (LEGACY_EXPLAINER_CHANNEL, LEGACY_EXPLAINER_ACCESS) => false,
             _ => false,
         }
     }
@@ -584,25 +582,25 @@ impl RunBaton {
     }
 
     /// Whether the exact local bytes have matching author and approval receipts
-    /// for this obligation. New receipts follow the role-derived policy. During
-    /// a 0.3.2 upgrade, each already-written receipt may instead match the fixed
-    /// policy stored with that run, including when the upgrade happened between
-    /// staging and review.
+    /// for this obligation. New receipts follow the role-derived policy. A
+    /// complete older receipt pair may instead match the readable local policy
+    /// stored with its run; incomplete mixed-policy pairs fail this predicate so
+    /// current vadi restages before current prativadi reviews.
     pub fn local_explainer_approved(&self, binding: &PublicationBinding) -> bool {
         let effective = self.effective_publication_policy();
         binding.artifact.as_ref().is_some_and(|artifact| {
             binding.review.as_ref().is_some_and(|review| {
-                let stored_legacy_policy = self.publication_policy.as_ref().filter(|stored| {
+                let stored_local_policy = self.publication_policy.as_ref().filter(|stored| {
                     stored.channel == EXPLAINER_CHANNEL && stored.access == EXPLAINER_ACCESS
                 });
                 let artifact_policy_matches = artifact.channel == EXPLAINER_CHANNEL
                     && artifact.access == EXPLAINER_ACCESS
                     && (artifact.publisher_harness == effective.publisher_harness
-                        || stored_legacy_policy.is_some_and(|stored| {
+                        || stored_local_policy.is_some_and(|stored| {
                             artifact.publisher_harness == stored.publisher_harness
                         }));
                 let review_policy_matches = review.reviewer_harness == effective.reviewer_harness
-                    || stored_legacy_policy
+                    || stored_local_policy
                         .is_some_and(|stored| review.reviewer_harness == stored.reviewer_harness);
                 artifact.obligation == binding.obligation
                     && review.obligation == binding.obligation

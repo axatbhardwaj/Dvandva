@@ -90,7 +90,7 @@ fn an_unreadable_policy_is_recognized_without_asking_a_human() {
         reviewer_harness: "Codex".into(),
         ..owner_only.clone()
     };
-    assert!(self_reviewed.reviewer_can_read());
+    assert!(!self_reviewed.reviewer_can_read());
 
     let unknown = PublicationPolicy {
         channel: "somewhere-else".into(),

@@ -4966,6 +4966,138 @@ fn persisted_reverse_cast_receipts_can_cross_the_v0_3_2_upgrade_boundary() {
 }
 
 #[test]
+fn persisted_non_codex_pair_finalizes_without_a_sites_receipt() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = RunBaton::new(
+        "run-no-codex",
+        "Complete without Sites",
+        "Fable",
+        "Grok",
+        vec![DeliverableRequirement {
+            id: "implementation".into(),
+            description: "Complete without Sites".into(),
+        }],
+    )
+    .unwrap();
+    let channel = RunChannel::open(dir.path());
+    channel.create(&root).unwrap();
+    let worker = claim_role(dir.path(), "worker", "worker-fable", 0);
+    let reviewer = claim_role(dir.path(), "reviewer", "reviewer-grok", 1);
+
+    let obligation = current_obligation(dir.path());
+    let (stage, _) = stage_explainer_action(dir.path(), &obligation, "initial-no-codex");
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-fable",
+        &worker,
+        2,
+        "initial-stage.json",
+        stage,
+    )
+    .success();
+    let artifact = read_baton(dir.path())["publication_binding"]["artifact"].clone();
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-grok",
+        &reviewer,
+        3,
+        "initial-review.json",
+        explainer_review_action(
+            &current_obligation(dir.path()),
+            &artifact,
+            "approved",
+            serde_json::json!([]),
+        ),
+    )
+    .success();
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-fable",
+        &worker,
+        4,
+        "checkpoint.json",
+        checkpoint_submission(
+            "no-codex-checkpoint",
+            serde_json::json!([{
+                "id": "implementation",
+                "artifacts": [{"kind": "commit", "value": "no-codex-checkpoint"}]
+            }]),
+        ),
+    )
+    .success();
+    let checkpoint = checkpoint_binding(dir.path());
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-grok",
+        &reviewer,
+        5,
+        "checkpoint-review.json",
+        review_action("approved", &checkpoint, serde_json::json!([])),
+    )
+    .success();
+
+    let final_obligation = current_obligation(dir.path());
+    let (final_stage, _) = stage_explainer_action(dir.path(), &final_obligation, "final-no-codex");
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-fable",
+        &worker,
+        6,
+        "final-stage.json",
+        final_stage,
+    )
+    .success();
+    let final_artifact = read_baton(dir.path())["publication_binding"]["artifact"].clone();
+    apply_action(
+        dir.path(),
+        "reviewer",
+        "reviewer-grok",
+        &reviewer,
+        7,
+        "final-review.json",
+        explainer_review_action(
+            &current_obligation(dir.path()),
+            &final_artifact,
+            "approved",
+            serde_json::json!([]),
+        ),
+    )
+    .success();
+    let approved = channel.read().unwrap();
+    assert!(!approved.has_codex_participant());
+    assert!(approved
+        .publication_binding
+        .as_ref()
+        .unwrap()
+        .deployment
+        .is_none());
+    assert!(
+        dvandva_v4::next_action::classify(&approved, Role::Worker, "fable")
+            .legal_actions
+            .contains(&"finalize")
+    );
+    apply_action(
+        dir.path(),
+        "worker",
+        "worker-fable",
+        &worker,
+        8,
+        "finalize.json",
+        serde_json::json!({"type": "finalize"}),
+    )
+    .success();
+    assert_eq!(
+        channel.read().unwrap().status,
+        dvandva_v4::model::Status::Done
+    );
+}
+
+#[test]
 fn publication_store_rejects_moved_receipts_and_site_identity_rewrites() {
     for (index, (pointer, value)) in [
         (
