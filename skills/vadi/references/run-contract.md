@@ -178,7 +178,7 @@ obligation to be staged and reviewed, not every obligation the run has opened.
 The explainer carries this exact content:
 canonical scope, complete manifest, findings and decisions, and a current plan/TODO.
 
-For `stage_explainer`, write the explainer HTML to a private path and
+For vadi-owned `stage_explainer`, write the explainer HTML to a private path and
 copy `publication_binding.obligation` unchanged from the fresh snapshot. The kernel
 hashes the bytes, stores them at `explainer/<source_digest>.html` inside the run
 directory, and binds that digest to the obligation. Staging different bytes
@@ -194,9 +194,9 @@ advance it, so an unrelated peer heartbeat or progress report never invalidates
 a prepared write, while a delayed or out-of-order receipt is refused instead of
 overwriting newer state. Re-applying an identical receipt is a no-op.
 
-For `review_explainer`, read the staged bytes through the facade with
-`dvandva-role.sh explainer`, which verifies the digest for you, then copy the
-same obligation and `publication_binding.artifact.source_digest` unchanged:
+For peer-owned `review_explainer`, prativadi reads the staged bytes through the
+facade with `dvandva-role.sh explainer`, then copies the same obligation and
+`publication_binding.artifact.source_digest` unchanged:
 
 ```json
 {"type":"record_explainer_review","obligation":"<snapshot.publication_binding.obligation>","after_seq":<snapshot.publication_binding.receipt_seq>,"source_digest":"<snapshot.publication_binding.artifact.source_digest>","verdict":"approved","findings":[]}

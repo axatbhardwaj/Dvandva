@@ -156,6 +156,19 @@ session_id() {
   exit 1
 }
 
+validate_harness_pair() {
+  local current="$1" peer="$2" current_trim peer_trim
+  current_trim="${current#"${current%%[![:space:]]*}"}"
+  current_trim="${current_trim%"${current_trim##*[![:space:]]}"}"
+  peer_trim="${peer#"${peer%%[![:space:]]*}"}"
+  peer_trim="${peer_trim%"${peer_trim##*[![:space:]]}"}"
+  if test -z "$current_trim" || test -z "$peer_trim" || \
+      test "${current_trim,,}" = "${peer_trim,,}"; then
+    printf 'dvandva-role: harnesses must be distinct and non-blank\n' >&2
+    exit 2
+  fi
+}
+
 start_role() {
   test "$#" -ge 4 || {
     printf 'usage: dvandva-role.sh start SESSION HARNESS PEER WORKSPACE [OBJECTIVE [TASK]] [--objective-ref KIND=VALUE] [--required-deliverable ID=DESCRIPTION] [--wait|--new-run|--run-id ID] [--autonomous]\n' >&2
@@ -163,13 +176,7 @@ start_role() {
   }
   local session="$1" harness="$2" peer="$3" workspace="$4"
   shift 4
-  case "$harness:$peer" in
-    codex:claude|claude:codex) ;;
-    *)
-      printf 'dvandva-role: harness families must be exactly codex and claude\n' >&2
-      exit 2
-      ;;
-  esac
+  validate_harness_pair "$harness" "$peer"
 
   local objective="" task="" wait_flag="" new_flag="" selected_run="" interaction="attended"
   local -a objective_refs=() deliverables=()
@@ -366,13 +373,7 @@ run_dir_command() {
         printf 'usage: dvandva-role.sh repair-policy SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS REVISION\n' >&2
         exit 2
       }
-      case "$1:$2" in
-        codex:claude|claude:codex) ;;
-        *)
-          printf 'dvandva-role: harness families must be exactly codex and claude\n' >&2
-          exit 2
-          ;;
-      esac
+      validate_harness_pair "$1" "$2"
       "$binary" role repair-policy "${common[@]}" \
         --current-harness "$1" --peer-harness "$2" --expected-revision "$3"
       ;;
@@ -385,9 +386,7 @@ upgrade_role() {
     exit 2
   }
   local session="$1" run_dir="$2" harness="$3" peer="$4" revision="$5"
-  case "$harness:$peer" in codex:claude|claude:codex) ;; *)
-    printf 'dvandva-role: harness families must be exactly codex and claude\n' >&2; exit 2 ;;
-  esac
+  validate_harness_pair "$harness" "$peer"
   "$binary" role upgrade --api "$role_api" --run-dir "$run_dir" --role "$role" \
     --session-id "$session" --current-harness "$harness" --peer-harness "$peer" \
     --expected-revision "$revision" --credentials-root "$credentials_root"

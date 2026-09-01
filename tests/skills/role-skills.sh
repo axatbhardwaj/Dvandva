@@ -194,6 +194,67 @@ bash "$vadi" upgrade legacy-session "$legacy_dir" codex claude 0 | grep -Fq '"sc
 bash "$vadi" claim legacy-session "$legacy_dir" 1 | grep -Fq '"revision": 2'
 bash "$vadi" read legacy-session "$legacy_dir" | grep -Fq '"status": "revising"'
 
+# The supported facade admits a distinct non-Codex pair and carries it through
+# both local explainer handoffs to terminal state without a Sites receipt.
+export DVANDVA_LEASE_SECONDS=300
+no_codex_worker="$(bash "$vadi" start fable-session fable grok "$workspace" \
+  'Complete without Sites' NO-CODEX --new-run \
+  --required-deliverable implementation='Complete without Sites')"
+no_codex_run_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])' \
+  <<<"$no_codex_worker")"
+no_codex_dir="$XDG_STATE_HOME/dvandva/runs/$no_codex_run_id"
+no_codex_reviewer="$(bash "$prativadi" start grok-session grok fable "$workspace" \
+  --run-id "$no_codex_run_id")"
+grep -Fq '"harness": "fable"' <<<"$no_codex_worker"
+grep -Fq '"harness": "grok"' <<<"$no_codex_reviewer"
+
+no_codex_source="$test_root/no-codex.html"
+no_codex_action="$test_root/no-codex-action.json"
+(umask 077; printf '%s\n' '<!doctype html><title>Non-Codex status</title>' >"$no_codex_source")
+(umask 077; printf '%s\n' \
+  "{\"type\":\"stage_explainer\",\"obligation\":{\"handoff_revision\":0,\"kind\":\"run_started\",\"scope_revision\":0},\"after_seq\":0,\"source_path\":\"$no_codex_source\"}" \
+  >"$no_codex_action")
+no_codex_staged="$(bash "$vadi" apply fable-session "$no_codex_dir" 2 "$no_codex_action")"
+no_codex_digest="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["publication_binding"]["artifact"]["source_digest"])' \
+  <<<"$no_codex_staged")"
+printf '%s\n' \
+  "{\"type\":\"record_explainer_review\",\"obligation\":{\"handoff_revision\":0,\"kind\":\"run_started\",\"scope_revision\":0},\"after_seq\":1,\"source_digest\":\"$no_codex_digest\",\"verdict\":\"approved\",\"findings\":[]}" \
+  >"$no_codex_action"
+bash "$prativadi" apply grok-session "$no_codex_dir" 3 "$no_codex_action" >/dev/null
+
+no_codex_checkpoint=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+printf '%s\n' \
+  "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"git\",\"identity\":\"$no_codex_checkpoint\",\"deliverables\":[{\"id\":\"implementation\",\"artifacts\":[{\"kind\":\"commit\",\"value\":\"$no_codex_checkpoint\"}]}],\"verification\":[\"tests passed\"]}}" \
+  >"$no_codex_action"
+no_codex_submitted="$(bash "$vadi" apply fable-session "$no_codex_dir" 4 "$no_codex_action")"
+no_codex_manifest="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' \
+  <<<"$no_codex_submitted")"
+printf '%s\n' \
+  "{\"type\":\"record_review\",\"verdict\":\"approved\",\"checkpoint_identity\":\"$no_codex_checkpoint\",\"manifest_digest\":\"$no_codex_manifest\",\"scope_revision\":0,\"findings\":[]}" \
+  >"$no_codex_action"
+bash "$prativadi" apply grok-session "$no_codex_dir" 5 "$no_codex_action" >/dev/null
+
+printf '%s\n' '<!doctype html><title>Non-Codex complete</title>' >"$no_codex_source"
+printf '%s\n' \
+  "{\"type\":\"stage_explainer\",\"obligation\":{\"handoff_revision\":6,\"kind\":\"reviewer_to_worker\",\"scope_revision\":0,\"checkpoint\":{\"checkpoint_identity\":\"$no_codex_checkpoint\",\"manifest_digest\":\"$no_codex_manifest\",\"scope_revision\":0}},\"after_seq\":0,\"source_path\":\"$no_codex_source\"}" \
+  >"$no_codex_action"
+no_codex_final_stage="$(bash "$vadi" apply fable-session "$no_codex_dir" 6 "$no_codex_action")"
+no_codex_final_digest="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["publication_binding"]["artifact"]["source_digest"])' \
+  <<<"$no_codex_final_stage")"
+printf '%s\n' \
+  "{\"type\":\"record_explainer_review\",\"obligation\":{\"handoff_revision\":6,\"kind\":\"reviewer_to_worker\",\"scope_revision\":0,\"checkpoint\":{\"checkpoint_identity\":\"$no_codex_checkpoint\",\"manifest_digest\":\"$no_codex_manifest\",\"scope_revision\":0}},\"after_seq\":1,\"source_digest\":\"$no_codex_final_digest\",\"verdict\":\"approved\",\"findings\":[]}" \
+  >"$no_codex_action"
+no_codex_approved="$(bash "$prativadi" apply grok-session "$no_codex_dir" 7 "$no_codex_action")"
+grep -Fq '"deployment": null' <<<"$no_codex_approved"
+no_codex_finalizer="$(bash "$vadi" read fable-session "$no_codex_dir")"
+grep -Fq '"finalize"' <<<"$no_codex_finalizer"
+printf '%s\n' '{"type":"finalize"}' >"$no_codex_action"
+no_codex_done="$(bash "$vadi" apply fable-session "$no_codex_dir" 8 "$no_codex_action")"
+grep -Fq '"status": "done"' <<<"$no_codex_done"
+grep -Fq '"outcome": "done"' <<<"$no_codex_done"
+unlink "$no_codex_action"
+unlink "$no_codex_source"
+
 cmp "$vadi" "$prativadi"
 
 grep -Fq 'act as vadi' "$repo_root/skills/vadi/SKILL.md"
