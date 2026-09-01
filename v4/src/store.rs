@@ -17,8 +17,7 @@ use crate::model::{
     normalize_participants, valid_exact_reference, valid_sha256, Assignee, Checkpoint,
     DeliverableRequirement, HandoffKind, LegacyPublication, MigrationProvenance, ParticipantClaim,
     PublicationBinding, PublicationPolicy, RecoveryProvenance, RunBaton, Status,
-    TerminalProvenance, CODEX_HARNESS, EXPLAINER_ACCESS, EXPLAINER_CHANNEL, LEGACY_SCHEMA, SCHEMA,
-    SITES_ACCESS, SITES_CHANNEL,
+    TerminalProvenance, CODEX_HARNESS, LEGACY_SCHEMA, SCHEMA, SITES_ACCESS, SITES_CHANNEL,
 };
 
 #[derive(Debug, Error)]
@@ -1246,16 +1245,9 @@ fn valid_publication_receipt_edge(
             return next_binding.deployment.is_some()
                 && current_binding.review == next_binding.review;
         }
-        let locally_approved = current_binding.review.as_ref().is_some_and(|review| {
-            current_binding.artifact.as_ref().is_some_and(|artifact| {
-                review.obligation == current_binding.obligation
-                    && review.source_digest == artifact.source_digest
-                    && review.verdict == "approved"
-                    && review.findings.is_empty()
-            })
-        });
-        return locally_approved
-            && next_binding.deployment.is_some()
+        return current.local_explainer_approved(current_binding)
+            && next.has_codex_participant()
+            && next.publication_gate_satisfied(next_binding, None)
             && current_binding.review == next_binding.review;
     }
     // A verdict already bound to these exact bytes is final until the bytes
@@ -1644,8 +1636,7 @@ fn valid_finalize_edge(current: &RunBaton, next: &RunBaton, binding: &Publicatio
         || current.pending_checkpoint_supersession.is_some()
         || review.verdict != "approved"
         || review.binding() != checkpoint
-        || !approved_publication_gate(
-            current,
+        || !current.publication_gate_satisfied(
             binding,
             Some((&HandoffKind::ReviewerToWorker, &checkpoint)),
         )
@@ -1946,42 +1937,6 @@ fn expected_checkpoint_clearing_transition(current: &RunBaton, next: &RunBaton) 
     expected.pending_checkpoint_supersession = None;
     expected.publication_binding = next.publication_binding.clone();
     expected == *next
-}
-
-fn approved_publication_gate(
-    baton: &RunBaton,
-    binding: &PublicationBinding,
-    expected: Option<(&HandoffKind, &crate::model::CheckpointBinding)>,
-) -> bool {
-    let policy = baton.effective_publication_policy();
-    expected.is_none_or(|(kind, checkpoint)| {
-        &binding.obligation.kind == kind
-            && binding.obligation.checkpoint.as_ref() == Some(checkpoint)
-    }) && binding.artifact.as_ref().is_some_and(|artifact| {
-        binding.review.as_ref().is_some_and(|review| {
-            let locally_approved = artifact.obligation == binding.obligation
-                && review.obligation == binding.obligation
-                && review.source_digest == artifact.source_digest
-                && review.verdict == "approved"
-                && review.findings.is_empty()
-                && artifact.channel == EXPLAINER_CHANNEL
-                && artifact.access == EXPLAINER_ACCESS
-                && artifact.publisher_harness == policy.publisher_harness
-                && review.reviewer_harness == policy.reviewer_harness;
-            locally_approved
-                && (!baton.has_codex_participant()
-                    || binding.deployment.as_ref().is_some_and(|deployment| {
-                        deployment.obligation == binding.obligation
-                            && deployment.source_digest == artifact.source_digest
-                            && binding.site_id.as_ref() == Some(&deployment.site_id)
-                            && deployment.channel == SITES_CHANNEL
-                            && deployment.access == SITES_ACCESS
-                            && deployment
-                                .publisher_harness
-                                .eq_ignore_ascii_case(CODEX_HARNESS)
-                    }))
-        })
-    })
 }
 
 fn validate_supported_schema(schema: &str) -> Result<(), StoreError> {

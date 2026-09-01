@@ -131,8 +131,9 @@ reviewer is never asked to authenticate to the Site.
 `done` requires one current complete checkpoint whose identity,
 `manifest_digest`, and `scope_revision` match the semantic approval; no pending
 supersession or Human Decision; the current handoff's staged explainer bytes,
-still hashing to their recorded digest; and the matching approved Claude
-explainer review plus owner-only Sites deployment. Finalization records that provenance. It is the only
+still hashing to their recorded digest; the matching approved prativadi
+explainer review; and, when the pairing contains Codex, the matching owner-only
+Sites deployment. Finalization records that provenance. It is the only
 transition the explainer gates: checkpoint submission, review, supersession, and
 approval withdrawal never wait on it. Terminal state is immutable, and both role loops stop
 only after observing the same terminal Baton identity.

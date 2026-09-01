@@ -144,8 +144,9 @@ turn is not a wait — it lets the lease lapse and stalls the peer. Both roles
 refresh the facade snapshot after waking. A role stops only for explicit human
 stop, `abandoned`, or after observing `done` with the current scope, complete
 checkpoint, exact semantic approval, and the current obligation's staged bytes
-and approved Claude review plus matching owner-only Sites deployment bound
-together. A Human Decision pauses the pair rather than completing it.
+and approved prativadi review bound together, plus the matching owner-only Sites
+deployment when the pairing contains Codex. A Human Decision pauses the pair
+rather than completing it.
 
 ## Companion skills
 

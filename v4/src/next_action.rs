@@ -2,9 +2,7 @@ use serde::Serialize;
 
 use crate::{
     claim::Role,
-    model::{
-        Assignee, PublicationPolicy, RunBaton, Status, CODEX_HARNESS, SITES_ACCESS, SITES_CHANNEL,
-    },
+    model::{Assignee, RunBaton, Status, CODEX_HARNESS},
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -143,10 +141,6 @@ fn result(
     }
 }
 
-fn effective_policy(baton: &RunBaton) -> PublicationPolicy {
-    baton.effective_publication_policy()
-}
-
 /// The publisher owes fresh explainer bytes whenever none are staged against the
 /// current obligation, or the reviewer asked for changes.
 fn publication_needs_artifact(baton: &RunBaton) -> bool {
@@ -196,32 +190,8 @@ fn publication_needs_review(baton: &RunBaton) -> bool {
 /// The local approval is always required. A matching private Sites receipt is
 /// additionally required only when this pairing contains Codex.
 fn publication_gate_satisfied(baton: &RunBaton) -> bool {
-    let policy = effective_policy(baton);
-    baton.publication_binding.as_ref().is_some_and(|binding| {
-        binding.artifact.as_ref().is_some_and(|artifact| {
-            binding.review.as_ref().is_some_and(|review| {
-                let locally_approved = artifact.obligation == binding.obligation
-                    && review.obligation == binding.obligation
-                    && review.source_digest == artifact.source_digest
-                    && review.verdict == "approved"
-                    && review.findings.is_empty()
-                    && artifact.channel == policy.channel
-                    && artifact.access == policy.access
-                    && artifact.publisher_harness == policy.publisher_harness
-                    && review.reviewer_harness == policy.reviewer_harness;
-                locally_approved
-                    && (!baton.has_codex_participant()
-                        || binding.deployment.as_ref().is_some_and(|deployment| {
-                            deployment.obligation == binding.obligation
-                                && deployment.source_digest == artifact.source_digest
-                                && binding.site_id.as_ref() == Some(&deployment.site_id)
-                                && deployment.channel == SITES_CHANNEL
-                                && deployment.access == SITES_ACCESS
-                                && deployment
-                                    .publisher_harness
-                                    .eq_ignore_ascii_case(CODEX_HARNESS)
-                        }))
-            })
-        })
-    })
+    baton
+        .publication_binding
+        .as_ref()
+        .is_some_and(|binding| baton.publication_gate_satisfied(binding, None))
 }

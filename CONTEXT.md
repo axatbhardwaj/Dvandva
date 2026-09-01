@@ -86,9 +86,12 @@ records the matching Explainer Site for the same Handoff before finalization;
 without Codex, Sites publication is skipped and local approval is sufficient.
 
 **Publication Policy**:
-The publisher harness, channel, access level, and reviewer harness for a run. A
-policy whose reviewer cannot read its channel is refused at `start`, because it
-can never reach a review.
+The local explainer channel and access level, plus role-derived author and
+reviewer harness fields retained in the Baton for compatibility. For a readable
+local policy, the kernel derives the effective author from vadi and reviewer
+from prativadi; these are distinct from the Codex participant that publishes the
+Explainer Site. A policy whose reviewer cannot read its channel is refused at
+`start`, because it can never reach a review.
 
 **Participant Progress**:
 A role's last self-reported phase and time, published with `report_progress`,

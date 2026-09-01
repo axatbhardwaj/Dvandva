@@ -29,7 +29,7 @@ pub enum ModelError {
     InvalidDeliverables,
     #[error("duplicate required deliverable id: {0}")]
     DuplicateDeliverable(String),
-    #[error("participants must contain exactly one Codex and one Claude harness")]
+    #[error("participants must name two non-blank, distinct harnesses")]
     InvalidParticipants,
 }
 
@@ -583,6 +583,53 @@ impl RunBaton {
                 .eq_ignore_ascii_case(CODEX_HARNESS)
     }
 
+    /// Whether prativadi approved the exact local bytes vadi staged for this
+    /// obligation. All consumers use this predicate so policy interpretation
+    /// cannot drift between action routing, transitions, and history checks.
+    pub fn local_explainer_approved(&self, binding: &PublicationBinding) -> bool {
+        let policy = self.effective_publication_policy();
+        binding.artifact.as_ref().is_some_and(|artifact| {
+            binding.review.as_ref().is_some_and(|review| {
+                artifact.obligation == binding.obligation
+                    && review.obligation == binding.obligation
+                    && review.source_digest == artifact.source_digest
+                    && review.verdict == "approved"
+                    && review.findings.is_empty()
+                    && artifact.channel == policy.channel
+                    && artifact.access == policy.access
+                    && artifact.publisher_harness == policy.publisher_harness
+                    && review.reviewer_harness == policy.reviewer_harness
+            })
+        })
+    }
+
+    /// Complete finalization predicate for one handoff. Local approval always
+    /// gates; a matching owner-only Site additionally gates when Codex is one
+    /// of the two participants.
+    pub fn publication_gate_satisfied(
+        &self,
+        binding: &PublicationBinding,
+        expected: Option<(&HandoffKind, &CheckpointBinding)>,
+    ) -> bool {
+        expected.is_none_or(|(kind, checkpoint)| {
+            &binding.obligation.kind == kind
+                && binding.obligation.checkpoint.as_ref() == Some(checkpoint)
+        }) && self.local_explainer_approved(binding)
+            && (!self.has_codex_participant()
+                || binding.artifact.as_ref().is_some_and(|artifact| {
+                    binding.deployment.as_ref().is_some_and(|deployment| {
+                        deployment.obligation == binding.obligation
+                            && deployment.source_digest == artifact.source_digest
+                            && binding.site_id.as_ref() == Some(&deployment.site_id)
+                            && deployment.channel == SITES_CHANNEL
+                            && deployment.access == SITES_ACCESS
+                            && deployment
+                                .publisher_harness
+                                .eq_ignore_ascii_case(CODEX_HARNESS)
+                    })
+                }))
+    }
+
     pub fn new(
         run_id: impl Into<String>,
         objective: impl Into<String>,
@@ -757,14 +804,18 @@ pub fn normalize_participants(
     worker_harness: String,
     reviewer_harness: String,
 ) -> Result<(String, String), ModelError> {
-    let normalize = |value: String| match value.trim().to_ascii_lowercase().as_str() {
-        "codex" => Some("Codex".to_owned()),
-        "claude" => Some("Claude".to_owned()),
-        _ => None,
+    let normalize = |value: String| {
+        let normalized = value.trim().to_ascii_lowercase();
+        match normalized.as_str() {
+            "" => None,
+            "codex" => Some("Codex".to_owned()),
+            "claude" => Some("Claude".to_owned()),
+            _ => Some(normalized),
+        }
     };
     let worker = normalize(worker_harness).ok_or(ModelError::InvalidParticipants)?;
     let reviewer = normalize(reviewer_harness).ok_or(ModelError::InvalidParticipants)?;
-    if worker == reviewer {
+    if worker.eq_ignore_ascii_case(&reviewer) {
         return Err(ModelError::InvalidParticipants);
     }
     Ok((worker, reviewer))

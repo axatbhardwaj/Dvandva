@@ -181,10 +181,19 @@ fn approved_local_bytes_make_private_sites_publication_actionable_and_required()
 
 #[test]
 fn a_pairing_without_codex_skips_the_sites_receipt() {
-    let mut run = baton();
-    run.participants.worker.harness = "Fable".into();
-    run.participants.reviewer.harness = "Grok".into();
-    run.publication_policy = Some(PublicationPolicy::for_participants("Fable", "Grok"));
+    let mut run = RunBaton::new(
+        "run-no-codex",
+        "Objective",
+        "Fable",
+        "Grok",
+        vec![DeliverableRequirement {
+            id: "kernel".into(),
+            description: "Fix the kernel".into(),
+        }],
+    )
+    .expect("non-Codex harness pairings are constructible");
+    assert_eq!(run.participants.worker.harness, "fable");
+    assert_eq!(run.participants.reviewer.harness, "grok");
     run.status = Status::Finalizing;
     run.assignee = Assignee::Worker;
     let binding = run.publication_binding.as_mut().unwrap();
@@ -198,20 +207,20 @@ fn a_pairing_without_codex_skips_the_sites_receipt() {
         byte_length: 32,
         channel: EXPLAINER_CHANNEL.into(),
         access: EXPLAINER_ACCESS.into(),
-        publisher_harness: "Fable".into(),
+        publisher_harness: "fable".into(),
     });
     binding.review = Some(PublicationReview {
         obligation,
         source_digest: digest,
         verdict: "approved".into(),
         findings: vec![],
-        reviewer_harness: "Grok".into(),
+        reviewer_harness: "grok".into(),
     });
 
-    let finalizer = next_action::classify(&run, Role::Worker, "Fable");
+    let finalizer = next_action::classify(&run, Role::Worker, "fable");
     assert!(finalizer.legal_actions.contains(&"finalize"));
     assert!(!finalizer.legal_actions.contains(&"publish_explainer"));
-    assert!(!next_action::classify(&run, Role::Reviewer, "Grok")
+    assert!(!next_action::classify(&run, Role::Reviewer, "grok")
         .legal_actions
         .contains(&"publish_explainer"));
 }

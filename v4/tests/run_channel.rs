@@ -630,11 +630,11 @@ fn migration_init_rejects_invalid_scope_and_participant_topology() {
             "github.com/axatbhardwaj/dvandva",
         ];
         if expected.is_empty() {
-            args[8] = "cursor";
+            args[8] = " ";
         }
         args.extend(extra);
         let expected = if expected.is_empty() {
-            "exactly one Codex"
+            "non-blank, distinct harnesses"
         } else {
             expected
         };
@@ -1469,7 +1469,7 @@ fn migration_upgrade_rejects_terminal_busy_and_invalid_topology() {
             "--current-harness",
             "codex",
             "--peer-harness",
-            "cursor",
+            "codex",
             "--expected-revision",
             "0",
             "--credentials-root",
@@ -2001,7 +2001,39 @@ fn init_rejects_same_harness_family() {
         ])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("exactly one Codex and one Claude"));
+        .stderr(predicate::str::contains("non-blank, distinct harnesses"));
+}
+
+#[test]
+fn init_accepts_distinct_non_codex_harnesses() {
+    let dir = tempfile::tempdir().unwrap();
+    command()
+        .args([
+            "init",
+            "--run-dir",
+            dir.path().to_str().unwrap(),
+            "--run-id",
+            "run-no-codex",
+            "--objective",
+            "Implement without a Codex participant",
+            "--worker",
+            "Fable",
+            "--reviewer",
+            "Grok",
+            "--repository-id",
+            "github.com/axatbhardwaj/dvandva",
+            "--required-deliverable",
+            "implementation=Implement the flow",
+        ])
+        .assert()
+        .success();
+
+    command()
+        .args(["read", "--run-dir", dir.path().to_str().unwrap()])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(r#""harness": "fable""#))
+        .stdout(predicate::str::contains(r#""harness": "grok""#));
 }
 
 #[test]

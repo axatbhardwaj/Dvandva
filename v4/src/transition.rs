@@ -962,50 +962,21 @@ fn require_publication_gate(
     baton: &RunBaton,
     expected: Option<(&HandoffKind, &CheckpointBinding)>,
 ) -> Result<(), TransitionError> {
-    let policy = effective_policy(baton);
     let binding = baton
         .publication_binding
         .as_ref()
         .ok_or(TransitionError::PublicationStale)?;
-    let artifact = binding
-        .artifact
-        .as_ref()
-        .ok_or(TransitionError::ExplainerNotStaged)?;
-    let review = binding
-        .review
-        .as_ref()
-        .ok_or(TransitionError::PublicationStale)?;
-    if expected.is_some_and(|(kind, checkpoint)| {
-        &binding.obligation.kind != kind
-            || binding.obligation.checkpoint.as_ref() != Some(checkpoint)
-    }) || artifact.obligation != binding.obligation
-        || review.obligation != binding.obligation
-        || review.source_digest != artifact.source_digest
-        || review.verdict != "approved"
-        || !review.findings.is_empty()
-        || artifact.channel != policy.channel
-        || artifact.access != policy.access
-        || artifact.publisher_harness != policy.publisher_harness
-        || review.reviewer_harness != policy.reviewer_harness
-    {
+    if binding.artifact.is_none() {
+        return Err(TransitionError::ExplainerNotStaged);
+    }
+    if !baton.local_explainer_approved(binding) {
         return Err(TransitionError::PublicationStale);
     }
-    if baton.has_codex_participant() {
-        let deployment = binding
-            .deployment
-            .as_ref()
-            .ok_or(TransitionError::ExplainerNotPublished)?;
-        if deployment.obligation != binding.obligation
-            || deployment.source_digest != artifact.source_digest
-            || binding.site_id.as_ref() != Some(&deployment.site_id)
-            || deployment.channel != SITES_CHANNEL
-            || deployment.access != SITES_ACCESS
-            || !deployment
-                .publisher_harness
-                .eq_ignore_ascii_case(CODEX_HARNESS)
-        {
-            return Err(TransitionError::PublicationStale);
-        }
+    if baton.has_codex_participant() && binding.deployment.is_none() {
+        return Err(TransitionError::ExplainerNotPublished);
+    }
+    if !baton.publication_gate_satisfied(binding, expected) {
+        return Err(TransitionError::PublicationStale);
     }
     Ok(())
 }
