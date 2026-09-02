@@ -764,11 +764,13 @@ pub struct ObservedRole {
 }
 
 /// Observe a run without claim verification. Needs no credential and never
-/// mutates state, so an external watcher can distinguish a finished run from
-/// its own lapsed claim without a mutating `start --run-id`.
+/// mutates state — `peek` answers from durable bytes without the
+/// interrupted-install reconciliation and temporary scavenging `read`
+/// performs — so an external watcher can distinguish a finished run from its
+/// own lapsed claim without a mutating `start --run-id`.
 pub fn observe(run_dir: &Path, role: Role) -> Result<ObservedRole, RoleSessionError> {
     let channel = RunChannel::open(run_dir);
-    let baton = channel.read()?;
+    let baton = channel.peek()?;
     require_current_schema(&baton)?;
     Ok(ObservedRole {
         outcome: "observed",

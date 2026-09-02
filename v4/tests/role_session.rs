@@ -1189,6 +1189,80 @@ fn role_observe_returns_the_snapshot_without_claim_verification() {
 }
 
 #[test]
+fn role_observe_never_reconciles_an_interrupted_install() {
+    let root = tempfile::tempdir().unwrap();
+    let run_dir = root.path().join("runs/run-a");
+    let credentials = root.path().join("credentials");
+    init_run(&run_dir);
+    // Kill the claim writer after linking revision 1 into history but before
+    // installing the head, leaving the exact interrupted state `read` repairs.
+    let interrupted = command()
+        .env("DVANDVA_TEST_FAILPOINT", "during_head_install")
+        .args([
+            "role",
+            "claim",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-session",
+            "--lease-seconds",
+            "300",
+            "--expected-revision",
+            "0",
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!interrupted.status.success());
+    let head_bytes = std::fs::read(run_dir.join("baton.json")).unwrap();
+    let head: serde_json::Value = serde_json::from_slice(&head_bytes).unwrap();
+    assert_eq!(head["revision"], 0);
+    let temporaries = |dir: &std::path::Path| {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                name.starts_with('.') && name.ends_with(".tmp")
+            })
+            .count()
+    };
+    let temporaries_before = temporaries(&run_dir);
+    assert!(temporaries_before > 0);
+
+    // Observe answers from the durable staged revision without installing it,
+    // scavenging temporaries, or otherwise touching the run directory.
+    let observed = command()
+        .args([
+            "role",
+            "observe",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        observed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&observed.stderr)
+    );
+    let snapshot: serde_json::Value = serde_json::from_slice(&observed.stdout).unwrap();
+    assert_eq!(snapshot["read_only"], true);
+    assert_eq!(snapshot["revision"], 1);
+    assert_eq!(std::fs::read(run_dir.join("baton.json")).unwrap(), head_bytes);
+    assert_eq!(temporaries(&run_dir), temporaries_before);
+}
+
+#[test]
 fn role_heartbeat_renews_without_exposing_the_token() {
     let root = tempfile::tempdir().unwrap();
     let run_dir = root.path().join("runs/run-a");

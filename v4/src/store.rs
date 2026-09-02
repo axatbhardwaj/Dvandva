@@ -97,6 +97,19 @@ impl RunChannel {
         Ok(head)
     }
 
+    /// Read the newest durable state without mutating anything: no lock, no
+    /// interrupted-install reconciliation, no temporary scavenging. A writer
+    /// that died mid-install leaves history one revision ahead of
+    /// `baton.json`; that revision is already durable, so answer from it
+    /// instead of finishing the install the way `read` does.
+    pub fn peek(&self) -> Result<RunBaton, StoreError> {
+        let head = self.read_head()?;
+        match self.read_history_revision(head.revision + 1) {
+            Ok(next) => Ok(next),
+            Err(_) => Ok(head),
+        }
+    }
+
     fn read_head(&self) -> Result<RunBaton, StoreError> {
         let path = self.baton_path();
         if !path.exists() {
