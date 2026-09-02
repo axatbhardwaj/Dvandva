@@ -21,17 +21,21 @@
   evidence is recorded in `docs/workflows/skill-only-run.md`.
 - Semantic roles submit and review only complete checkpoint bindings. Use
   checkpoint supersession or approval withdrawal for newly discovered work.
-- Each handoff opens an obligation. Vadi stages the run's digest-bound HTML,
+- Each work-carrying handoff opens an obligation. Vadi stages the run's digest-bound HTML,
   including its plan/TODO list, and prativadi reviews those exact local bytes.
   At run start, vadi proposes this first status-page artifact before continuing
   domain work and incorporates any requested changes. After approval, whichever
   participant is Codex mechanically publishes the same digest to one stable,
   owner-only ChatGPT Site per run. That Site is the user's progress page; local
   bytes remain canonical for review. If no participant is Codex, skip Sites
-  publication and use the local approval alone. A new handoff replaces the
-  current obligation; finalization requires the current applicable receipts.
+  publication and use the local approval alone. A work-carrying handoff
+  replaces the current obligation; an approval preserves it with its receipts,
+  so finalization requires the current applicable receipts and an approved
+  delivery finalizes in one handshake.
 - Only `finalize` waits on the explainer. Checkpoint submission, review,
-  supersession, and approval withdrawal never do.
+  supersession, and approval withdrawal never do. At run start the kernel
+  withholds vadi's `work` advisory until the `run_started` explainer approval
+  proves prativadi has joined.
 - Publish progress with `report_progress` before and during long authorized
   work, and read the peer's phase from the snapshot's `peer` block. Never infer
   a dead peer from an expired lease alone.

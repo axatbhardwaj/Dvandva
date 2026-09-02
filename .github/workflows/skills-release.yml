@@ -79,4 +79,4 @@ jobs:
             artifacts/SHA256SUMS \
             --verify-tag \
             --title "Dvandva skills $release_version" \
-            --notes "Skill-only Dvandva v4 kernel for setup-dvandva, vadi, and prativadi. Kernel $release_version writes dvandva.run.v2 with role API 2; legacy v1 runs require the explicit one-way upgrade. Linux x86_64 only, for now. The crate remains unpublished and the archived v3 plugin remains retired."
+            --notes "Skill-only Dvandva v4 kernel for setup-dvandva, vadi, and prativadi. Kernel $release_version writes dvandva.run.v2 with role API 2; legacy v1 runs require the explicit one-way upgrade. 0.3.5 protocol fixes: an approved review preserves the publication obligation and its explainer receipts, so an approved delivery finalizes in one terminal handshake and runs wedged in finalizing by earlier kernels drain; and the run_started explainer approval is the join gate — work is not advisory until prativadi's first receipt, while checkpoint submission stays legal and the pre-join wait rests. Linux x86_64 only, for now. The crate remains unpublished and the archived v3 plugin remains retired."

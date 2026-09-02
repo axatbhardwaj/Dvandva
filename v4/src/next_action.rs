@@ -51,7 +51,16 @@ pub fn classify(baton: &RunBaton, role: Role, participant_harness: &str) -> Next
     } else {
         match (role, &baton.status, &baton.assignee) {
             (Role::Worker, Status::Working | Status::Revising, Assignee::Worker) => {
-                advisory.push("work");
+                // Until the run_started explainer is locally approved — the
+                // reviewer's first receipt, proof the pair has actually formed —
+                // work is not advisory: advising it let vadi start alone. A
+                // finished deliverable can still land (PR-914), so submission
+                // stays legal; it just stops being a reason to wake below.
+                // The gate binds only the run_started obligation, so mid-run
+                // cycles never wait on an explainer.
+                if !run_started_awaiting_approval(baton) {
+                    advisory.push("work");
+                }
                 legal.push("submit_checkpoint");
             }
             (Role::Reviewer, Status::Reviewing, Assignee::Reviewer) => {
@@ -101,6 +110,15 @@ pub fn classify(baton: &RunBaton, role: Role, participant_harness: &str) -> Next
     // a role may do, not work the protocol is waiting on.
     legal.push("report_progress");
     let mut actions = result(role_state, wake_reason, advisory, legal, blocking_reason);
+    if role == Role::Worker && run_started_awaiting_approval(baton) {
+        // Pre-join, submission is an escape hatch like withdrawal: available,
+        // but never a reason to wake. Counting it made every worker wait
+        // return instantly while the pair was still forming.
+        actions.actionable = actions
+            .next_actions
+            .iter()
+            .any(|action| !matches!(*action, "submit_checkpoint") && is_wake_reason(action));
+    }
     if baton.status != Status::HumanDecision {
         actions.legal_actions.push("request_human_decision");
     }
@@ -123,16 +141,7 @@ fn result(
     // behalf. Escape hatches and liveness are always available and are never
     // reasons to wake: counting them makes a foreground wait return instantly
     // and spin instead of resting.
-    let actionable = next_actions.iter().any(|action| {
-        !matches!(
-            *action,
-            "wait"
-                | "stop"
-                | "report_progress"
-                | "request_checkpoint_supersession"
-                | "withdraw_approval"
-        )
-    });
+    let actionable = next_actions.iter().any(|action| is_wake_reason(action));
     NextActions {
         role_state,
         wake_reason,
@@ -142,6 +151,26 @@ fn result(
         actionable,
         blocking_reason,
     }
+}
+
+fn is_wake_reason(action: &str) -> bool {
+    !matches!(
+        action,
+        "wait"
+            | "stop"
+            | "report_progress"
+            | "request_checkpoint_supersession"
+            | "withdraw_approval"
+    )
+}
+
+/// Whether the run is still forming: the run_started obligation has no local
+/// approval yet, so the reviewer has not proven presence with a receipt.
+fn run_started_awaiting_approval(baton: &RunBaton) -> bool {
+    baton.publication_binding.as_ref().is_some_and(|binding| {
+        binding.obligation.kind == crate::model::HandoffKind::RunStarted
+            && !baton.local_explainer_approved(binding)
+    })
 }
 
 /// Vadi owes fresh explainer bytes whenever none are staged against the current

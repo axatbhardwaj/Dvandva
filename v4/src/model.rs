@@ -623,10 +623,10 @@ impl RunBaton {
     pub fn publication_gate_satisfied(
         &self,
         binding: &PublicationBinding,
-        expected: Option<(&HandoffKind, &CheckpointBinding)>,
+        expected: Option<(&[HandoffKind], &CheckpointBinding)>,
     ) -> bool {
-        expected.is_none_or(|(kind, checkpoint)| {
-            &binding.obligation.kind == kind
+        expected.is_none_or(|(kinds, checkpoint)| {
+            kinds.contains(&binding.obligation.kind)
                 && binding.obligation.checkpoint.as_ref() == Some(checkpoint)
         }) && self.local_explainer_approved(binding)
             && (!self.has_codex_participant()

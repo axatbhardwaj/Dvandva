@@ -2,6 +2,9 @@
 # Behavioural coverage for `dvandva-role.sh poll`: idle re-entry, an actionable
 # wake, a terminal return, lease renewal across the wait, and the MAX_MS budget.
 set -euo pipefail
+# Byte-order collation: filename comparisons below must not depend on the
+# invoking user's locale.
+export LC_ALL=C
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 test_root="$(mktemp -d)"
@@ -10,7 +13,7 @@ trap 'rm -rf -- "$test_root"' EXIT
 cargo build --quiet --locked --manifest-path "$repo_root/v4/Cargo.toml"
 export XDG_DATA_HOME="$test_root/data"
 export XDG_STATE_HOME="$test_root/state"
-binary="$XDG_DATA_HOME/dvandva/bin/0.3.4/dvandva-kernel"
+binary="$XDG_DATA_HOME/dvandva/bin/0.3.5/dvandva-kernel"
 mkdir -p "$(dirname "$binary")"
 cp "$repo_root/v4/target/debug/dvandva-v4" "$binary"
 

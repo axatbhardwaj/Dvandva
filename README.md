@@ -1,9 +1,10 @@
 # Dvandva
 
-> **Dvandva v4 is the active skill-only interface.** The `skills-v0.3.4`
-> GitHub release pairs the private, non-publishable kernel `0.3.4` with schema
+> **Dvandva v4 is the active skill-only interface.** The `skills-v0.3.5`
+> GitHub release pairs the private, non-publishable kernel `0.3.5` with schema
 > `dvandva.run.v2` and role API 2. Source checkout and tests are
-> development-only. The retired crate and plugin are not an installation path.
+> development-only. The v3 Dvandva is retired and archived: the crate and
+> plugin are not an installation path.
 >
 > **Supported platform: Linux x86_64 only, for now.** The release ships one
 > kernel asset and the installer refuses every other operating system or
@@ -39,15 +40,18 @@ Act as prativadi and join Dvandva run <run-id>.
 ```
 
 The vadi submits one complete immutable checkpoint for canonical scope. Each
-handoff opens an obligation: vadi stages the local digest-bound HTML and
-prativadi reviews it. At run start, vadi proposes the first artifact before
+work-carrying handoff opens an obligation: vadi stages the local digest-bound
+HTML and prativadi reviews it. At run start, vadi proposes the first artifact before
 continuing domain work and incorporates requested changes. Once approved,
 whichever participant is Codex publishes the same digest through ChatGPT Sites
 to one stable, owner-only status page the user can revisit for progress. If a pairing has
 no Codex participant, Sites publication is skipped and local approval is the
-gate. A new handoff replaces the obligation, so finalization checks only the
-current applicable receipts. Only finalization waits on that gate, so a finished
-deliverable can always be checkpointed. The explainer plan is the live TODO
+gate. A work-carrying handoff replaces the obligation; an approval preserves it
+with its receipts, so finalization checks only the current applicable receipts
+and an approved delivery finalizes in one handshake. Only finalization waits on
+that gate, so a finished deliverable can always be checkpointed, and the
+`run_started` approval doubles as the join gate: vadi's `work` advisory waits
+for prativadi's first receipt. The explainer plan is the live TODO
 list; the Baton remains authoritative.
 
 The sessions coordinate only through the local run. Neither harness invokes
