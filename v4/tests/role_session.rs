@@ -1088,6 +1088,107 @@ fn role_read_verifies_the_private_credential_against_the_baton() {
 }
 
 #[test]
+fn role_observe_returns_the_snapshot_without_claim_verification() {
+    let root = tempfile::tempdir().unwrap();
+    let run_dir = root.path().join("runs/run-a");
+    let credentials = root.path().join("credentials");
+    init_run(&run_dir);
+    command()
+        .args([
+            "role",
+            "claim",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-session",
+            "--lease-seconds",
+            "300",
+            "--expected-revision",
+            "0",
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // A session without any credential cannot use the claim-verified read.
+    command()
+        .args([
+            "role",
+            "read",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "watcher-session",
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+        ])
+        .assert()
+        .failure();
+
+    // Observe needs no session or credential and is explicitly read-only.
+    let observe = || {
+        let output = command()
+            .args([
+                "role",
+                "observe",
+                "--api",
+                "2",
+                "--run-dir",
+                run_dir.to_str().unwrap(),
+                "--role",
+                "worker",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let observed = observe();
+    assert_eq!(observed["outcome"], "observed");
+    assert_eq!(observed["read_only"], true);
+    assert_eq!(observed["revision"], 1);
+    assert!(observed["next_actions"].is_array());
+    assert_eq!(
+        observed["participants"]["worker"]["claim"]["session_id"],
+        "worker-session"
+    );
+
+    // Observing never mutates the run: the revision stays put and the claim
+    // holder's verified read still succeeds afterwards.
+    assert_eq!(observe()["revision"], 1);
+    command()
+        .args([
+            "role",
+            "read",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-session",
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
 fn role_heartbeat_renews_without_exposing_the_token() {
     let root = tempfile::tempdir().unwrap();
     let run_dir = root.path().join("runs/run-a");

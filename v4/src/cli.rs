@@ -300,6 +300,16 @@ enum RoleCommand {
         #[arg(long)]
         credentials_root: PathBuf,
     },
+    /// Read-only, claim-independent snapshot: never verifies, renews, or fences
+    /// a claim, so a watcher can observe a terminal or peer-held run.
+    Observe {
+        #[arg(long)]
+        api: u32,
+        #[arg(long)]
+        run_dir: PathBuf,
+        #[arg(long)]
+        role: Role,
+    },
     Heartbeat {
         #[arg(long)]
         api: u32,
@@ -704,6 +714,12 @@ pub fn run() -> Result<(), CliError> {
                 require_role_api(api)?;
                 let baton = role_session::read(&run_dir, &credentials_root, role, &session_id)?;
                 println!("{}", serde_json::to_string_pretty(&baton)?);
+                Ok(())
+            }
+            RoleCommand::Observe { api, run_dir, role } => {
+                require_role_api(api)?;
+                let observed = role_session::observe(&run_dir, role)?;
+                println!("{}", serde_json::to_string_pretty(&observed)?);
                 Ok(())
             }
             RoleCommand::Heartbeat {

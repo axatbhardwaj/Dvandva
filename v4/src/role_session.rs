@@ -753,6 +753,30 @@ pub fn read(
     Ok(snapshot(baton, run_dir, role))
 }
 
+/// Claim-independent, read-only view of a run, explicitly marked as such so a
+/// caller cannot mistake it for the claim-verified `read`.
+#[derive(Debug, Serialize)]
+pub struct ObservedRole {
+    pub outcome: &'static str,
+    pub read_only: bool,
+    #[serde(flatten)]
+    pub snapshot: RoleSnapshot,
+}
+
+/// Observe a run without claim verification. Needs no credential and never
+/// mutates state, so an external watcher can distinguish a finished run from
+/// its own lapsed claim without a mutating `start --run-id`.
+pub fn observe(run_dir: &Path, role: Role) -> Result<ObservedRole, RoleSessionError> {
+    let channel = RunChannel::open(run_dir);
+    let baton = channel.read()?;
+    require_current_schema(&baton)?;
+    Ok(ObservedRole {
+        outcome: "observed",
+        read_only: true,
+        snapshot: snapshot(baton, run_dir, role),
+    })
+}
+
 pub fn heartbeat(
     run_dir: &Path,
     credentials_root: &Path,
