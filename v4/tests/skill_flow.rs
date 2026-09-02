@@ -1075,18 +1075,18 @@ fn skill_safe_commands_complete_the_review_revision_and_publication_loop() {
     );
     assert_eq!(approved["status"], "finalizing");
 
-    flow.approve_explainer(18, "deployment-5");
-
+    // The approval preserved the delivery obligation and its receipts
+    // (deployment-4), so finalize follows directly: one terminal handshake.
     let done = flow.apply(
         "worker",
         "worker-session",
-        21,
+        18,
         "finalize.json",
         documented_action("vadi", "finalize"),
     );
     assert_eq!(done["status"], "done");
     assert_eq!(done["next_actions"], serde_json::json!(["stop"]));
-    assert_eq!(done["revision"], 22);
+    assert_eq!(done["revision"], 19);
     assert_eq!(done["checkpoint"]["identity"], checkpoint_b);
     assert_eq!(done["review"]["checkpoint_identity"], checkpoint_b);
 
