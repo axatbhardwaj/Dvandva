@@ -2,6 +2,9 @@
 # Behavioural coverage for `dvandva-role.sh poll`: idle re-entry, an actionable
 # wake, a terminal return, lease renewal across the wait, and the MAX_MS budget.
 set -euo pipefail
+# Byte-order collation: filename comparisons below must not depend on the
+# invoking user's locale.
+export LC_ALL=C
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd -P)"
 test_root="$(mktemp -d)"
