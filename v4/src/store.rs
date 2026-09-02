@@ -107,25 +107,34 @@ impl RunChannel {
     /// or invalid successor fails closed rather than being reported as state.
     pub fn peek(&self) -> Result<RunBaton, StoreError> {
         let head = self.read_head()?;
+        match self.validated_successor(&head)? {
+            Some(next) => Ok(next),
+            None => Ok(head),
+        }
+    }
+
+    /// Read-only decision about `history/<head+1>`: `Ok(None)` when absent,
+    /// `Ok(Some(next))` when it is the unique valid successor of `head`, and
+    /// an error when it exists but is malformed, mislabeled, unreadable, or
+    /// not justified by the validated chain. Both observation (`peek`) and
+    /// reconciliation consume this one helper so the invariant cannot drift.
+    fn validated_successor(&self, head: &RunBaton) -> Result<Option<RunBaton>, StoreError> {
         let ahead = head.revision + 1;
-        // Only an absent successor means the head is current. A successor file
-        // that exists but is malformed, mislabeled, or unreadable is invalid
-        // history and fails closed rather than being silently ignored.
         let ahead_path = self
             .directory
             .join("history")
             .join(format!("{ahead:020}.json"));
         if fs::symlink_metadata(&ahead_path).is_err() {
-            return Ok(head);
+            return Ok(None);
         }
         let next = self.read_history_revision(ahead)?;
         let (validated, high) = self.validated_history_head()?;
-        if high != ahead || validated != next || self.read_history_revision(head.revision)? != head
+        if high != ahead || validated != next || self.read_history_revision(head.revision)? != *head
         {
             return Err(StoreError::InvalidHistory);
         }
-        validate_history_edge(&head, &next)?;
-        Ok(next)
+        validate_history_edge(head, &next)?;
+        Ok(Some(next))
     }
 
     fn read_head(&self) -> Result<RunBaton, StoreError> {
@@ -590,21 +599,14 @@ impl RunChannel {
         let Ok(head) = self.read_head() else {
             return Ok(());
         };
-        let ahead = head.revision + 1;
-        let Ok(next) = self.read_history_revision(ahead) else {
+        // Finishing an install advances state, so the successor is held to the
+        // same standard as any other append via `validated_successor`: the
+        // recorded prefix must justify the head, the orphan must be exactly
+        // one revision, and its edge must be a valid live edge. Anything else
+        // is corruption and is refused here rather than after the state moved.
+        let Some(next) = self.validated_successor(&head)? else {
             return Ok(());
         };
-        // Finishing an install advances state, so it is held to the same
-        // standard as any other append: the recorded prefix must justify the
-        // head, the orphan must be exactly one revision, and its edge must be a
-        // valid live edge. Anything else is corruption and is refused here
-        // rather than after the state has moved.
-        let (validated, high) = self.validated_history_head()?;
-        if high != ahead || validated != next || self.read_history_revision(head.revision)? != head
-        {
-            return Err(StoreError::InvalidHistory);
-        }
-        validate_history_edge(&head, &next)?;
         self.install(&next)?;
         self.scavenge_staging_temporaries();
         Ok(())
