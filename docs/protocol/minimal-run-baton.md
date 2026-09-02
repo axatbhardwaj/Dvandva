@@ -99,14 +99,18 @@ the role calls it again at once on an idle return rather than ending its turn. T
 
 ## Rolling explainer gate
 
-Each semantic handoff opens an obligation. For the run's current obligation,
+Each work-carrying handoff opens an obligation; an approval preserves the
+current obligation and its receipts, since it transfers no new work product.
+For the run's current obligation,
 vadi stages the explainer's bytes into the run directory and prativadi reads
 those exact bytes back through the facade and reviews them. The explainer
 contains canonical scope, the complete manifest, findings and decisions, and a
 current plan/TODO.
 
-A new handoff replaces the current obligation, so the gate binds the current
-obligation rather than the run's whole history of them. The staged artifact is
+A work-carrying handoff replaces the current obligation, so the gate binds
+the current obligation rather than the run's whole history of them; because an
+approval preserves it, an approved delivery finalizes on the explainer already
+staged and reviewed for its checkpoint — one terminal handshake. The staged artifact is
 content-addressed at `explainer/<source_digest>.html` and echoes the pending
 handoff kind and revision, `scope_revision`, and the optional three-coordinate
 checkpoint binding. Each receipt advances `receipt_seq`, which receipts declare
@@ -117,8 +121,10 @@ URL cannot replace the local review, and finalization rehashes the staged bytes
 rather than trusting either receipt.
 
 At the run-start handoff, vadi proposes this initial status page before
-continuing domain work and revises
-it until approved. Then whichever participant is Codex mechanically deploys the
+continuing domain work and revises it until approved. The kernel enforces this
+as the join gate: `work` is not advisory until the `run_started` approval —
+prativadi's first receipt, proof the pair has formed — and the pre-join wait
+rests, while a finished deliverable may still be checkpointed. Then whichever participant is Codex mechanically deploys the
 same digest to one stable, owner-only ChatGPT Site per run. Later approved
 handoffs update that user-facing progress URL. When Codex participates, both
 receipts are required at finalization; without Codex, Sites publication is

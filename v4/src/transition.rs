@@ -274,10 +274,7 @@ fn apply_locked(
             require_publication_gate(
                 baton,
                 Some((
-                    &[
-                        HandoffKind::WorkerToReviewer,
-                        HandoffKind::ReviewerToWorker,
-                    ][..],
+                    &[HandoffKind::WorkerToReviewer, HandoffKind::ReviewerToWorker][..],
                     &checkpoint_binding,
                 )),
             )?;

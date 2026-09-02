@@ -2511,7 +2511,8 @@ fn approval_preserves_explainer_receipts_for_a_single_terminal_handshake() {
     .unwrap();
     let channel = RunChannel::open(&run_dir);
     channel.create(&created).unwrap();
-    let worker = dvandva_v4::claim::claim(&channel, Role::Worker, "worker-session", 1800, 0).unwrap();
+    let worker =
+        dvandva_v4::claim::claim(&channel, Role::Worker, "worker-session", 1800, 0).unwrap();
     let reviewer =
         dvandva_v4::claim::claim(&channel, Role::Reviewer, "reviewer-session", 1800, 1).unwrap();
 
@@ -2615,7 +2616,10 @@ fn approval_preserves_explainer_receipts_for_a_single_terminal_handshake() {
         "approval must not wipe the staged explainer for the approved checkpoint"
     );
     assert_eq!(
-        binding.review.as_ref().map(|review| review.verdict.as_str()),
+        binding
+            .review
+            .as_ref()
+            .map(|review| review.verdict.as_str()),
         Some("approved"),
         "approval must not wipe the reviewer's own explainer receipt"
     );
@@ -2659,7 +2663,8 @@ fn legacy_wedged_finalizing_runs_drain_with_reviewer_to_worker_receipts() {
     .unwrap();
     let channel = RunChannel::open(&run_dir);
     channel.create(&created).unwrap();
-    let worker = dvandva_v4::claim::claim(&channel, Role::Worker, "worker-session", 1800, 0).unwrap();
+    let worker =
+        dvandva_v4::claim::claim(&channel, Role::Worker, "worker-session", 1800, 0).unwrap();
     let reviewer =
         dvandva_v4::claim::claim(&channel, Role::Reviewer, "reviewer-session", 1800, 1).unwrap();
     let commit = "b".repeat(40);
@@ -2721,11 +2726,7 @@ fn legacy_wedged_finalizing_runs_drain_with_reviewer_to_worker_receipts() {
     });
     let bytes = serde_json::to_vec_pretty(&wedged).unwrap();
     std::fs::write(run_dir.join("baton.json"), &bytes).unwrap();
-    std::fs::write(
-        run_dir.join(format!("history/{revision:020}.json")),
-        &bytes,
-    )
-    .unwrap();
+    std::fs::write(run_dir.join(format!("history/{revision:020}.json")), &bytes).unwrap();
 
     let obligation = serde_json::from_value::<dvandva_v4::model::HandoffObligation>(
         wedged["publication_binding"]["obligation"].clone(),
@@ -2797,7 +2798,10 @@ fn run_start_work_waits_for_the_explainer_approval_that_proves_the_pair_joined()
     // A finished deliverable can still land (PR-914): submission stays legal.
     assert!(unstaged.legal_actions.contains(&"submit_checkpoint"));
     assert!(unstaged.legal_actions.contains(&"stage_explainer"));
-    assert!(unstaged.actionable, "staging the run_started explainer is owed work");
+    assert!(
+        unstaged.actionable,
+        "staging the run_started explainer is owed work"
+    );
 
     let binding = run.publication_binding.as_mut().unwrap();
     let obligation = binding.obligation.clone();

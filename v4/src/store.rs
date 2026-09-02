@@ -1737,10 +1737,7 @@ fn valid_finalize_edge(current: &RunBaton, next: &RunBaton, binding: &Publicatio
         || !current.publication_gate_satisfied(
             binding,
             Some((
-                &[
-                    HandoffKind::WorkerToReviewer,
-                    HandoffKind::ReviewerToWorker,
-                ][..],
+                &[HandoffKind::WorkerToReviewer, HandoffKind::ReviewerToWorker][..],
                 &checkpoint,
             )),
         )
