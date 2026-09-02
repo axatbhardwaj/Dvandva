@@ -389,9 +389,13 @@ fn a_pre_staging_baton_still_loads_and_can_be_repaired() {
         .deployment
         .is_some());
 
-    // And the Site alone never gates anything, however it was recorded.
+    // And the Site alone never gates anything, however it was recorded: a
+    // finished deliverable still has somewhere to land, while the unapproved
+    // run_started explainer keeps work off the advisory list.
     let actions = next_action::classify(&loaded, Role::Worker, "Claude");
     assert!(actions.legal_actions.contains(&"submit_checkpoint"));
+    assert!(actions.legal_actions.contains(&"stage_explainer"));
+    assert!(!actions.advisory_actions.contains(&"work"));
 
     let credentials = dir.path().join("credentials");
     let repaired = dvandva_v4::role_session::repair_publication_policy(
@@ -1492,8 +1496,11 @@ mod round_three {
         )
         .expect("the human's answer clears a released-format decision");
         assert_eq!(resumed.status, Status::Working);
+        // The run resumes autonomously: with the run_started explainer not yet
+        // approved, the worker's owed action is staging it, not bare work.
         let actions = next_action::classify(&resumed, Role::Worker, "Claude");
-        assert!(actions.next_actions.contains(&"work"));
+        assert!(actions.next_actions.contains(&"stage_explainer"));
+        assert!(actions.actionable);
     }
 
     /// [P1 compatibility] Checkpoints a 0.2 kernel accepted — `git` with
@@ -2773,4 +2780,67 @@ fn legacy_wedged_finalizing_runs_drain_with_reviewer_to_worker_receipts() {
     )
     .expect("a legacy reviewer_to_worker obligation with current receipts must drain");
     assert_eq!(done.status, Status::Done);
+}
+
+/// [Defect 2] Until the run_started explainer is locally approved — proof the
+/// reviewer has actually joined — the worker must not be advised to work or to
+/// checkpoint: its owed action is staging the explainer, and once staged it
+/// rests instead of spinning. Approval opens the ordinary work loop.
+#[test]
+fn run_start_work_waits_for_the_explainer_approval_that_proves_the_pair_joined() {
+    let mut run = baton();
+    let unstaged = next_action::classify(&run, Role::Worker, "Claude");
+    assert!(
+        !unstaged.advisory_actions.contains(&"work"),
+        "work must not be advisory before the pair has formed"
+    );
+    // A finished deliverable can still land (PR-914): submission stays legal.
+    assert!(unstaged.legal_actions.contains(&"submit_checkpoint"));
+    assert!(unstaged.legal_actions.contains(&"stage_explainer"));
+    assert!(unstaged.actionable, "staging the run_started explainer is owed work");
+
+    let binding = run.publication_binding.as_mut().unwrap();
+    let obligation = binding.obligation.clone();
+    let digest = "a".repeat(64);
+    binding.artifact = Some(ExplainerArtifact {
+        obligation: obligation.clone(),
+        source_digest: digest.clone(),
+        path: format!("explainer/{digest}.html"),
+        media_type: "text/html".into(),
+        byte_length: 32,
+        channel: EXPLAINER_CHANNEL.into(),
+        access: EXPLAINER_ACCESS.into(),
+        publisher_harness: "Claude".into(),
+    });
+    let staged = next_action::classify(&run, Role::Worker, "Claude");
+    assert!(!staged.advisory_actions.contains(&"work"));
+    assert!(staged.legal_actions.contains(&"submit_checkpoint"));
+    assert!(
+        !staged.actionable,
+        "a worker waiting for the reviewer's first receipt must rest, not spin"
+    );
+
+    run.publication_binding.as_mut().unwrap().review = Some(PublicationReview {
+        obligation,
+        source_digest: digest,
+        verdict: "approved".into(),
+        findings: vec![],
+        reviewer_harness: "Codex".into(),
+    });
+    let joined = next_action::classify(&run, Role::Worker, "Claude");
+    assert!(joined.advisory_actions.contains(&"work"));
+    assert!(joined.legal_actions.contains(&"submit_checkpoint"));
+}
+
+/// [Defect 2 boundary] The join gate binds only the run_started obligation:
+/// mid-run revising after requested changes never waits on an explainer.
+#[test]
+fn mid_run_revising_never_waits_for_the_explainer() {
+    let mut run = baton();
+    run.status = Status::Revising;
+    run.assignee = Assignee::Worker;
+    run.publication_binding.as_mut().unwrap().obligation.kind = HandoffKind::ReviewerToWorker;
+    let actions = next_action::classify(&run, Role::Worker, "Claude");
+    assert!(actions.advisory_actions.contains(&"work"));
+    assert!(actions.legal_actions.contains(&"submit_checkpoint"));
 }

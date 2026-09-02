@@ -2028,7 +2028,9 @@ fn worker_start_creates_claims_and_idempotently_resumes_one_run() {
     assert_eq!(created["status"], "working");
     assert_eq!(created["assignee"], "worker");
     assert_eq!(created["role_state"], "assigned");
-    assert_eq!(created["advisory_actions"], serde_json::json!(["work"]));
+    // Work is not advisory until the run_started explainer is approved: the
+    // pair forms first. Submission stays legal so a deliverable can land.
+    assert_eq!(created["advisory_actions"], serde_json::json!([]));
     assert_eq!(
         created["legal_actions"],
         serde_json::json!([
@@ -2040,12 +2042,7 @@ fn worker_start_creates_claims_and_idempotently_resumes_one_run() {
     );
     assert_eq!(
         created["next_actions"],
-        serde_json::json!([
-            "work",
-            "submit_checkpoint",
-            "stage_explainer",
-            "report_progress"
-        ])
+        serde_json::json!(["submit_checkpoint", "stage_explainer", "report_progress"])
     );
     // A completed deliverable always has somewhere to land, from revision 1 on.
     assert_eq!(created["blocking_reason"], serde_json::Value::Null);
@@ -2702,7 +2699,7 @@ fn snapshot_near_expiry_actionable_wait_returns_before_heartbeat() {
     assert!(started.elapsed() < std::time::Duration::from_millis(300));
     let snapshot: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(snapshot["revision"], 1);
-    assert_eq!(snapshot["next_actions"][0], "work");
+    assert_eq!(snapshot["next_actions"][0], "submit_checkpoint");
 }
 
 #[test]
@@ -2975,7 +2972,8 @@ fn snapshot_classifier_keeps_semantic_and_harness_duties_independent() {
     )
     .unwrap();
     let worker = next_action::classify(&normal, Role::Worker, "Codex");
-    assert_eq!(worker.advisory_actions, vec!["work"]);
+    // Pre-join: no work advisory until the run_started explainer is approved.
+    assert_eq!(worker.advisory_actions, Vec::<&str>::new());
     assert_eq!(
         worker.legal_actions,
         vec![
@@ -3004,12 +3002,7 @@ fn snapshot_classifier_keeps_semantic_and_harness_duties_independent() {
     .unwrap();
     assert_eq!(
         next_action::classify(&reverse, Role::Worker, "Claude").next_actions,
-        vec![
-            "work",
-            "submit_checkpoint",
-            "stage_explainer",
-            "report_progress"
-        ]
+        vec!["submit_checkpoint", "stage_explainer", "report_progress"]
     );
     assert_eq!(
         next_action::classify(&reverse, Role::Reviewer, "Codex").next_actions,
