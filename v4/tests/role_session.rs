@@ -1263,6 +1263,65 @@ fn role_observe_never_reconciles_an_interrupted_install() {
 }
 
 #[test]
+fn role_observe_fails_closed_on_a_forged_history_successor() {
+    let root = tempfile::tempdir().unwrap();
+    let run_dir = root.path().join("runs/run-a");
+    let credentials = root.path().join("credentials");
+    init_run(&run_dir);
+    command()
+        .args([
+            "role",
+            "claim",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-session",
+            "--lease-seconds",
+            "300",
+            "--expected-revision",
+            "0",
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // A parseable revision head+1 that is not a valid successor of the head —
+    // here it rewrites the immutable objective — must not be reported as state.
+    let head_path = run_dir.join("baton.json");
+    let head_bytes = std::fs::read(&head_path).unwrap();
+    let mut forged: serde_json::Value = serde_json::from_slice(&head_bytes).unwrap();
+    forged["revision"] = serde_json::json!(2);
+    forged["objective"]["summary"] = serde_json::json!("Forged objective");
+    let forged_path = run_dir.join("history/00000000000000000002.json");
+    std::fs::write(&forged_path, serde_json::to_vec_pretty(&forged).unwrap()).unwrap();
+
+    let observed = command()
+        .args([
+            "role",
+            "observe",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+        ])
+        .output()
+        .unwrap();
+    assert!(!observed.status.success());
+
+    // Failing closed is still non-mutating: the head and the forged file are
+    // both left exactly as they were for a claim-verified caller to adjudicate.
+    assert_eq!(std::fs::read(&head_path).unwrap(), head_bytes);
+    assert!(forged_path.exists());
+}
+
+#[test]
 fn role_heartbeat_renews_without_exposing_the_token() {
     let root = tempfile::tempdir().unwrap();
     let run_dir = root.path().join("runs/run-a");

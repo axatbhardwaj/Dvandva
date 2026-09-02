@@ -101,13 +101,23 @@ impl RunChannel {
     /// interrupted-install reconciliation, no temporary scavenging. A writer
     /// that died mid-install leaves history one revision ahead of
     /// `baton.json`; that revision is already durable, so answer from it
-    /// instead of finishing the install the way `read` does.
+    /// instead of finishing the install the way `read` does — but only after
+    /// proving, with the same checks reconciliation applies, that it is the
+    /// unique valid successor of the installed head. A parseable but forged
+    /// or invalid successor fails closed rather than being reported as state.
     pub fn peek(&self) -> Result<RunBaton, StoreError> {
         let head = self.read_head()?;
-        match self.read_history_revision(head.revision + 1) {
-            Ok(next) => Ok(next),
-            Err(_) => Ok(head),
+        let ahead = head.revision + 1;
+        let Ok(next) = self.read_history_revision(ahead) else {
+            return Ok(head);
+        };
+        let (validated, high) = self.validated_history_head()?;
+        if high != ahead || validated != next || self.read_history_revision(head.revision)? != head
+        {
+            return Err(StoreError::InvalidHistory);
         }
+        validate_history_edge(&head, &next)?;
+        Ok(next)
     }
 
     fn read_head(&self) -> Result<RunBaton, StoreError> {
