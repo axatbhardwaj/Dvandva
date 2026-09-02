@@ -3,7 +3,8 @@
 > **Dvandva v4 is the active skill-only interface.** The `skills-v0.3.5`
 > GitHub release pairs the private, non-publishable kernel `0.3.5` with schema
 > `dvandva.run.v2` and role API 2. Source checkout and tests are
-> development-only. The retired crate and plugin are not an installation path.
+> development-only. The v3 Dvandva is retired and archived: the crate and
+> plugin are not an installation path.
 >
 > **Supported platform: Linux x86_64 only, for now.** The release ships one
 > kernel asset and the installer refuses every other operating system or
