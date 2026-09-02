@@ -291,6 +291,12 @@ run_dir_command() {
       test "$#" -eq 0
       "$binary" role read "${common[@]}"
       ;;
+    observe)
+      # Read-only and claim-independent: returns the snapshot without claim
+      # verification, so a watcher can tell a finished run from a lapsed claim.
+      test "$#" -eq 0
+      "$binary" role observe --api "$role_api" --run-dir "$run_dir" --role "$role"
+      ;;
     claim|reclaim)
       test "$#" -eq 1 || {
         printf 'usage: dvandva-role.sh %s SESSION RUN_DIR REVISION\n' "$command" >&2
@@ -406,7 +412,7 @@ case "$operation" in
     require_kernel
     start_role "$@"
     ;;
-  read|claim|reclaim|apply|wait|poll|heartbeat|explainer|analysis|repair-policy)
+  read|observe|claim|reclaim|apply|wait|poll|heartbeat|explainer|analysis|repair-policy)
     require_kernel
     run_dir_command "$operation" "$@"
     ;;
@@ -415,7 +421,7 @@ case "$operation" in
     upgrade_role "$@"
     ;;
   *)
-    printf 'usage: dvandva-role.sh {session-id|probe|start|read|claim|reclaim|apply|wait|poll|heartbeat|explainer|analysis|repair-policy|upgrade} ...\n' >&2
+    printf 'usage: dvandva-role.sh {session-id|probe|start|read|observe|claim|reclaim|apply|wait|poll|heartbeat|explainer|analysis|repair-policy|upgrade} ...\n' >&2
     exit 2
     ;;
 esac

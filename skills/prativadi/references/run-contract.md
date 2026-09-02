@@ -7,6 +7,7 @@ The facade JSON is authoritative. Use only `scripts/dvandva-role.sh`; first
 ```text
 start SESSION CURRENT_HARNESS PEER_HARNESS WORKSPACE [OBJECTIVE [TASK]] [--objective-ref KIND=VALUE] [--required-deliverable ID=DESCRIPTION] [--wait|--run-id ID] [--autonomous]
 read  SESSION RUN_DIR
+observe SESSION RUN_DIR
 apply SESSION RUN_DIR EXPECTED_REVISION ACTION_FILE
 wait  SESSION RUN_DIR AFTER_REVISION [TIMEOUT_MS]
 poll  SESSION RUN_DIR AFTER_REVISION [MAX_MS]
@@ -18,6 +19,11 @@ repair-policy SESSION RUN_DIR CURRENT_HARNESS PEER_HARNESS EXPECTED_REVISION
 claim SESSION RUN_DIR EXPECTED_REVISION
 reclaim SESSION RUN_DIR EXPECTED_REVISION
 ```
+
+`observe` is read-only and claim-independent: it returns the snapshot without
+verifying, renewing, or fencing any claim, so a watcher can tell a finished
+run from a lapsed claim. It never substitutes for the claim-verified `read`
+before a mutation.
 
 Harness identity is protocol data. A Codex participant must use the harness
 name `codex` (case-insensitive); aliases such as `codex-cli`, `gpt`, or
