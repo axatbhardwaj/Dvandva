@@ -1088,6 +1088,371 @@ fn role_read_verifies_the_private_credential_against_the_baton() {
 }
 
 #[test]
+fn role_observe_returns_the_snapshot_without_claim_verification() {
+    let root = tempfile::tempdir().unwrap();
+    let run_dir = root.path().join("runs/run-a");
+    let credentials = root.path().join("credentials");
+    init_run(&run_dir);
+    command()
+        .args([
+            "role",
+            "claim",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-session",
+            "--lease-seconds",
+            "300",
+            "--expected-revision",
+            "0",
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // A session without any credential cannot use the claim-verified read.
+    command()
+        .args([
+            "role",
+            "read",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "watcher-session",
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+        ])
+        .assert()
+        .failure();
+
+    // Observe needs no session or credential and is explicitly read-only.
+    let observe = || {
+        let output = command()
+            .args([
+                "role",
+                "observe",
+                "--api",
+                "2",
+                "--run-dir",
+                run_dir.to_str().unwrap(),
+                "--role",
+                "worker",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let observed = observe();
+    assert_eq!(observed["outcome"], "observed");
+    assert_eq!(observed["read_only"], true);
+    assert_eq!(observed["revision"], 1);
+    assert!(observed["next_actions"].is_array());
+    assert_eq!(
+        observed["participants"]["worker"]["claim"]["session_id"],
+        "worker-session"
+    );
+
+    // Observing never mutates the run: the revision stays put and the claim
+    // holder's verified read still succeeds afterwards.
+    assert_eq!(observe()["revision"], 1);
+    command()
+        .args([
+            "role",
+            "read",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-session",
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+}
+
+#[test]
+fn role_observe_never_reconciles_an_interrupted_install() {
+    let root = tempfile::tempdir().unwrap();
+    let run_dir = root.path().join("runs/run-a");
+    let credentials = root.path().join("credentials");
+    init_run(&run_dir);
+    // Kill the claim writer after linking revision 1 into history but before
+    // installing the head, leaving the exact interrupted state `read` repairs.
+    let interrupted = command()
+        .env("DVANDVA_TEST_FAILPOINT", "during_head_install")
+        .args([
+            "role",
+            "claim",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-session",
+            "--lease-seconds",
+            "300",
+            "--expected-revision",
+            "0",
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+        ])
+        .output()
+        .unwrap();
+    assert!(!interrupted.status.success());
+    let head_bytes = std::fs::read(run_dir.join("baton.json")).unwrap();
+    let head: serde_json::Value = serde_json::from_slice(&head_bytes).unwrap();
+    assert_eq!(head["revision"], 0);
+    let temporaries = |dir: &std::path::Path| {
+        std::fs::read_dir(dir)
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                name.starts_with('.') && name.ends_with(".tmp")
+            })
+            .count()
+    };
+    let temporaries_before = temporaries(&run_dir);
+    assert!(temporaries_before > 0);
+
+    // Observe answers from the durable staged revision without installing it,
+    // scavenging temporaries, or otherwise touching the run directory.
+    let observed = command()
+        .args([
+            "role",
+            "observe",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        observed.status.success(),
+        "{}",
+        String::from_utf8_lossy(&observed.stderr)
+    );
+    let snapshot: serde_json::Value = serde_json::from_slice(&observed.stdout).unwrap();
+    assert_eq!(snapshot["read_only"], true);
+    assert_eq!(snapshot["revision"], 1);
+    assert_eq!(std::fs::read(run_dir.join("baton.json")).unwrap(), head_bytes);
+    assert_eq!(temporaries(&run_dir), temporaries_before);
+}
+
+#[test]
+fn role_observe_fails_closed_on_a_forged_history_successor() {
+    let root = tempfile::tempdir().unwrap();
+    let run_dir = root.path().join("runs/run-a");
+    let credentials = root.path().join("credentials");
+    init_run(&run_dir);
+    command()
+        .args([
+            "role",
+            "claim",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-session",
+            "--lease-seconds",
+            "300",
+            "--expected-revision",
+            "0",
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // A parseable revision head+1 that is not a valid successor of the head —
+    // here it rewrites the immutable objective — must not be reported as state.
+    let head_path = run_dir.join("baton.json");
+    let head_bytes = std::fs::read(&head_path).unwrap();
+    let mut forged: serde_json::Value = serde_json::from_slice(&head_bytes).unwrap();
+    forged["revision"] = serde_json::json!(2);
+    forged["objective"]["summary"] = serde_json::json!("Forged objective");
+    let forged_path = run_dir.join("history/00000000000000000002.json");
+    std::fs::write(&forged_path, serde_json::to_vec_pretty(&forged).unwrap()).unwrap();
+
+    let observed = command()
+        .args([
+            "role",
+            "observe",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+        ])
+        .output()
+        .unwrap();
+    assert!(!observed.status.success());
+
+    // Failing closed is still non-mutating: the head and the forged file are
+    // both left exactly as they were for a claim-verified caller to adjudicate.
+    assert_eq!(std::fs::read(&head_path).unwrap(), head_bytes);
+    assert!(forged_path.exists());
+
+    // A successor that exists but cannot even be parsed is invalid history,
+    // not an absent successor: observe fails closed instead of answering with
+    // the installed head, and still leaves the bytes alone.
+    std::fs::write(&forged_path, b"{not json").unwrap();
+    let malformed = command()
+        .args([
+            "role",
+            "observe",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+        ])
+        .output()
+        .unwrap();
+    assert!(!malformed.status.success());
+    assert_eq!(std::fs::read(&head_path).unwrap(), head_bytes);
+    assert_eq!(std::fs::read(&forged_path).unwrap(), b"{not json");
+
+    // A metadata failure that is not NotFound — here an unsearchable history
+    // directory — is not absence either: observe propagates the error instead
+    // of answering with the installed head.
+    std::fs::remove_file(&forged_path).unwrap();
+    let history_dir = run_dir.join("history");
+    let open_mode = std::fs::metadata(&history_dir).unwrap().permissions();
+    std::fs::set_permissions(&history_dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let unreadable = command()
+        .args([
+            "role",
+            "observe",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+        ])
+        .output()
+        .unwrap();
+    std::fs::set_permissions(&history_dir, open_mode).unwrap();
+    assert!(!unreadable.status.success());
+    assert_eq!(std::fs::read(&head_path).unwrap(), head_bytes);
+}
+
+#[test]
+fn role_observe_stays_coherent_under_a_live_writer() {
+    let root = tempfile::tempdir().unwrap();
+    let run_dir = root.path().join("runs/run-a");
+    let credentials = root.path().join("credentials");
+    init_run(&run_dir);
+    command()
+        .args([
+            "role",
+            "claim",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-session",
+            "--lease-seconds",
+            "300",
+            "--expected-revision",
+            "0",
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // A writer advancing the run mid-observation is progress, not corruption:
+    // every observe against a healthy run must succeed while heartbeats keep
+    // moving the head underneath it.
+    let writer_run_dir = run_dir.clone();
+    let writer_credentials = credentials.clone();
+    let writer = std::thread::spawn(move || {
+        for revision in 1..=60u64 {
+            let output = std::process::Command::new(env!("CARGO_BIN_EXE_dvandva-v4"))
+                .args([
+                    "role",
+                    "heartbeat",
+                    "--api",
+                    "2",
+                    "--run-dir",
+                    writer_run_dir.to_str().unwrap(),
+                    "--role",
+                    "worker",
+                    "--session-id",
+                    "worker-session",
+                    "--lease-seconds",
+                    "300",
+                    "--expected-revision",
+                    &revision.to_string(),
+                    "--credentials-root",
+                    writer_credentials.to_str().unwrap(),
+                ])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    });
+    while !writer.is_finished() {
+        let observed = command()
+            .args([
+                "role",
+                "observe",
+                "--api",
+                "2",
+                "--run-dir",
+                run_dir.to_str().unwrap(),
+                "--role",
+                "worker",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            observed.status.success(),
+            "{}",
+            String::from_utf8_lossy(&observed.stderr)
+        );
+    }
+    writer.join().unwrap();
+}
+
+#[test]
 fn role_heartbeat_renews_without_exposing_the_token() {
     let root = tempfile::tempdir().unwrap();
     let run_dir = root.path().join("runs/run-a");

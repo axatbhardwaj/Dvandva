@@ -97,6 +97,68 @@ impl RunChannel {
         Ok(head)
     }
 
+    /// Read the newest durable state without mutating anything: no lock, no
+    /// interrupted-install reconciliation, no temporary scavenging. A writer
+    /// that died mid-install leaves history one revision ahead of
+    /// `baton.json`; that revision is already durable, so answer from it
+    /// instead of finishing the install the way `read` does — but only after
+    /// proving, with the same checks reconciliation applies, that it is the
+    /// unique valid successor of the installed head. A parseable but forged
+    /// or invalid successor fails closed rather than being reported as state.
+    pub fn peek(&self) -> Result<RunBaton, StoreError> {
+        // Bounded consistency retry: a live writer can commit revisions
+        // between reading the head and validating the chain, which is
+        // progress, not corruption. Retry only while the head demonstrably
+        // moved; a failure against an unmoved head is real and fails closed.
+        let mut head = self.read_head()?;
+        let mut error = None;
+        for _ in 0..16 {
+            match self.validated_successor(&head) {
+                Ok(Some(next)) => return Ok(next),
+                Ok(None) => return Ok(head),
+                Err(current_error) => {
+                    let current = self.read_head()?;
+                    if current.revision == head.revision {
+                        return Err(current_error);
+                    }
+                    head = current;
+                    error = Some(current_error);
+                }
+            }
+        }
+        Err(error.unwrap_or(StoreError::InvalidHistory))
+    }
+
+    /// Read-only decision about `history/<head+1>`: `Ok(None)` when absent,
+    /// `Ok(Some(next))` when it is the unique valid successor of `head`, and
+    /// an error when it exists but is malformed, mislabeled, unreadable, or
+    /// not justified by the validated chain. Both observation (`peek`) and
+    /// reconciliation consume this one helper so the invariant cannot drift.
+    fn validated_successor(&self, head: &RunBaton) -> Result<Option<RunBaton>, StoreError> {
+        let ahead = head.revision + 1;
+        let ahead_path = self
+            .directory
+            .join("history")
+            .join(format!("{ahead:020}.json"));
+        // Only a definitively missing file means no successor. Any other
+        // metadata failure — permissions, I/O — is not absence and propagates,
+        // so an unreadable successor can never be laundered into "head is
+        // current".
+        match fs::symlink_metadata(&ahead_path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(StoreError::Io(error)),
+            Ok(_) => {}
+        }
+        let next = self.read_history_revision(ahead)?;
+        let (validated, high) = self.validated_history_head()?;
+        if high != ahead || validated != next || self.read_history_revision(head.revision)? != *head
+        {
+            return Err(StoreError::InvalidHistory);
+        }
+        validate_history_edge(head, &next)?;
+        Ok(Some(next))
+    }
+
     fn read_head(&self) -> Result<RunBaton, StoreError> {
         let path = self.baton_path();
         if !path.exists() {
@@ -559,21 +621,14 @@ impl RunChannel {
         let Ok(head) = self.read_head() else {
             return Ok(());
         };
-        let ahead = head.revision + 1;
-        let Ok(next) = self.read_history_revision(ahead) else {
+        // Finishing an install advances state, so the successor is held to the
+        // same standard as any other append via `validated_successor`: the
+        // recorded prefix must justify the head, the orphan must be exactly
+        // one revision, and its edge must be a valid live edge. Anything else
+        // is corruption and is refused here rather than after the state moved.
+        let Some(next) = self.validated_successor(&head)? else {
             return Ok(());
         };
-        // Finishing an install advances state, so it is held to the same
-        // standard as any other append: the recorded prefix must justify the
-        // head, the orphan must be exactly one revision, and its edge must be a
-        // valid live edge. Anything else is corruption and is refused here
-        // rather than after the state has moved.
-        let (validated, high) = self.validated_history_head()?;
-        if high != ahead || validated != next || self.read_history_revision(head.revision)? != head
-        {
-            return Err(StoreError::InvalidHistory);
-        }
-        validate_history_edge(&head, &next)?;
         self.install(&next)?;
         self.scavenge_staging_temporaries();
         Ok(())

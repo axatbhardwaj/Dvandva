@@ -14,9 +14,12 @@ old_binary="$test_root/old-target/debug/dvandva-v4"
 test "$($old_binary --version)" = 'dvandva-v4 0.1.1'
 export XDG_DATA_HOME="$test_root/data"
 export XDG_STATE_HOME="$test_root/state"
-binary="$XDG_DATA_HOME/dvandva/bin/current/dvandva-kernel"
+# The facade resolves the pinned version directory directly; `current` is only
+# the shared default selector and must not be able to break a pinned session.
+binary="$XDG_DATA_HOME/dvandva/bin/0.3.3/dvandva-kernel"
 mkdir -p "$(dirname "$binary")"
 cp "$repo_root/v4/target/debug/dvandva-v4" "$binary"
+ln -s 0.3.3 "$XDG_DATA_HOME/dvandva/bin/current"
 
 workspace="$test_root/workspace"
 mkdir -p "$workspace"
@@ -162,6 +165,24 @@ grep -Fq '"outcome": "started"' <<<"$reclaimed"
 grep -Fq '"disposition": "reclaimed"' <<<"$reclaimed"
 grep -Fq '"revision": 3' <<<"$reclaimed"
 bash "$vadi" read codex-session "$run_dir" | grep -Fq '"revision": 3'
+
+# A concurrent session flipping the shared bin/current selector must not break
+# this pinned session, and the pinned path must never consult the selector.
+rm "$XDG_DATA_HOME/dvandva/bin/current"
+ln -s 0.0.0 "$XDG_DATA_HOME/dvandva/bin/current"
+bash "$vadi" read codex-session "$run_dir" | grep -Fq '"revision": 3'
+rm "$XDG_DATA_HOME/dvandva/bin/current"
+ln -s 0.3.3 "$XDG_DATA_HOME/dvandva/bin/current"
+
+# Observe is claim-independent and read-only: a session with no credential can
+# watch the run, sees the explicit read-only marker, and never moves the head.
+expect_failure 'error' bash "$vadi" read watcher-session "$run_dir"
+observed="$(bash "$vadi" observe watcher-session "$run_dir")"
+grep -Fq '"outcome": "observed"' <<<"$observed"
+grep -Fq '"read_only": true' <<<"$observed"
+grep -Fq '"revision": 3' <<<"$observed"
+bash "$vadi" read codex-session "$run_dir" | grep -Fq '"revision": 3'
+
 bash "$vadi" heartbeat codex-session "$run_dir" 3 | grep -Fq '"revision":4'
 bash "$vadi" wait codex-session "$run_dir" 4 50 | grep -Fq '"revision": 4'
 
@@ -253,6 +274,13 @@ printf '%s\n' '{"type":"finalize"}' >"$no_codex_action"
 no_codex_done="$(bash "$vadi" apply alias-worker "$no_codex_dir" 8 "$no_codex_action")"
 grep -Fq '"status": "done"' <<<"$no_codex_done"
 grep -Fq '"outcome": "done"' <<<"$no_codex_done"
+
+# A terminal run stays observable without a claim, so a watcher can tell a
+# finished run from its own lapsed claim without a mutating start --run-id.
+terminal_observed="$(bash "$prativadi" observe watcher-session "$no_codex_dir")"
+grep -Fq '"outcome": "observed"' <<<"$terminal_observed"
+grep -Fq '"read_only": true' <<<"$terminal_observed"
+grep -Fq '"status": "done"' <<<"$terminal_observed"
 unlink "$no_codex_action"
 unlink "$no_codex_source"
 
