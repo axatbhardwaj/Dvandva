@@ -124,8 +124,14 @@ impl RunChannel {
             .directory
             .join("history")
             .join(format!("{ahead:020}.json"));
-        if fs::symlink_metadata(&ahead_path).is_err() {
-            return Ok(None);
+        // Only a definitively missing file means no successor. Any other
+        // metadata failure — permissions, I/O — is not absence and propagates,
+        // so an unreadable successor can never be laundered into "head is
+        // current".
+        match fs::symlink_metadata(&ahead_path) {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(StoreError::Io(error)),
+            Ok(_) => {}
         }
         let next = self.read_history_revision(ahead)?;
         let (validated, high) = self.validated_history_head()?;

@@ -1340,6 +1340,30 @@ fn role_observe_fails_closed_on_a_forged_history_successor() {
     assert!(!malformed.status.success());
     assert_eq!(std::fs::read(&head_path).unwrap(), head_bytes);
     assert_eq!(std::fs::read(&forged_path).unwrap(), b"{not json");
+
+    // A metadata failure that is not NotFound — here an unsearchable history
+    // directory — is not absence either: observe propagates the error instead
+    // of answering with the installed head.
+    std::fs::remove_file(&forged_path).unwrap();
+    let history_dir = run_dir.join("history");
+    let open_mode = std::fs::metadata(&history_dir).unwrap().permissions();
+    std::fs::set_permissions(&history_dir, std::fs::Permissions::from_mode(0o000)).unwrap();
+    let unreadable = command()
+        .args([
+            "role",
+            "observe",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+        ])
+        .output()
+        .unwrap();
+    std::fs::set_permissions(&history_dir, open_mode).unwrap();
+    assert!(!unreadable.status.success());
+    assert_eq!(std::fs::read(&head_path).unwrap(), head_bytes);
 }
 
 #[test]
