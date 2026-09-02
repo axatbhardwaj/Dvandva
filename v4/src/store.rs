@@ -108,9 +108,17 @@ impl RunChannel {
     pub fn peek(&self) -> Result<RunBaton, StoreError> {
         let head = self.read_head()?;
         let ahead = head.revision + 1;
-        let Ok(next) = self.read_history_revision(ahead) else {
+        // Only an absent successor means the head is current. A successor file
+        // that exists but is malformed, mislabeled, or unreadable is invalid
+        // history and fails closed rather than being silently ignored.
+        let ahead_path = self
+            .directory
+            .join("history")
+            .join(format!("{ahead:020}.json"));
+        if fs::symlink_metadata(&ahead_path).is_err() {
             return Ok(head);
-        };
+        }
+        let next = self.read_history_revision(ahead)?;
         let (validated, high) = self.validated_history_head()?;
         if high != ahead || validated != next || self.read_history_revision(head.revision)? != head
         {

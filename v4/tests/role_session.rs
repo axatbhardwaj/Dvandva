@@ -1319,6 +1319,27 @@ fn role_observe_fails_closed_on_a_forged_history_successor() {
     // both left exactly as they were for a claim-verified caller to adjudicate.
     assert_eq!(std::fs::read(&head_path).unwrap(), head_bytes);
     assert!(forged_path.exists());
+
+    // A successor that exists but cannot even be parsed is invalid history,
+    // not an absent successor: observe fails closed instead of answering with
+    // the installed head, and still leaves the bytes alone.
+    std::fs::write(&forged_path, b"{not json").unwrap();
+    let malformed = command()
+        .args([
+            "role",
+            "observe",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+        ])
+        .output()
+        .unwrap();
+    assert!(!malformed.status.success());
+    assert_eq!(std::fs::read(&head_path).unwrap(), head_bytes);
+    assert_eq!(std::fs::read(&forged_path).unwrap(), b"{not json");
 }
 
 #[test]
