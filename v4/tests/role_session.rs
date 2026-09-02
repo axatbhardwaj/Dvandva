@@ -1258,7 +1258,10 @@ fn role_observe_never_reconciles_an_interrupted_install() {
     let snapshot: serde_json::Value = serde_json::from_slice(&observed.stdout).unwrap();
     assert_eq!(snapshot["read_only"], true);
     assert_eq!(snapshot["revision"], 1);
-    assert_eq!(std::fs::read(run_dir.join("baton.json")).unwrap(), head_bytes);
+    assert_eq!(
+        std::fs::read(run_dir.join("baton.json")).unwrap(),
+        head_bytes
+    );
     assert_eq!(temporaries(&run_dir), temporaries_before);
 }
 
