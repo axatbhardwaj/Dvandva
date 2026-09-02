@@ -325,8 +325,8 @@ assert mismatch["candidates"][0]["run_id"] == sys.argv[1]
     "$reviewer_session" "$worker" "$worker_session" "$run_dir" "$(rev "$run_dir")" "$site_id" incident-4
   apply_action "$reviewer" "$reviewer_session" "$run_dir" "$(rev "$run_dir")" incident-approve-b \
     "{\"type\":\"record_review\",\"verdict\":\"approved\",\"checkpoint_identity\":\"$identity_b\",\"manifest_digest\":\"$digest_b\",\"scope_revision\":0,\"findings\":[]}" >/dev/null
-  approve_explainer "$worker" "$worker_session" "$reviewer" \
-    "$reviewer_session" "$worker" "$worker_session" "$run_dir" "$(rev "$run_dir")" "$site_id" incident-5
+  # Approval preserves the delivery obligation and its incident-4 receipts:
+  # finalize follows directly in the same handshake.
   terminal="$(apply_action "$worker" "$worker_session" "$run_dir" "$(rev "$run_dir")" \
     incident-finalize '{"type":"finalize"}')"
 
@@ -347,11 +347,12 @@ for path in sorted(pathlib.Path(run_dir, "history").glob("*.json")):
         receipts.append((obligation, artifact, review))
 assert [entry[0]["kind"] for entry in receipts] == [
     "run_started", "worker_to_reviewer", "checkpoint_superseded",
-    "worker_to_reviewer", "reviewer_to_worker",
+    "worker_to_reviewer",
 ]
-# Each handoff staged its own bytes, each review bound exactly those bytes, and
-# every digest still names readable content on disk.
-assert len({entry[1]["source_digest"] for entry in receipts}) == 5
+# Each work-carrying handoff staged its own bytes — approval preserved the last
+# delivery's receipts instead of opening a fresh obligation — each review bound
+# exactly those bytes, and every digest still names readable content on disk.
+assert len({entry[1]["source_digest"] for entry in receipts}) == 4
 assert all(entry[1]["channel"] == "run_artifact" for entry in receipts)
 assert all(entry[1]["access"] == "run_private" for entry in receipts)
 baton = json.loads(pathlib.Path(run_dir, "baton.json").read_text())

@@ -256,15 +256,16 @@ printf '%s\n' \
   >"$no_codex_action"
 bash "$prativadi" apply alias-reviewer "$no_codex_dir" 5 "$no_codex_action" >/dev/null
 
+# Approval preserved the delivery obligation: stage its explainer once and finalize.
 printf '%s\n' '<!doctype html><title>Non-Codex complete</title>' >"$no_codex_source"
 printf '%s\n' \
-  "{\"type\":\"stage_explainer\",\"obligation\":{\"handoff_revision\":6,\"kind\":\"reviewer_to_worker\",\"scope_revision\":0,\"checkpoint\":{\"checkpoint_identity\":\"$no_codex_checkpoint\",\"manifest_digest\":\"$no_codex_manifest\",\"scope_revision\":0}},\"after_seq\":0,\"source_path\":\"$no_codex_source\"}" \
+  "{\"type\":\"stage_explainer\",\"obligation\":{\"handoff_revision\":5,\"kind\":\"worker_to_reviewer\",\"scope_revision\":0,\"checkpoint\":{\"checkpoint_identity\":\"$no_codex_checkpoint\",\"manifest_digest\":\"$no_codex_manifest\",\"scope_revision\":0}},\"after_seq\":0,\"source_path\":\"$no_codex_source\"}" \
   >"$no_codex_action"
 no_codex_final_stage="$(bash "$vadi" apply alias-worker "$no_codex_dir" 6 "$no_codex_action")"
 no_codex_final_digest="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["publication_binding"]["artifact"]["source_digest"])' \
   <<<"$no_codex_final_stage")"
 printf '%s\n' \
-  "{\"type\":\"record_explainer_review\",\"obligation\":{\"handoff_revision\":6,\"kind\":\"reviewer_to_worker\",\"scope_revision\":0,\"checkpoint\":{\"checkpoint_identity\":\"$no_codex_checkpoint\",\"manifest_digest\":\"$no_codex_manifest\",\"scope_revision\":0}},\"after_seq\":1,\"source_digest\":\"$no_codex_final_digest\",\"verdict\":\"approved\",\"findings\":[]}" \
+  "{\"type\":\"record_explainer_review\",\"obligation\":{\"handoff_revision\":5,\"kind\":\"worker_to_reviewer\",\"scope_revision\":0,\"checkpoint\":{\"checkpoint_identity\":\"$no_codex_checkpoint\",\"manifest_digest\":\"$no_codex_manifest\",\"scope_revision\":0}},\"after_seq\":1,\"source_digest\":\"$no_codex_final_digest\",\"verdict\":\"approved\",\"findings\":[]}" \
   >"$no_codex_action"
 no_codex_approved="$(bash "$prativadi" apply alias-reviewer "$no_codex_dir" 7 "$no_codex_action")"
 grep -Fq '"deployment": null' <<<"$no_codex_approved"
