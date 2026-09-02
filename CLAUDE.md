@@ -21,7 +21,7 @@
   evidence is recorded in `docs/workflows/skill-only-run.md`.
 - Semantic roles submit and review only complete checkpoint bindings. Use
   checkpoint supersession or approval withdrawal for newly discovered work.
-- Each handoff opens an obligation. Vadi stages the run's digest-bound HTML,
+- Each work-carrying handoff opens an obligation. Vadi stages the run's digest-bound HTML,
   including its plan/TODO list, and prativadi reviews those exact local bytes.
   At run start, vadi proposes this first status-page artifact before continuing
   domain work and incorporates any requested changes. After approval, whichever

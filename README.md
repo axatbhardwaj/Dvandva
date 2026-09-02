@@ -40,8 +40,8 @@ Act as prativadi and join Dvandva run <run-id>.
 ```
 
 The vadi submits one complete immutable checkpoint for canonical scope. Each
-handoff opens an obligation: vadi stages the local digest-bound HTML and
-prativadi reviews it. At run start, vadi proposes the first artifact before
+work-carrying handoff opens an obligation: vadi stages the local digest-bound
+HTML and prativadi reviews it. At run start, vadi proposes the first artifact before
 continuing domain work and incorporates requested changes. Once approved,
 whichever participant is Codex publishes the same digest through ChatGPT Sites
 to one stable, owner-only status page the user can revisit for progress. If a pairing has

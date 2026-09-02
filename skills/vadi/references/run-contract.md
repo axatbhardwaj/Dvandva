@@ -176,7 +176,7 @@ not returned by the Human Decision object and must never be inferred:
 
 ## Explainer obligation
 
-Each semantic handoff opens an obligation. Vadi stages the explainer's bytes
+Each work-carrying handoff opens an obligation. Vadi stages the explainer's bytes
 into the run directory and prativadi reviews those exact bytes, regardless of which harness fills either role. Staging is first: the gate binds a digest, not a URL. For `run_started`, vadi proposes this initial HTML before continuing
 domain work and incorporates every requested change until prativadi approves.
 The kernel enforces this join gate: `work` is not advisory until that approval

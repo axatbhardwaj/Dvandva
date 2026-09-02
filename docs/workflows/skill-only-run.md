@@ -114,7 +114,7 @@ and only a human-approved scope amendment can change canonical scope.
 
 ## Published explainer
 
-Each handoff opens an obligation. Vadi stages the explainer's bytes for the
+Each work-carrying handoff opens an obligation. Vadi stages the explainer's bytes for the
 current obligation with `stage_explainer`; prativadi reads those exact bytes
 back through `dvandva-role.sh explainer` and reviews them. At `run_started`,
 vadi proposes this first HTML before continuing domain work and revises it until
