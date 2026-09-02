@@ -118,8 +118,11 @@ Each handoff opens an obligation. Vadi stages the explainer's bytes for the
 current obligation with `stage_explainer`; prativadi reads those exact bytes
 back through `dvandva-role.sh explainer` and reviews them. At `run_started`,
 vadi proposes this first HTML before continuing domain work and revises it until
-prativadi approves. A new handoff replaces the current obligation, so the gate
-checks the current artifact and receipts rather than every historical one. The
+prativadi approves. A work-carrying handoff replaces the current obligation — an approval
+preserves it with its receipts, so an approved delivery finalizes in one
+handshake — and the gate checks the current artifact and receipts rather than
+every historical one. The `run_started` approval is also the join gate: vadi's
+`work` advisory waits for prativadi's first receipt. The
 explainer carries canonical scope, complete manifest, findings and decisions,
 and a current plan/TODO list.
 

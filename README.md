@@ -45,9 +45,12 @@ continuing domain work and incorporates requested changes. Once approved,
 whichever participant is Codex publishes the same digest through ChatGPT Sites
 to one stable, owner-only status page the user can revisit for progress. If a pairing has
 no Codex participant, Sites publication is skipped and local approval is the
-gate. A new handoff replaces the obligation, so finalization checks only the
-current applicable receipts. Only finalization waits on that gate, so a finished
-deliverable can always be checkpointed. The explainer plan is the live TODO
+gate. A work-carrying handoff replaces the obligation; an approval preserves it
+with its receipts, so finalization checks only the current applicable receipts
+and an approved delivery finalizes in one handshake. Only finalization waits on
+that gate, so a finished deliverable can always be checkpointed, and the
+`run_started` approval doubles as the join gate: vadi's `work` advisory waits
+for prativadi's first receipt. The explainer plan is the live TODO
 list; the Baton remains authoritative.
 
 The sessions coordinate only through the local run. Neither harness invokes

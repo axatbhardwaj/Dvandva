@@ -235,11 +235,16 @@ not returned by the Human Decision object and must never be inferred:
 Each semantic handoff opens an obligation. Vadi stages the explainer's bytes
 into the run directory and prativadi reviews those exact bytes, regardless of which harness fills either role. Staging is first: the gate binds a digest, not a URL. For `run_started`, review this initial HTML before vadi continues domain
 work; request concrete changes and review each replacement digest until clean.
+The kernel withholds vadi's `work` advisory until this approval — the join
+gate — so review it promptly on joining: the pair forms on your first receipt.
 On an upgraded run, a complete pre-`0.3.3` receipt pair remains valid against
 the stored fixed policy. If only the legacy author receipt exists, wait for
 current vadi to restage before reviewing.
-A new handoff replaces the current obligation, so the gate requires the current
-obligation to be staged and reviewed, not every obligation the run has opened.
+A work-carrying handoff replaces the current obligation; an approval preserves
+the obligation and its receipts, so an approved delivery finalizes on the
+explainer already staged and reviewed for its checkpoint. The gate requires the
+current obligation to be staged and reviewed, not every obligation the run has
+opened.
 The explainer carries this exact content:
 canonical scope, complete manifest, findings and decisions, and a current plan/TODO.
 
