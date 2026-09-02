@@ -16,10 +16,10 @@ export XDG_DATA_HOME="$test_root/data"
 export XDG_STATE_HOME="$test_root/state"
 # The facade resolves the pinned version directory directly; `current` is only
 # the shared default selector and must not be able to break a pinned session.
-binary="$XDG_DATA_HOME/dvandva/bin/0.3.4/dvandva-kernel"
+binary="$XDG_DATA_HOME/dvandva/bin/0.3.5/dvandva-kernel"
 mkdir -p "$(dirname "$binary")"
 cp "$repo_root/v4/target/debug/dvandva-v4" "$binary"
-ln -s 0.3.4 "$XDG_DATA_HOME/dvandva/bin/current"
+ln -s 0.3.5 "$XDG_DATA_HOME/dvandva/bin/current"
 
 workspace="$test_root/workspace"
 mkdir -p "$workspace"
@@ -45,7 +45,7 @@ test "$(bash "$vadi" session-id)" = "codex-session"
 generated="$(env -u CODEX_SESSION_ID bash "$vadi" session-id --generate)"
 [[ "$generated" =~ ^[0-9a-f-]{36}$ ]]
 probe="$(bash "$vadi" probe)"
-grep -Fq '"version": "0.3.4"' <<<"$probe"
+grep -Fq '"version": "0.3.5"' <<<"$probe"
 grep -Fq '"write_schema": "dvandva.run.v2"' <<<"$probe"
 grep -Fq '"read_schemas": [' <<<"$probe"
 grep -Fq '"role_api": 2' <<<"$probe"
@@ -56,15 +56,15 @@ grep -Fq '"publish": false' <<<"$probe"
 mv "$binary" "$binary.real"
 cat >"$binary" <<'ADVERSARIAL_KERNEL'
 #!/usr/bin/env bash
-valid_probe='{"package":"dvandva-v4","version":"0.3.4","publish":false,"write_schema":"dvandva.run.v2","read_schemas":["dvandva.run.v2","dvandva.run.v1"],"role_api":2,"capabilities":{"upgrade_from_v1":true},"compatible":true}'
+valid_probe='{"package":"dvandva-v4","version":"0.3.5","publish":false,"write_schema":"dvandva.run.v2","read_schemas":["dvandva.run.v2","dvandva.run.v1"],"role_api":2,"capabilities":{"upgrade_from_v1":true},"compatible":true}'
 if test "${1:-}" = "--version"; then
   case "${DVANDVA_FAKE_MODE:-valid}" in
-    valid|probe_*) printf 'dvandva-v4 0.3.4\n' ;;
-    version_nul) printf 'dvandva-v4 0.3.4\0\n' ;;
-    version_invalid_utf8) printf 'dvandva-v4 0.3.4\377\n' ;;
-    version_oversized) printf 'dvandva-v4 0.3.4'; head -c 300 /dev/zero | tr '\0' x ;;
-    version_extra_newline) printf 'dvandva-v4 0.3.4\n\n' ;;
-    version_nonzero) printf 'dvandva-v4 0.3.4\n'; exit 7 ;;
+    valid|probe_*) printf 'dvandva-v4 0.3.5\n' ;;
+    version_nul) printf 'dvandva-v4 0.3.5\0\n' ;;
+    version_invalid_utf8) printf 'dvandva-v4 0.3.5\377\n' ;;
+    version_oversized) printf 'dvandva-v4 0.3.5'; head -c 300 /dev/zero | tr '\0' x ;;
+    version_extra_newline) printf 'dvandva-v4 0.3.5\n\n' ;;
+    version_nonzero) printf 'dvandva-v4 0.3.5\n'; exit 7 ;;
   esac
   exit 0
 fi
@@ -100,14 +100,14 @@ mv "$binary.real" "$binary"
 mv "$binary" "$binary.real"
 cat >"$binary" <<'DECOY_KERNEL'
 #!/usr/bin/env bash
-if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.3.4\n'; exit 0; fi
+if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.3.5\n'; exit 0; fi
 if test "${1:-}" = "probe"; then
   printf '%s\n' '{' \
     '  "package": 7, "version": false, "publish": true, "write_schema": [],' \
     '  "read_schemas": "wrong", "role_api": "2",' \
     '  "capabilities": {"upgrade_from_v1": "true"}, "compatible": "true",' \
     '  "decoy": {' \
-    '    "package": "dvandva-v4", "version": "0.3.4", "publish": false,' \
+    '    "package": "dvandva-v4", "version": "0.3.5", "publish": false,' \
     '    "write_schema": "dvandva.run.v2",' \
     '    "read_schemas": ["dvandva.run.v2", "dvandva.run.v1"],' \
     '    "role_api": 2, "capabilities": {"upgrade_from_v1": true},' \
@@ -172,7 +172,7 @@ rm "$XDG_DATA_HOME/dvandva/bin/current"
 ln -s 0.0.0 "$XDG_DATA_HOME/dvandva/bin/current"
 bash "$vadi" read codex-session "$run_dir" | grep -Fq '"revision": 3'
 rm "$XDG_DATA_HOME/dvandva/bin/current"
-ln -s 0.3.4 "$XDG_DATA_HOME/dvandva/bin/current"
+ln -s 0.3.5 "$XDG_DATA_HOME/dvandva/bin/current"
 
 # Observe is claim-independent and read-only: a session with no credential can
 # watch the run, sees the explicit read-only marker, and never moves the head.
@@ -464,8 +464,8 @@ do
 done
 
 for required in \
-  '0.3.4' \
-  'skills-v0.3.4' \
+  '0.3.5' \
+  'skills-v0.3.5' \
   'release target' \
   'fails closed if either is missing' \
   'Linux x86_64 only' \
