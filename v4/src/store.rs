@@ -106,11 +106,27 @@ impl RunChannel {
     /// unique valid successor of the installed head. A parseable but forged
     /// or invalid successor fails closed rather than being reported as state.
     pub fn peek(&self) -> Result<RunBaton, StoreError> {
-        let head = self.read_head()?;
-        match self.validated_successor(&head)? {
-            Some(next) => Ok(next),
-            None => Ok(head),
+        // Bounded consistency retry: a live writer can commit revisions
+        // between reading the head and validating the chain, which is
+        // progress, not corruption. Retry only while the head demonstrably
+        // moved; a failure against an unmoved head is real and fails closed.
+        let mut head = self.read_head()?;
+        let mut error = None;
+        for _ in 0..16 {
+            match self.validated_successor(&head) {
+                Ok(Some(next)) => return Ok(next),
+                Ok(None) => return Ok(head),
+                Err(current_error) => {
+                    let current = self.read_head()?;
+                    if current.revision == head.revision {
+                        return Err(current_error);
+                    }
+                    head = current;
+                    error = Some(current_error);
+                }
+            }
         }
+        Err(error.unwrap_or(StoreError::InvalidHistory))
     }
 
     /// Read-only decision about `history/<head+1>`: `Ok(None)` when absent,

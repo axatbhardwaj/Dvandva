@@ -1367,6 +1367,92 @@ fn role_observe_fails_closed_on_a_forged_history_successor() {
 }
 
 #[test]
+fn role_observe_stays_coherent_under_a_live_writer() {
+    let root = tempfile::tempdir().unwrap();
+    let run_dir = root.path().join("runs/run-a");
+    let credentials = root.path().join("credentials");
+    init_run(&run_dir);
+    command()
+        .args([
+            "role",
+            "claim",
+            "--api",
+            "2",
+            "--run-dir",
+            run_dir.to_str().unwrap(),
+            "--role",
+            "worker",
+            "--session-id",
+            "worker-session",
+            "--lease-seconds",
+            "300",
+            "--expected-revision",
+            "0",
+            "--credentials-root",
+            credentials.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+
+    // A writer advancing the run mid-observation is progress, not corruption:
+    // every observe against a healthy run must succeed while heartbeats keep
+    // moving the head underneath it.
+    let writer_run_dir = run_dir.clone();
+    let writer_credentials = credentials.clone();
+    let writer = std::thread::spawn(move || {
+        for revision in 1..=60u64 {
+            let output = std::process::Command::new(env!("CARGO_BIN_EXE_dvandva-v4"))
+                .args([
+                    "role",
+                    "heartbeat",
+                    "--api",
+                    "2",
+                    "--run-dir",
+                    writer_run_dir.to_str().unwrap(),
+                    "--role",
+                    "worker",
+                    "--session-id",
+                    "worker-session",
+                    "--lease-seconds",
+                    "300",
+                    "--expected-revision",
+                    &revision.to_string(),
+                    "--credentials-root",
+                    writer_credentials.to_str().unwrap(),
+                ])
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    });
+    while !writer.is_finished() {
+        let observed = command()
+            .args([
+                "role",
+                "observe",
+                "--api",
+                "2",
+                "--run-dir",
+                run_dir.to_str().unwrap(),
+                "--role",
+                "worker",
+            ])
+            .output()
+            .unwrap();
+        assert!(
+            observed.status.success(),
+            "{}",
+            String::from_utf8_lossy(&observed.stderr)
+        );
+    }
+    writer.join().unwrap();
+}
+
+#[test]
 fn role_heartbeat_renews_without_exposing_the_token() {
     let root = tempfile::tempdir().unwrap();
     let run_dir = root.path().join("runs/run-a");
