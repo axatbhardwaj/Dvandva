@@ -2474,3 +2474,303 @@ mod round_five {
         );
     }
 }
+
+/// [Defect 1] Prativadi's approval is a handoff that transfers no new work
+/// product, so it must not wipe the explainer receipts staged for the approved
+/// checkpoint. The old kernel replaced the obligation at approval, forcing a
+/// second stage/review round on identical content before `finalize` and
+/// wedging real runs in `finalizing` once either role had left.
+#[test]
+fn approval_preserves_explainer_receipts_for_a_single_terminal_handshake() {
+    use dvandva_v4::{
+        action::{Action, ReviewVerdict},
+        model::CheckpointSubmission,
+        store::RunChannel,
+        transition,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let run_dir = dir.path().join("run-a");
+    let created = RunBaton::new(
+        "run-a",
+        "Objective",
+        "claude",
+        "gpt",
+        vec![DeliverableRequirement {
+            id: "kernel".into(),
+            description: "Fix the kernel".into(),
+        }],
+    )
+    .unwrap();
+    let channel = RunChannel::open(&run_dir);
+    channel.create(&created).unwrap();
+    let worker = dvandva_v4::claim::claim(&channel, Role::Worker, "worker-session", 1800, 0).unwrap();
+    let reviewer =
+        dvandva_v4::claim::claim(&channel, Role::Reviewer, "reviewer-session", 1800, 1).unwrap();
+
+    let commit = "a".repeat(40);
+    let submitted = transition::apply(
+        &channel,
+        Role::Worker,
+        "worker-session",
+        &worker.token,
+        2,
+        Action::SubmitCheckpoint {
+            checkpoint: CheckpointSubmission {
+                kind: "git".into(),
+                identity: commit.clone(),
+                deliverables: vec![dvandva_v4::model::CheckpointDeliverable {
+                    id: "kernel".into(),
+                    artifacts: vec![dvandva_v4::model::ExternalRef {
+                        kind: "commit".into(),
+                        value: commit.clone(),
+                    }],
+                }],
+                verification: vec!["cargo test".into()],
+            },
+        },
+    )
+    .unwrap();
+    assert_eq!(submitted.status, Status::Reviewing);
+    let obligation = submitted
+        .publication_binding
+        .as_ref()
+        .unwrap()
+        .obligation
+        .clone();
+    assert_eq!(obligation.kind, HandoffKind::WorkerToReviewer);
+
+    let source = dir.path().join("explainer.html");
+    std::fs::write(&source, b"<h1>delivery</h1>").unwrap();
+    let staged = transition::apply(
+        &channel,
+        Role::Worker,
+        "worker-session",
+        &worker.token,
+        3,
+        Action::StageExplainer {
+            obligation: obligation.clone(),
+            after_seq: Some(0),
+            source_path: source,
+        },
+    )
+    .unwrap();
+    let digest = staged
+        .publication_binding
+        .as_ref()
+        .unwrap()
+        .artifact
+        .as_ref()
+        .unwrap()
+        .source_digest
+        .clone();
+    transition::apply(
+        &channel,
+        Role::Reviewer,
+        "reviewer-session",
+        &reviewer.token,
+        4,
+        Action::RecordExplainerReview {
+            obligation: obligation.clone(),
+            after_seq: Some(1),
+            source_digest: digest,
+            verdict: ReviewVerdict::Approved,
+            findings: vec![],
+        },
+    )
+    .unwrap();
+
+    let checkpoint = submitted.checkpoint.as_ref().unwrap();
+    let approved = transition::apply(
+        &channel,
+        Role::Reviewer,
+        "reviewer-session",
+        &reviewer.token,
+        5,
+        Action::RecordReview {
+            verdict: ReviewVerdict::Approved,
+            checkpoint_identity: checkpoint.identity.clone(),
+            manifest_digest: checkpoint.manifest_digest.clone(),
+            scope_revision: checkpoint.scope_revision,
+            findings: vec![],
+        },
+    )
+    .unwrap();
+    assert_eq!(approved.status, Status::Finalizing);
+    let binding = approved.publication_binding.as_ref().unwrap();
+    assert_eq!(
+        binding.obligation.kind,
+        HandoffKind::WorkerToReviewer,
+        "an approval transfers no new work product and must not open a fresh explainer obligation"
+    );
+    assert!(
+        binding.artifact.is_some(),
+        "approval must not wipe the staged explainer for the approved checkpoint"
+    );
+    assert_eq!(
+        binding.review.as_ref().map(|review| review.verdict.as_str()),
+        Some("approved"),
+        "approval must not wipe the reviewer's own explainer receipt"
+    );
+
+    let done = transition::apply(
+        &channel,
+        Role::Worker,
+        "worker-session",
+        &worker.token,
+        6,
+        Action::Finalize,
+    )
+    .expect("one staged and approved explainer per delivery must be enough to finalize");
+    assert_eq!(done.status, Status::Done);
+}
+
+/// [Defect 1 drain] Runs the old kernel already wedged — obligation replaced at
+/// approval, receipts gone — must still finalize once the pair restages and
+/// approves against that `reviewer_to_worker` obligation.
+#[test]
+fn legacy_wedged_finalizing_runs_drain_with_reviewer_to_worker_receipts() {
+    use dvandva_v4::{
+        action::{Action, ReviewVerdict},
+        model::CheckpointSubmission,
+        store::RunChannel,
+        transition,
+    };
+
+    let dir = tempfile::tempdir().unwrap();
+    let run_dir = dir.path().join("run-a");
+    let created = RunBaton::new(
+        "run-a",
+        "Objective",
+        "claude",
+        "gpt",
+        vec![DeliverableRequirement {
+            id: "kernel".into(),
+            description: "Fix the kernel".into(),
+        }],
+    )
+    .unwrap();
+    let channel = RunChannel::open(&run_dir);
+    channel.create(&created).unwrap();
+    let worker = dvandva_v4::claim::claim(&channel, Role::Worker, "worker-session", 1800, 0).unwrap();
+    let reviewer =
+        dvandva_v4::claim::claim(&channel, Role::Reviewer, "reviewer-session", 1800, 1).unwrap();
+    let commit = "b".repeat(40);
+    let submitted = transition::apply(
+        &channel,
+        Role::Worker,
+        "worker-session",
+        &worker.token,
+        2,
+        Action::SubmitCheckpoint {
+            checkpoint: CheckpointSubmission {
+                kind: "git".into(),
+                identity: commit.clone(),
+                deliverables: vec![dvandva_v4::model::CheckpointDeliverable {
+                    id: "kernel".into(),
+                    artifacts: vec![dvandva_v4::model::ExternalRef {
+                        kind: "commit".into(),
+                        value: commit.clone(),
+                    }],
+                }],
+                verification: vec!["cargo test".into()],
+            },
+        },
+    )
+    .unwrap();
+    let checkpoint = submitted.checkpoint.as_ref().unwrap();
+
+    // Hand-write the pre-0.3.5 approval edge: verdict recorded, status moved to
+    // finalizing, and the obligation replaced with a receiptless
+    // reviewer_to_worker binding — the exact shape of the wedged live runs.
+    let head: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(run_dir.join("baton.json")).unwrap()).unwrap();
+    let mut wedged = head.clone();
+    let revision = head["revision"].as_u64().unwrap() + 1;
+    wedged["revision"] = serde_json::json!(revision);
+    wedged["status"] = serde_json::json!("finalizing");
+    wedged["assignee"] = serde_json::json!("worker");
+    wedged["review"] = serde_json::json!({
+        "verdict": "approved",
+        "checkpoint_identity": checkpoint.identity,
+        "manifest_digest": checkpoint.manifest_digest,
+        "scope_revision": checkpoint.scope_revision,
+    });
+    wedged["publication_binding"] = serde_json::json!({
+        "obligation": {
+            "handoff_revision": revision,
+            "kind": "reviewer_to_worker",
+            "scope_revision": 0,
+            "checkpoint": {
+                "checkpoint_identity": checkpoint.identity,
+                "manifest_digest": checkpoint.manifest_digest,
+                "scope_revision": checkpoint.scope_revision,
+            },
+        },
+        "receipt_seq": 0,
+        "artifact": null,
+        "deployment": null,
+        "review": null,
+    });
+    let bytes = serde_json::to_vec_pretty(&wedged).unwrap();
+    std::fs::write(run_dir.join("baton.json"), &bytes).unwrap();
+    std::fs::write(
+        run_dir.join(format!("history/{revision:020}.json")),
+        &bytes,
+    )
+    .unwrap();
+
+    let obligation = serde_json::from_value::<dvandva_v4::model::HandoffObligation>(
+        wedged["publication_binding"]["obligation"].clone(),
+    )
+    .unwrap();
+    let source = dir.path().join("explainer.html");
+    std::fs::write(&source, b"<h1>drained</h1>").unwrap();
+    let staged = transition::apply(
+        &channel,
+        Role::Worker,
+        "worker-session",
+        &worker.token,
+        revision,
+        Action::StageExplainer {
+            obligation: obligation.clone(),
+            after_seq: Some(0),
+            source_path: source,
+        },
+    )
+    .unwrap();
+    let digest = staged
+        .publication_binding
+        .as_ref()
+        .unwrap()
+        .artifact
+        .as_ref()
+        .unwrap()
+        .source_digest
+        .clone();
+    transition::apply(
+        &channel,
+        Role::Reviewer,
+        "reviewer-session",
+        &reviewer.token,
+        revision + 1,
+        Action::RecordExplainerReview {
+            obligation,
+            after_seq: Some(1),
+            source_digest: digest,
+            verdict: ReviewVerdict::Approved,
+            findings: vec![],
+        },
+    )
+    .unwrap();
+    let done = transition::apply(
+        &channel,
+        Role::Worker,
+        "worker-session",
+        &worker.token,
+        revision + 2,
+        Action::Finalize,
+    )
+    .expect("a legacy reviewer_to_worker obligation with current receipts must drain");
+    assert_eq!(done.status, Status::Done);
+}

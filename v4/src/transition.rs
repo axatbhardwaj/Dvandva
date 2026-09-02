@@ -212,6 +212,14 @@ fn apply_locked(
                     baton.status = Status::Revising;
                     baton.assignee = Assignee::Worker;
                     baton.pending_checkpoint_supersession = None;
+                    // Requested changes hand real work back: the next delivery
+                    // will carry different bytes, so the current explainer
+                    // receipts stop describing it and the obligation turns over.
+                    replace_handoff_obligation(
+                        baton,
+                        HandoffKind::ReviewerToWorker,
+                        Some(submitted_binding.clone()),
+                    );
                     "changes_requested"
                 }
                 ReviewVerdict::Approved => {
@@ -231,6 +239,9 @@ fn apply_locked(
                     "approved"
                 }
             };
+            // An approval transfers no new work product, so it opens no fresh
+            // explainer obligation: the receipts staged for the approved
+            // checkpoint stay valid and `finalize` needs one handshake, not two.
             baton.review = Some(ReviewReceipt {
                 verdict: verdict_name.to_owned(),
                 checkpoint_identity: submitted_binding.checkpoint_identity.clone(),
@@ -238,11 +249,6 @@ fn apply_locked(
                 scope_revision: submitted_binding.scope_revision,
                 findings,
             });
-            replace_handoff_obligation(
-                baton,
-                HandoffKind::ReviewerToWorker,
-                Some(submitted_binding),
-            );
         }
         Action::Finalize => {
             require_owner(baton, role, Role::Worker, Assignee::Worker)?;
@@ -261,9 +267,19 @@ fn apply_locked(
                 return Err(TransitionError::StaleReview);
             }
             let checkpoint_binding = checkpoint.binding();
+            // The current kernel leaves the worker_to_reviewer obligation (and
+            // its receipts) in place at approval; a run wedged by an older
+            // kernel carries a reviewer_to_worker obligation instead. Either is
+            // finalizable when bound to the approved checkpoint.
             require_publication_gate(
                 baton,
-                Some((&HandoffKind::ReviewerToWorker, &checkpoint_binding)),
+                Some((
+                    &[
+                        HandoffKind::WorkerToReviewer,
+                        HandoffKind::ReviewerToWorker,
+                    ][..],
+                    &checkpoint_binding,
+                )),
             )?;
             let artifact = baton
                 .publication_binding
@@ -961,7 +977,7 @@ fn replace_handoff_obligation(
 /// to the run's private status Site.
 fn require_publication_gate(
     baton: &RunBaton,
-    expected: Option<(&HandoffKind, &CheckpointBinding)>,
+    expected: Option<(&[HandoffKind], &CheckpointBinding)>,
 ) -> Result<(), TransitionError> {
     let binding = baton
         .publication_binding

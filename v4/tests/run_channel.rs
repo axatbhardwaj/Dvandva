@@ -4288,14 +4288,15 @@ fn supersession_finalize_rejects_approved_review_with_pending_request() {
 }
 
 #[test]
-fn publication_obligation_rolls_at_every_handoff_and_gates_only_finalize() {
+fn publication_obligation_rolls_at_work_handoffs_and_gates_only_finalize() {
     let dir = tempfile::tempdir().unwrap();
     init_pair(dir.path());
     let worker = claim_role(dir.path(), "worker", "worker-1", 0);
     let reviewer = claim_role(dir.path(), "reviewer", "reviewer-1", 1);
 
-    // Every semantic handoff still rolls a fresh obligation, but none of them
-    // waits on the explainer: a finished deliverable always has somewhere to land.
+    // Handoffs that carry new work roll a fresh obligation, but none of them
+    // waits on the explainer: a finished deliverable always has somewhere to
+    // land. An approval carries no new work and keeps the obligation.
     apply_action_raw(
         dir.path(),
         "worker",
@@ -4380,9 +4381,11 @@ fn publication_obligation_rolls_at_every_handoff_and_gates_only_finalize() {
     .success();
     let baton = read_baton(dir.path());
     assert_eq!(baton["status"], "finalizing");
+    // Approval preserved the delivery obligation: one explainer handshake,
+    // bound to the approved checkpoint, is all finalize needs.
     assert_eq!(
         baton["publication_binding"]["obligation"]["kind"],
-        "reviewer_to_worker"
+        "worker_to_reviewer"
     );
     assert_eq!(
         baton["publication_binding"]["obligation"]["checkpoint"],

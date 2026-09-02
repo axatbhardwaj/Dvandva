@@ -1222,9 +1222,41 @@ fn valid_v2_edge_kind(current: &RunBaton, next: &RunBaton) -> bool {
         || valid_human_decision_request_edge(current, next)
         || valid_plain_human_decision_resume_edge(current, next)
         || valid_checkpoint_supersession_request_edge(current, next)
+        || valid_approval_edge(current, next)
         || valid_finalize_edge(current, next, current_binding)
         || valid_abandon_edge(current, next)
         || valid_recovery_successor_edge(current, next)
+}
+
+/// An approval keeps the worker_to_reviewer obligation and its receipts — the
+/// handoff transfers no new work product — so only the verdict, status, and
+/// assignee move. (Histories written before 0.3.5 recorded approval as an
+/// obligation turnover instead; those stored edges stay valid through
+/// `valid_reviewer_to_worker`.)
+fn valid_approval_edge(current: &RunBaton, next: &RunBaton) -> bool {
+    let (Some(checkpoint), Some(review)) = (current.checkpoint.as_ref(), next.review.as_ref())
+    else {
+        return false;
+    };
+    let checkpoint = checkpoint.binding();
+    if current.status != Status::Reviewing
+        || current.assignee != Assignee::Reviewer
+        || next.status != Status::Finalizing
+        || next.assignee != Assignee::Worker
+        || current.pending_checkpoint_supersession.is_some()
+        || review.verdict != "approved"
+        || !review.findings.is_empty()
+        || review.binding() != checkpoint
+        || next.checkpoint != current.checkpoint
+        || next.checkpoint_history != current.checkpoint_history
+    {
+        return false;
+    }
+    only_fields_changed(current, next, |expected| {
+        expected.status = Status::Finalizing;
+        expected.assignee = Assignee::Worker;
+        expected.review = next.review.clone();
+    })
 }
 
 /// Control-plane repair: an unreadable policy is replaced by the canonical
@@ -1704,7 +1736,13 @@ fn valid_finalize_edge(current: &RunBaton, next: &RunBaton, binding: &Publicatio
         || review.binding() != checkpoint
         || !current.publication_gate_satisfied(
             binding,
-            Some((&HandoffKind::ReviewerToWorker, &checkpoint)),
+            Some((
+                &[
+                    HandoffKind::WorkerToReviewer,
+                    HandoffKind::ReviewerToWorker,
+                ][..],
+                &checkpoint,
+            )),
         )
         || next.status != Status::Done
         || next.assignee != Assignee::None
