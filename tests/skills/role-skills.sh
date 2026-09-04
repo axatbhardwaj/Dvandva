@@ -311,6 +311,8 @@ pinned() { tr -s '[:space:]' ' ' <"$2" | grep -Fq "$1"; }
 # wrapping.
 for poll_source in "$vadi_skill" "$vadi_contract" "$prativadi_skill" "$prativadi_contract"; do
   pinned 'The first `poll` is illegal until' "$poll_source"
+  pinned 'Before the first `poll`, after all semantic work and the handoff' "$poll_source"
+  pinned 'is the final protocol output immediately before that first wait' "$poll_source"
   pinned 'is a human interrupt: it force-ends the turn' "$poll_source"
   pinned 'unless its message is an explicit human stop' "$poll_source"
   pinned 'A bare continue or an empty resume is never a stop and never a no-op.' "$poll_source"
@@ -322,7 +324,7 @@ for prativadi_source in "$prativadi_skill" "$prativadi_contract"; do
   pinned 'until that start outcome has been shown to the human' "$prativadi_source"
 done
 for role_contract_source in "$vadi_contract" "$prativadi_contract"; do
-  grep -Fq 'docs/research/2026-09-04-interrupted-poll-evidence.md' "$role_contract_source"
+  grep -Fq 'https://github.com/axatbhardwaj/Dvandva/issues/22#issuecomment-5537575950' "$role_contract_source"
 done
 setup_docs="$(cat "$setup_skill" "$setup_contract")"
 
