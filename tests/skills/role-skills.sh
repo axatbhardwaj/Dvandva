@@ -313,6 +313,8 @@ for role_skill in "$vadi_skill" "$prativadi_skill"; do
   grep -Fq 'the human'"'"'s alone' "$role_skill"
   grep -Fq 'Protocol-internal problems resolve autonomously' "$role_skill"
   grep -Fq 'the human may be absent' "$role_skill"
+  grep -Fq 'is a human interrupt: it force-ends the' "$role_skill"
+  grep -Fq 'A bare continue or an empty resume is never a stop and never' "$role_skill"
   ! grep -Fq 'only for new human scope or ambiguity' "$role_skill"
 done
 
@@ -322,6 +324,9 @@ for role_source in \
 do
   for required in \
     'fresh facade snapshot' \
+    'The first `poll` is illegal until' \
+    'is a human interrupt: it force-ends the' \
+    'A bare continue or an empty resume is never a stop and never' \
     'next_actions' \
     'advisory_actions' \
     'legal_actions' \
