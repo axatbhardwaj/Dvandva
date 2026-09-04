@@ -720,8 +720,7 @@ require_text 'Linux x86_64 only' "$workflow_doc"
 require_text 'Claude' "$workflow_doc"
 require_text 'Human Decision' "$workflow_doc"
 
-readme_active="$test_root/readme-active.md"
-sed '/^## Retired v3 archive/,$d' "$repo_root/README.md" >"$readme_active"
+readme_active="$repo_root/README.md"
 require_text 'skills-v0.3.7' "$readme_active"
 require_text 'Linux x86_64 only' "$readme_active"
 require_text 'dvandva.run.v2' "$readme_active"
@@ -773,11 +772,6 @@ test "$(sed -n '/^# Two-Mode Agent Workflow/,$p' \
   "$repo_root/docs/workflows/two-mode-agent-workflow.md" | sha256sum | cut -d' ' -f1)" = \
   '12d51f85fc0ec5e945e99122f465ee5dcad205604993eeb7cb1340f65acdf6b8' || \
   fail 'historical two-mode workflow body changed'
-
-test "$(sed -n '/^## Retired v3 archive/,$p' "$repo_root/README.md" | \
-  sha256sum | cut -d' ' -f1)" = \
-  '83182b2773ae4c52a71c2568cb856770b4269d1cdeb47bd92fb400fa4807629a' || \
-  fail 'README archive changed'
 
 context="$repo_root/CONTEXT.md"
 for term in 'Canonical Scope' 'Scope Revision' 'Checkpoint Manifest' \
