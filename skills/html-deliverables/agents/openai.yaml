@@ -1,0 +1,6 @@
+interface:
+  display_name: "Dvandva HTML Deliverables"
+  short_description: "Create Dvandva explainers in the house format"
+  default_prompt: "Use $html-deliverables to create a Dvandva HTML explainer for this work."
+policy:
+  allow_implicit_invocation: true
