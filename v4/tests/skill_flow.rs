@@ -721,8 +721,8 @@ fn setup_skill_sources_pin_v2_without_implicit_run_migration() {
         repository_file("skills/setup-dvandva/references/installation.md")
     );
     for required in [
-        "0.3.6",
-        "skills-v0.3.6",
+        "0.3.7",
+        "skills-v0.3.7",
         "release target",
         "fails closed if either is missing",
         "Linux x86_64 only",
@@ -767,7 +767,7 @@ fn version_and_probe_report_the_installation_contract() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("dvandva-v4 0.3.6"));
+        .stdout(predicate::str::contains("dvandva-v4 0.3.7"));
 
     let output = command()
         .args([
@@ -786,7 +786,7 @@ fn version_and_probe_report_the_installation_contract() {
     );
     let probe: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(probe["package"], "dvandva-v4");
-    assert_eq!(probe["version"], "0.3.6");
+    assert_eq!(probe["version"], "0.3.7");
     assert_eq!(probe["write_schema"], "dvandva.run.v2");
     assert_eq!(probe["role_api"], 2);
     assert_eq!(probe["publish"], false);

@@ -12,7 +12,7 @@ case "$skill_name" in
 esac
 data_home="${XDG_DATA_HOME:-${HOME:?HOME is required}/.local/share}"
 state_home="${XDG_STATE_HOME:-${HOME:?HOME is required}/.local/state}"
-kernel_version="0.3.6"
+kernel_version="0.3.7"
 # Resolve the pinned version directly, never the shared bin/current selector:
 # a concurrent session selecting another version must not break this run.
 binary="$data_home/dvandva/bin/$kernel_version/dvandva-kernel"
