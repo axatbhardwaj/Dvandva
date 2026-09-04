@@ -13,10 +13,14 @@ worker until the run is terminal or the human explicitly stops.
 Resolve the stable local session ID and start or resume through the facade.
 Before domain-tool work, the first user-visible protocol output must reproduce
 the returned run ID, canonical objective and scope, status and assignee,
-`next_actions`, and exact `peer_prompt`. The human starts the peer session with
-that returned prompt; never invoke or wake the peer harness. The first
-`poll` is illegal until that activation block, with the exact `peer_prompt`,
-has been shown to the human.
+`next_actions`, and exact `peer_prompt`. Show the `peer_prompt` verbatim in
+its own fenced code block as the last line of the activation block, so the
+human can copy it from a phone. The human starts the peer session with that
+returned prompt; never invoke or wake the peer harness. The first `poll` is
+illegal until that activation block, with the exact `peer_prompt`, has been
+shown to the human. At run start the kernel withholds `work` until prativadi
+approves the `run_started` explainer, so the only work between the activation
+block and the first `poll` is staging that explainer and reporting the handoff.
 
 ## Authoritative loop
 

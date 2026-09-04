@@ -332,6 +332,8 @@ sed 's/answers anything the human asked, //' "$prativadi_contract" >"$mutated_co
 rm -f -- "$mutated_contract"
 for vadi_source in "$vadi_skill" "$vadi_contract"; do
   pinned 'activation block, with the exact `peer_prompt`, has been shown to the human' "$vadi_source"
+  pinned 'Show the `peer_prompt` verbatim in its own fenced code block as the last line of the activation block' "$vadi_source"
+  pinned 'the only work between the activation block and the first `poll` is staging that explainer and reporting the handoff' "$vadi_source"
 done
 for prativadi_source in "$prativadi_skill" "$prativadi_contract"; do
   pinned 'until that start outcome has been shown to the human' "$prativadi_source"
