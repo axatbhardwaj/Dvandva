@@ -43,7 +43,8 @@ return that choice to the human so vadi/worker can create it.
 
 Surface `ambiguous`, `busy`, `run_missing`, and `upgrade_required` rather than
 guessing. Surface the start outcome and canonical snapshot before domain-tool
-work.
+work. The first `poll` is illegal until that start outcome has been shown to
+the human.
 
 For `publication_unreadable`, run `repair-policy` with the exact returned run
 directory and revision; it installs the readable channel and clears the current
@@ -344,10 +345,19 @@ in a foreground local wait until terminal state or human stop:
 - Who owns the next action
 - Exact command or prompt
 
+Before the first `poll`, after all semantic work and the handoff, the full
+start outcome is the final protocol output immediately before that first wait.
 The foreground wait is `poll`, which re-enters the kernel wait on every
 `idle_timeout` until a real wake, a terminal run, or its budget. When `poll`
 returns with `wait_outcome: idle_timeout`, call it again immediately; on any
-other outcome, read a fresh snapshot and act. Ending the turn is not a wait: it
-stops the poll, lets the lease lapse, and stalls the peer. Heartbeat before long
-authorized work. Keep action files private (mode 0600), exclude credentials,
-and delete them after `apply`.
+other JSON outcome, read a fresh snapshot and act. A `poll` that exits non-zero
+or returns no JSON is a human interrupt: it force-ends the turn, and that is
+expected. Ending the turn is not a wait: it stops the poll, lets the lease
+lapse, and stalls the peer. After an interrupt force-ends the turn, the next
+turn, unless its message is an explicit human stop, first reads a fresh
+snapshot, answers anything the human asked, and re-enters `poll`. A bare
+continue or an empty resume is never a stop and never a no-op. Heartbeat before
+long authorized work. Keep action files private (mode 0600), exclude
+credentials, and delete them after `apply`. Sources: the reproduction recorded
+in the [issue #22 owner refinement](https://github.com/axatbhardwaj/Dvandva/issues/22#issuecomment-5537575950),
+verified locally with `gh issue view 22 --repo axatbhardwaj/Dvandva --comments`.

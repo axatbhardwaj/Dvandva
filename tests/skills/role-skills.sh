@@ -303,6 +303,42 @@ setup_skill="$repo_root/skills/setup-dvandva/SKILL.md"
 setup_contract="$repo_root/skills/setup-dvandva/references/installation.md"
 
 role_contract="$(cat "$vadi_skill" "$vadi_contract" "$prativadi_skill" "$prativadi_contract")"
+pinned() { tr -s '[:space:]' ' ' <"$2" | grep -Fq "$1"; }
+# The whole ordered cross-turn recovery sentence, matched across line wrapping.
+recovery_sequence='After an interrupt force-ends the turn, the next turn, unless its message is an explicit human stop, first reads a fresh snapshot, answers anything the human asked, and re-enters `poll`.'
+
+# Each of the four contract surfaces carries the poll gate and the
+# interrupted-poll recovery on its own, so deleting a rule from one file fails
+# even when its sibling retains it. Sentences are matched across Markdown line
+# wrapping.
+for poll_source in "$vadi_skill" "$vadi_contract" "$prativadi_skill" "$prativadi_contract"; do
+  pinned 'The first `poll` is illegal until' "$poll_source"
+  pinned 'Before the first `poll`, after all semantic work and the handoff' "$poll_source"
+  pinned 'is the final protocol output immediately before that first wait' "$poll_source"
+  pinned 'is a human interrupt: it force-ends the turn' "$poll_source"
+  pinned 'unless its message is an explicit human stop' "$poll_source"
+  pinned "$recovery_sequence" "$poll_source"
+  pinned 'A bare continue or an empty resume is never a stop and never a no-op.' "$poll_source"
+done
+# Negative check: the ordered recovery clauses are load-bearing. Dropping the
+# fresh-read clause from a run contract must fail the sequence pin.
+mutated_contract="$test_root/mutated-run-contract.md"
+sed 's/first reads a fresh snapshot, //' "$vadi_contract" >"$mutated_contract"
+! cmp -s "$vadi_contract" "$mutated_contract"
+! pinned "$recovery_sequence" "$mutated_contract"
+sed 's/answers anything the human asked, //' "$prativadi_contract" >"$mutated_contract"
+! cmp -s "$prativadi_contract" "$mutated_contract"
+! pinned "$recovery_sequence" "$mutated_contract"
+rm -f -- "$mutated_contract"
+for vadi_source in "$vadi_skill" "$vadi_contract"; do
+  pinned 'activation block, with the exact `peer_prompt`, has been shown to the human' "$vadi_source"
+done
+for prativadi_source in "$prativadi_skill" "$prativadi_contract"; do
+  pinned 'until that start outcome has been shown to the human' "$prativadi_source"
+done
+for role_contract_source in "$vadi_contract" "$prativadi_contract"; do
+  grep -Fq 'https://github.com/axatbhardwaj/Dvandva/issues/22#issuecomment-5537575950' "$role_contract_source"
+done
 setup_docs="$(cat "$setup_skill" "$setup_contract")"
 
 for role_skill in "$vadi_skill" "$prativadi_skill"; do
@@ -313,6 +349,7 @@ for role_skill in "$vadi_skill" "$prativadi_skill"; do
   grep -Fq 'the human'"'"'s alone' "$role_skill"
   grep -Fq 'Protocol-internal problems resolve autonomously' "$role_skill"
   grep -Fq 'the human may be absent' "$role_skill"
+  pinned 'Before the first `poll`' "$role_skill"
   ! grep -Fq 'only for new human scope or ambiguity' "$role_skill"
 done
 
