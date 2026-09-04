@@ -12,7 +12,7 @@ case "$skill_name" in
 esac
 data_home="${XDG_DATA_HOME:-${HOME:?HOME is required}/.local/share}"
 state_home="${XDG_STATE_HOME:-${HOME:?HOME is required}/.local/state}"
-kernel_version="0.3.7"
+kernel_version="0.3.8"
 # Resolve the pinned version directly, never the shared bin/current selector:
 # a concurrent session selecting another version must not break this run.
 binary="$data_home/dvandva/bin/$kernel_version/dvandva-kernel"
@@ -328,7 +328,7 @@ run_dir_command() {
         printf 'usage: dvandva-role.sh poll SESSION RUN_DIR AFTER_REVISION [MAX_MS]\n' >&2
         exit 2
       }
-      local after="$1" budget_ms="${2:-540000}" started_ms now_ms chunk_ms output outcome
+      local after="$1" budget_ms="${2:-540000}" started_ms now_ms chunk_ms output outcome wait_status parsed
       case "$budget_ms" in
         ''|*[!0-9]*|0)
           printf 'dvandva-role: poll MAX_MS must be a positive integer\n' >&2
@@ -341,20 +341,45 @@ run_dir_command() {
         now_ms="$(date +%s%3N)"
         chunk_ms=$((budget_ms - (now_ms - started_ms)))
         if test "$chunk_ms" -le 0; then
-          printf '%s\n' "$output"
-          exit 0
+          if test -n "$output"; then
+            printf '%s\n' "$output"
+            exit 0
+          fi
+          # Even a tiny budget must return one real snapshot, never empty success.
+          chunk_ms=1
         fi
         test "$chunk_ms" -le "${DVANDVA_POLL_CHUNK_MS:-300000}" || chunk_ms="${DVANDVA_POLL_CHUNK_MS:-300000}"
         # Each kernel wait is observable, so re-entry is provable, not assumed.
         test -z "${DVANDVA_POLL_TRACE:-}" || printf 'wait after=%s timeout_ms=%s\n' "$after" "$chunk_ms" >>"$DVANDVA_POLL_TRACE"
+        wait_status=0
         output="$("$binary" role wait "${common[@]}" --after-revision "$after" \
-          --timeout-ms "$chunk_ms")" || exit $?
-        outcome="$(printf '%s' "$output" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("wait_outcome",""))')"
+          --timeout-ms "$chunk_ms")" || wait_status=$?
+        if test "$wait_status" -ne 0; then
+          # Preserve structured kernel errors for the role's recovery path.
+          test -z "$output" || printf '%s\n' "$output"
+          exit "$wait_status"
+        fi
+        if ! parsed="$(printf '%s' "$output" | python3 -c '
+import json, sys
+try:
+    value = json.load(sys.stdin)
+    outcome, revision = value["wait_outcome"], value["revision"]
+    if outcome not in ("idle_timeout", "actionable", "terminal"):
+        raise ValueError("unknown wait outcome")
+    if type(revision) is not int or revision < 0:
+        raise ValueError("invalid revision")
+    print(outcome, revision)
+except (ValueError, KeyError, TypeError):
+    sys.exit(1)
+')"; then
+          printf '%s\n' '{"error":"invalid_poll_response"}'
+          exit 1
+        fi
+        read -r outcome after <<<"$parsed"
         if test "$outcome" != idle_timeout; then
           printf '%s\n' "$output"
           exit 0
         fi
-        after="$(printf '%s' "$output" | python3 -c 'import json,sys; print(json.load(sys.stdin)["revision"])')"
       done
       ;;
     heartbeat)

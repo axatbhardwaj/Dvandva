@@ -19,10 +19,10 @@ export XDG_DATA_HOME="$test_root/data"
 export XDG_STATE_HOME="$test_root/state"
 # The facade resolves the pinned version directory directly; `current` is only
 # the shared default selector and must not be able to break a pinned session.
-binary="$XDG_DATA_HOME/dvandva/bin/0.3.7/dvandva-kernel"
+binary="$XDG_DATA_HOME/dvandva/bin/0.3.8/dvandva-kernel"
 mkdir -p "$(dirname "$binary")"
 cp "$repo_root/v4/target/debug/dvandva-v4" "$binary"
-ln -s 0.3.7 "$XDG_DATA_HOME/dvandva/bin/current"
+ln -s 0.3.8 "$XDG_DATA_HOME/dvandva/bin/current"
 
 workspace="$test_root/workspace"
 mkdir -p "$workspace"
@@ -48,7 +48,7 @@ test "$(bash "$vadi" session-id)" = "codex-session"
 generated="$(env -u CODEX_SESSION_ID bash "$vadi" session-id --generate)"
 [[ "$generated" =~ ^[0-9a-f-]{36}$ ]]
 probe="$(bash "$vadi" probe)"
-grep -Fq '"version": "0.3.7"' <<<"$probe"
+grep -Fq '"version": "0.3.8"' <<<"$probe"
 grep -Fq '"write_schema": "dvandva.run.v2"' <<<"$probe"
 grep -Fq '"read_schemas": [' <<<"$probe"
 grep -Fq '"role_api": 2' <<<"$probe"
@@ -59,15 +59,15 @@ grep -Fq '"publish": false' <<<"$probe"
 mv "$binary" "$binary.real"
 cat >"$binary" <<'ADVERSARIAL_KERNEL'
 #!/usr/bin/env bash
-valid_probe='{"package":"dvandva-v4","version":"0.3.7","publish":false,"write_schema":"dvandva.run.v2","read_schemas":["dvandva.run.v2","dvandva.run.v1"],"role_api":2,"capabilities":{"upgrade_from_v1":true},"compatible":true}'
+valid_probe='{"package":"dvandva-v4","version":"0.3.8","publish":false,"write_schema":"dvandva.run.v2","read_schemas":["dvandva.run.v2","dvandva.run.v1"],"role_api":2,"capabilities":{"upgrade_from_v1":true},"compatible":true}'
 if test "${1:-}" = "--version"; then
   case "${DVANDVA_FAKE_MODE:-valid}" in
-    valid|probe_*) printf 'dvandva-v4 0.3.7\n' ;;
-    version_nul) printf 'dvandva-v4 0.3.7\0\n' ;;
-    version_invalid_utf8) printf 'dvandva-v4 0.3.7\377\n' ;;
-    version_oversized) printf 'dvandva-v4 0.3.7'; head -c 300 /dev/zero | tr '\0' x ;;
-    version_extra_newline) printf 'dvandva-v4 0.3.7\n\n' ;;
-    version_nonzero) printf 'dvandva-v4 0.3.7\n'; exit 7 ;;
+    valid|probe_*) printf 'dvandva-v4 0.3.8\n' ;;
+    version_nul) printf 'dvandva-v4 0.3.8\0\n' ;;
+    version_invalid_utf8) printf 'dvandva-v4 0.3.8\377\n' ;;
+    version_oversized) printf 'dvandva-v4 0.3.8'; head -c 300 /dev/zero | tr '\0' x ;;
+    version_extra_newline) printf 'dvandva-v4 0.3.8\n\n' ;;
+    version_nonzero) printf 'dvandva-v4 0.3.8\n'; exit 7 ;;
   esac
   exit 0
 fi
@@ -103,14 +103,14 @@ mv "$binary.real" "$binary"
 mv "$binary" "$binary.real"
 cat >"$binary" <<'DECOY_KERNEL'
 #!/usr/bin/env bash
-if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.3.7\n'; exit 0; fi
+if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.3.8\n'; exit 0; fi
 if test "${1:-}" = "probe"; then
   printf '%s\n' '{' \
     '  "package": 7, "version": false, "publish": true, "write_schema": [],' \
     '  "read_schemas": "wrong", "role_api": "2",' \
     '  "capabilities": {"upgrade_from_v1": "true"}, "compatible": "true",' \
     '  "decoy": {' \
-    '    "package": "dvandva-v4", "version": "0.3.7", "publish": false,' \
+    '    "package": "dvandva-v4", "version": "0.3.8", "publish": false,' \
     '    "write_schema": "dvandva.run.v2",' \
     '    "read_schemas": ["dvandva.run.v2", "dvandva.run.v1"],' \
     '    "role_api": 2, "capabilities": {"upgrade_from_v1": true},' \
@@ -160,22 +160,23 @@ grep -Fq "\"run_id\": \"$run_id\"" <<<"$reviewer"
 grep -Fq '"summary": "Implement DEF-123"' <<<"$reviewer"
 test "$(find "$XDG_STATE_HOME/dvandva/runs" -mindepth 1 -maxdepth 1 -type d | wc -l)" = 1
 
-bash "$vadi" read codex-session "$run_dir" | grep -Fq '"status": "working"'
+grep -Fq '"status": "working"' <<<"$worker"
 sleep 2
+export DVANDVA_LEASE_SECONDS=300
 reclaimed="$(bash "$vadi" start codex-session codex claude "$workspace" \
   --run-id "$run_id")"
 grep -Fq '"outcome": "started"' <<<"$reclaimed"
 grep -Fq '"disposition": "reclaimed"' <<<"$reclaimed"
 grep -Fq '"revision": 3' <<<"$reclaimed"
-bash "$vadi" read codex-session "$run_dir" | grep -Fq '"revision": 3'
+bash "$vadi" read codex-session "$run_dir" | grep -F '"revision": 3' >/dev/null
 
 # A concurrent session flipping the shared bin/current selector must not break
 # this pinned session, and the pinned path must never consult the selector.
 rm "$XDG_DATA_HOME/dvandva/bin/current"
 ln -s 0.0.0 "$XDG_DATA_HOME/dvandva/bin/current"
-bash "$vadi" read codex-session "$run_dir" | grep -Fq '"revision": 3'
+bash "$vadi" read codex-session "$run_dir" | grep -F '"revision": 3' >/dev/null
 rm "$XDG_DATA_HOME/dvandva/bin/current"
-ln -s 0.3.7 "$XDG_DATA_HOME/dvandva/bin/current"
+ln -s 0.3.8 "$XDG_DATA_HOME/dvandva/bin/current"
 
 # Observe is claim-independent and read-only: a session with no credential can
 # watch the run, sees the explicit read-only marker, and never moves the head.
@@ -184,15 +185,15 @@ observed="$(bash "$vadi" observe watcher-session "$run_dir")"
 grep -Fq '"outcome": "observed"' <<<"$observed"
 grep -Fq '"read_only": true' <<<"$observed"
 grep -Fq '"revision": 3' <<<"$observed"
-bash "$vadi" read codex-session "$run_dir" | grep -Fq '"revision": 3'
+bash "$vadi" read codex-session "$run_dir" | grep -F '"revision": 3' >/dev/null
 
-bash "$vadi" heartbeat codex-session "$run_dir" 3 | grep -Fq '"revision":4'
-bash "$vadi" wait codex-session "$run_dir" 4 50 | grep -Fq '"revision": 4'
+bash "$vadi" heartbeat codex-session "$run_dir" 3 | grep -F '"revision":4' >/dev/null
+bash "$vadi" wait codex-session "$run_dir" 4 50 | grep -F '"revision": 4' >/dev/null
 
 action="$test_root/human.json"
 (umask 077; printf '%s\n' '{"type":"request_human_decision","kind":"scope","question":"Which sections are in scope","evidence":["scope changed"],"options":["all","only the kernel"]}' >"$action")
 test "$(stat -c '%a' "$action")" = 600
-bash "$vadi" apply codex-session "$run_dir" 4 "$action" | grep -Fq '"status": "human_decision"'
+bash "$vadi" apply codex-session "$run_dir" 4 "$action" | grep -F '"status": "human_decision"' >/dev/null
 rm -f -- "$action"
 test ! -e "$action"
 
@@ -214,9 +215,9 @@ LEGACY
 cp "$legacy_dir/baton.json" "$legacy_dir/history/00000000000000000000.json"
 upgrade_required="$(bash "$vadi" start legacy-session codex claude "$workspace" --run-id legacy-run)"
 grep -Fq '"outcome": "upgrade_required"' <<<"$upgrade_required"
-bash "$vadi" upgrade legacy-session "$legacy_dir" codex claude 0 | grep -Fq '"schema": "dvandva.run.v2"'
-bash "$vadi" claim legacy-session "$legacy_dir" 1 | grep -Fq '"revision": 2'
-bash "$vadi" read legacy-session "$legacy_dir" | grep -Fq '"status": "revising"'
+bash "$vadi" upgrade legacy-session "$legacy_dir" codex claude 0 | grep -F '"schema": "dvandva.run.v2"' >/dev/null
+bash "$vadi" claim legacy-session "$legacy_dir" 1 | grep -F '"revision": 2' >/dev/null
+bash "$vadi" read legacy-session "$legacy_dir" | grep -F '"status": "revising"' >/dev/null
 
 # A Codex-looking alias is intentionally not the canonical Codex identity. The
 # supported facade carries that pair through both local explainer handoffs to
@@ -295,17 +296,44 @@ grep -Fq 'act as prativadi' "$repo_root/skills/prativadi/SKILL.md"
 
 vadi_skill="$repo_root/skills/vadi/SKILL.md"
 vadi_contract="$repo_root/skills/vadi/references/run-contract.md"
+vadi_model_policy="$repo_root/skills/vadi/references/model-selection.md"
 vadi_prompt="$repo_root/skills/vadi/agents/openai.yaml"
 prativadi_skill="$repo_root/skills/prativadi/SKILL.md"
 prativadi_contract="$repo_root/skills/prativadi/references/run-contract.md"
+prativadi_model_policy="$repo_root/skills/prativadi/references/model-selection.md"
 prativadi_prompt="$repo_root/skills/prativadi/agents/openai.yaml"
 setup_skill="$repo_root/skills/setup-dvandva/SKILL.md"
 setup_contract="$repo_root/skills/setup-dvandva/references/installation.md"
 
 role_contract="$(cat "$vadi_skill" "$vadi_contract" "$prativadi_skill" "$prativadi_contract")"
-pinned() { tr -s '[:space:]' ' ' <"$2" | grep -Fq "$1"; }
+pinned() { tr -s '[:space:]' ' ' <"$2" | grep -F "$1" >/dev/null; }
 # The whole ordered cross-turn recovery sentence, matched across line wrapping.
 recovery_sequence='After an interrupt force-ends the turn, the next turn, unless its message is an explicit human stop, first reads a fresh snapshot, answers anything the human asked, and re-enters `poll`.'
+
+# Both independently installed role skills carry the same active casting policy
+# and point to it from their always-loaded contract surfaces.
+test -f "$vadi_model_policy"
+test -f "$prativadi_model_policy"
+cmp "$vadi_model_policy" "$prativadi_model_policy"
+for role_skill in "$vadi_skill" "$prativadi_skill"; do
+  pinned 'Read `references/run-contract.md` and `references/model-selection.md` completely before acting.' "$role_skill"
+done
+for role_contract_source in "$vadi_contract" "$prativadi_contract"; do
+  pinned 'Read `references/model-selection.md` before selecting or dispatching a model.' "$role_contract_source"
+  pinned 'delivery approved; publication pending' "$role_contract_source"
+  pinned 'bounded 5, 15, then 30 second backoff' "$role_contract_source"
+done
+for model_policy in "$vadi_model_policy" "$prativadi_model_policy"; do
+  pinned '`gpt-6-astra`' "$model_policy"
+  pinned '**Codex vadi: `gpt-5.6-sol` with `high` reasoning.**' "$model_policy"
+  pinned '**Claude prativadi: Opus.**' "$model_policy"
+  pinned 'Astra and Fable are optional advisers during implementation' "$model_policy"
+  pinned 'stage_explainer` authorizes Sol' "$model_policy"
+  pinned 'inside the Opus review station' "$model_policy"
+  pinned 'native local subagents if the companion requires them' "$model_policy"
+  pinned 'Only the vadi or prativadi parent may call the facade' "$model_policy"
+  pinned 'no silent fallback' "$model_policy"
+done
 
 # Each of the four contract surfaces carries the poll gate and the
 # interrupted-poll recovery on its own, so deleting a rule from one file fails
@@ -315,7 +343,8 @@ for poll_source in "$vadi_skill" "$vadi_contract" "$prativadi_skill" "$prativadi
   pinned 'The first `poll` is illegal until' "$poll_source"
   pinned 'Before the first `poll`, after all semantic work and the handoff' "$poll_source"
   pinned 'is the final protocol output immediately before that first wait' "$poll_source"
-  pinned 'is a human interrupt: it force-ends the turn' "$poll_source"
+  pinned 'A nonzero exit or missing JSON alone does not establish a human interrupt.' "$poll_source"
+  pinned 'take a fresh read-only `observe` snapshot' "$poll_source"
   pinned 'unless its message is an explicit human stop' "$poll_source"
   pinned "$recovery_sequence" "$poll_source"
   pinned 'A bare continue or an empty resume is never a stop and never a no-op.' "$poll_source"
@@ -461,7 +490,7 @@ grep -Fq 'deletes it after' <<<"$role_contract"
 grep -Fq 'Publication never substitutes for supersession or withdrawal.' <<<"$role_contract"
 grep -Fq 'foreground local wait' <<<"$role_contract"
 grep -Fq 'Prativadi never creates a run.' "$prativadi_contract"
-! sed -n '/^```text$/,/^```$/p' "$prativadi_contract" | grep -Fq -- '--new-run'
+! sed -n '/^```text$/,/^```$/p' "$prativadi_contract" | grep -F -- '--new-run' >/dev/null
 
 for required in \
   '"type":"submit_checkpoint"' \
@@ -506,8 +535,8 @@ do
 done
 
 for required in \
-  '0.3.7' \
-  'skills-v0.3.7' \
+  '0.3.8' \
+  'skills-v0.3.8' \
   'release target' \
   'fails closed if either is missing' \
   'Linux x86_64 only' \
