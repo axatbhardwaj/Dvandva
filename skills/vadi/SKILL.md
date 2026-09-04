@@ -24,12 +24,12 @@ has been shown to the human.
 2. Follow its `next_actions`. Perform semantic work only when
    `advisory_actions` authorizes `work`; apply a mutation only when it appears
    in `legal_actions`.
-3. Before the first `poll`, reproduce the activation block. Its exact
-   `peer_prompt`, repeated as the handoff's exact-prompt field, is the last
-   protocol output before that first wait.
-4. Verify and checkpoint the complete canonical scope, satisfy any
-   harness-specific explainer duty, report the five-part handoff, then in the
-   same turn enter a foreground local wait with `dvandva-role.sh poll`.
+3. Verify and checkpoint the complete canonical scope, satisfy any
+   harness-specific explainer duty, and report the five-part handoff.
+4. Before the first `poll`, after all semantic work and the handoff, repeat
+   the activation block: its exact `peer_prompt` is the final protocol output
+   immediately before that first wait. Then, in the same turn, enter a
+   foreground local wait with `dvandva-role.sh poll`.
 5. When `poll` returns `wait_outcome: idle_timeout`, call it again at once.
    On every other JSON outcome, repeat from a fresh snapshot. A `poll` that
    exits non-zero or returns no JSON is a human interrupt: it force-ends the

@@ -294,6 +294,9 @@ in a foreground local wait until terminal state or human stop:
 - Who owns the next action
 - Exact command or prompt
 
+Before the first `poll`, after all semantic work and the handoff, the
+activation block with the exact `peer_prompt` is the final protocol output
+immediately before that first wait.
 The foreground wait is `poll`, which re-enters the kernel wait on every
 `idle_timeout` until a real wake, a terminal run, or its budget. When `poll`
 returns with `wait_outcome: idle_timeout`, call it again immediately; on any
@@ -305,5 +308,6 @@ turn, unless its message is an explicit human stop, first reads a fresh
 snapshot, answers anything the human asked, and re-enters `poll`. A bare
 continue or an empty resume is never a stop and never a no-op. Heartbeat before
 long authorized work. Keep action files private (mode 0600), exclude
-credentials, and delete them after `apply`. Sources: [interrupted-poll
-evidence](../../../docs/research/2026-09-04-interrupted-poll-evidence.md).
+credentials, and delete them after `apply`. Sources: the reproduction recorded
+in the [issue #22 owner refinement](https://github.com/axatbhardwaj/Dvandva/issues/22#issuecomment-5537575950),
+verified locally with `gh issue view 22 --repo axatbhardwaj/Dvandva --comments`.
