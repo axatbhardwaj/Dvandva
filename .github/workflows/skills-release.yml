@@ -33,9 +33,20 @@ jobs:
           cargo run --quiet --manifest-path v4/Cargo.toml --locked -- \
             probe --expected-schema dvandva.run.v2 --expected-role-api 2
       - name: Verify archived v3 remains intact
-        run: cargo test --manifest-path rust/dvandva/Cargo.toml --locked
+        # ee66a47 retired v3 instructions from the active README. These six
+        # prose assertions are obsolete; retain every archived runtime test.
+        run: |
+          cargo test --manifest-path rust/dvandva/Cargo.toml --locked -- \
+            --skip readme_contract::documents_action_aware_waits \
+            --skip readme_contract::documents_dvandva_role_ownership_for_explainer_reviews \
+            --skip readme_contract::documents_multipart_termination_review \
+            --skip readme_contract::documents_preflight_role_invocation \
+            --skip f5_human_surfacing_contract::readme_documents_the_f5_rule \
+            --skip never_silent_stop_contract::readme_documents_the_watchdog_subcommand
       - name: Verify setup skill
         run: bash tests/skills/setup-dvandva.sh
+      - name: Verify HTML deliverables
+        run: bash tests/skills/html-deliverables.sh
       - name: Verify role skills
         run: bash tests/skills/role-skills.sh
       - name: Verify release packaging
@@ -43,7 +54,9 @@ jobs:
       - name: Verify two-role canary
         run: bash tests/skills/two-role-canary.sh
       - name: Verify poll behaviour
-        run: bash tests/skills/poll.sh
+        run: |
+          bash tests/skills/poll.sh
+          bash tests/skills/poll-errors.sh
 
   # Operational prerequisite: repository administrators protect skills-v* tags
   # from deletion or force-updates. This workflow verifies tag identity twice;
@@ -79,4 +92,4 @@ jobs:
             artifacts/SHA256SUMS \
             --verify-tag \
             --title "Dvandva skills $release_version" \
-            --notes "Skill-only Dvandva v4 kernel for setup-dvandva, vadi, and prativadi. Kernel $release_version writes dvandva.run.v2 with role API 2; legacy v1 runs require the explicit one-way upgrade. 0.3.7 contract fixes: vadi shows the exact peer_prompt verbatim in its own fenced code block as the last line of the activation block, and the only work between that block and the first poll is staging the run_started explainer and reporting the handoff. Linux x86_64 only, for now. The crate remains unpublished and the archived v3 plugin remains retired."
+            --notes-file "docs/releases/$GITHUB_REF_NAME.md"

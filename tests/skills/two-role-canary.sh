@@ -23,15 +23,20 @@ export DVANDVA_WAIT_TIMEOUT_MS=2000
 mkdir -p "$HOME"
 
 npx --yes skills add "$repo_root" --copy --global \
-  --agent claude-code codex --skill setup-dvandva vadi prativadi -y >/dev/null
+  --agent claude-code codex --skill setup-dvandva vadi prativadi html-deliverables -y >/dev/null
 bash "$HOME/.agents/skills/setup-dvandva/scripts/setup-dvandva.sh" \
-  install --version 0.3.7 >/dev/null
+  install --version 0.3.8 >/dev/null
 
 for role in vadi prativadi; do
   cmp "$repo_root/skills/$role/scripts/dvandva-role.sh" \
     "$HOME/.agents/skills/$role/scripts/dvandva-role.sh"
   cmp "$repo_root/skills/$role/scripts/dvandva-role.sh" \
     "$HOME/.claude/skills/$role/scripts/dvandva-role.sh"
+done
+
+# The restored companion must travel as a complete, identical skill in both hosts.
+for host_skills in "$HOME/.agents/skills" "$HOME/.claude/skills"; do
+  diff -r "$repo_root/skills/html-deliverables" "$host_skills/html-deliverables"
 done
 
 workspace="$test_root/workspace"
