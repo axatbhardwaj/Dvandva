@@ -41,8 +41,13 @@ Surface `ambiguous`, `busy`, `run_missing`, and `upgrade_required` rather than
 guessing. Use `--new-run` only on an explicit request for a separate run.
 Vadi's first user-visible protocol output includes returned run ID, canonical
 objective and scope, status and assignee, `next_actions`, and exact
-`peer_prompt` before domain-tool work. The first `poll` is illegal until that
+`peer_prompt` before domain-tool work. Show the `peer_prompt` verbatim in
+its own fenced code block as the last line of the activation block, so the
+human can copy it from a phone. The first `poll` is illegal until that
 activation block, with the exact `peer_prompt`, has been shown to the human.
+At run start the kernel withholds `work` until prativadi approves the
+`run_started` explainer, so the only work between the activation block and the
+first `poll` is staging that explainer and reporting the handoff.
 
 For `publication_unreadable`, run `repair-policy` with the exact returned run
 directory and revision; it installs the readable channel and clears the current
