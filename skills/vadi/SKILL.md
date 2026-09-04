@@ -14,7 +14,9 @@ Resolve the stable local session ID and start or resume through the facade.
 Before domain-tool work, the first user-visible protocol output must reproduce
 the returned run ID, canonical objective and scope, status and assignee,
 `next_actions`, and exact `peer_prompt`. The human starts the peer session with
-that returned prompt; never invoke or wake the peer harness.
+that returned prompt; never invoke or wake the peer harness. The first
+`poll` is illegal until that activation block, with the exact `peer_prompt`,
+has been shown to the human.
 
 ## Authoritative loop
 
@@ -26,13 +28,18 @@ that returned prompt; never invoke or wake the peer harness.
    harness-specific explainer duty, report the five-part handoff, then in the
    same turn enter a foreground local wait with `dvandva-role.sh poll`.
 4. When `poll` returns `wait_outcome: idle_timeout`, call it again at once.
-   On every other wake, repeat from a fresh snapshot. Stop only on terminal
-   state or human stop.
+   On every other JSON outcome, repeat from a fresh snapshot. A `poll` that
+   exits non-zero or returns no JSON is a human interrupt: it force-ends the
+   turn, and that is expected. Stop only on terminal state or human stop.
 
 Ending the turn is not a wait. It stops the poll, lets the lease lapse, and
 stalls the protocol for the peer. Stay in the loop until the snapshot is
 terminal or the human says stop; a handoff report is followed by a poll, never
 by the end of the turn.
+After an interrupt force-ends the turn, the next turn, whatever its message
+says, first reads a fresh snapshot, answers anything the human asked, and
+re-enters `poll`. A bare continue or an empty resume is never a stop and never
+a no-op.
 
 On the `run_started` obligation, propose the initial HTML explainer before
 continuing domain work. Prativadi reviews those local bytes; incorporate every

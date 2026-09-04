@@ -41,7 +41,8 @@ Surface `ambiguous`, `busy`, `run_missing`, and `upgrade_required` rather than
 guessing. Use `--new-run` only on an explicit request for a separate run.
 Vadi's first user-visible protocol output includes returned run ID, canonical
 objective and scope, status and assignee, `next_actions`, and exact
-`peer_prompt` before domain-tool work.
+`peer_prompt` before domain-tool work. The first `poll` is illegal until that
+activation block, with the exact `peer_prompt`, has been shown to the human.
 
 For `publication_unreadable`, run `repair-policy` with the exact returned run
 directory and revision; it installs the readable channel and clears the current
@@ -296,7 +297,12 @@ in a foreground local wait until terminal state or human stop:
 The foreground wait is `poll`, which re-enters the kernel wait on every
 `idle_timeout` until a real wake, a terminal run, or its budget. When `poll`
 returns with `wait_outcome: idle_timeout`, call it again immediately; on any
-other outcome, read a fresh snapshot and act. Ending the turn is not a wait: it
-stops the poll, lets the lease lapse, and stalls the peer. Heartbeat before long
+other JSON outcome, read a fresh snapshot and act. A `poll` that exits non-zero
+or returns no JSON is a human interrupt: it force-ends the turn, and that is
+expected. Ending the turn is not a wait: it stops the poll, lets the lease
+lapse, and stalls the peer. After an interrupt force-ends the turn, the next
+turn, whatever its message says, first reads a fresh snapshot, answers anything
+the human asked, and re-enters `poll`. A bare continue or an empty resume is
+never a stop and never a no-op. Heartbeat before long
 authorized work. Keep action files private (mode 0600), exclude credentials,
 and delete them after `apply`.
