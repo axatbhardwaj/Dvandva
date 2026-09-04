@@ -303,6 +303,27 @@ setup_skill="$repo_root/skills/setup-dvandva/SKILL.md"
 setup_contract="$repo_root/skills/setup-dvandva/references/installation.md"
 
 role_contract="$(cat "$vadi_skill" "$vadi_contract" "$prativadi_skill" "$prativadi_contract")"
+pinned() { tr -s '[:space:]' ' ' <"$2" | grep -Fq "$1"; }
+
+# Each of the four contract surfaces carries the poll gate and the
+# interrupted-poll recovery on its own, so deleting a rule from one file fails
+# even when its sibling retains it. Sentences are matched across Markdown line
+# wrapping.
+for poll_source in "$vadi_skill" "$vadi_contract" "$prativadi_skill" "$prativadi_contract"; do
+  pinned 'The first `poll` is illegal until' "$poll_source"
+  pinned 'is a human interrupt: it force-ends the turn' "$poll_source"
+  pinned 'unless its message is an explicit human stop' "$poll_source"
+  pinned 'A bare continue or an empty resume is never a stop and never a no-op.' "$poll_source"
+done
+for vadi_source in "$vadi_skill" "$vadi_contract"; do
+  pinned 'activation block, with the exact `peer_prompt`, has been shown to the human' "$vadi_source"
+done
+for prativadi_source in "$prativadi_skill" "$prativadi_contract"; do
+  pinned 'until that start outcome has been shown to the human' "$prativadi_source"
+done
+for role_contract_source in "$vadi_contract" "$prativadi_contract"; do
+  grep -Fq 'docs/research/2026-09-04-interrupted-poll-evidence.md' "$role_contract_source"
+done
 setup_docs="$(cat "$setup_skill" "$setup_contract")"
 
 for role_skill in "$vadi_skill" "$prativadi_skill"; do
@@ -313,8 +334,7 @@ for role_skill in "$vadi_skill" "$prativadi_skill"; do
   grep -Fq 'the human'"'"'s alone' "$role_skill"
   grep -Fq 'Protocol-internal problems resolve autonomously' "$role_skill"
   grep -Fq 'the human may be absent' "$role_skill"
-  grep -Fq 'is a human interrupt: it force-ends the' "$role_skill"
-  grep -Fq 'A bare continue or an empty resume is never a stop and never' "$role_skill"
+  pinned 'Before the first `poll`' "$role_skill"
   ! grep -Fq 'only for new human scope or ambiguity' "$role_skill"
 done
 
@@ -324,9 +344,6 @@ for role_source in \
 do
   for required in \
     'fresh facade snapshot' \
-    'The first `poll` is illegal until' \
-    'is a human interrupt: it force-ends the' \
-    'A bare continue or an empty resume is never a stop and never' \
     'next_actions' \
     'advisory_actions' \
     'legal_actions' \
