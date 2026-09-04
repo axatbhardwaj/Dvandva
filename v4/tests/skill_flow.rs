@@ -222,15 +222,13 @@ fn workflow_modes_define_distinct_review_and_authority_contracts() {
             normalized.contains(authorization),
             "{role} omitted {authorization:?}"
         );
-        let fable = source
-            .find("Fable adjudication")
-            .expect("Fable adjudication omitted");
-        let escalation = source
-            .find("irreversible human escalation")
-            .expect("irreversible human escalation omitted");
         assert!(
-            fable < escalation,
-            "{role} must use Fable before human escalation"
+            normalized.contains("optionally consult local Astra or Fable"),
+            "{role} must keep planning advice optional"
+        );
+        assert!(
+            !source.contains("Fable adjudication"),
+            "{role} must not restore the mandatory Fable escalation gate"
         );
     }
     for required in [
@@ -384,7 +382,7 @@ fn prativadi_review_inputs_and_verdict_are_immutably_bound() {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    assert!(workflow.contains("Dvandva setup installs only the three Dvandva skills"));
+    assert!(workflow.contains("Dvandva setup installs only the four Dvandva skills"));
     assert!(workflow.contains("mandatory when the host advertises it"));
     assert!(workflow.contains("Raw companion reports and rejected findings"));
 
@@ -721,8 +719,8 @@ fn setup_skill_sources_pin_v2_without_implicit_run_migration() {
         repository_file("skills/setup-dvandva/references/installation.md")
     );
     for required in [
-        "0.3.7",
-        "skills-v0.3.7",
+        "0.3.8",
+        "skills-v0.3.8",
         "release target",
         "fails closed if either is missing",
         "Linux x86_64 only",
@@ -767,7 +765,7 @@ fn version_and_probe_report_the_installation_contract() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("dvandva-v4 0.3.7"));
+        .stdout(predicate::str::contains("dvandva-v4 0.3.8"));
 
     let output = command()
         .args([
@@ -786,7 +784,7 @@ fn version_and_probe_report_the_installation_contract() {
     );
     let probe: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(probe["package"], "dvandva-v4");
-    assert_eq!(probe["version"], "0.3.7");
+    assert_eq!(probe["version"], "0.3.8");
     assert_eq!(probe["write_schema"], "dvandva.run.v2");
     assert_eq!(probe["role_api"], 2);
     assert_eq!(probe["publish"], false);

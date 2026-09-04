@@ -1,7 +1,7 @@
 # Dvandva
 
-> **Dvandva v4 is the active skill-only interface.** The `skills-v0.3.7`
-> GitHub release pairs the private, non-publishable kernel `0.3.7` with schema
+> **Dvandva v4 is the active skill-only interface.** The `skills-v0.3.8`
+> GitHub release pairs the private, non-publishable kernel `0.3.8` with schema
 > `dvandva.run.v2` and role API 2. Source checkout and tests are
 > development-only.
 >
@@ -12,12 +12,12 @@
 
 ## Active v4 skill-only interface
 
-Install the three source skills for Claude Code and Codex:
+Install the four source skills for Claude Code and Codex:
 
 ```bash
 npx --yes skills add axatbhardwaj/Dvandva --global \
   --agent claude-code codex \
-  --skill setup-dvandva vadi prativadi
+  --skill setup-dvandva vadi prativadi html-deliverables
 ```
 
 On a Linux x86_64 host, explicitly invoke `$setup-dvandva` with an install
@@ -55,6 +55,12 @@ list; the Baton remains authoritative.
 
 The sessions coordinate only through the local run. Neither harness invokes
 the other, there is no daemon, and user-owned harness goals remain untouched.
+For separate planning sessions, use Astra/Fable with the human's chosen skills
+and hand off a concise approved plan. Implementation sessions run Sol at `high`
+as Codex vadi and Opus as Claude prativadi; Astra/Fable are optional advisers.
+The restored `html-deliverables` skill supplies the shared visual template and
+standalone checks. See the role-local
+[`model-selection.md`](skills/vadi/references/model-selection.md).
 Matt Pocock's user-invoked workflow skills still require human invocation;
 prativadi automatically uses the model-invocable `code-review` skill for Git
 checkpoints, with native review for analysis checkpoints or when that companion
@@ -66,6 +72,7 @@ is unavailable. See
 ```
 skills/
   setup-dvandva/                    # explicit-only kernel installer skill
+  html-deliverables/                # shared HTML template and validation
   vadi/                             # implementer role skill
   prativadi/                        # reviewer role skill
 v4/                                 # private kernel crate (publish = false) + tests

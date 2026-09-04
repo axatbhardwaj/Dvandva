@@ -411,9 +411,9 @@ pub enum HumanDecisionKind {
     Authority,
 }
 
-/// How a run is allowed to interact with its human. An autonomous run admits a
-/// pause only as a choice between concrete scope proposals the kernel can apply
-/// itself, so there is no admissible shape for "please approve".
+/// How a run interacts with its human. Autonomous scope decisions require
+/// concrete proposals. Intent and authority decisions remain available in both
+/// modes; autonomy does not supply missing human permission.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum InteractionMode {

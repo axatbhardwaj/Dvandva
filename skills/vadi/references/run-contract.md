@@ -3,6 +3,7 @@
 The facade JSON is authoritative. Use only `scripts/dvandva-role.sh`; first
 `probe`, then resolve one stable session with `session-id` or one retained
 `session-id --generate` fallback.
+Read `references/model-selection.md` before selecting or dispatching a model.
 
 ```text
 start SESSION CURRENT_HARNESS PEER_HARNESS WORKSPACE [OBJECTIVE [TASK]] [--objective-ref KIND=VALUE] [--required-deliverable ID=DESCRIPTION] [--wait|--new-run|--run-id ID] [--autonomous]
@@ -81,7 +82,11 @@ kernel never leaves `request_human_decision` as the only way forward.
 
 Read objective ref `workflow=implementation|babysit|pr_review`; when absent, use
 `implementation`. Existing checkpoint, supersession, explainer, Human Decision,
-polling, and Matt `code-review` rules remain in force. Parents alone mutate Baton or GitHub; read-only evidence may use subagents.
+polling, and Matt `code-review` rules remain in force. Parents alone mutate
+Baton or GitHub. Native local subagents may perform only snapshot-authorized
+semantic work; while `advisory_actions` includes `work`, the vadi parent may
+give Sol/high bounded file edits, fixes, and tests, then verifies their result
+against canonical scope before checkpointing.
 
 In `implementation`, deliver and verify the complete canonical scope through the existing checkpoint and review cycle; never checkpoint work in progress merely to obtain review.
 
@@ -89,7 +94,7 @@ In `babysit`, fail closed before writable actions unless live GitHub verifies ow
 
 In `pr_review`, create one independent run per external PR. It is read-only except formal GitHub review submission, and vadi must never patch another author's PR. First prepare a constructive report on intent, behavior, integration, tests, maintainability, and practical failures; prativadi adjudicates final `APPROVE` or `REQUEST_CHANGES`, and vadi submits prativadi's adjudicated `APPROVE` or `REQUEST_CHANGES` exact and unmodified. Before submission, recheck PR identity, current head, actor versus author, and permission; self-approval, missing authority, or drift fails closed. A confirmed `REQUEST_CHANGES` completes; prativadi Dvandva approval approves the review artifact, not the external verdict. After submission, vadi queries GitHub and verifies review ID, exact PR, actor, state, reviewed commit/head, and body digest; then prativadi independently re-queries the same receipt. Use the existing receipt-bearing explainer gate: vadi stages and prativadi approves exact local bytes; the Codex participant publishes the approved status Site when present. Sources: [workflow-mode evidence](../../../docs/research/2026-09-01-workflow-mode-github-evidence.md).
 
-For every workflow, recoverable CI, review, scoped-branch failures, and other uncertainty stay autonomous. Before every actual `request_human_decision` for scope, intent, or authority, exchange evidence, attempt an available scoped fix, and use available local Fable adjudication before irreversible human escalation. Authority is permission the human alone can grant; unavailable capability is not a Human Decision. Escalate only an action both roles cannot establish as safe or an unavoidable external permission barrier; Fable is advisory and never a Baton participant. In babysit, design is intent; security and secret-policy are scope or authority, never new kinds.
+For every workflow, recoverable CI, review, scoped-branch failures, and other uncertainty stay autonomous. Before every actual `request_human_decision` for scope, intent, or authority, exchange evidence, attempt an available scoped fix, and optionally consult local Astra or Fable for a concrete unresolved design question within snapshot-authorized activity. Authority is permission the human alone can grant; unavailable capability is not a Human Decision. Escalate only an action both roles cannot establish as safe or an unavoidable external permission barrier; Astra and Fable are optional advisers and never additional Baton participants. In babysit, design is intent; security and secret-policy are scope or authority, never new kinds.
 
 ## Checkpoint and worker mutations
 
@@ -159,10 +164,12 @@ amendment; an `intent` or `authority` answer is recorded as an objective
 reference of that kind. A pause that would change nothing about the run cannot
 be resolved, and the decision just answered cannot be asked again.
 
-A run started with `--autonomous` admits a decision only as a choice among
-scope proposals, so when the human may be absent there is no admissible shape
-for "please approve": every pause is a set of concrete scopes the kernel
-applies itself.
+A run started with `--autonomous` requires concrete proposals for a `scope`
+decision. Genuine `intent` and `authority` decisions remain available: autonomy
+never supplies missing permission or chooses a human answer. Deterministic
+protocol recovery, distinct options, and protection against repeated decisions
+still apply in both modes. The kernel validates decision structure; the roles
+must establish that the question actually requires human judgment.
 
 Use only the minimal request. The kernel derives contact and resume routing:
 
@@ -181,6 +188,12 @@ not returned by the Human Decision object and must never be inferred:
 ```
 
 ## Explainer obligation
+
+Use the installed `html-deliverables` skill and its `template.html` for status
+HTML. Run its standalone validator and inspect desktop/mobile rendering before
+staging or approving. If the companion is missing, report the missing skill
+and install the release's companion within the user's setup authority; never
+invoke archived v3 tooling. The role parent retains every facade mutation.
 
 Each work-carrying handoff opens an obligation. Vadi stages the explainer's bytes
 into the run directory and prativadi reviews those exact bytes, regardless of which harness fills either role. Staging is first: the gate binds a digest, not a URL. For `run_started`, vadi proposes this initial HTML before continuing
@@ -250,9 +263,15 @@ a mechanical adapter:
 When Codex participates, finalization requires both the approved local digest
 and this matching private Sites receipt. Without Codex, local approval is
 sufficient. A connector failure remains Codex-owned publication work: report
-the exact non-secret failure, retry only errors identified as temporary, and
-leave the run active. Never record a guessed receipt, publish to broader access,
-substitute generic hosting, or ask prativadi to review through the Site.
+the exact non-secret failure, publication owner Codex, and preserved source
+digest. When the current checkpoint has exact semantic approval, report
+`delivery approved; publication pending`; otherwise report the actual delivery
+state. Retry only errors identified as temporary, with bounded 5, 15, then 30
+second backoff; after each attempt, obtain fresh connector status and refresh
+the facade. Leave the run active. A persistent non-transient failure is a
+reported environment blocker, not an immediate actionable/poll retry loop.
+Never record a guessed receipt, publish to broader access, substitute generic
+hosting, or ask prativadi to review through the Site.
 
 Never record a verdict on bytes you did not read. Recording an unread approval,
 or substituting a Claude Artifact, generic publisher, or any other
@@ -305,9 +324,21 @@ immediately before that first wait.
 The foreground wait is `poll`, which re-enters the kernel wait on every
 `idle_timeout` until a real wake, a terminal run, or its budget. When `poll`
 returns with `wait_outcome: idle_timeout`, call it again immediately; on any
-other JSON outcome, read a fresh snapshot and act. A `poll` that exits non-zero
-or returns no JSON is a human interrupt: it force-ends the turn, and that is
-expected. Ending the turn is not a wait: it stops the poll, lets the lease
+other successful JSON outcome, read a fresh snapshot and act.
+A nonzero exit or missing JSON alone does not establish a human interrupt.
+Only an explicit human stop or host-reported cancellation establishes one;
+exit 130 or 143 alone may also mean a process signal unrelated to the human.
+For a failed poll, retain its exit status and non-secret error, take a fresh
+read-only `observe` snapshot, and use its exact-run recovery. A fenced claim
+requires observation before exact reclaim; a missing run never permits a
+replacement run or domain work. Retry transient I/O failures with bounded
+backoff (5, 15, then 30 seconds), refreshing state before resuming. Persistent
+failure is an environment blocker: report the run, error, owner, and next
+recovery action, preserving the active run rather than claiming a human stop.
+A malformed or empty successful response is `invalid_poll_response`, not a
+wake; inspect the pinned kernel/probe before retrying. After successful
+recovery, resume the foreground loop.
+Ending the turn is not a wait: it stops the poll, lets the lease
 lapse, and stalls the peer. After an interrupt force-ends the turn, the next
 turn, unless its message is an explicit human stop, first reads a fresh
 snapshot, answers anything the human asked, and re-enters `poll`. A bare

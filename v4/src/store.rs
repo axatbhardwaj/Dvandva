@@ -1584,7 +1584,7 @@ fn valid_human_decision_request_edge(current: &RunBaton, next: &RunBaton) -> boo
 }
 
 /// What may be asked at all. Proposals, when present, are one per option and
-/// distinct; an autonomous run admits only a choice among scope proposals; and
+/// distinct; an autonomous scope decision requires concrete proposals; and
 /// the decision just answered may not be asked again verbatim.
 fn valid_decision_admission(current: &RunBaton, decision: &crate::model::HumanDecision) -> bool {
     let options_distinct = decision
@@ -1625,8 +1625,8 @@ fn valid_decision_admission(current: &RunBaton, decision: &crate::model::HumanDe
         }
     }
     if current.interaction == crate::model::InteractionMode::Autonomous
-        && (decision.kind != crate::model::HumanDecisionKind::Scope
-            || decision.proposals.is_empty())
+        && decision.kind == crate::model::HumanDecisionKind::Scope
+        && decision.proposals.is_empty()
     {
         return false;
     }

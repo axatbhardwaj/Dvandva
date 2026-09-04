@@ -26,8 +26,9 @@ one differs. A Human Decision is one of three kinds — `scope` (what the work
 covers), `intent` (which reading of the request is meant), `authority`
 (permission that is the human's alone) — and never protocol approval: the kernel
 refuses to park while it holds a deterministic recovery, admits a decision only
-with distinct options (and, in an autonomous run, only as a choice among
-concrete scope proposals), refuses to re-ask the decision just answered, and
+with distinct options (autonomous scope decisions additionally require
+concrete proposals; intent and authority decisions remain available), refuses
+to re-ask the decision just answered, and
 resolves a decision only by a chosen option that changes the run. Only a
 resumed Human Decision can amend scope; amendment
 increments `scope_revision` and clears stale checkpoint state.
@@ -95,7 +96,11 @@ Act as prativadi and join Dvandva run <run-id>.
 Both roles obey the snapshot's actions and foreground-wait when the peer owns
 the next mutation. The wait is `poll`: it re-enters the kernel wait on every
 idle timeout and returns only on a real wake, a terminal run, or its budget, and
-the role calls it again at once on an idle return rather than ending its turn. Tokens remain private to each role facade.
+the role calls it again at once on an idle return rather than ending its turn.
+Failed waits preserve their error output and exit status; malformed successful
+responses fail as `invalid_poll_response`. Neither proves human cancellation.
+Roles observe fresh state and recover before resuming, or report a persistent
+environment blocker explicitly. Tokens remain private to each role facade.
 
 ## Rolling explainer gate
 

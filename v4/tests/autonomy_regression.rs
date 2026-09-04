@@ -2117,11 +2117,10 @@ mod round_five {
         }
     }
 
-    /// [P1 autonomy] In an autonomous run, "please approve" has no admissible
-    /// shape: only a choice among concrete scope proposals may park the run,
-    /// choosing one applies it, and the same question cannot be asked twice.
+    /// Autonomous scope choices need concrete proposals, choosing one applies
+    /// it, and the same question cannot be asked twice.
     #[test]
-    fn an_autonomous_run_admits_only_a_choice_among_scope_proposals() {
+    fn an_autonomous_scope_decision_requires_concrete_proposals() {
         let dir = tempfile::tempdir().unwrap();
         let (channel, run_dir) = created_run(dir.path(), InteractionMode::Autonomous);
         let token = worker_token(dir.path(), &run_dir);
@@ -2134,19 +2133,6 @@ mod round_five {
                 proposals,
             })
         };
-        for kind in [HumanDecisionKind::Intent, HumanDecisionKind::Authority] {
-            assert!(matches!(
-                transition::apply(
-                    &channel,
-                    Role::Worker,
-                    "claude-session",
-                    &token,
-                    1,
-                    ask(kind, Vec::new())
-                ),
-                Err(transition::TransitionError::NotAnAutonomousDecision)
-            ));
-        }
         assert!(matches!(
             transition::apply(
                 &channel,
@@ -2244,6 +2230,85 @@ mod round_five {
         decision.question = "Another question".into();
         forged.human_decision = Some(decision);
         assert!(channel.compare_and_swap(head, &forged).is_err());
+    }
+
+    #[test]
+    fn autonomous_intent_and_authority_decisions_preserve_the_human_answer() {
+        for kind in [HumanDecisionKind::Intent, HumanDecisionKind::Authority] {
+            let dir = tempfile::tempdir().unwrap();
+            let (channel, run_dir) = created_run(dir.path(), InteractionMode::Autonomous);
+            let token = worker_token(dir.path(), &run_dir);
+            let request = || {
+                Action::RequestHumanDecision(HumanDecisionRequest {
+                    kind,
+                    question: "May the requested delivery include a remote push?".into(),
+                    evidence: vec!["The task does not specify remote push authority".into()],
+                    options: vec![
+                        "Keep the delivery local".into(),
+                        "Include a remote push".into(),
+                    ],
+                    proposals: Vec::new(),
+                })
+            };
+            let parked = transition::apply(
+                &channel,
+                Role::Worker,
+                "claude-session",
+                &token,
+                1,
+                request(),
+            )
+            .expect("autonomy must not prevent a genuine human decision");
+            assert_eq!(parked.status, Status::HumanDecision);
+            assert!(
+                !dvandva_v4::next_action::classify(&parked, Role::Worker, "claude")
+                    .advisory_actions
+                    .contains(&"work")
+            );
+            assert!(matches!(
+                transition::apply(
+                    &channel,
+                    Role::Worker,
+                    "claude-session",
+                    &token,
+                    parked.revision,
+                    Action::ResumeHumanDecision {
+                        answer: "yes".into(),
+                        scope_amendment: None
+                    },
+                ),
+                Err(transition::TransitionError::AnswerNotAnOption)
+            ));
+            let resumed = transition::apply(
+                &channel,
+                Role::Worker,
+                "claude-session",
+                &token,
+                parked.revision,
+                Action::ResumeHumanDecision {
+                    answer: "Keep the delivery local".into(),
+                    scope_amendment: None,
+                },
+            )
+            .unwrap();
+            assert_eq!(resumed.scope_revision, parked.scope_revision);
+            let reference = resumed.objective.refs.last().unwrap();
+            assert_eq!(reference.kind, kind.reference_kind());
+            assert_eq!(reference.value, "Keep the delivery local");
+            assert!(matches!(
+                transition::apply(
+                    &channel,
+                    Role::Worker,
+                    "claude-session",
+                    &token,
+                    resumed.revision,
+                    request(),
+                ),
+                Err(transition::TransitionError::RepeatedDecision)
+            ));
+            let recovered = channel.recover(resumed.revision).unwrap();
+            assert_eq!(recovered.objective.refs, resumed.objective.refs);
+        }
     }
 
     /// [P1 history integrity] A resolved intent decision must validate when the

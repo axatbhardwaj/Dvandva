@@ -2,7 +2,7 @@
 
 ## Boundary
 
-Dvandva v4 is three agent skills backed by one private local kernel. It is not
+Dvandva v4 is four agent skills backed by one private local kernel. It is not
 a Claude/Codex plugin, daemon, launcher, Git hook, or peer-invocation service.
 The human starts two ordinary T3 Code sessions. The sessions coordinate only
 through one run-scoped Baton under the XDG state directory.
@@ -16,10 +16,10 @@ v4.
 ```bash
 npx --yes skills add axatbhardwaj/Dvandva --global \
   --agent claude-code codex \
-  --skill setup-dvandva vadi prativadi
+  --skill setup-dvandva vadi prativadi html-deliverables
 ```
 
-Dvandva setup installs only the three Dvandva skills above and their private
+Dvandva setup installs only the four Dvandva skills above and their private
 kernel. It does not install or update Matt Pocock's separate skills. When the
 host advertises Matt's model-invocable `code-review`, prativadi must use it once
 for each newly authorized complete Git delivery candidate; otherwise the
@@ -31,8 +31,8 @@ Then explicitly ask one session:
 $setup-dvandva install Dvandva.
 ```
 
-The `skills-v0.3.7` GitHub release provides `dvandva-kernel-linux-x86_64` and
-`SHA256SUMS`. Setup verifies the digest and the complete kernel 0.3.7,
+The `skills-v0.3.8` GitHub release provides `dvandva-kernel-linux-x86_64` and
+`SHA256SUMS`. Setup verifies the digest and the complete kernel 0.3.8,
 `dvandva.run.v2`, role API 2 probe before installing under
 `${XDG_DATA_HOME:-$HOME/.local/share}/dvandva/`, outside `PATH`. The crate is
 non-publishable and no plugin or marketplace package is involved.
@@ -43,21 +43,32 @@ architecture it fails closed before downloading anything. The kernel itself
 uses Linux-only system calls, so there is no other build to substitute. On
 Windows, run both sessions inside WSL2.
 
-Updates are explicit: update the three skills, then invoke
+Updates are explicit: update the four skills, then invoke
 `$setup-dvandva update`. Uninstall removes only manifest-owned binary data and
 preserves run history unless the user separately confirms a purge. Install,
 update, and uninstall never migrate run state.
 
 ## Run one ticket
 
-The default implementation casting is Codex vadi and Claude prativadi:
+Plan in separate Astra/Fable sessions using the human's selected planning
+skills. Hand off a concise approved plan containing scope, decisions,
+acceptance criteria, relevant files, and verification commands. The default
+implementation pair is **Sol/high as Codex vadi and Opus as Claude prativadi**.
+They implement and review directly, consulting local Astra/Fable advisers only
+for concrete design questions. Each parent alone mutates Baton or GitHub.
+The portable [model policy](../../skills/vadi/references/model-selection.md)
+travels with each role skill; optional advisers do not block ordinary work.
+The `html-deliverables` companion supplies the house template, static validation,
+and desktop/mobile visual-review guidance for the rolling status page.
 
 ```text
 Codex session A: Act as vadi and implement DEF-123 with deliverable implementation.
 ```
 
-Any two distinct, non-blank harness names may fill the two roles; the user may
-explicitly reverse the usual Codex/Claude casting.
+The user may explicitly reverse or replace the usual Codex/Claude casting only
+when each selected harness has native access to the stations assigned to it.
+Neither harness may invoke the other, and unavailable models are surfaced
+rather than silently substituted.
 
 Before domain work, vadi surfaces the returned run ID, canonical objective and
 scope, status/assignee, actions, and this exact prompt:

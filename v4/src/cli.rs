@@ -235,8 +235,8 @@ enum RoleCommand {
         new_run: bool,
         #[arg(long = "required-deliverable")]
         required_deliverables: Vec<String>,
-        /// `attended` (default) or `autonomous`. An autonomous run admits a
-        /// human decision only as a choice among concrete scope proposals.
+        /// `attended` (default) or `autonomous`. Autonomous scope decisions
+        /// require concrete proposals; intent and authority remain available.
         #[arg(long, default_value = "attended")]
         interaction: String,
     },

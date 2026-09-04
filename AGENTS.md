@@ -5,7 +5,7 @@
 > **Active v4 skills; retired v3 archive.** The final v3 crate release remains
 > `3.5.1`, and the v3 plugin is unsupported historical evidence. Do not install
 > or modify that plugin. New distribution is limited to `skills/setup-dvandva`,
-> `skills/vadi`, `skills/prativadi`, and versioned `skills-v*` private-kernel
+> `skills/vadi`, `skills/prativadi`, `skills/html-deliverables`, and versioned `skills-v*` private-kernel
 > releases.
 
 This repo preserves research into practical agent-to-agent coordination between Claude Code and Codex. The historical Dvandva implementation used a baton-passing protocol-level orchestrator: the baton coordinated roles, phases, review gates, and subagent work, with no daemon, launcher, or hidden central control loop.
@@ -26,9 +26,18 @@ Prefer concise, source-backed docs over speculative architecture. If a workflow 
 - Keep public case studies sanitized and source-backed.
 - Keep active skill sources under root `skills/` and v4 release automation
   isolated from `plugins/dvandva/` and `rust/dvandva/`.
-- Historical HTML artifacts retain the `dvandva:html-deliverables` house format (`plugins/dvandva/skills/html-deliverables/` — tokens, components, diagram rules, `template.html`); preserve it when documenting the archive rather than creating an active-product surface.
+- Active HTML deliverables use `skills/html-deliverables/` and its template and standalone validator. Historical HTML sources under `plugins/dvandva/skills/html-deliverables/` remain unchanged; never invoke their retired v3 lint or publication workflow.
 - Do not put private project secrets, proprietary source snippets, or raw private PR exports in this repo.
 - If importing a private PR history for local research, keep raw JSON and timelines outside the public tree, for example under ignored `private-artifacts/`.
+
+## Active v4 model casting
+
+For every active v4 run, read the role-local
+`references/model-selection.md` before selecting or dispatching models. That
+policy defines separate Astra/Fable planning sessions, Sol/high vadi and Opus
+prativadi drivers, optional planning advisers, and parent-only mutation
+boundary. The copies under `skills/vadi/` and `skills/prativadi/` are identical
+so each distributed role skill remains self-contained.
 
 ## Historical workflow model
 
@@ -38,8 +47,10 @@ Use PR comments for archive-maintenance summaries only. Do not create new v3
 baton files or restart a historical workflow. Active v4 runs must use the
 released role skills and XDG run root, never the archived plugin.
 
+## Historical model-casting evidence
+
 Historical model-casting guidance (advisory, both engines): `docs/model-selection.md`. The
-default casting is a repeating ring, not a one-shot pipeline: human task ->
+historical default casting was a repeating ring, not a one-shot pipeline: human task ->
 fable gathers info/asks clarifying Qs -> gpt-5.6-sol adversarially reviews the
 Qs -> human answers -> gpt-5.6-sol produces the research, optionally aided by
 a read-only Grok freshness lane -> a fresh Claude-family reviewer evaluates the
