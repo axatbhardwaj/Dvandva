@@ -304,6 +304,8 @@ setup_contract="$repo_root/skills/setup-dvandva/references/installation.md"
 
 role_contract="$(cat "$vadi_skill" "$vadi_contract" "$prativadi_skill" "$prativadi_contract")"
 pinned() { tr -s '[:space:]' ' ' <"$2" | grep -Fq "$1"; }
+# The whole ordered cross-turn recovery sentence, matched across line wrapping.
+recovery_sequence='After an interrupt force-ends the turn, the next turn, unless its message is an explicit human stop, first reads a fresh snapshot, answers anything the human asked, and re-enters `poll`.'
 
 # Each of the four contract surfaces carries the poll gate and the
 # interrupted-poll recovery on its own, so deleting a rule from one file fails
@@ -315,8 +317,19 @@ for poll_source in "$vadi_skill" "$vadi_contract" "$prativadi_skill" "$prativadi
   pinned 'is the final protocol output immediately before that first wait' "$poll_source"
   pinned 'is a human interrupt: it force-ends the turn' "$poll_source"
   pinned 'unless its message is an explicit human stop' "$poll_source"
+  pinned "$recovery_sequence" "$poll_source"
   pinned 'A bare continue or an empty resume is never a stop and never a no-op.' "$poll_source"
 done
+# Negative check: the ordered recovery clauses are load-bearing. Dropping the
+# fresh-read clause from a run contract must fail the sequence pin.
+mutated_contract="$test_root/mutated-run-contract.md"
+sed 's/first reads a fresh snapshot, //' "$vadi_contract" >"$mutated_contract"
+! cmp -s "$vadi_contract" "$mutated_contract"
+! pinned "$recovery_sequence" "$mutated_contract"
+sed 's/answers anything the human asked, //' "$prativadi_contract" >"$mutated_contract"
+! cmp -s "$prativadi_contract" "$mutated_contract"
+! pinned "$recovery_sequence" "$mutated_contract"
+rm -f -- "$mutated_contract"
 for vadi_source in "$vadi_skill" "$vadi_contract"; do
   pinned 'activation block, with the exact `peer_prompt`, has been shown to the human' "$vadi_source"
 done
