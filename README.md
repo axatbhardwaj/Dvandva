@@ -1,7 +1,7 @@
 # Dvandva
 
-> **Dvandva v4 is the active skill-only interface.** The `skills-v0.3.6`
-> GitHub release pairs the private, non-publishable kernel `0.3.6` with schema
+> **Dvandva v4 is the active skill-only interface.** The `skills-v0.3.7`
+> GitHub release pairs the private, non-publishable kernel `0.3.7` with schema
 > `dvandva.run.v2` and role API 2. Source checkout and tests are
 > development-only. The v3 Dvandva is retired and archived: the crate and
 > plugin are not an installation path.
