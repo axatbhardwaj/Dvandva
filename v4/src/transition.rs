@@ -92,7 +92,7 @@ pub enum TransitionError {
     AnswerNotAnOption,
     #[error("a scope decision resolves only through a scope amendment; a pause that changes nothing was an approval wait")]
     DecisionWithoutChange,
-    #[error("an autonomous run admits a pause only as a choice among concrete scope proposals")]
+    #[error("an autonomous scope decision requires concrete scope proposals")]
     NotAnAutonomousDecision,
     #[error("the decision just answered cannot be asked again")]
     RepeatedDecision,
@@ -330,14 +330,12 @@ fn apply_locked(
                 .collect::<Vec<_>>();
             let distinct = options.iter().collect::<HashSet<_>>().len() == options.len();
             let question = question.trim().to_owned();
-            // Admission is where an approval wait is made unrepresentable. An
-            // autonomous run admits a pause only as a choice among concrete
-            // scope proposals the kernel applies itself: no proposals, or a
-            // question of any other kind, has no admissible shape when the
-            // human may be absent. In every mode, proposals are one per option
-            // and distinct, and the decision just answered cannot be re-asked.
+            // Autonomy still permits decisions only the human can make.
+            // Scope changes additionally need executable proposals; intent and
+            // authority choices are recorded on the objective when answered.
             if baton.interaction == crate::model::InteractionMode::Autonomous
-                && (kind != crate::model::HumanDecisionKind::Scope || proposals.is_empty())
+                && kind == crate::model::HumanDecisionKind::Scope
+                && proposals.is_empty()
             {
                 return Err(TransitionError::NotAnAutonomousDecision);
             }

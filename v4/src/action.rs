@@ -113,7 +113,7 @@ pub struct HumanDecisionRequest {
     pub evidence: Vec<String>,
     pub options: Vec<String>,
     /// One concrete scope per option. Makes a scope decision a choice the kernel
-    /// can apply; required in autonomous runs.
+    /// can apply; required for scope decisions in autonomous runs.
     #[serde(default)]
     pub proposals: Vec<ScopeAmendment>,
 }
