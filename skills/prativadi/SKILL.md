@@ -22,14 +22,16 @@ has been shown to the human.
 2. Follow its `next_actions`. Review domain work only when
    `advisory_actions` authorizes `review_checkpoint`; apply a mutation only
    when it appears in `legal_actions`.
-3. Inspect the exact immutable, complete delivery checkpoint. For `git`, run the
+3. Before the first `poll`, surface the full start outcome as the last
+   protocol output before that first wait.
+4. Inspect the exact immutable, complete delivery checkpoint. For `git`, run the
    required `code-review` companion once for that newly authorized candidate;
    never run it against implementation-in-progress. For `analysis`, review the
    verified staged bytes natively. Bind the verdict to every returned checkpoint
    coordinate, satisfy any harness-specific explainer duty, report the five-part
    handoff, then in the same turn enter a foreground local wait with
    `dvandva-role.sh poll`.
-4. When `poll` returns `wait_outcome: idle_timeout`, call it again at once.
+5. When `poll` returns `wait_outcome: idle_timeout`, call it again at once.
    On every other JSON outcome, repeat from a fresh snapshot. A `poll` that
    exits non-zero or returns no JSON is a human interrupt: it force-ends the
    turn, and that is expected. Stop only on terminal state or human stop.
@@ -38,10 +40,10 @@ Ending the turn is not a wait. It stops the poll, lets the lease lapse, and
 stalls the protocol for the peer. Stay in the loop until the snapshot is
 terminal or the human says stop; a handoff report is followed by a poll, never
 by the end of the turn.
-After an interrupt force-ends the turn, the next turn, whatever its message
-says, first reads a fresh snapshot, answers anything the human asked, and
-re-enters `poll`. A bare continue or an empty resume is never a stop and never
-a no-op.
+After an interrupt force-ends the turn, the next turn, unless its message is
+an explicit human stop, first reads a fresh snapshot, answers anything the
+human asked, and re-enters `poll`. A bare continue or an empty resume is never
+a stop and never a no-op.
 
 Review vadi's initial `run_started` HTML before domain work continues. Read the
 local bytes through the facade, request concrete changes when needed, and bind
