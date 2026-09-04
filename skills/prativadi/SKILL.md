@@ -22,14 +22,15 @@ has been shown to the human.
 2. Follow its `next_actions`. Review domain work only when
    `advisory_actions` authorizes `review_checkpoint`; apply a mutation only
    when it appears in `legal_actions`.
-3. Before the first `poll`, surface the full start outcome as the last
-   protocol output before that first wait.
-4. Inspect the exact immutable, complete delivery checkpoint. For `git`, run the
+3. Inspect the exact immutable, complete delivery checkpoint. For `git`, run the
    required `code-review` companion once for that newly authorized candidate;
    never run it against implementation-in-progress. For `analysis`, review the
    verified staged bytes natively. Bind the verdict to every returned checkpoint
-   coordinate, satisfy any harness-specific explainer duty, report the five-part
-   handoff, then in the same turn enter a foreground local wait with
+   coordinate, satisfy any harness-specific explainer duty, and report the
+   five-part handoff.
+4. Before the first `poll`, after all semantic work and the handoff, repeat
+   the full start outcome: it is the final protocol output immediately before
+   that first wait. Then, in the same turn, enter a foreground local wait with
    `dvandva-role.sh poll`.
 5. When `poll` returns `wait_outcome: idle_timeout`, call it again at once.
    On every other JSON outcome, repeat from a fresh snapshot. A `poll` that
