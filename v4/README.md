@@ -1,9 +1,9 @@
-# Dvandva v4 kernel 0.3.5
+# Dvandva v4 kernel 0.3.6
 
 This directory contains the non-publishable implementation of the active
 skill-only `dvandva.run.v2` Run Baton protocol and role API 2. The crate has
 `publish = false`: it is not published on crates.io. The distribution is
-one checksummed `skills-v0.3.5` GitHub release asset,
+one checksummed `skills-v0.3.6` GitHub release asset,
 `dvandva-kernel-linux-x86_64`, used only by the root `setup-dvandva`, `vadi`,
 and `prativadi` skills. It is not installed on `PATH` and does not invoke or
 manage Claude Code, Codex, T3 Code, issue trackers, goals, or publication
