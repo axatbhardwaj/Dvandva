@@ -13,7 +13,7 @@ trap 'rm -rf -- "$test_root"' EXIT
 cargo build --quiet --locked --manifest-path "$repo_root/v4/Cargo.toml"
 export XDG_DATA_HOME="$test_root/data"
 export XDG_STATE_HOME="$test_root/state"
-binary="$XDG_DATA_HOME/dvandva/bin/0.3.5/dvandva-kernel"
+binary="$XDG_DATA_HOME/dvandva/bin/0.3.6/dvandva-kernel"
 mkdir -p "$(dirname "$binary")"
 cp "$repo_root/v4/target/debug/dvandva-v4" "$binary"
 
