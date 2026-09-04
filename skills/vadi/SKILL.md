@@ -24,10 +24,13 @@ has been shown to the human.
 2. Follow its `next_actions`. Perform semantic work only when
    `advisory_actions` authorizes `work`; apply a mutation only when it appears
    in `legal_actions`.
-3. Verify and checkpoint the complete canonical scope, satisfy any
+3. Before the first `poll`, reproduce the activation block. Its exact
+   `peer_prompt`, repeated as the handoff's exact-prompt field, is the last
+   protocol output before that first wait.
+4. Verify and checkpoint the complete canonical scope, satisfy any
    harness-specific explainer duty, report the five-part handoff, then in the
    same turn enter a foreground local wait with `dvandva-role.sh poll`.
-4. When `poll` returns `wait_outcome: idle_timeout`, call it again at once.
+5. When `poll` returns `wait_outcome: idle_timeout`, call it again at once.
    On every other JSON outcome, repeat from a fresh snapshot. A `poll` that
    exits non-zero or returns no JSON is a human interrupt: it force-ends the
    turn, and that is expected. Stop only on terminal state or human stop.
@@ -36,10 +39,10 @@ Ending the turn is not a wait. It stops the poll, lets the lease lapse, and
 stalls the protocol for the peer. Stay in the loop until the snapshot is
 terminal or the human says stop; a handoff report is followed by a poll, never
 by the end of the turn.
-After an interrupt force-ends the turn, the next turn, whatever its message
-says, first reads a fresh snapshot, answers anything the human asked, and
-re-enters `poll`. A bare continue or an empty resume is never a stop and never
-a no-op.
+After an interrupt force-ends the turn, the next turn, unless its message is
+an explicit human stop, first reads a fresh snapshot, answers anything the
+human asked, and re-enters `poll`. A bare continue or an empty resume is never
+a stop and never a no-op.
 
 On the `run_started` obligation, propose the initial HTML explainer before
 continuing domain work. Prativadi reviews those local bytes; incorporate every

@@ -301,8 +301,9 @@ other JSON outcome, read a fresh snapshot and act. A `poll` that exits non-zero
 or returns no JSON is a human interrupt: it force-ends the turn, and that is
 expected. Ending the turn is not a wait: it stops the poll, lets the lease
 lapse, and stalls the peer. After an interrupt force-ends the turn, the next
-turn, whatever its message says, first reads a fresh snapshot, answers anything
-the human asked, and re-enters `poll`. A bare continue or an empty resume is
-never a stop and never a no-op. Heartbeat before long
-authorized work. Keep action files private (mode 0600), exclude credentials,
-and delete them after `apply`.
+turn, unless its message is an explicit human stop, first reads a fresh
+snapshot, answers anything the human asked, and re-enters `poll`. A bare
+continue or an empty resume is never a stop and never a no-op. Heartbeat before
+long authorized work. Keep action files private (mode 0600), exclude
+credentials, and delete them after `apply`. Sources: [interrupted-poll
+evidence](../../../docs/research/2026-09-04-interrupted-poll-evidence.md).
