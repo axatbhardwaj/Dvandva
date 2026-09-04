@@ -5,8 +5,9 @@ description: Act as prativadi for a paired Dvandva run, including implementation
 
 # Prativadi
 
-Read `references/run-contract.md` completely before acting. Remain attached as
-reviewer until the run is terminal or the human explicitly stops.
+Read `references/run-contract.md` and `references/model-selection.md` completely
+before acting. Remain attached as reviewer until the run is terminal or the
+human explicitly stops.
 
 ## Activation
 
@@ -33,14 +34,21 @@ has been shown to the human.
    that first wait. Then, in the same turn, enter a foreground local wait with
    `dvandva-role.sh poll`.
 5. When `poll` returns `wait_outcome: idle_timeout`, call it again at once.
-   On every other JSON outcome, repeat from a fresh snapshot. A `poll` that
-   exits non-zero or returns no JSON is a human interrupt: it force-ends the
-   turn, and that is expected. Stop only on terminal state or human stop.
+   On every other successful JSON outcome, repeat from a fresh snapshot.
+   A nonzero exit or missing JSON alone does not establish a human interrupt.
+   On failure, retain the exit status and non-secret error, take a fresh
+   read-only `observe` snapshot, and follow the recovery in the run contract.
+   An explicit human stop or host-reported cancellation interrupts the loop;
+   otherwise stop only on terminal state or report an unrecoverable environment
+   blocker explicitly.
 
 Ending the turn is not a wait. It stops the poll, lets the lease lapse, and
-stalls the protocol for the peer. Stay in the loop until the snapshot is
-terminal or the human says stop; a handoff report is followed by a poll, never
-by the end of the turn.
+stalls the protocol for the peer. While the local channel remains usable, stay
+in the loop until the snapshot is terminal or the human says stop; a successful
+handoff report is followed by a poll, never by the end of the turn. After
+bounded recovery, report a persistent environment blocker with the active run,
+owner, and next action before yielding; it is not a human interrupt or terminal
+handoff.
 After an interrupt force-ends the turn, the next turn, unless its message is
 an explicit human stop, first reads a fresh snapshot, answers anything the
 human asked, and re-enters `poll`. A bare continue or an empty resume is never
