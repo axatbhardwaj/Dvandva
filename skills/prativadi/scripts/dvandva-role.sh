@@ -404,17 +404,17 @@ if checkpoint_kind == "git":
         for value, object_kind in objects:
             if not isinstance(value, str):
                 continue
-            revision = f"{value}^{{{object_kind}}}"
-            available = subprocess.run(
-                ["git", "-C", worktree, "cat-file", "-e", revision],
-                stdout=subprocess.DEVNULL,
+            inspected = subprocess.run(
+                ["git", "-C", worktree, "cat-file", "-t", value],
+                stdout=subprocess.PIPE,
                 stderr=subprocess.DEVNULL,
+                text=True,
                 check=False,
-            ).returncode == 0
-            if not available:
+            )
+            if inspected.returncode != 0 or inspected.stdout.strip() != object_kind:
                 print(json.dumps({
                     "error": "invalid_checkpoint",
-                    "message": "git checkpoint object is unavailable from the verified workspace",
+                    "message": "git checkpoint object is unavailable or has the wrong type in the verified workspace",
                 }, separators=(",", ":")))
                 raise SystemExit(1)
 PY

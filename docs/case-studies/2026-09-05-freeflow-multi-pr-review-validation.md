@@ -73,7 +73,8 @@ The facade copies the caller action once into a mode-600 private temporary file,
 then gives those same bytes to the guard and kernel. Git identities and commit
 artifacts must match a real commit in the verified worktree; cited tree and blob
 objects must also be available. The canary rejects a syntactically valid fake
-commit before accepting a real fixture commit.
+commit and rejects a real commit mislabeled as a tree before accepting a real,
+exactly typed fixture commit.
 
 ## Commands and observed results
 

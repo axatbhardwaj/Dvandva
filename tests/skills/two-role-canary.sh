@@ -562,6 +562,13 @@ run_checkpoint_kind_guard() {
   set -e
   test "$failure_status" -ne 0
   grep -Fq '"error":"invalid_checkpoint"' <<<"$failure"
+  set +e
+  failure="$(apply_action_error "$worker" mixed-worker "$run_dir" "$(rev "$run_dir")" mixed-wrong-type-git \
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"git\",\"identity\":\"$commit\",\"deliverables\":[{\"id\":\"mixed\",\"artifacts\":[{\"kind\":\"tree\",\"value\":\"$commit\"}]}],\"verification\":[\"commit cannot masquerade as tree\"]}}")"
+  failure_status=$?
+  set -e
+  test "$failure_status" -ne 0
+  grep -Fq '"error":"invalid_checkpoint"' <<<"$failure"
   reviewing="$(apply_action "$worker" mixed-worker "$run_dir" "$(rev "$run_dir")" mixed-git \
     "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"git\",\"identity\":\"$commit\",\"deliverables\":[{\"id\":\"mixed\",\"artifacts\":[{\"kind\":\"commit\",\"value\":\"$commit\"}]}],\"verification\":[\"Standards and Spec review attached\"]}}")"
   python3 -c 'import json,sys; s=json.load(sys.stdin); assert s["status"] == "reviewing" and s["checkpoint"]["kind"] == "git"' <<<"$reviewing"

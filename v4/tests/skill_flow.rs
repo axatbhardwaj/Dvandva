@@ -1664,6 +1664,8 @@ fn review_validation_uses_public_facade_and_separates_simulated_from_live_eviden
     assert!(facade.contains("chmod 600 \"$facade_action_file\""));
     assert!(facade.contains("--action \"$facade_action_file\""));
     assert!(facade.contains("(identity, \"commit\")"));
+    assert!(facade.contains("\"cat-file\", \"-t\""));
+    assert!(!facade.contains("cat-file\", \"-e\""));
     assert_eq!(
         facade
             .matches("guard_checkpoint_kind \"$snapshot\"")
