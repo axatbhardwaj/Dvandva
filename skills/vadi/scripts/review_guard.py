@@ -8,6 +8,8 @@ from pathlib import Path
 import re
 import sys
 
+from role_guard import load_action, ref_values, rejection
+
 
 DIGEST = re.compile(r"[0-9a-f]{64}")
 MEMBER = re.compile(
@@ -17,45 +19,21 @@ MEMBER = re.compile(
 FULL_REVISION = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", re.I)
 
 
-def reject(message):
-    print(json.dumps({"error": "review_not_ready", "message": message}, separators=(",", ":")))
-    raise SystemExit(1)
+reject = rejection("review_not_ready")
 
 
 def load_context(action_path, expected_revision):
-    try:
-        snapshot = json.load(sys.stdin)
-        with open(action_path, encoding="utf-8") as source:
-            action = json.load(source)
-        expected = int(expected_revision)
-    except (OSError, json.JSONDecodeError, TypeError, ValueError):
+    context = load_action(action_path, expected_revision, "finalize")
+    if context is None:
         return None
-    refs = snapshot.get("objective", {}).get("refs", [])
-    workflow = [
-        str(ref.get("value", "")).casefold()
-        for ref in refs
-        if isinstance(ref, dict) and str(ref.get("kind", "")).casefold() == "workflow"
-    ]
-    if (
-        snapshot.get("revision") != expected
-        or not isinstance(action, dict)
-        or action.get("type") != "finalize"
-        or "review" not in workflow
-    ):
+    snapshot, _action = context
+    if "review" not in [value.casefold() for value in ref_values(snapshot, "workflow")]:
         return None
-    members = [
-        str(ref.get("value", ""))
-        for ref in refs
-        if isinstance(ref, dict) and str(ref.get("kind", "")).casefold() == "review_member"
-    ]
-    # Existing scalar single-PR Review runs predate review_member scope. Only
-    # their canonical task PR identity receives the legacy kernel-only path.
+    members = ref_values(snapshot, "review_member")
+    # All member-less Review runs predate persistent member scope and retain
+    # their exact kernel-only finalization behavior, regardless of task shape.
     if not members:
-        task = snapshot.get("task")
-        reference = task.get("reference") if isinstance(task, dict) else None
-        if isinstance(reference, str) and MEMBER.fullmatch(reference):
-            return None
-        reject("Review finalization requires frozen members or a canonical legacy PR task")
+        return None
     return snapshot, members
 
 

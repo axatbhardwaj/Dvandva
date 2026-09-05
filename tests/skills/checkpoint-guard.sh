@@ -11,6 +11,8 @@ commit="$(git -C "$workspace" rev-parse HEAD)"
 vadi="$repo_root/skills/vadi/scripts/checkpoint_guard.py"
 prativadi="$repo_root/skills/prativadi/scripts/checkpoint_guard.py"
 cmp "$vadi" "$prativadi"
+cmp "$repo_root/skills/vadi/scripts/role_guard.py" "$repo_root/skills/prativadi/scripts/role_guard.py"
+cmp "$repo_root/skills/vadi/scripts/skill_metadata.py" "$repo_root/skills/prativadi/scripts/skill_metadata.py"
 vadi_review="$repo_root/skills/vadi/scripts/review_guard.py"
 prativadi_review="$repo_root/skills/prativadi/scripts/review_guard.py"
 cmp "$vadi_review" "$prativadi_review"
@@ -52,17 +54,12 @@ set -e
 test "$missing_status" -ne 0
 grep -Fq 'Freeflow delivery_kind must be exactly one of code or analysis' <<<"$missing_error"
 
-# Only a scalar legacy Review run with a canonical GitHub PR task reference
-# retains its pre-existing kernel-only finalization behavior.
+# Every member-less legacy Review run retains its pre-existing kernel-only
+# finalization behavior, including null and tracker-style task references.
 printf '{"type":"finalize"}\n' >"$action"
-legacy_output="$(snapshot review '' 'https://github.com/axatbhardwaj/Dvandva/pull/31' | python3 "$vadi_review" list "$action" 7)"
-test -z "$legacy_output"
-for bad_task in '' 'issue-31' 'https://github.com/axatbhardwaj/Dvandva/issues/31' 'https://github.com/not canonical/repo/pull/31'; do
-  set +e
-  error="$(snapshot review '' "$bad_task" | python3 "$vadi_review" list "$action" 7)"; status=$?
-  set -e
-  test "$status" -ne 0
-  grep -Fq 'review_not_ready' <<<"$error"
+for legacy_task in '' 'PR-10' 'issue-31' 'https://github.com/axatbhardwaj/Dvandva/pull/31'; do
+  legacy_output="$(snapshot review '' "$legacy_task" | python3 "$vadi_review" list "$action" 7)"
+  test -z "$legacy_output"
 done
 
 # A terminal disposition is evidence, not a shortcut around identity, revision,

@@ -1,16 +1,15 @@
 #!/usr/bin/env python3
 """Validate Freeflow checkpoint policy against a verified role snapshot."""
 
-import json
 from pathlib import Path
-import re
 import subprocess
 import sys
 
+from role_guard import load_action, ref_values, rejection
+from skill_metadata import marks_user_only
 
-def reject(message):
-    print(json.dumps({"error": "invalid_checkpoint", "message": message}, separators=(",", ":")))
-    raise SystemExit(1)
+
+reject = rejection("invalid_checkpoint")
 
 
 def git_type(worktree, value):
@@ -24,189 +23,27 @@ def git_type(worktree, value):
     return result.stdout.strip() if result.returncode == 0 else None
 
 
-def bounded_text(path, required):
-    try:
-        with path.open("rb") as source:
-            raw = source.read(65537)
-    except FileNotFoundError:
-        return None if not required else False
-    except OSError:
-        return False
-    if len(raw) > 65536:
-        return False
-    try:
-        return raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return False
-
-
-def strip_yaml_comment(value):
-    value = value.strip()
-    if not value or value[0] not in {"'", '"'}:
-        comment = re.search(r"\s+#", value)
-        return value[: comment.start()].rstrip() if comment else value
-    quote = value[0]
-    index = 1
-    while index < len(value):
-        if quote == '"' and value[index] == "\\":
-            index += 2
-            continue
-        if quote == "'" and value[index : index + 2] == "''":
-            index += 2
-            continue
-        if value[index] == quote:
-            remainder = value[index + 1 :].strip()
-            return value[: index + 1] if not remainder or remainder.startswith("#") else None
-        index += 1
-    return None
-
-
-def parse_scalar(value):
-    """Accept a deliberately small, complete YAML scalar subset."""
-    if not value or value[0] in "[{}]|>" or value[-1:] in "]}":
-        return None
-    if value[0] == '"':
-        try:
-            parsed = json.loads(value)
-        except json.JSONDecodeError:
-            return None
-        return parsed if isinstance(parsed, str) else None
-    if value[0] == "'":
-        if not re.fullmatch(r"'(?:[^']|'')*'", value):
-            return None
-        return value[1:-1].replace("''", "'")
-    # YAML forbids a colon followed by whitespace inside a plain scalar. Other
-    # collection and block forms are rejected above rather than partially read.
-    if re.search(r":(?:\s|$)", value) or value[0] in "-?:,!&*#%@`":
-        return None
-    if value.casefold() == "true":
-        return True
-    if value.casefold() == "false":
-        return False
-    return value
-
-
-def parse_mapping(lines):
-    """Parse the nested scalar-map subset used by skill metadata."""
-    values = {}
-    seen = set()
-    parents = []
-    for raw in lines:
-        if not raw.strip() or raw.lstrip().startswith("#"):
-            continue
-        if "\t" in raw:
-            return None
-        indent = len(raw) - len(raw.lstrip(" "))
-        if indent % 2 or indent // 2 > len(parents):
-            return None
-        match = re.fullmatch(r" *([A-Za-z0-9_-]+):\s*(.*)", raw)
-        if not match:
-            return None
-        level = indent // 2
-        path = tuple(parents[:level] + [match.group(1)])
-        if path in seen:
-            return None
-        seen.add(path)
-        value = strip_yaml_comment(match.group(2))
-        if value is None:
-            return None
-        if not value:
-            parents = list(path)
-            continue
-        scalar = parse_scalar(value)
-        if scalar is None:
-            return None
-        parents = list(path[:-1])
-        values[path] = scalar.casefold() if isinstance(scalar, str) else scalar
-    return values
-
-
-def frontmatter_disables_model_invocation(text):
-    lines = text.splitlines()
-    if not lines or lines[0] != "---":
-        return False
-    try:
-        end = lines[1:].index("---") + 1
-    except ValueError:
-        return None
-    values = parse_mapping(lines[1:end])
-    return None if values is None else values.get(("disable-model-invocation",)) is True
-
-
-def policy_disables_implicit_invocation(text):
-    values = parse_mapping(text.splitlines())
-    return None if values is None else values.get(("policy", "allow_implicit_invocation")) is False
-
-
-def metadata_marks_user_only(root):
-    try:
-        skill_root = Path(root).resolve(strict=True)
-        if not skill_root.is_dir():
-            return False
-    except OSError:
-        return False
-    skill_md = bounded_text(skill_root / "SKILL.md", required=True)
-    openai_yaml = bounded_text(skill_root / "agents" / "openai.yaml", required=False)
-    if not isinstance(skill_md, str) or openai_yaml is False:
-        return False
-    skill_policy = frontmatter_disables_model_invocation(skill_md)
-    openai_policy = (
-        policy_disables_implicit_invocation(openai_yaml)
-        if isinstance(openai_yaml, str)
-        else False
-    )
-    if skill_policy is None or openai_policy is None:
-        return False
-    return skill_policy or openai_policy
-
-
 def main():
     if len(sys.argv) != 3:
         raise SystemExit(2)
-    try:
-        snapshot = json.load(sys.stdin)
-        with open(sys.argv[1], encoding="utf-8") as source:
-            action = json.load(source)
-        expected_revision = int(sys.argv[2])
-        refs = snapshot["objective"]["refs"]
-    except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError):
+    context = load_action(sys.argv[1], sys.argv[2], "submit_checkpoint")
+    if context is None:
         return
-    if snapshot.get("revision") != expected_revision:
-        return
-    if not isinstance(action, dict) or action.get("type") != "submit_checkpoint":
-        return
-    freeflow = any(
-        isinstance(ref, dict)
-        and str(ref.get("kind", "")).casefold() == "workflow"
-        and str(ref.get("value", "")).casefold() == "freeflow"
-        for ref in refs
-    )
+    snapshot, action = context
+    freeflow = any(value.casefold() == "freeflow" for value in ref_values(snapshot, "workflow"))
     if not freeflow:
         return
-    delivery_kinds = [
-        str(ref.get("value", "")).casefold()
-        for ref in refs
-        if isinstance(ref, dict)
-        and str(ref.get("kind", "")).casefold() == "delivery_kind"
-    ]
+    delivery_kinds = [value.casefold() for value in ref_values(snapshot, "delivery_kind")]
     if len(delivery_kinds) != 1 or delivery_kinds[0] not in {"code", "analysis"}:
         reject("Freeflow delivery_kind must be exactly one of code or analysis")
-    required_skills = [
-        str(ref.get("value", ""))
-        for ref in refs
-        if isinstance(ref, dict)
-        and str(ref.get("kind", "")).casefold() == "required_user_skill"
-    ]
+    required_skills = ref_values(snapshot, "required_user_skill")
     invoked_skills = {
-        str(Path(str(ref.get("value", ""))).resolve())
-        for ref in refs
-        if isinstance(ref, dict)
-        and str(ref.get("kind", "")).casefold() == "invoked_user_skill"
+        str(Path(value).resolve()) for value in ref_values(snapshot, "invoked_user_skill")
     }
     if len(set(required_skills)) != len(required_skills):
         reject("required user-only skill references must be unique")
     for root in required_skills:
-        if not metadata_marks_user_only(root):
+        if not marks_user_only(root):
             reject("required user-only skill metadata is missing, unreadable, or model-invocable")
         if str(Path(root).resolve()) not in invoked_skills:
             reject("required user-only skill has not been explicitly invoked")

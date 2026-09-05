@@ -35,6 +35,10 @@ for role in vadi prativadi; do
       "$host_skills/$role/scripts/checkpoint_guard.py"
     cmp "$repo_root/skills/$role/scripts/review_guard.py" \
       "$host_skills/$role/scripts/review_guard.py"
+    cmp "$repo_root/skills/$role/scripts/role_guard.py" \
+      "$host_skills/$role/scripts/role_guard.py"
+    cmp "$repo_root/skills/$role/scripts/skill_metadata.py" \
+      "$host_skills/$role/scripts/skill_metadata.py"
   done
   for reference in initiation discovery freeflow review; do
     cmp "$repo_root/skills/$role/references/$reference.md" \
