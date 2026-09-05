@@ -10,7 +10,10 @@ import sys
 
 
 DIGEST = re.compile(r"[0-9a-f]{64}")
-MEMBER = re.compile(r"https://github\.com/([^/]+)/([^/]+)/pull/([1-9][0-9]*)", re.I)
+MEMBER = re.compile(
+    r"https://github\.com/([A-Z0-9](?:[A-Z0-9-]{0,37}[A-Z0-9])?)/([A-Z0-9_.-]{1,100})/pull/([1-9][0-9]*)",
+    re.I,
+)
 FULL_REVISION = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", re.I)
 
 

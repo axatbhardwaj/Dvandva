@@ -44,28 +44,53 @@ def frontmatter_disables_model_invocation(text):
     lines = text.splitlines()
     if not lines or lines[0] != "---":
         return False
-    for line in lines[1:]:
-        if line == "---":
-            return False
-        match = re.fullmatch(r"([A-Za-z0-9_-]+):\s*(.*?)\s*", line)
-        if match and match.group(1) == "disable-model-invocation":
-            return match.group(2).casefold() == "true"
-    return False
+    try:
+        end = lines[1:].index("---") + 1
+    except ValueError:
+        return None
+    metadata = lines[1:end]
+    # This is intentionally a strict subset of YAML: skill metadata only needs
+    # top-level scalar keys for this policy. Reject syntax we cannot prove valid
+    # instead of letting malformed metadata authorize a user-only boundary.
+    values = {}
+    for line in metadata:
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        match = re.fullmatch(r"([A-Za-z0-9_-]+):\s*([^#]*?)(?:\s+#.*)?", line)
+        if not match:
+            return None
+        value = match.group(2).strip()
+        if not value or value[0] in "[{|'\">" or value[-1:] in "]}":
+            return None
+        values[match.group(1)] = value.casefold()
+    return values.get("disable-model-invocation") == "true"
 
 
 def policy_disables_implicit_invocation(text):
+    lines = text.splitlines()
+    policy_value = None
     in_policy = False
-    for line in text.splitlines():
+    for line in lines:
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         if not line.startswith((" ", "\t")):
-            in_policy = bool(re.fullmatch(r"policy:\s*(?:#.*)?", line))
+            match = re.fullmatch(r"([A-Za-z0-9_-]+):\s*([^#]*?)(?:\s+#.*)?", line)
+            if not match:
+                return None
+            value = match.group(2).strip()
+            if value and (value[0] in "[{|'\">" or value[-1:] in "]}"):
+                return None
+            in_policy = match.group(1) == "policy" and not value
             continue
-        if in_policy and re.fullmatch(
-            r" {2}allow_implicit_invocation:\s*false\s*(?:#.*)?", line
-        ):
-            return True
-    return False
+        match = re.fullmatch(r" {2}([A-Za-z0-9_-]+):\s*([^#]*?)(?:\s+#.*)?", line)
+        if not in_policy or not match:
+            return None
+        value = match.group(2).strip()
+        if not value or value[0] in "[{|'\">" or value[-1:] in "]}":
+            return None
+        if match.group(1) == "allow_implicit_invocation":
+            policy_value = value.casefold()
+    return policy_value == "false"
 
 
 def metadata_marks_user_only(root):
@@ -79,9 +104,15 @@ def metadata_marks_user_only(root):
     openai_yaml = bounded_text(skill_root / "agents" / "openai.yaml", required=False)
     if not isinstance(skill_md, str) or openai_yaml is False:
         return False
-    return frontmatter_disables_model_invocation(skill_md) or (
-        isinstance(openai_yaml, str) and policy_disables_implicit_invocation(openai_yaml)
+    skill_policy = frontmatter_disables_model_invocation(skill_md)
+    openai_policy = (
+        policy_disables_implicit_invocation(openai_yaml)
+        if isinstance(openai_yaml, str)
+        else False
     )
+    if skill_policy is None or openai_policy is None:
+        return False
+    return skill_policy or openai_policy
 
 
 def main():

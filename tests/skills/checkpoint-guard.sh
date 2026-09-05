@@ -57,7 +57,7 @@ grep -Fq 'Freeflow delivery_kind must be exactly one of code or analysis' <<<"$m
 printf '{"type":"finalize"}\n' >"$action"
 legacy_output="$(snapshot review '' 'https://github.com/axatbhardwaj/Dvandva/pull/31' | python3 "$vadi_review" list "$action" 7)"
 test -z "$legacy_output"
-for bad_task in '' 'issue-31' 'https://github.com/axatbhardwaj/Dvandva/issues/31'; do
+for bad_task in '' 'issue-31' 'https://github.com/axatbhardwaj/Dvandva/issues/31' 'https://github.com/not canonical/repo/pull/31'; do
   set +e
   error="$(snapshot review '' "$bad_task" | python3 "$vadi_review" list "$action" 7)"; status=$?
   set -e
@@ -69,7 +69,7 @@ done
 # timestamp, and basis fields.
 review_dir="$test_root/review-artifacts"
 mkdir -p "$review_dir"
-python3 - "$review_dir" "$test_root/review-snapshot.json" minimal <<'PY'
+terminal_fixture() { python3 - "$review_dir" "$test_root/review-snapshot.json" "$1" <<'PY'
 import hashlib, json, pathlib, sys
 root, snapshot_path, mode = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
 record = {"url":"https://github.com/axatbhardwaj/Dvandva/pull/31","disposition":"merged","evidence_valid":True}
@@ -80,28 +80,22 @@ contents=json.dumps(record,separators=(",",":")); digest=hashlib.sha256(contents
 snapshot={"revision":7,"objective":{"refs":[{"kind":"workflow","value":"review"},{"kind":"review_member","value":record["url"]}]},"task":{"reference":None},"checkpoint":{"kind":"analysis","deliverables":[{"id":"pr-31","artifacts":[{"kind":"analysis_digest","value":digest}]}]}}
 snapshot_path.write_text(json.dumps(snapshot))
 PY
+}
+terminal_fixture minimal
 set +e
 error="$(python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json")"; status=$?
 set -e
 test "$status" -ne 0
 grep -Fq 'review_not_ready' <<<"$error"
 find "$review_dir" -maxdepth 1 -type f -exec unlink {} \;
-python3 - "$review_dir" "$test_root/review-snapshot.json" complete <<'PY'
-import hashlib, json, pathlib, sys
-root, snapshot_path = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
-record={"url":"https://github.com/axatbhardwaj/Dvandva/pull/31","disposition":"merged","evidence_valid":True,"author":"author","acting_reviewer":"reviewer","head":"1"*40,"base":"2"*40,"observed_at":"2026-09-06T12:00:00Z","review_basis":"Exact head/base and merged disposition re-queried"}
-contents=json.dumps(record,separators=(",",":")); digest=hashlib.sha256(contents.encode()).hexdigest()
-(root/f"{digest}.json").write_text(json.dumps({"digest":digest,"contents":contents}))
-snapshot={"revision":7,"objective":{"refs":[{"kind":"workflow","value":"review"},{"kind":"review_member","value":record["url"]}]},"task":{"reference":None},"checkpoint":{"kind":"analysis","deliverables":[{"id":"pr-31","artifacts":[{"kind":"analysis_digest","value":digest}]}]}}
-snapshot_path.write_text(json.dumps(snapshot))
-PY
+terminal_fixture complete
 python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json"
 
 # Metadata keys in examples/body text and oversized files must not mark a skill
 # user-only. A real leading frontmatter/policy document does.
-valid_skill="$test_root/valid-skill"; false_skill="$test_root/false-skill"; huge_skill="$test_root/huge-skill"
-mkdir -p "$valid_skill/agents" "$false_skill/agents" "$huge_skill/agents"
-printf '%s\n' '---' 'name: fixture' 'disable-model-invocation: true' '---' '# Fixture' >"$valid_skill/SKILL.md"
+valid_skill="$test_root/valid-skill"; false_skill="$test_root/false-skill"; huge_skill="$test_root/huge-skill"; malformed_skill="$test_root/malformed-skill"; unclosed_skill="$test_root/unclosed-skill"
+mkdir -p "$valid_skill/agents" "$false_skill/agents" "$huge_skill/agents" "$malformed_skill/agents" "$unclosed_skill/agents"
+printf '%s\n' '---' 'name: fixture' 'disable-model-invocation: true # user-only' '---' '# Fixture' >"$valid_skill/SKILL.md"
 printf '%s\n' 'policy:' '  allow_implicit_invocation: false' >"$valid_skill/agents/openai.yaml"
 printf '%s\n' '---' 'name: example' '---' '# Example' '```yaml' 'disable-model-invocation: true' '```' >"$false_skill/SKILL.md"
 printf '%s\n' 'examples:' '  allow_implicit_invocation: false' >"$false_skill/agents/openai.yaml"
@@ -110,6 +104,10 @@ from pathlib import Path
 import sys
 root=Path(sys.argv[1]); (root/'SKILL.md').write_bytes(b'---\nname: huge\n---\n'+b'x'*70000); (root/'agents/openai.yaml').write_text('policy:\n  allow_implicit_invocation: false\n')
 PY
+printf '%s\n' '---' 'name: [' 'disable-model-invocation: true' '---' >"$malformed_skill/SKILL.md"
+printf '%s\n' 'policy:' '  allow_implicit_invocation: false' >"$malformed_skill/agents/openai.yaml"
+printf '%s\n' '---' 'name: fixture' 'disable-model-invocation: true' >"$unclosed_skill/SKILL.md"
+printf '%s\n' 'policy:' '  allow_implicit_invocation: false' >"$unclosed_skill/agents/openai.yaml"
 printf '{"type":"submit_checkpoint","checkpoint":{"kind":"analysis","identity":"%064d","deliverables":[]}}\n' 0 >"$action"
 skill_snapshot() { python3 - "$workspace" "$1" "$2" <<'PY'
 import json,sys
@@ -118,7 +116,7 @@ print(json.dumps({"revision":7,"objective":{"refs":refs},"workspace":{"worktree"
 PY
 }
 skill_snapshot "$valid_skill" yes | python3 "$vadi" "$action" 7
-for root in "$false_skill" "$huge_skill"; do
+for root in "$false_skill" "$huge_skill" "$malformed_skill" "$unclosed_skill"; do
   set +e
   error="$(skill_snapshot "$root" yes | python3 "$vadi" "$action" 7)"; status=$?
   set -e
