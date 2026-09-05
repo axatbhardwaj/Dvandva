@@ -436,7 +436,7 @@ case "$operation" in
   discover)
     require_kernel
     test "$#" -ge 4 || {
-      printf 'usage: dvandva-role.sh discover SESSION HARNESS PEER WORKSPACE --workflow NAME [--task-reference REF] [--objective EXACT] [--wait]\n' >&2
+      printf 'usage: dvandva-role.sh discover SESSION HARNESS PEER WORKSPACE --workflow NAME [--task-reference REF_OR_REVIEW_MEMBER] [--objective EXACT] [--wait]\n' >&2
       exit 2
     }
     python3 "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/discover.py" \

@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -30,6 +31,7 @@ def filter_candidates(result, args):
     if not isinstance(candidates, list):
         raise ValueError("kernel candidates must be an array")
     selected = []
+    match_bases = []
     for candidate in candidates:
         peer_key = "worker_harness" if args.role == "reviewer" else "reviewer_harness"
         if candidate[peer_key].casefold() != args.peer.casefold():
@@ -41,11 +43,35 @@ def filter_candidates(result, args):
         actual = workflows[0] if workflows else "implementation"
         if actual != workflow(args.workflow):
             continue
-        if args.task_reference and candidate["task_reference"] != args.task_reference:
-            continue
+        match_basis = None
+        if actual == "review":
+            members = [ref["value"] for ref in refs if ref["kind"] == "review_member"]
+            if (args.task_reference and candidate["task_reference"] != args.task_reference
+                    and args.task_reference not in members):
+                continue
+            if len(members) != len(set(members)):
+                raise ValueError("candidate has duplicate review_member references")
+            if members and not args.repository_id.casefold().startswith("github.com/"):
+                raise ValueError("review members require a canonical GitHub repository")
+            member_pattern = re.compile(
+                rf"^https://{re.escape(args.repository_id)}/pull/[1-9][0-9]*$",
+                re.IGNORECASE,
+            )
+            if any(not member_pattern.fullmatch(member) for member in members):
+                raise ValueError("candidate has a non-canonical or cross-repository review member")
+        else:
+            members = []
+        if args.task_reference:
+            if candidate["task_reference"] == args.task_reference:
+                match_basis = "task_reference"
+            elif actual == "review" and args.task_reference in members:
+                match_basis = "review_member"
+            else:
+                continue
         if args.objective and candidate["objective"]["summary"] != args.objective:
             continue
         selected.append(candidate)
+        match_bases.append(match_basis)
     result["candidates"] = selected
     if result["outcome"] != "corrupt":
         if not selected:
@@ -58,6 +84,8 @@ def filter_candidates(result, args):
             result["outcome"] = "busy"
         else:
             result["outcome"] = "match"
+            if match_bases[0] is not None:
+                result["match_basis"] = match_bases[0]
     result["read_only"] = True
     return result
 
@@ -71,8 +99,11 @@ def main():
     parser.add_argument("harness")
     parser.add_argument("peer")
     parser.add_argument("workspace")
-    parser.add_argument("--workflow", required=True,
-                        choices=["discovery", "implementation", "babysitting", "review", "babysit", "pr_review"])
+    parser.add_argument(
+        "--workflow", required=True,
+        choices=["discovery", "implementation", "babysitting", "review",
+                 "freeflow", "babysit", "pr_review"],
+    )
     parser.add_argument("--task-reference")
     parser.add_argument("--objective", help="Optional exact canonical objective, never a fuzzy query")
     parser.add_argument("--wait", action="store_true")
@@ -87,6 +118,7 @@ def main():
     if not 1 <= timeout <= 60000 or not 1 <= interval <= 60000:
         parser.error("discovery timeout and interval must be between 1 and 60000 ms")
     identity = kernel_json(args.binary, "identify", "--workspace", args.workspace)
+    args.repository_id = identity["repository_id"]
     deadline = time.monotonic() + timeout / 1000
     while True:
         result = kernel_json(args.binary, "discover", "--read-only", "--runs-dir", args.runs_dir,
