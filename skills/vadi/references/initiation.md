@@ -149,8 +149,9 @@ answers; an actual question may yield for the answer rather than busy-polling.
 Discovery: read `references/discovery.md` in either role before domain work.
 Freeflow: read `references/freeflow.md`; retain its current plan and choose
 skills, evidence, checkpoint kind, and executed testing within existing authority.
-For code-carrying or mixed scope, start with `delivery_kind=code`; omit that
-marker for report-only analysis.
+For code-carrying or mixed scope, start with `delivery_kind=code`; for report,
+investigation, or testing-only scope, use `delivery_kind=analysis`. Every
+Freeflow run has exactly one of these markers.
 Implementation: consume the approved spec/tickets; when Matt's implement method
 was selected, wait for the human's `/implement` invocation. Its local code-review
 is vadi's self-check; prativadi separately owns exact-checkpoint acceptance.

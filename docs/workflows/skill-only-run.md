@@ -244,8 +244,10 @@ criteria, then keeps one current plan with evidence and limitations. Non-code
 deliveries may use staged analysis; anything containing code uses a Git
 checkpoint and the existing Standards/Spec review rule. Code-carrying or mixed
 Freeflow scope records `delivery_kind=code`, which lets the verified role facade
-reject an analysis checkpoint without adding kernel state; report-only scope
-omits the marker. Browser E2E means an
+reject an analysis checkpoint without adding kernel state; report,
+investigation, and testing-only scope records `delivery_kind=analysis` and the
+facade rejects a Git checkpoint. Missing, duplicated, and invalid markers fail
+closed at checkpoint submission. Browser E2E means an
 actual running-application journey with environment, steps, observable state,
 and passed/failed/blocked/not-run results—not generated tests or API calls alone.
 

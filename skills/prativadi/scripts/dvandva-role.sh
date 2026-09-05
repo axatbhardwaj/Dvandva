@@ -23,16 +23,41 @@ role_api="2"
 version_max_bytes=256
 probe_max_bytes=16384
 handshake_dir=""
+facade_action_dir=""
+facade_action_file=""
 
 cleanup() {
   local status=$?
   trap - EXIT
+  if test -n "$facade_action_file" && test -f "$facade_action_file"; then
+    unlink "$facade_action_file" || true
+  fi
+  if test -n "$facade_action_dir" && test -d "$facade_action_dir"; then
+    rmdir "$facade_action_dir" || true
+  fi
   if test -n "$handshake_dir"; then
     rm -rf -- "$handshake_dir" || true
   fi
   exit "$status"
 }
 trap cleanup EXIT
+
+clear_action_copy() {
+  test -z "$facade_action_file" || test ! -f "$facade_action_file" || \
+    unlink "$facade_action_file"
+  test -z "$facade_action_dir" || test ! -d "$facade_action_dir" || \
+    rmdir "$facade_action_dir"
+  facade_action_file=""
+  facade_action_dir=""
+}
+
+copy_action_once() {
+  facade_action_dir="$(mktemp -d "${TMPDIR:-/tmp}/dvandva-action.XXXXXX")"
+  chmod 700 "$facade_action_dir"
+  facade_action_file="$facade_action_dir/action.json"
+  cp -- "$1" "$facade_action_file"
+  chmod 600 "$facade_action_file"
+}
 
 incompatible_kernel() {
   printf 'dvandva-role: incompatible kernel; explicitly invoke $setup-dvandva doctor\n' >&2
@@ -279,10 +304,11 @@ start_role() {
 # Enforce the role contract's one semantic checkpoint distinction at the
 # public facade without adding a schema field or kernel state.
 guard_checkpoint_kind() {
-  local snapshot="$1" action_file="$2"
-  python3 - "$action_file" 3<<<"$snapshot" <<'PY'
+  local snapshot="$1" expected_revision="$2" action_file="$3"
+  python3 - "$action_file" "$expected_revision" 3<<<"$snapshot" <<'PY'
 import json
 import os
+import subprocess
 import sys
 
 try:
@@ -291,28 +317,106 @@ try:
     with open(sys.argv[1], encoding="utf-8") as source:
         action = json.load(source)
     refs = baton["objective"]["refs"]
+    expected_revision = int(sys.argv[2])
 except (OSError, json.JSONDecodeError, KeyError, TypeError):
     # The kernel owns ordinary file/schema diagnostics.
     raise SystemExit(0)
+except ValueError:
+    raise SystemExit(0)
 
-code_delivery = any(
+if baton.get("revision") != expected_revision:
+    # The validated snapshot revision does not match expected revision. Defer
+    # to kernel apply so its compare-and-swap returns the atomic conflict.
+    raise SystemExit(0)
+
+if not isinstance(action, dict) or action.get("type") != "submit_checkpoint":
+    raise SystemExit(0)
+
+freeflow = any(
     isinstance(ref, dict)
-    and str(ref.get("kind", "")).casefold() == "delivery_kind"
-    and str(ref.get("value", "")).casefold() == "code"
+    and str(ref.get("kind", "")).casefold() == "workflow"
+    and str(ref.get("value", "")).casefold() == "freeflow"
     for ref in refs
 )
-analysis_submission = (
-    isinstance(action, dict)
-    and action.get("type") == "submit_checkpoint"
-    and isinstance(action.get("checkpoint"), dict)
-    and action["checkpoint"].get("kind") == "analysis"
-)
-if code_delivery and analysis_submission:
-    print(json.dumps({
-        "error": "invalid_checkpoint",
-        "message": "code-carrying delivery requires a git checkpoint; naming a commit in an analysis artifact is insufficient",
-    }, separators=(",", ":")))
-    raise SystemExit(1)
+checkpoint = action.get("checkpoint")
+checkpoint_kind = checkpoint.get("kind") if isinstance(checkpoint, dict) else None
+if freeflow:
+    delivery_kinds = [
+        str(ref.get("value", "")).casefold()
+        for ref in refs
+        if isinstance(ref, dict)
+        and str(ref.get("kind", "")).casefold() == "delivery_kind"
+    ]
+    if len(delivery_kinds) != 1 or delivery_kinds[0] not in {"code", "analysis"}:
+        print(json.dumps({
+            "error": "invalid_checkpoint",
+            "message": "Freeflow delivery_kind must be exactly one of code or analysis",
+        }, separators=(",", ":")))
+        raise SystemExit(1)
+
+    delivery_kind = delivery_kinds[0]
+    if delivery_kind == "code" and checkpoint_kind == "analysis":
+        print(json.dumps({
+            "error": "invalid_checkpoint",
+            "message": "code-carrying delivery requires a git checkpoint; naming a commit in an analysis artifact is insufficient",
+        }, separators=(",", ":")))
+        raise SystemExit(1)
+    if delivery_kind == "analysis" and checkpoint_kind == "git":
+        print(json.dumps({
+            "error": "invalid_checkpoint",
+            "message": "analysis-only delivery requires an analysis checkpoint",
+        }, separators=(",", ":")))
+        raise SystemExit(1)
+
+if checkpoint_kind == "git":
+    workspace = baton.get("workspace")
+    worktree = workspace.get("worktree") if isinstance(workspace, dict) else None
+    identity = checkpoint.get("identity")
+    deliverables = checkpoint.get("deliverables")
+    if not isinstance(worktree, str) or not worktree:
+        print(json.dumps({
+            "error": "invalid_checkpoint",
+            "message": "git checkpoint requires a verified workspace",
+        }, separators=(",", ":")))
+        raise SystemExit(1)
+    if isinstance(identity, str) and isinstance(deliverables, list):
+        artifacts = []
+        for deliverable in deliverables:
+            if not isinstance(deliverable, dict):
+                continue
+            incoming = deliverable.get("artifacts")
+            if isinstance(incoming, list):
+                artifacts.extend(item for item in incoming if isinstance(item, dict))
+        commit_values = [
+            artifact.get("value") for artifact in artifacts
+            if artifact.get("kind") == "commit"
+        ]
+        if any(value != identity for value in commit_values):
+            print(json.dumps({
+                "error": "invalid_checkpoint",
+                "message": "git checkpoint commit artifacts must match checkpoint identity",
+            }, separators=(",", ":")))
+            raise SystemExit(1)
+        objects = [(identity, "commit")] + [
+            (artifact.get("value"), artifact.get("kind")) for artifact in artifacts
+            if artifact.get("kind") in {"commit", "tree", "blob"}
+        ]
+        for value, object_kind in objects:
+            if not isinstance(value, str):
+                continue
+            revision = f"{value}^{{{object_kind}}}"
+            available = subprocess.run(
+                ["git", "-C", worktree, "cat-file", "-e", revision],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            ).returncode == 0
+            if not available:
+                print(json.dumps({
+                    "error": "invalid_checkpoint",
+                    "message": "git checkpoint object is unavailable from the verified workspace",
+                }, separators=(",", ":")))
+                raise SystemExit(1)
 PY
 }
 
@@ -351,10 +455,15 @@ run_dir_command() {
         printf 'usage: dvandva-role.sh apply SESSION RUN_DIR REVISION ACTION_FILE\n' >&2
         exit 2
       }
-      local snapshot
+      local snapshot apply_status
+      copy_action_once "$2"
       snapshot="$("$binary" role read "${common[@]}")"
-      guard_checkpoint_kind "$snapshot" "$2"
-      "$binary" role apply "${common[@]}" --expected-revision "$1" --action "$2"
+      guard_checkpoint_kind "$snapshot" "$1" "$facade_action_file"
+      apply_status=0
+      "$binary" role apply "${common[@]}" --expected-revision "$1" \
+        --action "$facade_action_file" || apply_status=$?
+      clear_action_copy
+      return "$apply_status"
       ;;
     wait)
       test "$#" -ge 1 && test "$#" -le 2 || {

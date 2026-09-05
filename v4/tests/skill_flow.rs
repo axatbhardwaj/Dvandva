@@ -1511,6 +1511,8 @@ fn freeflow_is_a_fifth_workflow_with_autonomous_evidence_bound_delivery() {
             "analysis checkpoints only for deliveries without code changes",
             "mixed test-and-fix deliveries use a `git` checkpoint",
             "delivery_kind=code",
+            "delivery_kind=analysis",
+            "Every Freeflow run records exactly one",
             "For a code-carrying candidate, bind every included non-code deliverable through an immutable Git commit, tree, or blob",
             "Report-only analysis deliverables remain staged analysis artifacts",
             "source identities, revisions or capture times",
@@ -1656,6 +1658,18 @@ fn review_validation_uses_public_facade_and_separates_simulated_from_live_eviden
     }
     assert!(facade.contains("delivery_kind"));
     assert!(facade.contains("code-carrying delivery requires a git checkpoint"));
+    assert!(facade.contains("snapshot revision does not match expected revision"));
+    assert!(facade.contains("Freeflow delivery_kind must be exactly one of code or analysis"));
+    assert!(facade.contains("copy_action_once"));
+    assert!(facade.contains("chmod 600 \"$facade_action_file\""));
+    assert!(facade.contains("--action \"$facade_action_file\""));
+    assert!(facade.contains("(identity, \"commit\")"));
+    assert_eq!(
+        facade
+            .matches("guard_checkpoint_kind \"$snapshot\"")
+            .count(),
+        1
+    );
     assert!(facade.contains("\"$binary\" role read \"${common[@]}\""));
     assert!(!facade.contains("$run_dir/baton.json"));
     for required in [
@@ -1668,6 +1682,7 @@ fn review_validation_uses_public_facade_and_separates_simulated_from_live_eviden
         "Chromium 151.0.7922.173",
         "2 passed",
         "**not executed**",
+        "immutable candidate under review",
     ] {
         assert!(
             report.contains(required),

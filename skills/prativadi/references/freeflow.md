@@ -63,10 +63,18 @@ that Git candidate or appear as an unsupported Git-manifest artifact kind.
 Report-only analysis deliverables remain staged analysis artifacts. A moving
 branch or mutable report URL is invalid.
 
-At initiation, mark code-carrying and mixed Freeflow scope with the existing
-objective reference `delivery_kind=code`. The role facade rejects an analysis
-checkpoint for that scope; naming a commit inside staged analysis does not turn
-it into a Git candidate. Do not add this marker to a report-only analysis run.
+Every Freeflow run records exactly one delivery-kind objective reference at
+initiation: `delivery_kind=code` for code-carrying or mixed scope, and
+`delivery_kind=analysis` for report, investigation, or testing-only scope. The
+role facade rejects a checkpoint if the marker is missing, duplicated, invalid,
+or disagrees with the checkpoint kind. Naming a commit inside staged analysis
+does not turn it into a Git candidate.
+
+For every Git checkpoint, the facade validates the exact copied action against
+the credential-checked snapshot at the caller's expected revision. The identity
+and commit artifacts must name the same real commit available from the verified
+workspace; tree and blob artifacts must also exist there. Kernel apply remains
+the atomic revision check if state moves after validation.
 
 Use only the startup review and each complete delivery-checkpoint review. Do
 not checkpoint unfinished work for advice. Consequential approach changes are
