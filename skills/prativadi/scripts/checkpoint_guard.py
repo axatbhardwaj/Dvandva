@@ -77,7 +77,7 @@ def parse_scalar(value):
         return value[1:-1].replace("''", "'")
     # YAML forbids a colon followed by whitespace inside a plain scalar. Other
     # collection and block forms are rejected above rather than partially read.
-    if re.search(r":(?:\s|$)", value) or value[0] in "-?:,!&*#@`":
+    if re.search(r":(?:\s|$)", value) or value[0] in "-?:,!&*#%@`":
         return None
     return value
 

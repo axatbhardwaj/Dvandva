@@ -136,4 +136,10 @@ error="$(skill_snapshot "$malformed_skill" yes | python3 "$vadi" "$action" 7)"; 
 set -e
 test "$status" -ne 0
 grep -Fq 'metadata is missing, unreadable, or model-invocable' <<<"$error"
+printf '%s\n' '---' 'name: %invalid' 'disable-model-invocation: true' '---' >"$malformed_skill/SKILL.md"
+set +e
+error="$(skill_snapshot "$malformed_skill" yes | python3 "$vadi" "$action" 7)"; status=$?
+set -e
+test "$status" -ne 0
+grep -Fq 'metadata is missing, unreadable, or model-invocable' <<<"$error"
 printf 'checkpoint guard: ok\n'
