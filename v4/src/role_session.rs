@@ -659,9 +659,16 @@ fn scope_matches(
     candidate: &crate::discovery::RunCandidate,
     request: &RoleStartRequest<'_>,
 ) -> bool {
-    request
-        .objective
-        .is_none_or(|value| candidate.objective.summary == value.trim())
+    let peer_harness = match request.role {
+        Role::Worker => &candidate.reviewer_harness,
+        Role::Reviewer => &candidate.worker_harness,
+    };
+    peer_harness
+        .trim()
+        .eq_ignore_ascii_case(request.peer_harness.trim())
+        && request
+            .objective
+            .is_none_or(|value| candidate.objective.summary == value.trim())
         && (request.objective_refs.is_empty() || candidate.objective.refs == request.objective_refs)
         && request
             .task_reference
