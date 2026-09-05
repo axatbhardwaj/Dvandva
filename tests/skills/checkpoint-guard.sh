@@ -95,7 +95,7 @@ record = {"url":"https://github.com/axatbhardwaj/Dvandva/pull/31","disposition":
 if mode == "missing-observed-at":
     record.pop("observed_at")
 if mode == "complete":
-    record.update({"author":"author","acting_reviewer":"reviewer","head":"1"*40,"base":"2"*40,"dependencies":[],"observed_at":"2026-09-06T12:00:00Z","review_basis":"Exact head/base and merged disposition re-queried"})
+    record.update({"author":"author","acting_reviewer":"reviewer","head":"1"*40,"base":"2"*40,"dependencies":[],"review_basis":"Merged disposition re-queried; no current approval asserted","findings":[],"proposed_verdict":None,"adjudicated_verdict":None,"exact_body":None,"body_digest":None,"receipts":[],"checks":None,"blocking_feedback":[],"next_action":"No action; PR is merged"})
 contents=json.dumps(record,separators=(",",":")); digest=hashlib.sha256(contents.encode()).hexdigest()
 (root/f"{digest}.json").write_text(json.dumps({"digest":digest,"contents":contents}))
 snapshot={"revision":7,"objective":{"refs":[{"kind":"workflow","value":"review"},{"kind":"review_member","value":record["url"]}]},"task":{"reference":None},"workspace":{"repository_id":"github.com/axatbhardwaj/dvandva"},"checkpoint":{"kind":"analysis","deliverables":[{"id":"pr-31","artifacts":[{"kind":"analysis_digest","value":digest}]}]}}
@@ -103,7 +103,11 @@ snapshot_path.write_text(json.dumps(snapshot))
 PY
 }
 terminal_fixture minimal
-python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json"
+set +e
+error="$(python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json")"; status=$?
+set -e
+test "$status" -ne 0
+grep -Fq 'record is incomplete' <<<"$error"
 find "$review_dir" -maxdepth 1 -type f -exec unlink {} \;
 terminal_fixture missing-observed-at
 set +e
@@ -134,7 +138,7 @@ open_fixture() { python3 - "$review_dir" "$test_root/review-snapshot.json" "$1" 
 import hashlib, json, pathlib, sys
 root, snapshot_path, mode = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
 body="Approved on exact current evidence"; head="3"*40
-record={"url":"https://github.com/axatbhardwaj/Dvandva/pull/31","disposition":"open","evidence_valid":True,"author":"author","acting_reviewer":"reviewer","head":head,"base":"4"*40,"dependencies":[],"observed_at":"2026-09-06T12:00:00Z","review_basis":"Exact head, base, dependency, checks, feedback, and receipt query","checks":"green","blocking_feedback":[],"adjudicated_verdict":"APPROVE","exact_body":body,"body_digest":hashlib.sha256(body.encode()).hexdigest()}
+record={"url":"https://github.com/axatbhardwaj/Dvandva/pull/31","disposition":"open","evidence_valid":True,"author":"author","acting_reviewer":"reviewer","head":head,"base":"4"*40,"dependencies":[],"observed_at":"2026-09-06T12:00:00Z","review_basis":"Exact head, base, dependency, checks, feedback, and receipt query","findings":[],"proposed_verdict":"APPROVE","checks":"green","blocking_feedback":[],"adjudicated_verdict":"APPROVE","exact_body":body,"body_digest":hashlib.sha256(body.encode()).hexdigest(),"next_action":"Finalize after exact approval receipt"}
 record["receipts"]=[{"pr":31,"actor":"reviewer","head":head,"state":"APPROVE","body_digest":record["body_digest"]}]
 if mode.startswith("missing-"): record.pop(mode.removeprefix("missing-"))
 if mode == "invalid-base": record["base"]="main"
@@ -153,7 +157,7 @@ snapshot_path.write_text(json.dumps(snapshot))
 PY
 }
 find "$review_dir" -maxdepth 1 -type f -exec unlink {} \;
-for mode in missing-base missing-dependencies missing-observed_at missing-review_basis invalid-base invalid-observed_at invalid-dependencies padded-self-review numeric-receipt; do
+for mode in missing-base missing-dependencies missing-observed_at missing-review_basis missing-findings missing-proposed_verdict missing-next_action invalid-base invalid-observed_at invalid-dependencies padded-self-review numeric-receipt; do
   open_fixture "$mode"
   set +e
   error="$(python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json")"; status=$?

@@ -9,7 +9,7 @@ import time
 
 sys.dont_write_bytecode = True
 
-from role_guard import CandidateError, validate_review_members
+from role_guard import CandidateError, ref_values, validate_review_members
 
 
 def kernel_json(binary, *args):
@@ -26,6 +26,7 @@ def kernel_json(binary, *args):
 
 def workflow(value):
     # Persistent Review must not adopt legacy one-shot pr_review runs.
+    value = value.casefold()
     return "babysitting" if value == "babysit" else value
 
 
@@ -42,7 +43,9 @@ def filter_candidates(result, args):
             if candidate[peer_key].casefold() != args.peer.casefold():
                 continue
             refs = candidate["objective"]["refs"]
-            workflows = [workflow(ref["value"]) for ref in refs if ref["kind"] == "workflow"]
+            if not isinstance(refs, list):
+                raise CandidateError("candidate objective references are not an array")
+            workflows = [workflow(value) for value in ref_values(candidate, "workflow")]
             if len(workflows) > 1:
                 raise ValueError("candidate has ambiguous workflow references")
             actual = workflows[0] if workflows else "implementation"
@@ -50,7 +53,7 @@ def filter_candidates(result, args):
                 continue
             match_basis = None
             if actual == "review":
-                members = [ref["value"] for ref in refs if ref["kind"] == "review_member"]
+                members = ref_values(candidate, "review_member")
                 member_match = (
                     args.task_reference is not None
                     and any(member.casefold() == args.task_reference.casefold() for member in members)

@@ -93,6 +93,43 @@ def validate_timestamp(record, member_id):
         reject(f"{member_id} timestamp is invalid")
 
 
+def validate_record(record, member_id, member_numbers):
+    required = {
+        "author", "acting_reviewer", "head", "base", "dependencies",
+        "review_basis", "findings", "proposed_verdict", "adjudicated_verdict",
+        "exact_body", "body_digest", "receipts", "checks",
+        "blocking_feedback", "next_action",
+    }
+    if not required.issubset(record):
+        reject(f"{member_id} record is incomplete")
+    author = record["author"]
+    actor = record["acting_reviewer"]
+    head = record["head"]
+    base = record["base"]
+    dependencies = record["dependencies"]
+    number = int(member_id.removeprefix("pr-"))
+    if not all(isinstance(value, str) and value.strip() for value in (author, actor, head, base, record["review_basis"], record["next_action"])):
+        reject(f"{member_id} record identity or basis is invalid")
+    if actor.strip().casefold() == author.strip().casefold() or not FULL_REVISION.fullmatch(head) or not FULL_REVISION.fullmatch(base):
+        reject(f"{member_id} record identity or basis is invalid")
+    if (
+        not isinstance(dependencies, list)
+        or any(type(dependency) is not int for dependency in dependencies)
+        or len(dependencies) != len(set(dependencies))
+        or number in dependencies
+        or any(dependency not in member_numbers for dependency in dependencies)
+    ):
+        reject(f"{member_id} dependency relationship evidence is invalid")
+    if not isinstance(record["findings"], list) or not isinstance(record["receipts"], list) or not isinstance(record["blocking_feedback"], list):
+        reject(f"{member_id} record is incomplete")
+    verdicts = {None, "APPROVE", "REQUEST_CHANGES"}
+    if record["proposed_verdict"] not in verdicts or record["adjudicated_verdict"] not in verdicts:
+        reject(f"{member_id} record verdict is invalid")
+    for key in ("exact_body", "body_digest", "checks"):
+        if record[key] is not None and not isinstance(record[key], str):
+            reject(f"{member_id} record is incomplete")
+
+
 def validate_artifact(record, member_url, member_id, member_numbers):
     if not isinstance(record, dict):
         reject(f"{member_id} analysis evidence is not an object")
@@ -103,6 +140,7 @@ def validate_artifact(record, member_url, member_id, member_numbers):
     if record.get("evidence_valid") is not True:
         reject(f"{member_id} evidence is not current")
     validate_timestamp(record, member_id)
+    validate_record(record, member_id, member_numbers)
     if disposition in {"closed", "merged"}:
         return
     if disposition != "open":

@@ -160,6 +160,8 @@ class GitHubFixture:
         return {
             **pr,
             "acting_reviewer": REVIEWER,
+            "findings": copy.deepcopy(pr["blocking_feedback"]),
+            "proposed_verdict": self.verdicts[number],
             "adjudicated_verdict": self.verdicts[number],
             "exact_body": self.bodies[number],
             "body_digest": digest(self.bodies[number]),
@@ -167,6 +169,7 @@ class GitHubFixture:
             "evidence_valid": self.evidence_valid[number],
             "observed_at": "2026-09-05T12:00:00Z",
             "review_basis": "Deterministic exact head, base, checks, feedback, and receipt query",
+            "next_action": "Finalize when open-member readiness is complete",
         }
 
     def ready(self) -> bool:
