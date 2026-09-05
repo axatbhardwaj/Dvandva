@@ -1379,3 +1379,85 @@ fn a_live_worker_run_blocks_silent_duplicate_creation() {
     assert_eq!(result["candidates"][0]["run_id"], first["run_id"]);
     assert_eq!(std::fs::read_dir(&runs).unwrap().count(), 1);
 }
+
+#[test]
+fn discovery_initiation_is_distributed_and_preserves_human_entry_points() {
+    let mut copies = Vec::new();
+    for role in ["vadi", "prativadi"] {
+        let (skill, contract) = role_sources(role);
+        for reference in ["initiation", "discovery"] {
+            let pointer = format!("references/{reference}.md");
+            assert!(
+                format!("{skill}\n{contract}").contains(&pointer),
+                "{role} must route to {pointer}"
+            );
+            let source = repository_file(&format!("skills/{role}/{pointer}"));
+            copies.push(source);
+        }
+        let initiation = &copies[copies.len() - 2];
+        for required in [
+            "source manifest",
+            "before reading vadi's conclusions",
+            "run_missing",
+            "waiting_for_skill",
+            "--run-id",
+            "review_explainer",
+            "changes_requested",
+            "approval\nhas empty findings",
+            "30 seconds",
+            "Read-only readiness checks are authorized in Finalizing",
+            "handoff wakes prativadi to verify fresh readiness",
+            "workflow=discovery",
+            "workflow=review",
+            "REQUEST_CHANGES",
+            "required checks",
+            "pr_review",
+            "babysitting",
+        ] {
+            assert!(
+                initiation.contains(required),
+                "{role} initiation lacks {required}"
+            );
+        }
+        let discovery = copies.last().unwrap();
+        for required in [
+            "/grill-with-docs",
+            "/to-spec",
+            "/to-tickets",
+            "predecessor_run",
+            "spec_digest",
+            "blocking edges",
+            "human approves",
+            "analysis",
+            "ready-for-agent",
+            "explicitly invokes",
+            "scope_revision",
+        ] {
+            assert!(
+                discovery.contains(required),
+                "{role} discovery lacks {required}"
+            );
+        }
+    }
+    assert_eq!(
+        copies[0], copies[2],
+        "initiation must ship in both role skills"
+    );
+    assert_eq!(
+        copies[1], copies[3],
+        "discovery must ship in both role skills"
+    );
+}
+
+#[test]
+fn discovery_html_companion_uses_the_discovery_drivers() {
+    let html = repository_file("skills/html-deliverables/SKILL.md");
+    assert!(html.contains("workflow=discovery"));
+    assert!(
+        html.contains("Fable 5.1/high authors as vadi and Codex Astra/high reviews as prativadi")
+    );
+    for role in ["vadi", "prativadi"] {
+        let policy = repository_file(&format!("skills/{role}/references/model-selection.md"));
+        assert!(policy.contains("Discovery follows the Discovery drivers above"));
+    }
+}

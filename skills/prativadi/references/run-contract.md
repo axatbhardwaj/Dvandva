@@ -32,6 +32,10 @@ name `codex` (case-insensitive); aliases such as `codex-cli`, `gpt`, or
 
 ## Start and snapshot contract
 
+Read `references/initiation.md` before activation and `references/discovery.md`
+for Discovery. Their startup source verification, workflow completion overrides
+and intentional human-input waits take precedence over the ordinary loop below.
+
 Exact joins pass only `--run-id` unless the human explicitly supplied objective,
 reference, task, or deliverable coordinates to compare. Never
 invent an objective for an exact join. Exact run ID selects state but never
@@ -78,8 +82,9 @@ idle_timeout`) takes a fresh snapshot and another wait. The kernel never leaves
 
 ## Workflow selection and prativadi lifecycle
 
-Read objective ref `workflow=implementation|babysit|pr_review`; when absent, use
-`implementation`. Existing checkpoint, supersession, explainer, Human Decision,
+Route new workflows through initiation.md: discovery, implementation,
+babysitting and review. Legacy refs `workflow=implementation|babysit|pr_review`
+retain their contracts below; when absent, use `implementation`. Existing checkpoint, supersession, explainer, Human Decision,
 polling, and Matt `code-review` rules remain in force. Parents alone mutate
 Baton or GitHub. Prativadi subagents remain read-only and receive only semantic
 work authorized by the current snapshot.
