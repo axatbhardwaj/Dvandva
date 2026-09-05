@@ -11,6 +11,9 @@ commit="$(git -C "$workspace" rev-parse HEAD)"
 vadi="$repo_root/skills/vadi/scripts/checkpoint_guard.py"
 prativadi="$repo_root/skills/prativadi/scripts/checkpoint_guard.py"
 cmp "$vadi" "$prativadi"
+vadi_review="$repo_root/skills/vadi/scripts/review_guard.py"
+prativadi_review="$repo_root/skills/prativadi/scripts/review_guard.py"
+cmp "$vadi_review" "$prativadi_review"
 
 snapshot() {
   local workflow="$1" marker="$2"
@@ -47,4 +50,10 @@ missing_error="$(snapshot freeflow '' | python3 "$vadi" "$action" 7)"; missing_s
 set -e
 test "$missing_status" -ne 0
 grep -Fq 'Freeflow delivery_kind must be exactly one of code or analysis' <<<"$missing_error"
+
+# Scalar legacy Review runs have no review_member refs and retain their
+# pre-existing kernel-only finalization behavior.
+printf '{"type":"finalize"}\n' >"$action"
+legacy_output="$(snapshot review '' | python3 "$vadi_review" list "$action" 7)"
+test -z "$legacy_output"
 printf 'checkpoint guard: ok\n'

@@ -25,10 +25,24 @@ probe_max_bytes=16384
 handshake_dir=""
 facade_action_dir=""
 facade_action_file=""
+review_artifact_dir=""
+
+clear_review_materialization() {
+  local artifact
+  if test -n "$review_artifact_dir" && test -d "$review_artifact_dir"; then
+    for artifact in "$review_artifact_dir"/*.json; do
+      test -f "$artifact" || continue
+      unlink "$artifact" || true
+    done
+    rmdir "$review_artifact_dir" || true
+  fi
+  review_artifact_dir=""
+}
 
 cleanup() {
   local status=$?
   trap - EXIT
+  clear_review_materialization
   if test -n "$facade_action_file" && test -f "$facade_action_file"; then
     unlink "$facade_action_file" || true
   fi
@@ -310,6 +324,26 @@ guard_checkpoint_kind() {
     "$action_file" "$expected_revision"
 }
 
+# Final Review readiness depends on the exact per-member bytes cited by the
+# checkpoint. Materialize them only through credential-checked kernel reads.
+guard_review_finalize() {
+  local snapshot="$1" expected_revision="$2" action_file="$3"
+  local helper digests digest artifact_file
+  helper="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/review_guard.py"
+  digests="$(printf '%s' "$snapshot" | python3 "$helper" list \
+    "$action_file" "$expected_revision")"
+  review_artifact_dir="$(mktemp -d "$facade_action_dir/review-artifacts.XXXXXX")"
+  chmod 700 "$review_artifact_dir"
+  while IFS= read -r digest; do
+    test -n "$digest" || continue
+    artifact_file="$review_artifact_dir/$digest.json"
+    (umask 077; "$binary" role analysis "${common[@]}" --digest "$digest" >"$artifact_file")
+  done <<<"$digests"
+  printf '%s' "$snapshot" | python3 "$helper" validate \
+    "$action_file" "$expected_revision" "$review_artifact_dir"
+  clear_review_materialization
+}
+
 run_dir_command() {
   local command="$1"
   shift
@@ -349,6 +383,7 @@ run_dir_command() {
       copy_action_once "$2"
       snapshot="$("$binary" role read "${common[@]}")"
       guard_checkpoint_kind "$snapshot" "$1" "$facade_action_file"
+      guard_review_finalize "$snapshot" "$1" "$facade_action_file"
       apply_status=0
       "$binary" role apply "${common[@]}" --expected-revision "$1" \
         --action "$facade_action_file" || apply_status=$?

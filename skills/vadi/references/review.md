@@ -79,3 +79,11 @@ merged or closed member instead carries its verified actual disposition; do
 not invent green CI or current approval. Finalize only after both roles verify
 the complete current readiness/disposition manifest, semantic approval, and
 the existing explainer/private-Site gate. Review grants no merge authority.
+For member-scoped persistent Review, the public facade enforces this final boundary from the credential-checked role
+snapshot: it materializes every checkpoint analysis digest through the pinned
+kernel `role analysis` interface and validates the documented per-member record
+and exact receipt coordinates before passing the same copied finalize action to
+the kernel's atomic revision check. It never reads Baton or artifact files
+directly.
+Scalar legacy Review runs without `review_member` references retain their
+original kernel-only finalization behavior.

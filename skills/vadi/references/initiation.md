@@ -129,6 +129,16 @@ A user-only skill runs only when the human explicitly invokes that skill in
 this session. Honor its own questions, approvals and publishing behavior;
 never copy its method to bypass invocation restrictions.
 
+When scope makes an installed user-only skill mandatory, record its canonical
+skill root as `required_user_skill=<root>`. Record
+`invoked_user_skill=<same root>` only after the human explicitly invokes that
+skill; if invocation occurs after initiation, use the existing human-approved
+scope amendment to add the reference. Before a Freeflow checkpoint, the public
+role facade reads `SKILL.md` and `agents/openai.yaml` at that root and requires
+`disable-model-invocation: true` or `allow_implicit_invocation: false`, plus the
+matching invocation reference. Missing, unreadable, model-invocable, or
+uninvoked mandatory metadata fails closed without adding kernel state.
+
 When the next required step is an uninvoked skill, report progress with
 `phase=waiting` and detail `waiting_for_skill: <command>; <reason>`, show the
 run ID and exact command, then yield the turn. This is an intentional human

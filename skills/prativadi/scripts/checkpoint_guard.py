@@ -2,6 +2,8 @@
 """Validate Freeflow checkpoint policy against a verified role snapshot."""
 
 import json
+from pathlib import Path
+import re
 import subprocess
 import sys
 
@@ -20,6 +22,23 @@ def git_type(worktree, value):
         check=False,
     )
     return result.stdout.strip() if result.returncode == 0 else None
+
+
+def metadata_marks_user_only(root):
+    try:
+        skill_root = Path(root).resolve(strict=True)
+        if not skill_root.is_dir():
+            return False
+        skill_md = (skill_root / "SKILL.md").read_text(encoding="utf-8")
+        openai_yaml = (skill_root / "agents" / "openai.yaml").read_text(encoding="utf-8")
+    except (OSError, UnicodeError):
+        return False
+    if len(skill_md) > 65536 or len(openai_yaml) > 65536:
+        return False
+    return bool(
+        re.search(r"^disable-model-invocation:\s*true\s*$", skill_md, re.MULTILINE)
+        or re.search(r"^\s*allow_implicit_invocation:\s*false\s*$", openai_yaml, re.MULTILINE)
+    )
 
 
 def main():
@@ -53,6 +72,25 @@ def main():
     ]
     if len(delivery_kinds) != 1 or delivery_kinds[0] not in {"code", "analysis"}:
         reject("Freeflow delivery_kind must be exactly one of code or analysis")
+    required_skills = [
+        str(ref.get("value", ""))
+        for ref in refs
+        if isinstance(ref, dict)
+        and str(ref.get("kind", "")).casefold() == "required_user_skill"
+    ]
+    invoked_skills = {
+        str(Path(str(ref.get("value", ""))).resolve())
+        for ref in refs
+        if isinstance(ref, dict)
+        and str(ref.get("kind", "")).casefold() == "invoked_user_skill"
+    }
+    if len(set(required_skills)) != len(required_skills):
+        reject("required user-only skill references must be unique")
+    for root in required_skills:
+        if not metadata_marks_user_only(root):
+            reject("required user-only skill metadata is missing, unreadable, or model-invocable")
+        if str(Path(root).resolve()) not in invoked_skills:
+            reject("required user-only skill has not been explicitly invoked")
     checkpoint = action.get("checkpoint")
     checkpoint_kind = checkpoint.get("kind") if isinstance(checkpoint, dict) else None
     if delivery_kinds[0] == "code" and checkpoint_kind == "analysis":
