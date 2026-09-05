@@ -275,6 +275,47 @@ start_role() {
   "$binary" "${args[@]}"
 }
 
+# The kernel deliberately treats workflow metadata as opaque objective refs.
+# Enforce the role contract's one semantic checkpoint distinction at the
+# public facade without adding a schema field or kernel state.
+guard_checkpoint_kind() {
+  local snapshot="$1" action_file="$2"
+  python3 - "$action_file" 3<<<"$snapshot" <<'PY'
+import json
+import os
+import sys
+
+try:
+    with os.fdopen(3, encoding="utf-8") as source:
+        baton = json.load(source)
+    with open(sys.argv[1], encoding="utf-8") as source:
+        action = json.load(source)
+    refs = baton["objective"]["refs"]
+except (OSError, json.JSONDecodeError, KeyError, TypeError):
+    # The kernel owns ordinary file/schema diagnostics.
+    raise SystemExit(0)
+
+code_delivery = any(
+    isinstance(ref, dict)
+    and str(ref.get("kind", "")).casefold() == "delivery_kind"
+    and str(ref.get("value", "")).casefold() == "code"
+    for ref in refs
+)
+analysis_submission = (
+    isinstance(action, dict)
+    and action.get("type") == "submit_checkpoint"
+    and isinstance(action.get("checkpoint"), dict)
+    and action["checkpoint"].get("kind") == "analysis"
+)
+if code_delivery and analysis_submission:
+    print(json.dumps({
+        "error": "invalid_checkpoint",
+        "message": "code-carrying delivery requires a git checkpoint; naming a commit in an analysis artifact is insufficient",
+    }, separators=(",", ":")))
+    raise SystemExit(1)
+PY
+}
+
 run_dir_command() {
   local command="$1"
   shift
@@ -310,6 +351,9 @@ run_dir_command() {
         printf 'usage: dvandva-role.sh apply SESSION RUN_DIR REVISION ACTION_FILE\n' >&2
         exit 2
       }
+      local snapshot
+      snapshot="$("$binary" role read "${common[@]}")"
+      guard_checkpoint_kind "$snapshot" "$2"
       "$binary" role apply "${common[@]}" --expected-revision "$1" --action "$2"
       ;;
     wait)

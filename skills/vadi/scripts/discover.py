@@ -49,7 +49,7 @@ def filter_candidates(result, args):
             if (args.task_reference and candidate["task_reference"] != args.task_reference
                     and args.task_reference not in members):
                 continue
-            if len(members) != len(set(members)):
+            if len(members) != len({member.casefold() for member in members}):
                 raise ValueError("candidate has duplicate review_member references")
             if members and not args.repository_id.casefold().startswith("github.com/"):
                 raise ValueError("review members require a canonical GitHub repository")

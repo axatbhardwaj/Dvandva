@@ -106,9 +106,13 @@ rev() {
 # Stage the bytes behind an analysis deliverable and echo their digest, so the
 # manifest cites something the reviewer can materialize.
 stage_analysis() {
-  local facade="$1" session="$2" run_dir="$3" label="$4" source staged
-  source="$test_root/analysis-$label.md"
-  printf '# %s\nanalysis deliverable\n' "$label" >"$source"
+  local facade="$1" session="$2" run_dir="$3" label="$4" source="${5:-}" staged
+  if test -z "$source"; then
+    source="$test_root/analysis-$label.md"
+    printf '# %s\nanalysis deliverable\n' "$label" >"$source"
+  else
+    test -f "$source"
+  fi
   local digest
   # staged_analysis is a sorted set, so the digest is computed here rather than
   # read back positionally.
@@ -119,6 +123,42 @@ stage_analysis() {
   python3 -c 'import json,sys; assert sys.argv[1] in json.load(sys.stdin)["staged_analysis"]' \
     "$digest" <<<"$staged"
   printf '%s\n' "$digest"
+}
+
+# Build the staged-digest identity and complete deliverable manifest once. Each
+# remaining argument is ID=SOURCE_PATH; callers submit the returned JSON through
+# the public role facade rather than duplicating checkpoint assembly logic.
+stage_analysis_manifest() {
+  local facade="$1" session="$2" run_dir="$3" label="$4"
+  shift 4
+  local item id source staged
+  local -a ids=() digests=()
+  for item in "$@"; do
+    id="${item%%=*}"
+    source="${item#*=}"
+    test -n "$id" && test "$source" != "$item" && test -f "$source"
+    staged="$(stage_analysis "$facade" "$session" "$run_dir" "$label-$id" "$source")"
+    ids+=("$id")
+    digests+=("$staged")
+  done
+  python3 - "${#ids[@]}" "${ids[@]}" "${digests[@]}" <<'PY'
+import hashlib, json, sys
+
+count = int(sys.argv[1])
+ids = sys.argv[2:2 + count]
+digests = sys.argv[2 + count:]
+assert count and len(digests) == count and len(set(ids)) == count
+identity = hashlib.sha256("\n".join(sorted(set(digests))).encode()).hexdigest()
+deliverables = [
+    {"id": item_id, "artifacts": [{"kind": "analysis_digest", "value": digest}]}
+    for item_id, digest in zip(ids, digests)
+]
+print(json.dumps({
+    "identity": identity,
+    "digests": digests,
+    "deliverables": deliverables,
+}, separators=(",", ":")))
+PY
 }
 
 obligation_json() {
@@ -459,6 +499,58 @@ run_discovery_startup() {
 }
 run_discovery_startup
 
+# The workflow contract marks code-carrying Freeflow scope at initiation. The
+# public role facade must reject an analysis checkpoint even when the staged
+# report names a commit, while report-only Freeflow retains analysis delivery.
+run_checkpoint_kind_guard() {
+  local worker="$HOME/.agents/skills/vadi/scripts/dvandva-role.sh"
+  local reviewer="$HOME/.claude/skills/prativadi/scripts/dvandva-role.sh"
+  local started run_id run_dir source artifact identity failure failure_status reviewing
+  local commit="cccccccccccccccccccccccccccccccccccccccc"
+
+  started="$(bash "$worker" start mixed-worker codex claude "$workspace" \
+    'Test and fix the reported defect' --new-run \
+    --objective-ref workflow=freeflow --objective-ref delivery_kind=code \
+    --required-deliverable mixed='Tests, code repair, and report')"
+  run_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])' <<<"$started")"
+  run_dir="$XDG_STATE_HOME/dvandva/runs/$run_id"
+  bash "$reviewer" start mixed-reviewer claude codex "$workspace" --run-id "$run_id" >/dev/null
+  approve_explainer "$worker" mixed-worker "$reviewer" mixed-reviewer \
+    "$worker" mixed-worker "$run_dir" "$(rev "$run_dir")" mixed-delivery mixed-start
+  source="$test_root/mixed-analysis.md"
+  printf '# Mixed delivery\nCode changes committed at %s\n' "$commit" >"$source"
+  artifact="$(sha256sum "$source" | cut -d' ' -f1)"
+  apply_action "$worker" mixed-worker "$run_dir" "$(rev "$run_dir")" mixed-stage \
+    "{\"type\":\"stage_analysis\",\"source_path\":\"$source\"}" >/dev/null
+  identity="$(analysis_identity "$artifact")"
+  set +e
+  failure="$(apply_action_error "$worker" mixed-worker "$run_dir" "$(rev "$run_dir")" \
+    mixed-analysis \
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$identity\",\"deliverables\":[{\"id\":\"mixed\",\"artifacts\":[{\"kind\":\"analysis_digest\",\"value\":\"$artifact\"}]}],\"verification\":[\"commit named in report\"]}}")"
+  failure_status=$?
+  set -e
+  test "$failure_status" -ne 0
+  grep -Fq '"error":"invalid_checkpoint"' <<<"$failure"
+  reviewing="$(apply_action "$worker" mixed-worker "$run_dir" "$(rev "$run_dir")" mixed-git \
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"git\",\"identity\":\"$commit\",\"deliverables\":[{\"id\":\"mixed\",\"artifacts\":[{\"kind\":\"commit\",\"value\":\"$commit\"}]}],\"verification\":[\"Standards and Spec review attached\"]}}")"
+  python3 -c 'import json,sys; s=json.load(sys.stdin); assert s["status"] == "reviewing" and s["checkpoint"]["kind"] == "git"' <<<"$reviewing"
+
+  started="$(bash "$worker" start report-worker codex claude "$workspace" \
+    'Produce an evidence-backed report' --new-run --objective-ref workflow=freeflow \
+    --required-deliverable report='Source-backed report')"
+  run_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])' <<<"$started")"
+  run_dir="$XDG_STATE_HOME/dvandva/runs/$run_id"
+  bash "$reviewer" start report-reviewer claude codex "$workspace" --run-id "$run_id" >/dev/null
+  approve_explainer "$worker" report-worker "$reviewer" report-reviewer \
+    "$worker" report-worker "$run_dir" "$(rev "$run_dir")" report-delivery report-start
+  artifact="$(stage_analysis "$worker" report-worker "$run_dir" report-only)"
+  identity="$(analysis_identity "$artifact")"
+  reviewing="$(apply_action "$worker" report-worker "$run_dir" "$(rev "$run_dir")" report-analysis \
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$identity\",\"deliverables\":[{\"id\":\"report\",\"artifacts\":[{\"kind\":\"analysis_digest\",\"value\":\"$artifact\"}]}],\"verification\":[\"sources checked\"]}}")"
+  python3 -c 'import json,sys; s=json.load(sys.stdin); assert s["status"] == "reviewing" and s["checkpoint"]["kind"] == "analysis"' <<<"$reviewing"
+}
+run_checkpoint_kind_guard
+
 # A five-member Review stays one run and one atomic checkpoint. The kernel's
 # existing complete-manifest interface rejects partial/duplicate coverage; a
 # receipt/readiness update uses approval withdrawal and a complete replacement.
@@ -466,12 +558,30 @@ run_batch_review() {
   local worker="$HOME/.agents/skills/vadi/scripts/dvandva-role.sh"
   local reviewer="$HOME/.claude/skills/prativadi/scripts/dvandva-role.sh"
   local started run_id run_dir failure failure_status reviewing digest identity terminal missing_identity
-  local -a round=() receipts=() members=(101 102 103 104 105) entries=() receipt_entries=()
-  local -a refs=() deliverables=()
-  local member artifact manifest="" receipt_manifest=""
+  local fixture_root="$test_root/github-review-fixture" round_bundle receipt_bundle
+  local manifest missing_manifest duplicate_manifest receipt_manifest
+  local -a members=(101 102 103 104 105) refs=() deliverables=()
+  local -a initial_specs=() final_specs=()
+  local member
+  python3 "$repo_root/tests/skills/fixtures/github_review_lifecycle.py" "$fixture_root"
+  python3 - "$fixture_root/summary.json" <<'PY'
+import json, sys
+summary = json.load(open(sys.argv[1]))
+events = {event["event"] for event in summary["events"]}
+required = {
+    "interrupted_before_write", "interrupted_after_write", "checks_changed",
+    "evidence_invalidated", "evidence_rechecked", "author_repair",
+    "disposition_changed", "review_submitted",
+}
+assert required <= events
+assert summary["zero_duplicate_confirmed_retries"] is True
+assert summary["write_count"] == summary["receipt_count"]
+PY
   for member in "${members[@]}"; do
     refs+=(--objective-ref "review_member=https://github.com/axatbhardwaj/Dvandva/pull/$member")
     deliverables+=(--required-deliverable "pr-$member=Review https://github.com/axatbhardwaj/Dvandva/pull/$member")
+    initial_specs+=("pr-$member=$fixture_root/initial/pr-$member.json")
+    final_specs+=("pr-$member=$fixture_root/final/pr-$member.json")
   done
   started="$(bash "$worker" start batch-worker codex claude "$workspace" \
     'Review the frozen five-PR fixture' --new-run --objective-ref workflow=review \
@@ -482,24 +592,17 @@ run_batch_review() {
   approve_explainer "$worker" batch-worker "$reviewer" batch-reviewer \
     "$worker" batch-worker "$run_dir" "$(rev "$run_dir")" batch-review batch-start
 
-  for member in "${members[@]}"; do
-    artifact="$(stage_analysis "$worker" batch-worker "$run_dir" "round-pr-$member")"
-    round+=("$artifact")
-  done
-  identity="$(analysis_identity "${round[@]}")"
-  for index in "${!members[@]}"; do
-    member="${members[$index]}"
-    artifact="${round[$index]}"
-    entries+=("{\"id\":\"pr-$member\",\"artifacts\":[{\"kind\":\"analysis_digest\",\"value\":\"$artifact\"}]}")
-  done
-  manifest="$(IFS=,; printf '%s' "${entries[*]}")"
-  local missing_manifest
-  missing_manifest="$(IFS=,; printf '%s' "${entries[*]:0:4}")"
-  missing_identity="$(analysis_identity "${round[@]:0:4}")"
+  round_bundle="$(stage_analysis_manifest "$worker" batch-worker "$run_dir" \
+    initial "${initial_specs[@]}")"
+  identity="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["identity"])' <<<"$round_bundle")"
+  manifest="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["deliverables"],separators=(",",":")))' <<<"$round_bundle")"
+  missing_manifest="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["deliverables"][:4],separators=(",",":")))' <<<"$round_bundle")"
+  missing_identity="$(python3 -c 'import hashlib,json,sys; values=json.load(sys.stdin)["digests"][:4]; print(hashlib.sha256("\n".join(sorted(set(values))).encode()).hexdigest())' <<<"$round_bundle")"
+  duplicate_manifest="$(python3 -c 'import json,sys; values=json.load(sys.stdin)["deliverables"]; print(json.dumps(values + values[:1],separators=(",",":")))' <<<"$round_bundle")"
 
   set +e
   failure="$(apply_action_error "$worker" batch-worker "$run_dir" "$(rev "$run_dir")" batch-missing \
-    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$missing_identity\",\"deliverables\":[${missing_manifest}],\"verification\":[\"five deterministic PR fixtures inspected\"]}}")"
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$missing_identity\",\"deliverables\":${missing_manifest},\"verification\":[\"five deterministic PR fixtures inspected\"]}}")"
   failure_status=$?
   set -e
   test "$failure_status" -ne 0
@@ -507,14 +610,14 @@ run_batch_review() {
 
   set +e
   failure="$(apply_action_error "$worker" batch-worker "$run_dir" "$(rev "$run_dir")" batch-duplicate \
-    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$identity\",\"deliverables\":[${manifest},${entries[0]}],\"verification\":[\"five deterministic PR fixtures inspected\"]}}")"
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$identity\",\"deliverables\":${duplicate_manifest},\"verification\":[\"five deterministic PR fixtures inspected\"]}}")"
   failure_status=$?
   set -e
   test "$failure_status" -ne 0
   grep -Fq '"error":"invalid_checkpoint"' <<<"$failure"
 
   reviewing="$(apply_action "$worker" batch-worker "$run_dir" "$(rev "$run_dir")" batch-round \
-    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$identity\",\"deliverables\":[${manifest}],\"verification\":[\"five deterministic PR fixtures inspected: mixed APPROVE and REQUEST_CHANGES; pending CI recorded\"]}}")"
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$identity\",\"deliverables\":${manifest},\"verification\":[\"five deterministic PR fixtures inspected: mixed APPROVE and REQUEST_CHANGES; pending CI recorded\"]}}")"
   digest="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' <<<"$reviewing")"
   approve_explainer "$worker" batch-worker "$reviewer" batch-reviewer \
     "$worker" batch-worker "$run_dir" "$(rev "$run_dir")" batch-review batch-round
@@ -525,19 +628,12 @@ run_batch_review() {
     '{"type":"withdraw_approval","reason":"Record exact GitHub receipts and pending-to-green readiness"}' >/dev/null
   approve_explainer "$worker" batch-worker "$reviewer" batch-reviewer \
     "$worker" batch-worker "$run_dir" "$(rev "$run_dir")" batch-review batch-receipt-open
-  for member in "${members[@]}"; do
-    artifact="$(stage_analysis "$worker" batch-worker "$run_dir" "receipt-pr-$member")"
-    receipts+=("$artifact")
-  done
-  identity="$(analysis_identity "${receipts[@]}")"
-  for index in "${!members[@]}"; do
-    member="${members[$index]}"
-    artifact="${receipts[$index]}"
-    receipt_entries+=("{\"id\":\"pr-$member\",\"artifacts\":[{\"kind\":\"analysis_digest\",\"value\":\"$artifact\"}]}")
-  done
-  receipt_manifest="$(IFS=,; printf '%s' "${receipt_entries[*]}")"
+  receipt_bundle="$(stage_analysis_manifest "$worker" batch-worker "$run_dir" \
+    final "${final_specs[@]}")"
+  identity="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["identity"])' <<<"$receipt_bundle")"
+  receipt_manifest="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["deliverables"],separators=(",",":")))' <<<"$receipt_bundle")"
   reviewing="$(apply_action "$worker" batch-worker "$run_dir" "$(rev "$run_dir")" batch-receipts \
-    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$identity\",\"deliverables\":[${receipt_manifest}],\"verification\":[\"actor PR head state and body digest receipts verified; pending checks now green; unchanged reviews submitted zero duplicate writes\"]}}")"
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$identity\",\"deliverables\":${receipt_manifest},\"verification\":[\"actor PR head state and body digest receipts verified; pending checks now green; unchanged reviews submitted zero duplicate writes\"]}}")"
   digest="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' <<<"$reviewing")"
   approve_explainer "$worker" batch-worker "$reviewer" batch-reviewer \
     "$worker" batch-worker "$run_dir" "$(rev "$run_dir")" batch-review batch-receipts

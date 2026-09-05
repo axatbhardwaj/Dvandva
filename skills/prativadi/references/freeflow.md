@@ -56,10 +56,17 @@ critical or disputed results when feasible.
 Use analysis checkpoints only for deliveries without code changes. Any
 code-carrying result uses a `git` checkpoint; mixed test-and-fix deliveries use
 a `git` checkpoint and the required Standards/Spec companion review when available,
-or its disclosed native fallback. Bind every non-code deliverable through an
-immutable Git commit, tree, or blob available to the reviewer; staged analysis
-may supplement but never replace that Git candidate or appear as an unsupported
-Git-manifest artifact kind. A moving branch or mutable report URL is invalid.
+or its disclosed native fallback. For a code-carrying candidate, bind every
+included non-code deliverable through an immutable Git commit, tree, or blob
+available to the reviewer; staged analysis may supplement but never replace
+that Git candidate or appear as an unsupported Git-manifest artifact kind.
+Report-only analysis deliverables remain staged analysis artifacts. A moving
+branch or mutable report URL is invalid.
+
+At initiation, mark code-carrying and mixed Freeflow scope with the existing
+objective reference `delivery_kind=code`. The role facade rejects an analysis
+checkpoint for that scope; naming a commit inside staged analysis does not turn
+it into a Git candidate. Do not add this marker to a report-only analysis run.
 
 Use only the startup review and each complete delivery-checkpoint review. Do
 not checkpoint unfinished work for advice. Consequential approach changes are

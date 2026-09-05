@@ -86,7 +86,7 @@ duplicate="$(bash "$vadi" start worker-duplicate claude codex "$workspace" \
   'Malformed duplicate batch' --new-run \
   --objective-ref workflow=review \
   --objective-ref review_member=https://github.com/example/project/pull/55 \
-  --objective-ref review_member=https://github.com/example/project/pull/55 \
+  --objective-ref review_member=https://GITHUB.com/EXAMPLE/PROJECT/pull/55 \
   --required-deliverable pr-55='Review https://github.com/example/project/pull/55')"
 duplicate_id="$(field run_id <<<"$duplicate")"
 set +e
