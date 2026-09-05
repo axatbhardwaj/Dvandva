@@ -6,6 +6,7 @@ The facade JSON is authoritative. Use only `scripts/dvandva-role.sh`; first
 Read `references/model-selection.md` before selecting or dispatching a model.
 
 ```text
+discover SESSION CURRENT_HARNESS PEER_HARNESS WORKSPACE --workflow NAME [--task-reference REF] [--objective EXACT] [--wait]
 start SESSION CURRENT_HARNESS PEER_HARNESS WORKSPACE [OBJECTIVE [TASK]] [--objective-ref KIND=VALUE] [--required-deliverable ID=DESCRIPTION] [--wait|--new-run|--run-id ID] [--autonomous]
 read  SESSION RUN_DIR
 observe SESSION RUN_DIR
@@ -31,6 +32,10 @@ name `codex` (case-insensitive); aliases such as `codex-cli`, `gpt`, or
 `openai` take the no-Codex branch and skip Sites publication.
 
 ## Start and snapshot contract
+
+Read `references/initiation.md` before activation and `references/discovery.md`
+for Discovery. Their startup source verification, workflow completion overrides
+and intentional human-input waits take precedence over the ordinary loop below.
 
 New runs require the human's objective and every required deliverable.
 Exact joins pass only `--run-id` unless the human explicitly supplied objective,
@@ -80,8 +85,9 @@ kernel never leaves `request_human_decision` as the only way forward.
 
 ## Workflow selection and vadi lifecycle
 
-Read objective ref `workflow=implementation|babysit|pr_review`; when absent, use
-`implementation`. Existing checkpoint, supersession, explainer, Human Decision,
+Route new workflows through initiation.md: discovery, implementation,
+babysitting and review. Legacy refs `workflow=implementation|babysit|pr_review`
+retain their contracts below; when absent, use `implementation`. Existing checkpoint, supersession, explainer, Human Decision,
 polling, and Matt `code-review` rules remain in force. Parents alone mutate
 Baton or GitHub. Native local subagents may perform only snapshot-authorized
 semantic work; while `advisory_actions` includes `work`, the vadi parent may

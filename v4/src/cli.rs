@@ -37,6 +37,10 @@ enum Command {
         workspace: PathBuf,
     },
     Discover {
+        /// Require the observational registry interface. Older kernels reject
+        /// this flag rather than silently running a repairing read.
+        #[arg(long)]
+        read_only: bool,
         #[arg(long)]
         runs_dir: PathBuf,
         #[arg(long)]
@@ -525,6 +529,7 @@ pub fn run() -> Result<(), CliError> {
             Ok(())
         }
         Command::Discover {
+            read_only: _,
             runs_dir,
             repository_id,
             reviewer_harness,

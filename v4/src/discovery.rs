@@ -58,6 +58,8 @@ pub enum DiscoveryKind {
 #[derive(Debug, Serialize)]
 pub struct RunCandidate {
     pub run_id: String,
+    pub worker_harness: String,
+    pub reviewer_harness: String,
     pub run_dir: PathBuf,
     pub task_reference: Option<String>,
     pub task_summary: String,
@@ -164,7 +166,8 @@ pub fn discover(
             }
             continue;
         }
-        match RunChannel::open(&run_dir).read() {
+        // Enumeration must never reconcile history or create a run lock.
+        match RunChannel::open(&run_dir).peek() {
             Ok(baton) => {
                 if query.run_id.is_none() {
                     if let Some(idle_days) = stale_idle_days(&run_dir, &baton, &query) {
@@ -478,6 +481,8 @@ fn candidate(
         baton.scope_deliverables
     };
     let candidate = RunCandidate {
+        worker_harness: baton.participants.worker.harness.clone(),
+        reviewer_harness: baton.participants.reviewer.harness.clone(),
         run_id: baton.run_id,
         run_dir: run_dir.to_owned(),
         task_reference,

@@ -1046,3 +1046,45 @@ fn worker_discovery_is_independent_of_a_live_reviewer_claim() {
     assert_eq!(outcome["outcome"], "match");
     assert_eq!(outcome["candidates"][0]["run_id"], "def-123-worker");
 }
+
+#[test]
+fn read_only_discovery_leaves_unreconciled_history_and_lock_untouched() {
+    let root = tempfile::tempdir().unwrap();
+    let run_dir = create_run(
+        root.path(),
+        "read-only",
+        REPOSITORY_ID,
+        Some("DEF-123"),
+        "claude",
+    );
+    let channel = RunChannel::open(&run_dir);
+    let original = std::fs::read(run_dir.join("baton.json")).unwrap();
+    // A history successor is durable but the installed head predates it.
+    // A legal claim edge is prepared through the public claim API first.
+    claim::claim(&channel, Role::Worker, "worker", 1800, 0).unwrap();
+    std::fs::write(run_dir.join("baton.json"), &original).unwrap();
+    std::fs::remove_file(run_dir.join(".baton.lock")).unwrap();
+    let before = std::fs::read(run_dir.join("baton.json")).unwrap();
+    let output = command()
+        .args([
+            "discover",
+            "--read-only",
+            "--runs-dir",
+            root.path().to_str().unwrap(),
+            "--repository-id",
+            REPOSITORY_ID,
+            "--reviewer-harness",
+            "claude",
+        ])
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(result["outcome"], "match");
+    assert_eq!(std::fs::read(run_dir.join("baton.json")).unwrap(), before);
+    assert!(!run_dir.join(".baton.lock").exists());
+}

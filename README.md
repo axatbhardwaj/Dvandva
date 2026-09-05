@@ -1,7 +1,7 @@
 # Dvandva
 
-> **Dvandva v4 is the active skill-only interface.** The `skills-v0.3.8`
-> GitHub release pairs the private, non-publishable kernel `0.3.8` with schema
+> **Dvandva v4 is the active skill-only interface.** The `skills-v0.3.9`
+> GitHub release pairs the private, non-publishable kernel `0.3.9` with schema
 > `dvandva.run.v2` and role API 2. Source checkout and tests are
 > development-only.
 >
@@ -66,6 +66,41 @@ prativadi automatically uses the model-invocable `code-review` skill for Git
 checkpoints, with native review for analysis checkpoints or when that companion
 is unavailable. See
 [`docs/workflows/skill-only-run.md`](docs/workflows/skill-only-run.md).
+
+## Four workflows
+
+- **Discovery:** Claude Fable 5.1/high vadi and Codex Astra/high prativadi
+  discover relevant docs and code, independently investigate, reconcile questions,
+  and review a spec. A second linked run in the same sessions produces verified
+  tickets. You explicitly invoke Matt's `/grill-with-docs`, `/to-spec`, and
+  `/to-tickets` at their entry points; Dvandva does not invoke them for you.
+- **Implementation:** fresh Codex Sol/high vadi and Claude Opus prativadi consume
+  approved spec/tickets. Invoke `/implement` in vadi when using Matt's method.
+- **Babysitting:** repair and maintain our scoped PRs, including CI, rebases and
+  feedback, with separate human merge authority.
+- **Review:** independently review others' PRs and re-review changed candidates
+  until the exact approved head satisfies required checks. Authors own fixes.
+
+For discovery, start Fable with:
+
+```text
+Act as vadi for discovery of <objective>.
+/grill-with-docs
+```
+
+Docs are discovered automatically; supplied references are optional search seeds.
+Launch Astra independently with `Act as prativadi for discovery of <objective>`.
+Prativadi discovers available runs in the shared XDG registry and exact-joins
+an unambiguous scope. Multiple matches require a choice; no match waits for vadi.
+Vadi's exact peer join prompt remains an optional recovery shortcut, so a delayed
+activation message does not prevent the pair from forming. The existing initial explainer review
+records source verification and establishes the pair. Skill-invocation waits
+show the pending command and resume the exact run on your next message.
+See the [initiation contract](skills/vadi/references/initiation.md) and
+[discovery contract](skills/vadi/references/discovery.md) for source manifests,
+human decisions, checkpoint gates and linked-run receipts. These are role-skill
+policies on the existing v2 kernel, not new schema-level guarantees. Legacy
+`babysit` and one-shot `pr_review` runs preserve their original semantics.
 
 ## Repo map
 

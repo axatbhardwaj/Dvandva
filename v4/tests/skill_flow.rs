@@ -719,8 +719,8 @@ fn setup_skill_sources_pin_v2_without_implicit_run_migration() {
         repository_file("skills/setup-dvandva/references/installation.md")
     );
     for required in [
-        "0.3.8",
-        "skills-v0.3.8",
+        "0.3.9",
+        "skills-v0.3.9",
         "release target",
         "fails closed if either is missing",
         "Linux x86_64 only",
@@ -765,7 +765,7 @@ fn version_and_probe_report_the_installation_contract() {
         .arg("--version")
         .assert()
         .success()
-        .stdout(predicate::str::contains("dvandva-v4 0.3.8"));
+        .stdout(predicate::str::contains("dvandva-v4 0.3.9"));
 
     let output = command()
         .args([
@@ -784,7 +784,7 @@ fn version_and_probe_report_the_installation_contract() {
     );
     let probe: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(probe["package"], "dvandva-v4");
-    assert_eq!(probe["version"], "0.3.8");
+    assert_eq!(probe["version"], "0.3.9");
     assert_eq!(probe["write_schema"], "dvandva.run.v2");
     assert_eq!(probe["role_api"], 2);
     assert_eq!(probe["publish"], false);
@@ -1378,4 +1378,109 @@ fn a_live_worker_run_blocks_silent_duplicate_creation() {
     assert_eq!(result["outcome"], "busy");
     assert_eq!(result["candidates"][0]["run_id"], first["run_id"]);
     assert_eq!(std::fs::read_dir(&runs).unwrap().count(), 1);
+}
+
+#[test]
+fn discovery_initiation_is_distributed_and_preserves_human_entry_points() {
+    let mut copies = Vec::new();
+    for role in ["vadi", "prativadi"] {
+        let (skill, contract) = role_sources(role);
+        for reference in ["initiation", "discovery"] {
+            let pointer = format!("references/{reference}.md");
+            assert!(
+                format!("{skill}\n{contract}").contains(&pointer),
+                "{role} must route to {pointer}"
+            );
+            let source = repository_file(&format!("skills/{role}/{pointer}"));
+            copies.push(source);
+        }
+        let initiation = &copies[copies.len() - 2];
+        for required in [
+            "source manifest",
+            "before reading vadi's conclusions",
+            "run_missing",
+            "waiting_for_skill",
+            "--run-id",
+            "review_explainer",
+            "changes_requested",
+            "approval\nhas empty findings",
+            "30 seconds",
+            "Read-only readiness checks are authorized in Finalizing",
+            "handoff wakes prativadi to verify fresh readiness",
+            "workflow=discovery",
+            "workflow=review",
+            "REQUEST_CHANGES",
+            "required checks",
+            "pr_review",
+            "babysitting",
+        ] {
+            assert!(
+                initiation.contains(required),
+                "{role} initiation lacks {required}"
+            );
+        }
+        let discovery = copies.last().unwrap();
+        for required in [
+            "/grill-with-docs",
+            "/to-spec",
+            "/to-tickets",
+            "predecessor_run",
+            "spec_digest",
+            "blocking edges",
+            "human approves",
+            "analysis",
+            "ready-for-agent",
+            "explicitly invokes",
+            "scope_revision",
+        ] {
+            assert!(
+                discovery.contains(required),
+                "{role} discovery lacks {required}"
+            );
+        }
+    }
+    assert_eq!(
+        copies[0], copies[2],
+        "initiation must ship in both role skills"
+    );
+    assert_eq!(
+        copies[1], copies[3],
+        "discovery must ship in both role skills"
+    );
+}
+
+#[test]
+fn discovery_html_companion_uses_the_discovery_drivers() {
+    let html = repository_file("skills/html-deliverables/SKILL.md");
+    assert!(html.contains("workflow=discovery"));
+    assert!(
+        html.contains("Fable 5.1/high authors as vadi and Codex Astra/high reviews as prativadi")
+    );
+    for role in ["vadi", "prativadi"] {
+        let policy = repository_file(&format!("skills/{role}/references/model-selection.md"));
+        assert!(policy.contains("Discovery follows the Discovery drivers above"));
+    }
+}
+
+#[test]
+fn automatic_discovery_routes_to_exact_join_without_a_prompt_dependency() {
+    let (skill, _) = role_sources("prativadi");
+    assert!(skill.contains("With no run\nID, use the read-only discover ceremony"));
+    assert!(skill.contains("never fall back to discovery"));
+    for role in ["vadi", "prativadi"] {
+        let initiation = repository_file(&format!("skills/{role}/references/initiation.md"));
+        for rule in [
+            "CURRENT_HARNESS PEER_HARNESS WORKSPACE",
+            "Only `outcome=match` is eligible",
+            "all subsequent resumes use that exact ID",
+            "When the user supplies an exact ID, bypass discovery entirely",
+            "copying it is optional",
+        ] {
+            assert!(initiation.contains(rule), "{role} omitted {rule}");
+        }
+    }
+    assert_eq!(
+        repository_file("skills/vadi/scripts/discover.py"),
+        repository_file("skills/prativadi/scripts/discover.py")
+    );
 }

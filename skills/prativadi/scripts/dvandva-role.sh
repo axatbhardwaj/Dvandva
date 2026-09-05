@@ -12,7 +12,7 @@ case "$skill_name" in
 esac
 data_home="${XDG_DATA_HOME:-${HOME:?HOME is required}/.local/share}"
 state_home="${XDG_STATE_HOME:-${HOME:?HOME is required}/.local/state}"
-kernel_version="0.3.8"
+kernel_version="0.3.9"
 # Resolve the pinned version directly, never the shared bin/current selector:
 # a concurrent session selecting another version must not break this run.
 binary="$data_home/dvandva/bin/$kernel_version/dvandva-kernel"
@@ -433,6 +433,15 @@ case "$operation" in
     require_kernel
     "$binary" probe --expected-schema "$schema" --expected-role-api "$role_api"
     ;;
+  discover)
+    require_kernel
+    test "$#" -ge 4 || {
+      printf 'usage: dvandva-role.sh discover SESSION HARNESS PEER WORKSPACE --workflow NAME [--task-reference REF] [--objective EXACT] [--wait]\n' >&2
+      exit 2
+    }
+    python3 "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/discover.py" \
+      "$binary" "$runs_dir" "$role" "$@"
+    ;;
   start)
     require_kernel
     start_role "$@"
@@ -446,7 +455,7 @@ case "$operation" in
     upgrade_role "$@"
     ;;
   *)
-    printf 'usage: dvandva-role.sh {session-id|probe|start|read|observe|claim|reclaim|apply|wait|poll|heartbeat|explainer|analysis|repair-policy|upgrade} ...\n' >&2
+    printf 'usage: dvandva-role.sh {session-id|probe|discover|start|read|observe|claim|reclaim|apply|wait|poll|heartbeat|explainer|analysis|repair-policy|upgrade} ...\n' >&2
     exit 2
     ;;
 esac

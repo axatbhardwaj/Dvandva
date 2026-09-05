@@ -31,8 +31,8 @@ Then explicitly ask one session:
 $setup-dvandva install Dvandva.
 ```
 
-The `skills-v0.3.8` GitHub release provides `dvandva-kernel-linux-x86_64` and
-`SHA256SUMS`. Setup verifies the digest and the complete kernel 0.3.8,
+The `skills-v0.3.9` GitHub release provides `dvandva-kernel-linux-x86_64` and
+`SHA256SUMS`. Setup verifies the digest and the complete kernel 0.3.9,
 `dvandva.run.v2`, role API 2 probe before installing under
 `${XDG_DATA_HOME:-$HOME/.local/share}/dvandva/`, outside `PATH`. The crate is
 non-publishable and no plugin or marketplace package is involved.
@@ -203,3 +203,50 @@ printf 'installed policy check: model invocation allowed\n'
 
 The RED/GREEN fresh-agent scenarios are recorded in
 [`docs/case-studies/2026-09-01-prativadi-code-review-pressure-test.md`](../case-studies/2026-09-01-prativadi-code-review-pressure-test.md).
+
+## Discovery and four-workflow initiation
+
+The active role contracts now expose Discovery, Implementation, Babysitting
+and Review. Read [initiation](../../skills/vadi/references/initiation.md) before
+activation and [discovery](../../skills/vadi/references/discovery.md) for paired
+spec/ticket work. Identical references ship inside both role skills.
+
+New discovery runs record `workflow=discovery` and `discovery_stage=spec|tickets`.
+Source discovery is bounded read-only preflight. Prativadi's independent source
+investigation is part of the existing initial explainer review; ordinary product
+work still waits for its approval. User-only skill waits intentionally yield
+and exact-resume, overriding ordinary foreground polling for that wait only.
+The existing schema, immutable checkpoint cycle and publication gates remain.
+
+Discovery uses Fable 5.1/high as Claude vadi and Astra/high as Codex prativadi.
+Its separate terminal spec and ticket runs share sessions, not mutable approval.
+Implementation starts in fresh Sol/high vadi and Opus prativadi sessions.
+Matt skills remain separately installed and unchanged. `/to-spec` publishes
+before the paired review; a ready-for-agent label cannot replace approval.
+`/to-tickets` retains its human breakdown approval; prativadi verifies published
+tickets and returns changes through the complete analysis checkpoint cycle.
+
+New `workflow=review` extends review across author updates and CI completion.
+The stored `pr_review` workflow remains one-shot for compatibility; a confirmed
+REQUEST_CHANGES ends that legacy objective only. `babysitting` uses the existing
+`babysit` ownership, maintenance and explicit merge-authority rules.
+
+Validation: `cargo test --locked --manifest-path v4/Cargo.toml --test skill_flow`
+checks source contracts and distributed-reference parity. These checks establish
+instruction presence and integration, not a live cross-harness planning run.
+
+## Automatic run lookup
+
+The role facade exposes `discover SESSION HARNESS PEER WORKSPACE --workflow NAME`
+with optional exact `--task-reference`, `--objective` and bounded `--wait`.
+The existing XDG registry is the sole source. Enumeration is read-only and
+uses `RunChannel::peek`; it cannot repair a head or create a lock. The facade
+requires the kernel's `discover --read-only` interface, so earlier kernels fail
+explicitly instead of silently running a repairing read. No schema migration
+or installed-kernel update is performed by lookup.
+
+Prativadi compares returned scopes with the request, then uses exact start;
+an explicit supplied run ID bypasses discovery. A natural-language paraphrase
+is never silently substituted for the selected run's canonical scope. No match
+waits, multiple matches ask, and the chosen ID persists across turns. Discovery
+and existing exact joins are tested by `bash tests/skills/discover.sh`.

@@ -1,6 +1,6 @@
 ---
 name: vadi
-description: Act as vadi for a paired Dvandva run, including implementation, own-PR babysit, or external pr_review. Use when the user says act as vadi, implement as vadi, resume a vadi run, or explicitly invokes $vadi. Do not trigger for ordinary solo implementation.
+description: Act as vadi for a paired Dvandva run, including discovery, implementation, babysitting, or review. Use when the user says act as vadi, implement as vadi, resume a vadi run, or explicitly invokes $vadi. Do not trigger for ordinary solo implementation.
 ---
 
 # Vadi
@@ -11,13 +11,18 @@ explicitly stops.
 
 ## Activation
 
+Read `references/initiation.md` before starting or joining. For discovery,
+also read `references/discovery.md`. Its bounded startup source verification
+and intentional human-input waits are explicit exceptions to the ordinary
+work/poll loop below; all mutations still require facade authorization.
+
 Resolve the stable local session ID and start or resume through the facade.
 Before domain-tool work, the first user-visible protocol output must reproduce
 the returned run ID, canonical objective and scope, status and assignee,
 `next_actions`, and exact `peer_prompt`. Show the `peer_prompt` verbatim in
 its own fenced code block as the last line of the activation block, so the
-human can copy it from a phone. The human starts the peer session with that
-returned prompt; never invoke or wake the peer harness. The first `poll` is
+human can copy it from a phone. The human starts the peer session independently; the returned prompt is an
+optional shortcut. Never invoke or wake the peer harness. The first `poll` is
 illegal until that activation block, with the exact `peer_prompt`, has been
 shown to the human. At run start the kernel withholds `work` until prativadi
 approves the `run_started` explainer, so the only work between the activation

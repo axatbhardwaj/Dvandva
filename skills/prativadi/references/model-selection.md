@@ -1,7 +1,23 @@
 # Active v4 model casting
 
 This is the user-selected workflow policy, not a model-performance benchmark.
-Planning and implementation normally use separate sessions.
+Discovery and implementation use separate sessions.
+
+## Discovery drivers
+
+For `workflow=discovery`, Claude Fable 5.1 at high is vadi and Codex
+Astra (`gpt-6-astra`) at high is prativadi. Verify the actual host catalog;
+never infer model identity from a prompt. Spec and ticket runs reuse these
+sessions and keep separate run identities. Both investigate independently
+through startup scope verification before comparing conclusions. Each driver
+owns its role's explainer work at its selected reasoning level. The Sol/Opus
+HTML and implementation casting below applies to implementation, babysitting
+and review, not discovery. Required model unavailability has no silent fallback.
+
+Matt's user-only entry points remain human-invoked in the owning session:
+`/grill-with-docs`, `/to-spec`, `/to-tickets`, then `/implement` in the fresh
+Codex implementation session. No wrapper automatically invokes those skills.
+Read initiation.md and discovery.md for the paired planning lifecycle.
 
 ## Planning handoff
 
@@ -37,6 +53,8 @@ block ordinary implementation or review.
 
 ## Authorization and isolation
 
+Discovery follows the Discovery drivers above, including authoring and review
+of explainers. The remaining authorization examples describe implementation.
 Select models from the actual host catalog. Use Sol at `high` for general
 implementation and `medium` for HTML authoring.
 Prompt personas do not prove model identity. Required Sol/Opus drivers have no

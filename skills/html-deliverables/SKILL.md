@@ -26,6 +26,14 @@ inspection.
 
 ## Active v4 runs
 
+For `workflow=discovery`, follow the role-local Discovery drivers: Claude
+Fable 5.1/high authors as vadi and Codex Astra/high reviews as prativadi,
+including exact source and desktop/mobile rendering. Use those existing
+sessions; the Sol/medium and Opus stations below apply to other workflows.
+In the staging/publication steps below, "Opus review" means the selected
+prativadi's review for discovery. Parent-only facade mutations, validation,
+immutable bytes and Codex publication still apply.
+
 When `stage_explainer` is legal, including the pre-work `run_started`
 obligation, use native `gpt-5.6-sol` at `medium` reasoning to author the page. If the parent uses a different
 reasoning level, delegate the bounded HTML task to native Sol/medium; a prompt

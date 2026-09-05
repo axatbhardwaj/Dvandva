@@ -25,9 +25,18 @@ mkdir -p "$HOME"
 npx --yes skills add "$repo_root" --copy --global \
   --agent claude-code codex --skill setup-dvandva vadi prativadi html-deliverables -y >/dev/null
 bash "$HOME/.agents/skills/setup-dvandva/scripts/setup-dvandva.sh" \
-  install --version 0.3.8 >/dev/null
+  install --version 0.3.9 >/dev/null
 
 for role in vadi prativadi; do
+  for host_skills in "$HOME/.agents/skills" "$HOME/.claude/skills"; do
+    cmp "$repo_root/skills/$role/scripts/discover.py" "$host_skills/$role/scripts/discover.py"
+  done
+  for reference in initiation discovery; do
+    cmp "$repo_root/skills/$role/references/$reference.md" \
+      "$HOME/.agents/skills/$role/references/$reference.md"
+    cmp "$repo_root/skills/$role/references/$reference.md" \
+      "$HOME/.claude/skills/$role/references/$reference.md"
+  done
   cmp "$repo_root/skills/$role/scripts/dvandva-role.sh" \
     "$HOME/.agents/skills/$role/scripts/dvandva-role.sh"
   cmp "$repo_root/skills/$role/scripts/dvandva-role.sh" \
@@ -409,6 +418,46 @@ run_casting reverse \
 
 # Original incident: exact scope mismatch, checkpoint supersession, and exact-B completion.
 run_supersession_incident
+
+# Discovery startup evidence must use changes_requested, then changed bytes and
+# empty approval findings. Exercise the real facade, not just source wording.
+run_discovery_startup() {
+  local worker="$HOME/.claude/skills/vadi/scripts/dvandva-role.sh"
+  local reviewer="$HOME/.agents/skills/prativadi/scripts/dvandva-role.sh"
+  local started run_id run_dir source obligation digest snapshot
+  started="$(bash "$worker" start discovery-worker claude codex "$workspace" \
+    'Discover a feature' --new-run --objective-ref workflow=discovery \
+    --objective-ref discovery_stage=spec --required-deliverable spec='Reviewed spec')"
+  run_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])' <<<"$started")"
+  run_dir="$XDG_STATE_HOME/dvandva/runs/$run_id"
+  bash "$reviewer" start discovery-reviewer codex claude "$workspace" --run-id "$run_id" >/dev/null
+  obligation="$(obligation_json "$run_dir")"
+  source="$test_root/discovery-source.html"
+  printf '<h1>Source manifest</h1><p>repo@fixed-revision</p>\n' >"$source"
+  apply_action "$worker" discovery-worker "$run_dir" "$(rev "$run_dir")" discovery-stage \
+    "{\"type\":\"stage_explainer\",\"obligation\":$obligation,\"after_seq\":$(receipt_seq "$run_dir"),\"source_path\":\"$source\"}" >/dev/null
+  digest="$(sha256sum "$source" | cut -d' ' -f1)"
+  apply_action "$reviewer" discovery-reviewer "$run_dir" "$(rev "$run_dir")" discovery-research \
+    "{\"type\":\"record_explainer_review\",\"obligation\":$obligation,\"after_seq\":$(receipt_seq "$run_dir"),\"source_digest\":\"$digest\",\"verdict\":\"changes_requested\",\"findings\":[\"Incorporate independent evidence: existing interface supports the feature; ask about retention.\"]}" >/dev/null
+  snapshot="$(bash "$worker" read discovery-worker "$run_dir")"
+  python3 -c 'import json,sys; s=json.load(sys.stdin); assert "work" not in s["advisory_actions"]' <<<"$snapshot"
+  printf '<p>Independent evidence: existing interface supports the feature; retention is a human question. Vadi agrees after checking.</p>\n' >>"$source"
+  apply_action "$worker" discovery-worker "$run_dir" "$(rev "$run_dir")" discovery-restage \
+    "{\"type\":\"stage_explainer\",\"obligation\":$obligation,\"after_seq\":$(receipt_seq "$run_dir"),\"source_path\":\"$source\"}" >/dev/null
+  digest="$(sha256sum "$source" | cut -d' ' -f1)"
+  apply_action "$reviewer" discovery-reviewer "$run_dir" "$(rev "$run_dir")" discovery-approve \
+    "{\"type\":\"record_explainer_review\",\"obligation\":$obligation,\"after_seq\":$(receipt_seq "$run_dir"),\"source_digest\":\"$digest\",\"verdict\":\"approved\",\"findings\":[]}" >/dev/null
+  snapshot="$(bash "$worker" read discovery-worker "$run_dir")"
+  python3 -c 'import json,sys; s=json.load(sys.stdin); assert "work" in s["advisory_actions"]' <<<"$snapshot"
+  # Intentional invocation wait is durable progress, not terminal completion.
+  apply_action "$worker" discovery-worker "$run_dir" "$(rev "$run_dir")" discovery-skill-wait \
+    '{"type":"report_progress","phase":"waiting","detail":"waiting_for_skill: /to-spec; research reconciled"}' >/dev/null
+  snapshot="$(bash "$worker" start discovery-worker claude codex "$workspace" --run-id "$run_id")"
+  python3 -c 'import json,sys; s=json.load(sys.stdin); assert s["run_id"] == sys.argv[1]' "$run_id" <<<"$snapshot"
+  snapshot="$(bash "$worker" read discovery-worker "$run_dir")"
+  python3 -c 'import json,sys; s=json.load(sys.stdin); assert s["status"] == "working"; assert s["participants"]["worker"]["progress"]["detail"].startswith("waiting_for_skill: /to-spec")' <<<"$snapshot"
+}
+run_discovery_startup
 
 test ! -e "$test_root/peer-launched"
 printf 'two-role skill canary: ok\n'
