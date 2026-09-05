@@ -40,6 +40,60 @@ def bounded_text(path, required):
         return False
 
 
+def strip_yaml_comment(value):
+    quote = None
+    escaped = False
+    for index, character in enumerate(value):
+        if quote == '"' and character == "\\" and not escaped:
+            escaped = True
+            continue
+        if character in {"'", '"'} and not escaped:
+            if quote is None:
+                quote = character
+            elif quote == character:
+                quote = None
+        if character == "#" and quote is None and (index == 0 or value[index - 1].isspace()):
+            return value[:index].rstrip()
+        escaped = False
+    return None if quote else value.strip()
+
+
+def parse_mapping(lines):
+    """Parse the nested scalar-map subset used by skill metadata."""
+    values = {}
+    seen = set()
+    parents = []
+    for raw in lines:
+        if not raw.strip() or raw.lstrip().startswith("#"):
+            continue
+        if "\t" in raw:
+            return None
+        indent = len(raw) - len(raw.lstrip(" "))
+        if indent % 2 or indent // 2 > len(parents):
+            return None
+        match = re.fullmatch(r" *([A-Za-z0-9_-]+):\s*(.*)", raw)
+        if not match:
+            return None
+        level = indent // 2
+        path = tuple(parents[:level] + [match.group(1)])
+        if path in seen:
+            return None
+        seen.add(path)
+        value = strip_yaml_comment(match.group(2))
+        if value is None:
+            return None
+        if not value:
+            parents = list(path)
+            continue
+        if value[0] in "[{|>" or value[-1:] in "]}":
+            return None
+        if value[0] in {"'", '"'} and value[-1:] != value[0]:
+            return None
+        parents = list(path[:-1])
+        values[path] = value.strip("'\"").casefold()
+    return values
+
+
 def frontmatter_disables_model_invocation(text):
     lines = text.splitlines()
     if not lines or lines[0] != "---":
@@ -48,49 +102,13 @@ def frontmatter_disables_model_invocation(text):
         end = lines[1:].index("---") + 1
     except ValueError:
         return None
-    metadata = lines[1:end]
-    # This is intentionally a strict subset of YAML: skill metadata only needs
-    # top-level scalar keys for this policy. Reject syntax we cannot prove valid
-    # instead of letting malformed metadata authorize a user-only boundary.
-    values = {}
-    for line in metadata:
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        match = re.fullmatch(r"([A-Za-z0-9_-]+):\s*([^#]*?)(?:\s+#.*)?", line)
-        if not match:
-            return None
-        value = match.group(2).strip()
-        if not value or value[0] in "[{|'\">" or value[-1:] in "]}":
-            return None
-        values[match.group(1)] = value.casefold()
-    return values.get("disable-model-invocation") == "true"
+    values = parse_mapping(lines[1:end])
+    return None if values is None else values.get(("disable-model-invocation",)) == "true"
 
 
 def policy_disables_implicit_invocation(text):
-    lines = text.splitlines()
-    policy_value = None
-    in_policy = False
-    for line in lines:
-        if not line.strip() or line.lstrip().startswith("#"):
-            continue
-        if not line.startswith((" ", "\t")):
-            match = re.fullmatch(r"([A-Za-z0-9_-]+):\s*([^#]*?)(?:\s+#.*)?", line)
-            if not match:
-                return None
-            value = match.group(2).strip()
-            if value and (value[0] in "[{|'\">" or value[-1:] in "]}"):
-                return None
-            in_policy = match.group(1) == "policy" and not value
-            continue
-        match = re.fullmatch(r" {2}([A-Za-z0-9_-]+):\s*([^#]*?)(?:\s+#.*)?", line)
-        if not in_policy or not match:
-            return None
-        value = match.group(2).strip()
-        if not value or value[0] in "[{|'\">" or value[-1:] in "]}":
-            return None
-        if match.group(1) == "allow_implicit_invocation":
-            policy_value = value.casefold()
-    return policy_value == "false"
+    values = parse_mapping(text.splitlines())
+    return None if values is None else values.get(("policy", "allow_implicit_invocation")) == "false"
 
 
 def metadata_marks_user_only(root):
