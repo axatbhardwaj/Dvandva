@@ -35,6 +35,53 @@ Check actual model identity, role skills, required explicitly invoked companion
 skills and tracker access. Report a missing capability without installing,
 reconfiguring or silently substituting it. Follow model-selection.md.
 
+## Automatic peer discovery
+
+The human starts both sessions independently under the same Linux user and
+XDG state root. Vadi registers the run through start in
+`$XDG_STATE_HOME/dvandva/runs` (default `~/.local/state/dvandva/runs`). Keep one
+Baton per run. Never create a second registry, a global single Baton or a raw
+`.dvandva` file. When the task has a ticket or PR, vadi records its canonical
+reference with `--task-reference`: use the tracker issue key, or the full
+canonical `https://github.com/OWNER/REPO/pull/NUMBER` URL for a GitHub PR.
+Discover this identity from the request and repository; do not invent a ticket.
+
+When prativadi has no explicit run ID, call:
+
+```text
+discover SESSION CURRENT_HARNESS PEER_HARNESS WORKSPACE --workflow NAME [--task-reference REF] [--objective EXACT] [--wait]
+```
+
+This facade command identifies the repository across worktrees and returns
+available candidate scopes without claiming, renewing, repairing, creating or
+archiving runs. It filters both harness identities, workflow and optional exact task reference. Reserve
+`--objective` for known canonical wording; natural-language paraphrases belong
+to the role's comparison of returned scopes, not an exact string filter.
+`--wait` bounds each lookup to 60 seconds; repeat a `none` result while waiting
+for vadi to register a matching run. Unrelated workflows must not make it spin.
+A missing read-only discovery capability is a kernel-version blocker: report
+it rather than inspecting files directly or creating a replacement run.
+
+Only `outcome=match` is eligible for automatic selection. For that candidate,
+compare its complete objective, task, required deliverables
+and intended pairing with the human's request. Join automatically only when
+that scope unambiguously matches; record the selected run ID and use exact
+`start --run-id` with the human's task reference, when supplied, as an additional
+scope check. Otherwise show candidate objectives and ask which one is intended.
+With multiple matches, show a short choice; never choose the newest run or the
+closest wording. With no available match, keep bounded discovery waiting;
+`corrupt`, `busy` and `upgrade_required` are explicit outcomes, not permission
+to start solo. After joining, verify the fresh scope still matches before domain
+work; all subsequent resumes use that exact ID, even if another run appears.
+When the user supplies an exact ID, bypass discovery entirely and preserve
+run_missing/scope_mismatch behavior. No background completion or auto-wake
+capability is assumed.
+
+The exact peer prompt is still a recovery shortcut, but copying it is optional:
+prativadi can discover the run even while vadi's activation turn is polling.
+If interrupted before pairing, read fresh state and re-show the exact peer
+prompt when the reviewer remains unjoined; an explicit stop still takes priority.
+
 ## Join and reconcile
 
 Vadi starts the run with its objective, required output and workflow refs.

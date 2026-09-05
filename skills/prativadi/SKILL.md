@@ -16,8 +16,10 @@ also read `references/discovery.md`. Its bounded startup source verification
 and intentional human-input waits are explicit exceptions to the ordinary
 work/poll loop below; all mutations still require facade authorization.
 
-Resolve the stable local session ID and join through the facade. Exact joins
-use the run ID from the human-pasted peer prompt. The human starts the peer
+Resolve the stable local session ID and join through the facade. With no run
+ID, use the read-only discover ceremony in initiation.md, select an unambiguous
+scope, then exact-join its returned ID. Exact joins use the supplied run ID and
+never fall back to discovery. The human starts the peer
 session; never invoke or wake the peer harness. Surface every start outcome
 before domain-tool work. The first `poll` is illegal until that start outcome
 has been shown to the human.

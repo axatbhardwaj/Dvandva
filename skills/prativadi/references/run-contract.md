@@ -6,6 +6,7 @@ The facade JSON is authoritative. Use only `scripts/dvandva-role.sh`; first
 Read `references/model-selection.md` before selecting or dispatching a model.
 
 ```text
+discover SESSION CURRENT_HARNESS PEER_HARNESS WORKSPACE --workflow NAME [--task-reference REF] [--objective EXACT] [--wait]
 start SESSION CURRENT_HARNESS PEER_HARNESS WORKSPACE [OBJECTIVE [TASK]] [--objective-ref KIND=VALUE] [--required-deliverable ID=DESCRIPTION] [--wait|--run-id ID] [--autonomous]
 read  SESSION RUN_DIR
 observe SESSION RUN_DIR
