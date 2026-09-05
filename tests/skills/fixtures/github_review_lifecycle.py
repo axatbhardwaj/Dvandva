@@ -167,6 +167,22 @@ class GitHubFixture:
             "evidence_valid": self.evidence_valid[number],
         }
 
+    def ready(self) -> bool:
+        for number, pr in self.prs.items():
+            if pr["disposition"] != "open":
+                continue
+            if (
+                pr["checks"] != "green"
+                or pr["blocking_feedback"]
+                or self.verdicts[number] != "APPROVE"
+                or not self.evidence_valid[number]
+                or self.find_exact(
+                    number, REVIEWER, str(pr["head"]), "APPROVE", self.bodies[number]
+                ) is None
+            ):
+                return False
+        return True
+
 
 def write_artifacts(root: Path, phase: str, artifacts: dict[int, dict[str, object]]) -> None:
     directory = root / phase
@@ -180,6 +196,8 @@ def write_artifacts(root: Path, phase: str, artifacts: dict[int, dict[str, objec
 def run(root: Path) -> None:
     fixture = GitHubFixture()
     assert set(fixture.verdicts.values()) == {"APPROVE", "REQUEST_CHANGES"}
+    assert not fixture.ready()
+    initial_ready = fixture.ready()
     initial = {number: fixture.artifact(number) for number in fixture.prs}
 
     # An interruption immediately before a write has no receipt to reuse.
@@ -220,6 +238,8 @@ def run(root: Path) -> None:
     )
     assert retry["outcome"] == "confirmed_existing"
     assert fixture.write_count == writes_after_interruption
+    assert not fixture.ready()
+    requested_changes_ready = fixture.ready()
 
     # Identity and receipt matching is exact. Actor, head, state, and body all
     # participate; author self-review is rejected.
@@ -301,6 +321,7 @@ def run(root: Path) -> None:
     fixture.prs[105]["disposition"] = "closed"
     fixture.record("disposition_changed", 101, disposition="merged")
     fixture.record("disposition_changed", 105, disposition="closed")
+    assert fixture.ready()
     for number, pr in fixture.prs.items():
         if pr["disposition"] != "open":
             continue
@@ -326,6 +347,9 @@ def run(root: Path) -> None:
         "write_count": fixture.write_count,
         "receipt_count": len(fixture.receipts),
         "zero_duplicate_confirmed_retries": True,
+        "initial_ready": initial_ready,
+        "requested_changes_ready": requested_changes_ready,
+        "final_ready": fixture.ready(),
         "events": fixture.events,
     }
     (root / "summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")

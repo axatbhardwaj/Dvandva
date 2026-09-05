@@ -1632,6 +1632,7 @@ fn review_validation_uses_public_facade_and_separates_simulated_from_live_eviden
     let canary = repository_file("tests/skills/two-role-canary.sh");
     let fixture = repository_file("tests/skills/fixtures/github_review_lifecycle.py");
     let facade = repository_file("skills/vadi/scripts/dvandva-role.sh");
+    let checkpoint_guard = repository_file("skills/vadi/scripts/checkpoint_guard.py");
     let report =
         repository_file("docs/case-studies/2026-09-05-freeflow-multi-pr-review-validation.md");
 
@@ -1656,16 +1657,9 @@ fn review_validation_uses_public_facade_and_separates_simulated_from_live_eviden
             "GitHub fixture omitted {required:?}"
         );
     }
-    assert!(facade.contains("delivery_kind"));
-    assert!(facade.contains("code-carrying delivery requires a git checkpoint"));
-    assert!(facade.contains("snapshot revision does not match expected revision"));
-    assert!(facade.contains("Freeflow delivery_kind must be exactly one of code or analysis"));
     assert!(facade.contains("copy_action_once"));
     assert!(facade.contains("chmod 600 \"$facade_action_file\""));
     assert!(facade.contains("--action \"$facade_action_file\""));
-    assert!(facade.contains("(identity, \"commit\")"));
-    assert!(facade.contains("\"cat-file\", \"-t\""));
-    assert!(!facade.contains("cat-file\", \"-e\""));
     assert_eq!(
         facade
             .matches("guard_checkpoint_kind \"$snapshot\"")
@@ -1674,6 +1668,11 @@ fn review_validation_uses_public_facade_and_separates_simulated_from_live_eviden
     );
     assert!(facade.contains("\"$binary\" role read \"${common[@]}\""));
     assert!(!facade.contains("$run_dir/baton.json"));
+    assert_eq!(
+        checkpoint_guard,
+        repository_file("skills/prativadi/scripts/checkpoint_guard.py")
+    );
+    assert!(repository_file("tests/skills/checkpoint-guard.sh").contains("checkpoint guard: ok"));
     for required in [
         "Simulated service and canary evidence",
         "Actual paired/model evidence",

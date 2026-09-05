@@ -57,7 +57,9 @@ round is approved.
 The discovery regression enumerates a Review member, applies a human-approved
 scope amendment before exact join, and proves that the join returns the new
 scope revision/member/deliverable rather than the earlier enumeration. The old
-member no longer matches observational lookup.
+member no longer matches observational lookup. Case-insensitive canonical
+member lookup succeeds, while malformed duplicate/cross-repository candidates
+are reported under `invalid_candidates` without aborting a healthy match.
 
 The same canary proves the checkpoint-kind acceptance rule. Every Freeflow run
 must carry exactly one `delivery_kind=code|analysis` marker. A code-carrying run
@@ -75,6 +77,23 @@ artifacts must match a real commit in the verified worktree; cited tree and blob
 objects must also be available. The canary rejects a syntactically valid fake
 commit and rejects a real commit mislabeled as a tree before accepting a real,
 exactly typed fixture commit.
+
+The pre-existing `autonomy_regression.rs` suite covers general kernel autonomy
+and recovery invariants; it is not issue-specific role behavior. The new
+two-role Freeflow canary uses public role operations to show routine test-seam,
+format, and tool choices; a recoverable tool failure; recorded model selection;
+and interrupted exact resumption continuing without a Human Decision. It then
+submits a complete analysis checkpoint, receives peer-requested changes, and
+exact-resumes in `revising` with the model reference retained. A bounded poll
+trace proves the waiting loop does not spin tightly. A genuine new publication
+authority question remains human-gated, its exact answer is retained and reused,
+and a duplicate question is rejected. A separate mandatory uninvoked user-only
+skill run remains at `waiting_for_skill` with no checkpoint or finalize action.
+
+The five-PR fixture also evaluates readiness before protocol finalization. Its
+initial mixed round and its confirmed `REQUEST_CHANGES` receipt both remain not
+ready; only the final state with current approvals, green checks, resolved
+findings, fresh evidence, and literal closed/merged dispositions becomes ready.
 
 ## Commands and observed results
 
@@ -101,18 +120,25 @@ github fixture: ok; writes=5; receipts=5; events=22
 bash tests/skills/discover.sh
 automatic run discovery: ok
 
+bash tests/skills/checkpoint-guard.sh
+checkpoint guard: ok
+
 bash tests/skills/two-role-canary.sh
 two-role skill canary: ok
 ```
 
-Final GREEN evidence, rerun after the review fixes and browser fallback:
+Final full-suite GREEN evidence, rerun after the extracted-guard,
+discovery-isolation, readiness, sanitization, and issue-specific autonomy repairs:
 
 ```text
 cargo fmt --check --manifest-path v4/Cargo.toml
 passed
 
 cargo test --all-targets --locked --manifest-path v4/Cargo.toml
-passed; skill_flow 23/23, all other v4 targets green
+passed; skill_flow 23/23, autonomy_regression 36/36, all other v4 targets green
+
+bash tests/skills/checkpoint-guard.sh
+checkpoint guard: ok
 
 bash tests/skills/discover.sh
 automatic run discovery: ok
@@ -166,12 +192,10 @@ terminal-completion claim is made from this run. Those issue behaviors are
 ## Actual Sites rendering evidence
 
 The parent reported an owner-only succeeded deployment for the approved startup
-explainer:
-
-- URL: `https://dvandva-issue-31-freeflow-review.axatbhardwaj99.chatgpt.site`
-- Version: `appgprj_6a9c48ac4a908191a174a05abbc866e8~appgver_d87a5a2905608191a1ae8f263f611123`
-- Source digest: `c5c1c61a68fc0d67409fc630240b31e7083dc1151aefce894f8f906e9f5d8c73`
-- Deployment result: `succeeded`
+explainer. The Site URL, project/version identifiers, and deployment receipt
+remain only in private run evidence; this public case study intentionally
+redacts them. The approved source digest is
+`c5c1c61a68fc0d67409fc630240b31e7083dc1151aefce894f8f906e9f5d8c73`.
 
 That receipt proves deployment of the startup bytes. Before staging, the exact
 local artifact was rendered at 1440 px and 390 px, visually inspected, corrected

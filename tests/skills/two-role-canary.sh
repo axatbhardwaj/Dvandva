@@ -30,6 +30,8 @@ bash "$HOME/.agents/skills/setup-dvandva/scripts/setup-dvandva.sh" \
 for role in vadi prativadi; do
   for host_skills in "$HOME/.agents/skills" "$HOME/.claude/skills"; do
     cmp "$repo_root/skills/$role/scripts/discover.py" "$host_skills/$role/scripts/discover.py"
+    cmp "$repo_root/skills/$role/scripts/checkpoint_guard.py" \
+      "$host_skills/$role/scripts/checkpoint_guard.py"
   done
   for reference in initiation discovery freeflow review; do
     cmp "$repo_root/skills/$role/references/$reference.md" \
@@ -508,7 +510,7 @@ run_discovery_startup
 run_checkpoint_kind_guard() {
   local worker="$HOME/.agents/skills/vadi/scripts/dvandva-role.sh"
   local reviewer="$HOME/.claude/skills/prativadi/scripts/dvandva-role.sh"
-  local started run_id run_dir source artifact identity failure failure_status reviewing
+  local started run_id run_dir source artifact identity failure failure_status reviewing manifest_digest snapshot
   local current_revision stale_revision
   local fake_commit="cccccccccccccccccccccccccccccccccccccccc" commit mismatch_commit
   local report_commit="dddddddddddddddddddddddddddddddddddddddd"
@@ -594,6 +596,11 @@ run_checkpoint_kind_guard() {
   reviewing="$(apply_action "$worker" report-worker "$run_dir" "$(rev "$run_dir")" report-analysis \
     "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$identity\",\"deliverables\":[{\"id\":\"report\",\"artifacts\":[{\"kind\":\"analysis_digest\",\"value\":\"$artifact\"}]}],\"verification\":[\"sources checked\"]}}")"
   python3 -c 'import json,sys; s=json.load(sys.stdin); assert s["status"] == "reviewing" and s["checkpoint"]["kind"] == "analysis"' <<<"$reviewing"
+  manifest_digest="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' <<<"$reviewing")"
+  apply_action "$reviewer" report-reviewer "$run_dir" "$(rev "$run_dir")" report-revision \
+    "{\"type\":\"record_review\",\"verdict\":\"changes_requested\",\"checkpoint_identity\":\"$identity\",\"manifest_digest\":\"$manifest_digest\",\"scope_revision\":0,\"findings\":[\"Clarify the evidence limit\"]}" >/dev/null
+  snapshot="$(bash "$worker" start report-worker codex claude "$workspace" --run-id "$run_id")"
+  python3 -c 'import json,sys; s=json.load(sys.stdin); assert s["status"] == "revising" and s.get("human_decision") is None' <<<"$snapshot"
 
   started="$(bash "$worker" start missing-kind-worker codex claude "$workspace" \
     'Report with a missing delivery marker' --new-run --objective-ref workflow=freeflow \
@@ -632,6 +639,95 @@ run_checkpoint_kind_guard() {
 }
 run_checkpoint_kind_guard
 
+# Freeflow autonomy uses ordinary facade progress/resume actions for routine
+# choices and recovery. Only real authority and an explicitly required
+# user-only skill remain human entry points.
+run_freeflow_autonomy() {
+  local worker="$HOME/.agents/skills/vadi/scripts/dvandva-role.sh"
+  local reviewer="$HOME/.claude/skills/prativadi/scripts/dvandva-role.sh"
+  local started run_id run_dir snapshot trace failure failure_status
+  local artifact identity reviewing manifest_digest
+  started="$(bash "$worker" start autonomy-worker codex claude "$workspace" \
+    'Exercise authorized Freeflow autonomy' --new-run --autonomous \
+    --objective-ref workflow=freeflow --objective-ref delivery_kind=analysis \
+    --objective-ref model_pair=codex-sol-high+claude-opus \
+    --required-deliverable report='Autonomy evidence')"
+  run_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])' <<<"$started")"
+  run_dir="$XDG_STATE_HOME/dvandva/runs/$run_id"
+  bash "$reviewer" start autonomy-reviewer claude codex "$workspace" --run-id "$run_id" >/dev/null
+  apply_action "$worker" autonomy-worker "$run_dir" "$(rev "$run_dir")" autonomy-routine \
+    '{"type":"report_progress","phase":"working","detail":"routine choices recorded: test seam, format, and tool"}' >/dev/null
+  apply_action "$worker" autonomy-worker "$run_dir" "$(rev "$run_dir")" autonomy-tool-failure \
+    '{"type":"report_progress","phase":"working","detail":"recoverable tool failure; using verified fallback"}' >/dev/null
+  snapshot="$(bash "$worker" start autonomy-worker codex claude "$workspace" --run-id "$run_id")"
+  python3 -c '
+import json, sys
+s=json.load(sys.stdin)
+refs={(r["kind"],r["value"]) for r in s["objective"]["refs"]}
+assert s["run_id"] == sys.argv[1] and s["status"] == "working"
+assert ("model_pair","codex-sol-high+claude-opus") in refs
+assert s.get("human_decision") is None
+' "$run_id" <<<"$snapshot"
+
+  trace="$test_root/autonomy-poll.trace"
+  DVANDVA_POLL_TRACE="$trace" DVANDVA_POLL_CHUNK_MS=50 \
+    bash "$reviewer" poll autonomy-reviewer "$run_dir" "$(rev "$run_dir")" 80 >/dev/null
+  test "$(wc -l <"$trace")" -ge 1
+  test "$(wc -l <"$trace")" -le 3
+
+  artifact="$(stage_analysis "$worker" autonomy-worker "$run_dir" autonomy-round)"
+  identity="$(analysis_identity "$artifact")"
+  reviewing="$(apply_action "$worker" autonomy-worker "$run_dir" "$(rev "$run_dir")" autonomy-checkpoint \
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$identity\",\"deliverables\":[{\"id\":\"report\",\"artifacts\":[{\"kind\":\"analysis_digest\",\"value\":\"$artifact\"}]}],\"verification\":[\"routine choices and recovery verified\"]}}")"
+  manifest_digest="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' <<<"$reviewing")"
+  apply_action "$reviewer" autonomy-reviewer "$run_dir" "$(rev "$run_dir")" autonomy-peer-revision \
+    "{\"type\":\"record_review\",\"verdict\":\"changes_requested\",\"checkpoint_identity\":\"$identity\",\"manifest_digest\":\"$manifest_digest\",\"scope_revision\":0,\"findings\":[\"Add recovery limitation\"]}" >/dev/null
+  snapshot="$(bash "$worker" start autonomy-worker codex claude "$workspace" --run-id "$run_id")"
+  python3 -c 'import json,sys; s=json.load(sys.stdin); refs={(r["kind"],r["value"]) for r in s["objective"]["refs"]}; assert s["status"] == "revising" and s.get("human_decision") is None; assert ("model_pair","codex-sol-high+claude-opus") in refs' <<<"$snapshot"
+
+  apply_action "$worker" autonomy-worker "$run_dir" "$(rev "$run_dir")" autonomy-authority \
+    '{"type":"request_human_decision","kind":"authority","question":"May this run publish beyond the owner-only Site?","evidence":["No broader publication authority exists"],"options":["Authorize broader publication","Keep owner-only"]}' >/dev/null
+  snapshot="$(bash "$worker" read autonomy-worker "$run_dir")"
+  python3 -c 'import json,sys; s=json.load(sys.stdin); assert s["status"] == "human_decision" and s["human_decision"]["kind"] == "authority"' <<<"$snapshot"
+  apply_action "$worker" autonomy-worker "$run_dir" "$(rev "$run_dir")" autonomy-answer \
+    '{"type":"resume_human_decision","answer":"Keep owner-only"}' >/dev/null
+  snapshot="$(bash "$worker" start autonomy-worker codex claude "$workspace" --run-id "$run_id")"
+  python3 -c 'import json,sys; s=json.load(sys.stdin); refs={(r["kind"],r["value"]) for r in s["objective"]["refs"]}; assert ("authority","Keep owner-only") in refs; assert s["human_decision"]["answer"] == "Keep owner-only"' <<<"$snapshot"
+  set +e
+  failure="$(apply_action_error "$worker" autonomy-worker "$run_dir" "$(rev "$run_dir")" autonomy-repeat \
+    '{"type":"request_human_decision","kind":"authority","question":"May this run publish beyond the owner-only Site?","evidence":["No broader publication authority exists"],"options":["Authorize broader publication","Keep owner-only"]}')"
+  failure_status=$?
+  set -e
+  test "$failure_status" -ne 0
+  grep -Fq '"error":"repeated_decision"' <<<"$failure"
+}
+run_freeflow_autonomy
+
+run_required_user_only_gate() {
+  local worker="$HOME/.agents/skills/vadi/scripts/dvandva-role.sh"
+  local reviewer="$HOME/.claude/skills/prativadi/scripts/dvandva-role.sh"
+  local started run_id run_dir snapshot
+  started="$(bash "$worker" start user-skill-worker codex claude "$workspace" \
+    'Run a mandatory user-only method' --new-run --autonomous \
+    --objective-ref workflow=freeflow --objective-ref delivery_kind=analysis \
+    --required-deliverable report='User-skill result')"
+  run_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])' <<<"$started")"
+  run_dir="$XDG_STATE_HOME/dvandva/runs/$run_id"
+  bash "$reviewer" start user-skill-reviewer claude codex "$workspace" --run-id "$run_id" >/dev/null
+  apply_action "$worker" user-skill-worker "$run_dir" "$(rev "$run_dir")" user-skill-wait \
+    '{"type":"report_progress","phase":"waiting","detail":"waiting_for_skill: /required-user-only; explicit invocation required before delivery"}' >/dev/null
+  snapshot="$(bash "$worker" read user-skill-worker "$run_dir")"
+  python3 -c '
+import json,sys
+s=json.load(sys.stdin)
+assert s["status"] == "working" and s["checkpoint"] is None
+assert s.get("human_decision") is None
+assert "finalize" not in s["advisory_actions"]
+assert s["participants"]["worker"]["progress"]["detail"].startswith("waiting_for_skill:")
+' <<<"$snapshot"
+}
+run_required_user_only_gate
+
 # A five-member Review stays one run and one atomic checkpoint. The kernel's
 # existing complete-manifest interface rejects partial/duplicate coverage; a
 # receipt/readiness update uses approval withdrawal and a complete replacement.
@@ -658,6 +754,9 @@ required = {
 assert required <= events
 assert summary["zero_duplicate_confirmed_retries"] is True
 assert summary["write_count"] == summary["receipt_count"]
+assert summary["initial_ready"] is False
+assert summary["requested_changes_ready"] is False
+assert summary["final_ready"] is True
 PY
   for member in "${members[@]}"; do
     refs+=(--objective-ref "review_member=https://github.com/axatbhardwaj/Dvandva/pull/$member")
