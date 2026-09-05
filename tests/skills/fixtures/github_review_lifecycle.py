@@ -165,6 +165,8 @@ class GitHubFixture:
             "body_digest": digest(self.bodies[number]),
             "receipts": [r for r in self.receipts if r["pr"] == number],
             "evidence_valid": self.evidence_valid[number],
+            "observed_at": "2026-09-05T12:00:00Z",
+            "review_basis": "Deterministic exact head, base, checks, feedback, and receipt query",
         }
 
     def ready(self) -> bool:

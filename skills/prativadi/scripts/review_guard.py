@@ -3,6 +3,7 @@
 
 import hashlib
 import json
+from datetime import datetime
 from pathlib import Path
 import re
 import sys
@@ -10,6 +11,7 @@ import sys
 
 DIGEST = re.compile(r"[0-9a-f]{64}")
 MEMBER = re.compile(r"https://github\.com/([^/]+)/([^/]+)/pull/([1-9][0-9]*)", re.I)
+FULL_REVISION = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", re.I)
 
 
 def reject(message):
@@ -43,10 +45,14 @@ def load_context(action_path, expected_revision):
         for ref in refs
         if isinstance(ref, dict) and str(ref.get("kind", "")).casefold() == "review_member"
     ]
-    # Existing scalar single-PR Review runs predate review_member scope and
-    # retain their original kernel-only finalization behavior.
+    # Existing scalar single-PR Review runs predate review_member scope. Only
+    # their canonical task PR identity receives the legacy kernel-only path.
     if not members:
-        return None
+        task = snapshot.get("task")
+        reference = task.get("reference") if isinstance(task, dict) else None
+        if isinstance(reference, str) and MEMBER.fullmatch(reference):
+            return None
+        reject("Review finalization requires frozen members or a canonical legacy PR task")
     return snapshot, members
 
 
@@ -81,6 +87,22 @@ def validate_artifact(record, member_url, member_id):
     if record.get("evidence_valid") is not True:
         reject(f"{member_id} evidence is not current")
     if disposition in {"closed", "merged"}:
+        author = record.get("author")
+        actor = record.get("acting_reviewer")
+        head = record.get("head")
+        base = record.get("base")
+        observed_at = record.get("observed_at")
+        review_basis = record.get("review_basis")
+        if not all(isinstance(value, str) and value for value in (author, actor, head, base, observed_at, review_basis)):
+            reject(f"{member_id} terminal disposition lacks full identity, revision, timestamp, or basis evidence")
+        if actor.casefold() == author.casefold() or not FULL_REVISION.fullmatch(head) or not FULL_REVISION.fullmatch(base):
+            reject(f"{member_id} terminal disposition identity or revision evidence is invalid")
+        try:
+            observed = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+        except ValueError:
+            reject(f"{member_id} terminal disposition timestamp is invalid")
+        if observed.tzinfo is None:
+            reject(f"{member_id} terminal disposition timestamp is invalid")
         return
     if disposition != "open":
         reject(f"{member_id} has no verified open, closed, or merged disposition")

@@ -24,20 +24,63 @@ def git_type(worktree, value):
     return result.stdout.strip() if result.returncode == 0 else None
 
 
+def bounded_text(path, required):
+    try:
+        with path.open("rb") as source:
+            raw = source.read(65537)
+    except FileNotFoundError:
+        return None if not required else False
+    except OSError:
+        return False
+    if len(raw) > 65536:
+        return False
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+
+
+def frontmatter_disables_model_invocation(text):
+    lines = text.splitlines()
+    if not lines or lines[0] != "---":
+        return False
+    for line in lines[1:]:
+        if line == "---":
+            return False
+        match = re.fullmatch(r"([A-Za-z0-9_-]+):\s*(.*?)\s*", line)
+        if match and match.group(1) == "disable-model-invocation":
+            return match.group(2).casefold() == "true"
+    return False
+
+
+def policy_disables_implicit_invocation(text):
+    in_policy = False
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        if not line.startswith((" ", "\t")):
+            in_policy = bool(re.fullmatch(r"policy:\s*(?:#.*)?", line))
+            continue
+        if in_policy and re.fullmatch(
+            r" {2}allow_implicit_invocation:\s*false\s*(?:#.*)?", line
+        ):
+            return True
+    return False
+
+
 def metadata_marks_user_only(root):
     try:
         skill_root = Path(root).resolve(strict=True)
         if not skill_root.is_dir():
             return False
-        skill_md = (skill_root / "SKILL.md").read_text(encoding="utf-8")
-        openai_yaml = (skill_root / "agents" / "openai.yaml").read_text(encoding="utf-8")
-    except (OSError, UnicodeError):
+    except OSError:
         return False
-    if len(skill_md) > 65536 or len(openai_yaml) > 65536:
+    skill_md = bounded_text(skill_root / "SKILL.md", required=True)
+    openai_yaml = bounded_text(skill_root / "agents" / "openai.yaml", required=False)
+    if not isinstance(skill_md, str) or openai_yaml is False:
         return False
-    return bool(
-        re.search(r"^disable-model-invocation:\s*true\s*$", skill_md, re.MULTILINE)
-        or re.search(r"^\s*allow_implicit_invocation:\s*false\s*$", openai_yaml, re.MULTILINE)
+    return frontmatter_disables_model_invocation(skill_md) or (
+        isinstance(openai_yaml, str) and policy_disables_implicit_invocation(openai_yaml)
     )
 
 
