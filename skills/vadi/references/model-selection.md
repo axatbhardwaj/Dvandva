@@ -14,6 +14,12 @@ owns its role's explainer work at its selected reasoning level. The Sol/Opus
 HTML and implementation casting below applies to implementation, babysitting
 and review, not discovery. Required model unavailability has no silent fallback.
 
+For `workflow=freeflow`, an explicit user pairing wins and is recorded once.
+Without one, analysis-heavy investigation/report/testing uses the Discovery
+Fable/Astra pairing; execution-heavy work, including test-and-fix, uses the
+Sol/high vadi and Opus prativadi pairing. Preserve that recorded pair through
+mixed steps and resumption rather than silently switching mid-run.
+
 Matt's user-only entry points remain human-invoked in the owning session:
 `/grill-with-docs`, `/to-spec`, `/to-tickets`, then `/implement` in the fresh
 Codex implementation session. No wrapper automatically invokes those skills.

@@ -33,8 +33,9 @@ name `codex` (case-insensitive); aliases such as `codex-cli`, `gpt`, or
 
 ## Start and snapshot contract
 
-Read `references/initiation.md` before activation and `references/discovery.md`
-for Discovery. Their startup source verification, workflow completion overrides
+Read `references/initiation.md` before activation, `references/discovery.md`
+for Discovery, `references/freeflow.md` for Freeflow, and
+`references/review.md` for persistent Review. Their startup source verification, workflow completion overrides
 and intentional human-input waits take precedence over the ordinary loop below.
 
 Exact joins pass only `--run-id` unless the human explicitly supplied objective,
@@ -84,17 +85,27 @@ idle_timeout`) takes a fresh snapshot and another wait. The kernel never leaves
 ## Workflow selection and prativadi lifecycle
 
 Route new workflows through initiation.md: discovery, implementation,
-babysitting and review. Legacy refs `workflow=implementation|babysit|pr_review`
+babysitting, review, and freeflow. Legacy refs `workflow=implementation|babysit|pr_review`
 retain their contracts below; when absent, use `implementation`. Existing checkpoint, supersession, explainer, Human Decision,
 polling, and Matt `code-review` rules remain in force. Parents alone mutate
 Baton or GitHub. Prativadi subagents remain read-only and receive only semantic
 work authorized by the current snapshot.
+
+`workflow=freeflow` is the fifth workflow. Prativadi independently verifies its
+sources, claims, coverage, risks, and real-interface executions; use the
+checkpoint kind and autonomous authority rules in `freeflow.md`.
 
 In `implementation`, review each newly authorized complete checkpoint under existing immutable two-axis rules; never treat work in progress as a candidate.
 
 In `babysit`, prativadi is an internal sanity filter, not the real reviewer. Independently check each exact fix head and CI evidence before vadi re-requests the existing colleague reviewer. Unresolved findings block that request, but neither internal approval nor thread resolution is colleague acceptance; feedback, changed head, or failed gate reopens the loop. After colleague approval, progress from `merge_ready` to `maintaining_ready` and refresh live GitHub between bounded Baton waits; GitHub does not wake Baton. Head, base, CI, approval, requested-change, or thread drift reopens the fix and review loop. Never merge without fresh human authorization.
 
 In `pr_review`, make an independent first pass without vadi's report, covering diff, spec, standards, regressions, security edges, and practical failures. Then compare and adjudicate every vadi finding into final `APPROVE` or `REQUEST_CHANGES` that vadi submits. After the write, prativadi independently re-queries the same GitHub receipt: review ID, exact PR, actor, state, reviewed commit/head, and body digest. Head drift before both confirmations invalidates the attempt and restarts review. A Dvandva approval in `pr_review` approves the receipt-bearing review artifact; formal `REQUEST_CHANGES` still completes after confirmed submission. Sources: [workflow-mode evidence](../../../docs/research/2026-09-01-workflow-mode-github-evidence.md).
+
+In `review`, follow `review.md`. Prativadi independently investigates every
+member before the atomic verdict, adjudicates every per-member finding, and
+later re-queries each exact GitHub receipt and readiness fact. Missing member
+coverage, duplicate delivery coverage, stale coordinates, or unresolved drift
+requires changes to the complete candidate.
 
 For every workflow, recoverable CI, review, scoped-branch failures, and other uncertainty stay autonomous. Before every actual `request_human_decision` for scope, intent, or authority, exchange evidence, attempt an available scoped fix, and optionally consult local Astra or Fable for a concrete unresolved design question within snapshot-authorized activity. Authority is permission the human alone can grant; unavailable capability is not a Human Decision. Escalate only an action both roles cannot establish as safe or an unavoidable external permission barrier; Astra and Fable are optional advisers and never additional Baton participants. In babysit, design is intent; security and secret-policy are scope or authority, never new kinds.
 

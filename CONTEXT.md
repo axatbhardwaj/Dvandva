@@ -29,10 +29,25 @@ The agreed objective, references, task identity, and required deliverables for
 one run.
 
 **Workflow**:
-The role-contract mode: `implementation` delivers the canonical scope,
-`babysit` maintains an own PR, and `pr_review` submits an external review.
+The role-contract mode. New runs use `discovery`, `implementation`,
+`babysitting`, `review`, or `freeflow`. Freeflow covers adaptable investigations,
+reports, diagnostics, and testing; Review may cover a frozen same-repository PR
+set. Compatible `babysit` and legacy one-shot `pr_review` retain their stored
+meaning. Workflow values are objective references, not kernel states.
 `fix_ready`, `internally_cleared`, `rereview_requested`, `merge_ready`, and
 `maintaining_ready` are role-contract prose, not Baton status values.
+
+**Review Member**:
+One canonical PR in a persistent Review run, stored as a `review_member`
+objective reference and represented by exactly one required deliverable. Member
+progress and verdicts are content inside the run's complete candidate; they are
+not child Batons, kernel states, or independently finalizable checkpoints.
+
+**Review Round**:
+One complete immutable candidate accounting for every frozen Review Member.
+The pair records one atomic checkpoint verdict. External GitHub receipts and
+later readiness changes enter through approval withdrawal or supersession and
+another complete round.
 
 **Scope Revision**:
 The identity of one declared Canonical Scope version. A human-approved

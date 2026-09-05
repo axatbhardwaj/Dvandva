@@ -67,7 +67,7 @@ checkpoints, with native review for analysis checkpoints or when that companion
 is unavailable. See
 [`docs/workflows/skill-only-run.md`](docs/workflows/skill-only-run.md).
 
-## Four workflows
+## Five workflows
 
 - **Discovery:** Claude Fable 5.1/high vadi and Codex Astra/high prativadi
   discover relevant docs and code, independently investigate, reconcile questions,
@@ -79,7 +79,13 @@ is unavailable. See
 - **Babysitting:** repair and maintain our scoped PRs, including CI, rebases and
   feedback, with separate human merge authority.
 - **Review:** independently review others' PRs and re-review changed candidates
-  until the exact approved head satisfies required checks. Authors own fixes.
+  until every frozen same-repository member has a verified current approval or
+  explicit closed/merged disposition. A batch remains one complete manifest and
+  one atomic run-level verdict; authors own fixes.
+- **Freeflow:** produce evidence-backed investigations, reports, diagnostics,
+  real-interface testing, or scoped test-and-fix results without manufacturing
+  a spec/ticket pipeline. The pair keeps one current plan and independently
+  verifies the complete immutable delivery.
 
 For discovery, start Fable with:
 
@@ -101,6 +107,8 @@ See the [initiation contract](skills/vadi/references/initiation.md) and
 human decisions, checkpoint gates and linked-run receipts. These are role-skill
 policies on the existing v2 kernel, not new schema-level guarantees. Legacy
 `babysit` and one-shot `pr_review` runs preserve their original semantics.
+Persistent Review can be discovered through any exact canonical member URL;
+the selected run is then exact-joined and its complete frozen scope rechecked.
 
 ## Repo map
 
