@@ -39,7 +39,9 @@ When scope makes an installed user-only skill mandatory, record its canonical
 skill root as `required_user_skill=<root>`. Record
 `invoked_user_skill=<same root>` only after the human explicitly invokes that
 skill; if invocation occurs after initiation, use the existing human-approved
-scope amendment to add the reference. Before a Freeflow checkpoint, the public
+scope amendment to add the reference. This marker is a durable role attestation
+based on that explicit human action, not cryptographic or harness-level proof;
+an agent must never synthesize it. Before a Freeflow checkpoint, the public
 role facade reads `SKILL.md` and `agents/openai.yaml` at that root and requires
 `disable-model-invocation: true` or `allow_implicit_invocation: false`, plus the
 matching invocation reference. Missing, unreadable, model-invocable, or
@@ -79,6 +81,13 @@ initiation: `delivery_kind=code` for code-carrying or mixed scope, and
 role facade rejects a checkpoint if the marker is missing, duplicated, invalid,
 or disagrees with the checkpoint kind. Naming a commit inside staged analysis
 does not turn it into a Git candidate.
+
+Changing methods within the promised outcome does not change this marker. If
+an analysis-only outcome legitimately grows into a code-carrying delivery, use
+the existing human-approved scope amendment to replace `delivery_kind=analysis`
+with `delivery_kind=code` before checkpointing. A request that already
+authorizes test-and-fix or another code-carrying result starts with
+`delivery_kind=code`.
 
 For every Git checkpoint, the facade validates the exact copied action against
 the credential-checked snapshot at the caller's expected revision. The identity
