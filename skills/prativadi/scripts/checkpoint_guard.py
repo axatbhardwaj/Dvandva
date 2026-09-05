@@ -41,21 +41,24 @@ def bounded_text(path, required):
 
 
 def strip_yaml_comment(value):
-    quote = None
-    escaped = False
-    for index, character in enumerate(value):
-        if quote == '"' and character == "\\" and not escaped:
-            escaped = True
+    value = value.strip()
+    if not value or value[0] not in {"'", '"'}:
+        comment = re.search(r"\s+#", value)
+        return value[: comment.start()].rstrip() if comment else value
+    quote = value[0]
+    index = 1
+    while index < len(value):
+        if quote == '"' and value[index] == "\\":
+            index += 2
             continue
-        if character in {"'", '"'} and not escaped:
-            if quote is None:
-                quote = character
-            elif quote == character:
-                quote = None
-        if character == "#" and quote is None and (index == 0 or value[index - 1].isspace()):
-            return value[:index].rstrip()
-        escaped = False
-    return None if quote else value.strip()
+        if quote == "'" and value[index : index + 2] == "''":
+            index += 2
+            continue
+        if value[index] == quote:
+            remainder = value[index + 1 :].strip()
+            return value[: index + 1] if not remainder or remainder.startswith("#") else None
+        index += 1
+    return None
 
 
 def parse_scalar(value):
@@ -74,7 +77,7 @@ def parse_scalar(value):
         return value[1:-1].replace("''", "'")
     # YAML forbids a colon followed by whitespace inside a plain scalar. Other
     # collection and block forms are rejected above rather than partially read.
-    if re.search(r":\s", value) or value[0] in "-?:,!&*#@`":
+    if re.search(r":(?:\s|$)", value) or value[0] in "-?:,!&*#@`":
         return None
     return value
 

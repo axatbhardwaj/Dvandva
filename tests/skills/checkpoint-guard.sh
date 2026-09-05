@@ -95,7 +95,7 @@ python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-sn
 # user-only. A real leading frontmatter/policy document does.
 valid_skill="$test_root/valid-skill"; false_skill="$test_root/false-skill"; huge_skill="$test_root/huge-skill"; malformed_skill="$test_root/malformed-skill"; unclosed_skill="$test_root/unclosed-skill"
 mkdir -p "$valid_skill/agents" "$false_skill/agents" "$huge_skill/agents" "$malformed_skill/agents" "$unclosed_skill/agents"
-printf '%s\n' '---' 'name: fixture' 'disable-model-invocation: true # user-only' '---' '# Fixture' >"$valid_skill/SKILL.md"
+printf '%s\n' '---' 'name: fixture' "description: This user's skill can't run implicitly." 'disable-model-invocation: true # user-only' '---' '# Fixture' >"$valid_skill/SKILL.md"
 printf '%s\n' 'interface:' '  display_name: "Fixture"' '  short_description: "Explicit # invocation"' 'policy:' '  allow_implicit_invocation: false' >"$valid_skill/agents/openai.yaml"
 printf '%s\n' '---' 'name: example' '---' '# Example' '```yaml' 'disable-model-invocation: true' '```' >"$false_skill/SKILL.md"
 printf '%s\n' 'examples:' '  allow_implicit_invocation: false' >"$false_skill/agents/openai.yaml"
@@ -125,6 +125,12 @@ for root in "$false_skill" "$huge_skill" "$malformed_skill" "$unclosed_skill"; d
   grep -Fq 'metadata is missing, unreadable, or model-invocable' <<<"$error"
 done
 printf '%s\n' '---' 'name: invalid: yaml' 'disable-model-invocation: true' '---' >"$malformed_skill/SKILL.md"
+set +e
+error="$(skill_snapshot "$malformed_skill" yes | python3 "$vadi" "$action" 7)"; status=$?
+set -e
+test "$status" -ne 0
+grep -Fq 'metadata is missing, unreadable, or model-invocable' <<<"$error"
+printf '%s\n' '---' 'name: invalid:' 'disable-model-invocation: true' '---' >"$malformed_skill/SKILL.md"
 set +e
 error="$(skill_snapshot "$malformed_skill" yes | python3 "$vadi" "$action" 7)"; status=$?
 set -e
