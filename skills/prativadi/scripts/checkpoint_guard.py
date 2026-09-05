@@ -63,7 +63,7 @@ def strip_yaml_comment(value):
 
 def parse_scalar(value):
     """Accept a deliberately small, complete YAML scalar subset."""
-    if not value or value[0] in "[{|>" or value[-1:] in "]}":
+    if not value or value[0] in "[{}]|>" or value[-1:] in "]}":
         return None
     if value[0] == '"':
         try:
@@ -79,6 +79,10 @@ def parse_scalar(value):
     # collection and block forms are rejected above rather than partially read.
     if re.search(r":(?:\s|$)", value) or value[0] in "-?:,!&*#%@`":
         return None
+    if value.casefold() == "true":
+        return True
+    if value.casefold() == "false":
+        return False
     return value
 
 
@@ -113,7 +117,7 @@ def parse_mapping(lines):
         if scalar is None:
             return None
         parents = list(path[:-1])
-        values[path] = scalar.casefold()
+        values[path] = scalar.casefold() if isinstance(scalar, str) else scalar
     return values
 
 
@@ -126,12 +130,12 @@ def frontmatter_disables_model_invocation(text):
     except ValueError:
         return None
     values = parse_mapping(lines[1:end])
-    return None if values is None else values.get(("disable-model-invocation",)) == "true"
+    return None if values is None else values.get(("disable-model-invocation",)) is True
 
 
 def policy_disables_implicit_invocation(text):
     values = parse_mapping(text.splitlines())
-    return None if values is None else values.get(("policy", "allow_implicit_invocation")) == "false"
+    return None if values is None else values.get(("policy", "allow_implicit_invocation")) is False
 
 
 def metadata_marks_user_only(root):

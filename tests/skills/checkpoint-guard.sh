@@ -142,4 +142,11 @@ error="$(skill_snapshot "$malformed_skill" yes | python3 "$vadi" "$action" 7)"; 
 set -e
 test "$status" -ne 0
 grep -Fq 'metadata is missing, unreadable, or model-invocable' <<<"$error"
+printf '%s\n' '---' 'name: fixture' 'disable-model-invocation: "true"' '---' >"$malformed_skill/SKILL.md"
+printf '%s\n' 'policy:' '  allow_implicit_invocation: "false"' >"$malformed_skill/agents/openai.yaml"
+set +e
+error="$(skill_snapshot "$malformed_skill" yes | python3 "$vadi" "$action" 7)"; status=$?
+set -e
+test "$status" -ne 0
+grep -Fq 'metadata is missing, unreadable, or model-invocable' <<<"$error"
 printf 'checkpoint guard: ok\n'
