@@ -175,6 +175,14 @@ expect_failure 'Review members must be unique' \
   --objective-ref review_member=https://GITHUB.com/EXAMPLE/PROJECT/pull/10 \
   --required-deliverable pr-10='Review PR 10'
 test ! -e "$XDG_STATE_HOME/dvandva/runs"
+expect_failure 'Review members must belong to one canonical repository' \
+  bash "$vadi" start invalid-review codex claude "$workspace" \
+  'Cross-repository members' --objective-ref workflow=review \
+  --objective-ref review_member=https://github.com/example/project/pull/10 \
+  --objective-ref review_member=https://github.com/example/other/pull/11 \
+  --required-deliverable pr-10='Review PR 10' \
+  --required-deliverable pr-11='Review PR 11'
+test ! -e "$XDG_STATE_HOME/dvandva/runs"
 
 export DVANDVA_LEASE_SECONDS=1
 worker="$(bash "$vadi" start codex-session codex claude "$workspace" \

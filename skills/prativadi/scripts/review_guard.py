@@ -60,7 +60,39 @@ def member_number(url):
     return int(match.group(3)) if match else None
 
 
-def validate_artifact(record, member_url, member_id):
+def validate_current_basis(record, member_id, member_numbers):
+    author = record.get("author")
+    actor = record.get("acting_reviewer")
+    head = record.get("head")
+    base = record.get("base")
+    observed_at = record.get("observed_at")
+    review_basis = record.get("review_basis")
+    dependencies = record.get("dependencies")
+    if not all(
+        isinstance(value, str) and value.strip()
+        for value in (author, actor, head, base, observed_at, review_basis)
+    ):
+        reject(f"{member_id} lacks full identity, revision, timestamp, or basis evidence")
+    if actor.casefold() == author.casefold() or not FULL_REVISION.fullmatch(head) or not FULL_REVISION.fullmatch(base):
+        reject(f"{member_id} identity or revision evidence is invalid")
+    number = int(member_id.removeprefix("pr-"))
+    if (
+        not isinstance(dependencies, list)
+        or any(type(dependency) is not int for dependency in dependencies)
+        or len(dependencies) != len(set(dependencies))
+        or number in dependencies
+        or any(dependency not in member_numbers for dependency in dependencies)
+    ):
+        reject(f"{member_id} dependency relationship evidence is invalid")
+    try:
+        observed = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
+    except ValueError:
+        reject(f"{member_id} timestamp is invalid")
+    if observed.tzinfo is None:
+        reject(f"{member_id} timestamp is invalid")
+
+
+def validate_artifact(record, member_url, member_id, member_numbers):
     if not isinstance(record, dict):
         reject(f"{member_id} analysis evidence is not an object")
     number = member_number(member_url)
@@ -69,30 +101,14 @@ def validate_artifact(record, member_url, member_id):
     disposition = record.get("disposition")
     if record.get("evidence_valid") is not True:
         reject(f"{member_id} evidence is not current")
+    validate_current_basis(record, member_id, member_numbers)
     if disposition in {"closed", "merged"}:
-        author = record.get("author")
-        actor = record.get("acting_reviewer")
-        head = record.get("head")
-        base = record.get("base")
-        observed_at = record.get("observed_at")
-        review_basis = record.get("review_basis")
-        if not all(isinstance(value, str) and value for value in (author, actor, head, base, observed_at, review_basis)):
-            reject(f"{member_id} terminal disposition lacks full identity, revision, timestamp, or basis evidence")
-        if actor.casefold() == author.casefold() or not FULL_REVISION.fullmatch(head) or not FULL_REVISION.fullmatch(base):
-            reject(f"{member_id} terminal disposition identity or revision evidence is invalid")
-        try:
-            observed = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
-        except ValueError:
-            reject(f"{member_id} terminal disposition timestamp is invalid")
-        if observed.tzinfo is None:
-            reject(f"{member_id} terminal disposition timestamp is invalid")
         return
     if disposition != "open":
         reject(f"{member_id} has no verified open, closed, or merged disposition")
     exact_body = record.get("exact_body")
     body_digest = record.get("body_digest")
     actor = record.get("acting_reviewer")
-    author = record.get("author")
     head = record.get("head")
     receipts = record.get("receipts")
     if record.get("checks") != "green":
@@ -101,10 +117,8 @@ def validate_artifact(record, member_url, member_id):
         reject(f"{member_id} has unresolved blocking feedback")
     if record.get("adjudicated_verdict") != "APPROVE":
         reject(f"{member_id} does not have a current APPROVE verdict")
-    if not all(isinstance(value, str) and value for value in (exact_body, body_digest, actor, author, head)):
+    if not all(isinstance(value, str) and value for value in (exact_body, body_digest, actor, head)):
         reject(f"{member_id} is missing receipt identity evidence")
-    if actor.casefold() == author.casefold():
-        reject(f"{member_id} records a self-review")
     if hashlib.sha256(exact_body.encode()).hexdigest() != body_digest:
         reject(f"{member_id} exact review body digest does not match")
     if not isinstance(receipts, list) or not any(
@@ -123,9 +137,16 @@ def validate(snapshot, members, artifact_dir):
     checkpoint = snapshot.get("checkpoint")
     if not isinstance(checkpoint, dict) or checkpoint.get("kind") != "analysis":
         reject("persistent Review finalization requires a current analysis checkpoint")
-    parsed_members = [member_number(url) for url in members]
+    member_matches = [MEMBER.fullmatch(url) for url in members]
+    parsed_members = [int(match.group(3)) if match else None for match in member_matches]
     if not members or any(number is None for number in parsed_members) or len(set(url.casefold() for url in members)) != len(members):
         reject("persistent Review has invalid or duplicate frozen members")
+    repositories = {
+        (match.group(1).casefold(), match.group(2).casefold())
+        for match in member_matches if match
+    }
+    if len(repositories) != 1:
+        reject("persistent Review members do not belong to one canonical repository")
     deliverables = checkpoint.get("deliverables")
     if not isinstance(deliverables, list) or len(deliverables) != len(members):
         reject("persistent Review checkpoint does not cover every frozen member")
@@ -148,7 +169,7 @@ def validate(snapshot, members, artifact_dir):
             record = json.loads(materialized["contents"])
         except (OSError, json.JSONDecodeError, TypeError, ValueError):
             reject(f"{member_id} analysis evidence could not be materialized")
-        validate_artifact(record, member_by_id[member_id], member_id)
+        validate_artifact(record, member_by_id[member_id], member_id, set(parsed_members))
         seen.add(member_id)
     if seen != set(member_by_id):
         reject("persistent Review checkpoint does not cover every frozen member")

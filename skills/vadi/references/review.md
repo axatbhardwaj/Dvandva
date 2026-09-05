@@ -29,6 +29,9 @@ basis; findings; proposed and adjudicated verdict; exact body and body digest;
 formal review receipt coordinates; required checks; unresolved blocking
 feedback; timestamps; disposition; and next action. Keep raw private exports
 outside public repositories.
+Encode the dependency relationship as `dependencies`, a deduplicated array of
+in-batch PR numbers (empty when independent); self and out-of-batch references
+are invalid current-basis evidence.
 
 Finish the complete initial review of every active member before submitting the
 first candidate. Pending CI and an adjudicated `REQUEST_CHANGES` are valid

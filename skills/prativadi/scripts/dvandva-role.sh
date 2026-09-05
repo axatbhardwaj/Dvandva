@@ -291,6 +291,8 @@ start_role() {
   }
   if test -z "$selected_run"; then
     local workflow_ref="" workflow_refs=0 review_members=0 value kind member_key index
+    local member_repository="" review_repository=""
+    local -a review_member_values=()
     local -A seen_review_members=()
     for index in "${!objective_refs[@]}"; do
       value="${objective_refs[$index]}"
@@ -311,6 +313,7 @@ start_role() {
             exit 2
           }
           seen_review_members[$member_key]=1
+          review_member_values+=("$member_key")
           review_members=$((review_members + 1))
           ;;
       esac
@@ -319,6 +322,22 @@ start_role() {
       printf 'dvandva-role: non-exact starts permit at most one workflow objective reference\n' >&2
       exit 2
     }
+    if test "$workflow_ref" = review; then
+      for member_key in "${review_member_values[@]}"; do
+        if [[ "$member_key" =~ ^https://github\.com/([A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?)/([A-Za-z0-9_.-]{1,100})/pull/([1-9][0-9]*)$ ]]; then
+          member_repository="${BASH_REMATCH[1],,}/${BASH_REMATCH[3],,}"
+        else
+          printf 'dvandva-role: Review members must belong to one canonical repository\n' >&2
+          exit 2
+        fi
+        if test -z "$review_repository"; then
+          review_repository="$member_repository"
+        elif test "$member_repository" != "$review_repository"; then
+          printf 'dvandva-role: Review members must belong to one canonical repository\n' >&2
+          exit 2
+        fi
+      done
+    fi
     if test "${workflow_ref,,}" = review && test "$review_members" -eq 0; then
       printf 'dvandva-role: non-exact persistent Review requires at least one review_member objective reference\n' >&2
       exit 2

@@ -62,6 +62,27 @@ for legacy_task in '' 'PR-10' 'issue-31' 'https://github.com/axatbhardwaj/Dvandv
   test -z "$legacy_output"
 done
 
+# Exact legacy joins and human amendments bypass new-run validation, so the
+# final boundary independently rejects a cross-repository frozen batch.
+python3 - "$test_root/review-snapshot.json" <<'PY'
+import json, pathlib, sys
+pathlib.Path(sys.argv[1]).write_text(json.dumps({
+    "revision": 7,
+    "objective": {"refs": [
+        {"kind": "workflow", "value": "review"},
+        {"kind": "review_member", "value": "https://github.com/axatbhardwaj/Dvandva/pull/31"},
+        {"kind": "review_member", "value": "https://github.com/example/other/pull/32"},
+    ]},
+    "task": {"reference": None},
+    "checkpoint": {"kind": "analysis", "deliverables": []},
+}))
+PY
+set +e
+error="$(python3 "$vadi_review" validate "$action" 7 "$test_root" <"$test_root/review-snapshot.json")"; status=$?
+set -e
+test "$status" -ne 0
+grep -Fq 'members do not belong to one canonical repository' <<<"$error"
+
 # A terminal disposition is evidence, not a shortcut around identity, revision,
 # timestamp, and basis fields.
 review_dir="$test_root/review-artifacts"
@@ -71,7 +92,7 @@ import hashlib, json, pathlib, sys
 root, snapshot_path, mode = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
 record = {"url":"https://github.com/axatbhardwaj/Dvandva/pull/31","disposition":"merged","evidence_valid":True}
 if mode == "complete":
-    record.update({"author":"author","acting_reviewer":"reviewer","head":"1"*40,"base":"2"*40,"observed_at":"2026-09-06T12:00:00Z","review_basis":"Exact head/base and merged disposition re-queried"})
+    record.update({"author":"author","acting_reviewer":"reviewer","head":"1"*40,"base":"2"*40,"dependencies":[],"observed_at":"2026-09-06T12:00:00Z","review_basis":"Exact head/base and merged disposition re-queried"})
 contents=json.dumps(record,separators=(",",":")); digest=hashlib.sha256(contents.encode()).hexdigest()
 (root/f"{digest}.json").write_text(json.dumps({"digest":digest,"contents":contents}))
 snapshot={"revision":7,"objective":{"refs":[{"kind":"workflow","value":"review"},{"kind":"review_member","value":record["url"]}]},"task":{"reference":None},"checkpoint":{"kind":"analysis","deliverables":[{"id":"pr-31","artifacts":[{"kind":"analysis_digest","value":digest}]}]}}
@@ -86,6 +107,37 @@ test "$status" -ne 0
 grep -Fq 'review_not_ready' <<<"$error"
 find "$review_dir" -maxdepth 1 -type f -exec unlink {} \;
 terminal_fixture complete
+python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json"
+
+# Open readiness requires the same complete current basis as terminal evidence,
+# in addition to its exact approval receipt.
+open_fixture() { python3 - "$review_dir" "$test_root/review-snapshot.json" "$1" <<'PY'
+import hashlib, json, pathlib, sys
+root, snapshot_path, mode = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
+body="Approved on exact current evidence"; head="3"*40
+record={"url":"https://github.com/axatbhardwaj/Dvandva/pull/31","disposition":"open","evidence_valid":True,"author":"author","acting_reviewer":"reviewer","head":head,"base":"4"*40,"dependencies":[],"observed_at":"2026-09-06T12:00:00Z","review_basis":"Exact head, base, dependency, checks, feedback, and receipt query","checks":"green","blocking_feedback":[],"adjudicated_verdict":"APPROVE","exact_body":body,"body_digest":hashlib.sha256(body.encode()).hexdigest()}
+record["receipts"]=[{"pr":31,"actor":"reviewer","head":head,"state":"APPROVE","body_digest":record["body_digest"]}]
+if mode.startswith("missing-"): record.pop(mode.removeprefix("missing-"))
+if mode == "invalid-base": record["base"]="main"
+if mode == "invalid-observed_at": record["observed_at"]="yesterday"
+if mode == "invalid-dependencies": record["dependencies"]=[31]
+contents=json.dumps(record,separators=(",",":")); digest=hashlib.sha256(contents.encode()).hexdigest()
+(root/f"{digest}.json").write_text(json.dumps({"digest":digest,"contents":contents}))
+snapshot={"revision":7,"objective":{"refs":[{"kind":"workflow","value":"review"},{"kind":"review_member","value":record["url"]}]},"task":{"reference":None},"checkpoint":{"kind":"analysis","deliverables":[{"id":"pr-31","artifacts":[{"kind":"analysis_digest","value":digest}]}]}}
+snapshot_path.write_text(json.dumps(snapshot))
+PY
+}
+find "$review_dir" -maxdepth 1 -type f -exec unlink {} \;
+for mode in missing-base missing-dependencies missing-observed_at missing-review_basis invalid-base invalid-observed_at invalid-dependencies; do
+  open_fixture "$mode"
+  set +e
+  error="$(python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json")"; status=$?
+  set -e
+  test "$status" -ne 0
+  grep -Fq 'review_not_ready' <<<"$error"
+  find "$review_dir" -maxdepth 1 -type f -exec unlink {} \;
+done
+open_fixture complete
 python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json"
 
 # Metadata keys in examples/body text and oversized files must not mark a skill
