@@ -1510,7 +1510,9 @@ fn freeflow_is_a_fifth_workflow_with_autonomous_evidence_bound_delivery() {
             "model-invocable",
             "analysis checkpoints only for deliveries without code changes",
             "mixed test-and-fix deliveries use a `git` checkpoint",
-            "immutable Git commit, tree, or blob",
+            "delivery_kind=code",
+            "For a code-carrying candidate, bind every included non-code deliverable through an immutable Git commit, tree, or blob",
+            "Report-only analysis deliverables remain staged analysis artifacts",
             "source identities, revisions or capture times",
             "passed, failed, blocked, or not run",
             "running application",
@@ -1520,6 +1522,10 @@ fn freeflow_is_a_fifth_workflow_with_autonomous_evidence_bound_delivery() {
         ] {
             assert!(source.contains(required), "{role} Freeflow contract omitted {required:?}");
         }
+        assert!(
+            !freeflow.contains("Bind every non-code deliverable through an immutable Git"),
+            "{role} must not require report-only analysis to be Git-bound"
+        );
     }
     assert_eq!(
         references[0], references[1],
@@ -1615,6 +1621,57 @@ fn public_workflow_docs_and_canary_cover_the_new_surface_without_kernel_claims()
         assert!(
             canary.contains(required),
             "batch canary omitted {required:?}"
+        );
+    }
+}
+
+#[test]
+fn review_validation_uses_public_facade_and_separates_simulated_from_live_evidence() {
+    let canary = repository_file("tests/skills/two-role-canary.sh");
+    let fixture = repository_file("tests/skills/fixtures/github_review_lifecycle.py");
+    let facade = repository_file("skills/vadi/scripts/dvandva-role.sh");
+    let report =
+        repository_file("docs/case-studies/2026-09-05-freeflow-multi-pr-review-validation.md");
+
+    assert!(canary.contains("stage_analysis_manifest"));
+    assert!(canary.contains("github_review_lifecycle.py"));
+    for required in [
+        "interrupted_before_write",
+        "interrupted_after_write",
+        "head_drift",
+        "base_drift",
+        "new_blocking_feedback",
+        "author_repair",
+        "pending",
+        "merged",
+        "closed",
+        "body_digest",
+        "confirmed_existing",
+        "affected == [103, 104]",
+    ] {
+        assert!(
+            fixture.contains(required),
+            "GitHub fixture omitted {required:?}"
+        );
+    }
+    assert!(facade.contains("delivery_kind"));
+    assert!(facade.contains("code-carrying delivery requires a git checkpoint"));
+    assert!(facade.contains("\"$binary\" role read \"${common[@]}\""));
+    assert!(!facade.contains("$run_dir/baton.json"));
+    for required in [
+        "Simulated service and canary evidence",
+        "Actual paired/model evidence",
+        "Actual Sites rendering evidence",
+        "Actual browser E2E: passed with a disclosed fallback",
+        "{apps:[],browsers:[]}",
+        "Playwright 1.63.0",
+        "Chromium 151.0.7922.173",
+        "2 passed",
+        "**not executed**",
+    ] {
+        assert!(
+            report.contains(required),
+            "validation report omitted {required:?}"
         );
     }
 }
