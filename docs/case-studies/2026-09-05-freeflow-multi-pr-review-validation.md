@@ -45,14 +45,19 @@ The deterministic five-PR fixture passed these cases:
   checks, no blocking feedback, and evidence at the current revisions.
 
 The fixture produced five unique writes and five receipts across 22 recorded
-events. Its initial and final per-PR JSON artifacts were staged by digest into
+events. Its initial, confirmed-`REQUEST_CHANGES`, and final per-PR JSON artifacts were staged by digest into
 the existing five-deliverable analysis checkpoint. The public facade rejected
 missing and duplicate manifest coverage, then exercised the complete
 review-round → approval → receipt update/approval withdrawal → complete
 replacement → readiness approval → finalization cycle. There was no per-PR
 kernel approval or child run. A stale approval carrying the superseded round's
 identity and manifest digest is rejected before the current receipt-bearing
-round is approved.
+round is approved. Finalize is behaviorally refused for both the initial mixed
+round and the confirmed `REQUEST_CHANGES` round. It succeeds only for the final
+complete manifest: the facade obtains the current credential-checked snapshot,
+materializes every cited digest with pinned-kernel `role analysis`, validates
+the documented member/receipt/readiness fields, and then lets kernel apply
+atomically compare the expected revision. Neither guard reads Baton directly.
 
 The discovery regression enumerates a Review member, applies a human-approved
 scope amendment before exact join, and proves that the join returns the new
@@ -85,10 +90,15 @@ format, and tool choices; a recoverable tool failure; recorded model selection;
 and interrupted exact resumption continuing without a Human Decision. It then
 submits a complete analysis checkpoint, receives peer-requested changes, and
 exact-resumes in `revising` with the model reference retained. A bounded poll
-trace proves the waiting loop does not spin tightly. A genuine new publication
-authority question remains human-gated, its exact answer is retained and reused,
-and a duplicate question is rejected. A separate mandatory uninvoked user-only
-skill run remains at `waiting_for_skill` with no checkpoint or finalize action.
+trace proves the waiting loop does not spin tightly. The objective and required
+deliverable predeclare broader publication, so the missing publication authority
+is necessary rather than a confirmatory pause; its exact human answer is retained
+and reused, and a duplicate question is rejected. A disposable mandatory
+user-only skill carries real `SKILL.md` and `agents/openai.yaml` metadata. The
+facade discovers those documented flags and rejects checkpoint submission when
+only `required_user_skill` is present, then accepts the same checkpoint shape in
+a positive run where explicit invocation is represented by the matching
+`invoked_user_skill` reference.
 
 The five-PR fixture also evaluates readiness before protocol finalization. Its
 initial mixed round and its confirmed `REQUEST_CHANGES` receipt both remain not
@@ -110,6 +120,9 @@ Focused RED evidence:
 - The lookup regression failed before an exact join returned the amended scope
   rather than the member set observed during enumeration.
 - The validation-report contract failed while this case-study file was absent.
+- The expanded public-facade canary failed before `review_guard.py` existed;
+  Review finalize therefore had no behavioral readiness gate for its materialized
+  per-member artifacts.
 
 Focused GREEN evidence recorded during implementation:
 
@@ -124,6 +137,7 @@ bash tests/skills/checkpoint-guard.sh
 checkpoint guard: ok
 
 bash tests/skills/two-role-canary.sh
+github fixture: ok; writes=5; receipts=5; events=22
 two-role skill canary: ok
 ```
 

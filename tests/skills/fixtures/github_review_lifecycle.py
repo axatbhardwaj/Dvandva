@@ -240,6 +240,9 @@ def run(root: Path) -> None:
     assert fixture.write_count == writes_after_interruption
     assert not fixture.ready()
     requested_changes_ready = fixture.ready()
+    requested_changes = {number: fixture.artifact(number) for number in fixture.prs}
+    for artifact in requested_changes.values():
+        artifact["capture_phase"] = "requested_changes"
 
     # Identity and receipt matching is exact. Actor, head, state, and body all
     # participate; author self-review is rejected.
@@ -339,6 +342,7 @@ def run(root: Path) -> None:
 
     final = {number: fixture.artifact(number) for number in fixture.prs}
     write_artifacts(root, "initial", initial)
+    write_artifacts(root, "requested-changes", requested_changes)
     write_artifacts(root, "final", final)
     summary = {
         "fixture": "deterministic GitHub Review lifecycle",

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+shopt -s inherit_errexit
 # Byte-order collation: filename comparisons below must not depend on the
 # invoking user's locale.
 export LC_ALL=C
@@ -32,6 +33,8 @@ for role in vadi prativadi; do
     cmp "$repo_root/skills/$role/scripts/discover.py" "$host_skills/$role/scripts/discover.py"
     cmp "$repo_root/skills/$role/scripts/checkpoint_guard.py" \
       "$host_skills/$role/scripts/checkpoint_guard.py"
+    cmp "$repo_root/skills/$role/scripts/review_guard.py" \
+      "$host_skills/$role/scripts/review_guard.py"
   done
   for reference in initiation discovery freeflow review; do
     cmp "$repo_root/skills/$role/references/$reference.md" \
@@ -648,10 +651,10 @@ run_freeflow_autonomy() {
   local started run_id run_dir snapshot trace failure failure_status
   local artifact identity reviewing manifest_digest
   started="$(bash "$worker" start autonomy-worker codex claude "$workspace" \
-    'Exercise authorized Freeflow autonomy' --new-run --autonomous \
+    'Produce and publish the autonomy report beyond the owner-only Site' --new-run --autonomous \
     --objective-ref workflow=freeflow --objective-ref delivery_kind=analysis \
     --objective-ref model_pair=codex-sol-high+claude-opus \
-    --required-deliverable report='Autonomy evidence')"
+    --required-deliverable report='Autonomy evidence and broader-publication receipt')"
   run_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])' <<<"$started")"
   run_dir="$XDG_STATE_HOME/dvandva/runs/$run_id"
   bash "$reviewer" start autonomy-reviewer claude codex "$workspace" --run-id "$run_id" >/dev/null
@@ -690,9 +693,9 @@ assert s.get("human_decision") is None
   snapshot="$(bash "$worker" read autonomy-worker "$run_dir")"
   python3 -c 'import json,sys; s=json.load(sys.stdin); assert s["status"] == "human_decision" and s["human_decision"]["kind"] == "authority"' <<<"$snapshot"
   apply_action "$worker" autonomy-worker "$run_dir" "$(rev "$run_dir")" autonomy-answer \
-    '{"type":"resume_human_decision","answer":"Keep owner-only"}' >/dev/null
+    '{"type":"resume_human_decision","answer":"Authorize broader publication"}' >/dev/null
   snapshot="$(bash "$worker" start autonomy-worker codex claude "$workspace" --run-id "$run_id")"
-  python3 -c 'import json,sys; s=json.load(sys.stdin); refs={(r["kind"],r["value"]) for r in s["objective"]["refs"]}; assert ("authority","Keep owner-only") in refs; assert s["human_decision"]["answer"] == "Keep owner-only"' <<<"$snapshot"
+  python3 -c 'import json,sys; s=json.load(sys.stdin); refs={(r["kind"],r["value"]) for r in s["objective"]["refs"]}; assert ("authority","Authorize broader publication") in refs; assert s["human_decision"]["answer"] == "Authorize broader publication"' <<<"$snapshot"
   set +e
   failure="$(apply_action_error "$worker" autonomy-worker "$run_dir" "$(rev "$run_dir")" autonomy-repeat \
     '{"type":"request_human_decision","kind":"authority","question":"May this run publish beyond the owner-only Site?","evidence":["No broader publication authority exists"],"options":["Authorize broader publication","Keep owner-only"]}')"
@@ -706,10 +709,29 @@ run_freeflow_autonomy
 run_required_user_only_gate() {
   local worker="$HOME/.agents/skills/vadi/scripts/dvandva-role.sh"
   local reviewer="$HOME/.claude/skills/prativadi/scripts/dvandva-role.sh"
-  local started run_id run_dir snapshot
+  local started run_id run_dir snapshot artifact identity failure failure_status skill_root
+  skill_root="$test_root/required-user-only"
+  mkdir -p "$skill_root/agents"
+  cat >"$skill_root/SKILL.md" <<'EOF'
+---
+name: required-user-only
+description: Disposable mandatory user-only canary skill.
+disable-model-invocation: true
+---
+# Required user-only fixture
+EOF
+  cat >"$skill_root/agents/openai.yaml" <<'EOF'
+interface:
+  display_name: Required user-only fixture
+policy:
+  allow_implicit_invocation: false
+EOF
+  rg -q '^disable-model-invocation:[[:space:]]*true$' "$skill_root/SKILL.md"
+  rg -q 'allow_implicit_invocation:[[:space:]]*false' "$skill_root/agents/openai.yaml"
   started="$(bash "$worker" start user-skill-worker codex claude "$workspace" \
     'Run a mandatory user-only method' --new-run --autonomous \
     --objective-ref workflow=freeflow --objective-ref delivery_kind=analysis \
+    --objective-ref "required_user_skill=$skill_root" \
     --required-deliverable report='User-skill result')"
   run_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])' <<<"$started")"
   run_dir="$XDG_STATE_HOME/dvandva/runs/$run_id"
@@ -725,6 +747,30 @@ assert s.get("human_decision") is None
 assert "finalize" not in s["advisory_actions"]
 assert s["participants"]["worker"]["progress"]["detail"].startswith("waiting_for_skill:")
 ' <<<"$snapshot"
+
+  artifact="$(stage_analysis "$worker" user-skill-worker "$run_dir" user-skill-blocked)"
+  identity="$(analysis_identity "$artifact")"
+  set +e
+  failure="$(apply_action_error "$worker" user-skill-worker "$run_dir" "$(rev "$run_dir")" user-skill-checkpoint \
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$identity\",\"deliverables\":[{\"id\":\"report\",\"artifacts\":[{\"kind\":\"analysis_digest\",\"value\":\"$artifact\"}]}],\"verification\":[\"user-only skill metadata discovered\"]}}")"
+  failure_status=$?
+  set -e
+  test "$failure_status" -ne 0
+  grep -Fq 'required user-only skill has not been explicitly invoked' <<<"$failure"
+
+  started="$(bash "$worker" start user-skill-invoked-worker codex claude "$workspace" \
+    'Run an explicitly invoked mandatory user-only method' --new-run --autonomous \
+    --objective-ref workflow=freeflow --objective-ref delivery_kind=analysis \
+    --objective-ref "required_user_skill=$skill_root" \
+    --objective-ref "invoked_user_skill=$skill_root" \
+    --required-deliverable report='User-skill result')"
+  run_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])' <<<"$started")"
+  run_dir="$XDG_STATE_HOME/dvandva/runs/$run_id"
+  bash "$reviewer" start user-skill-invoked-reviewer claude codex "$workspace" --run-id "$run_id" >/dev/null
+  artifact="$(stage_analysis "$worker" user-skill-invoked-worker "$run_dir" user-skill-invoked)"
+  identity="$(analysis_identity "$artifact")"
+  apply_action "$worker" user-skill-invoked-worker "$run_dir" "$(rev "$run_dir")" user-skill-invoked-checkpoint \
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$identity\",\"deliverables\":[{\"id\":\"report\",\"artifacts\":[{\"kind\":\"analysis_digest\",\"value\":\"$artifact\"}]}],\"verification\":[\"explicit invocation represented by exact metadata root\"]}}" >/dev/null
 }
 run_required_user_only_gate
 
@@ -736,10 +782,10 @@ run_batch_review() {
   local reviewer="$HOME/.claude/skills/prativadi/scripts/dvandva-role.sh"
   local started run_id run_dir failure failure_status reviewing digest identity terminal missing_identity
   local round_identity round_digest
-  local fixture_root="$test_root/github-review-fixture" round_bundle receipt_bundle
-  local manifest missing_manifest duplicate_manifest receipt_manifest
+  local fixture_root="$test_root/github-review-fixture" round_bundle requested_bundle receipt_bundle
+  local manifest missing_manifest duplicate_manifest requested_manifest receipt_manifest
   local -a members=(101 102 103 104 105) refs=() deliverables=()
-  local -a initial_specs=() final_specs=()
+  local -a initial_specs=() requested_specs=() final_specs=()
   local member
   python3 "$repo_root/tests/skills/fixtures/github_review_lifecycle.py" "$fixture_root"
   python3 - "$fixture_root/summary.json" <<'PY'
@@ -762,6 +808,7 @@ PY
     refs+=(--objective-ref "review_member=https://github.com/axatbhardwaj/Dvandva/pull/$member")
     deliverables+=(--required-deliverable "pr-$member=Review https://github.com/axatbhardwaj/Dvandva/pull/$member")
     initial_specs+=("pr-$member=$fixture_root/initial/pr-$member.json")
+    requested_specs+=("pr-$member=$fixture_root/requested-changes/pr-$member.json")
     final_specs+=("pr-$member=$fixture_root/final/pr-$member.json")
   done
   started="$(bash "$worker" start batch-worker codex claude "$workspace" \
@@ -807,8 +854,37 @@ PY
   apply_action "$reviewer" batch-reviewer "$run_dir" "$(rev "$run_dir")" batch-approve \
     "{\"type\":\"record_review\",\"verdict\":\"approved\",\"checkpoint_identity\":\"$identity\",\"manifest_digest\":\"$digest\",\"scope_revision\":0,\"findings\":[]}" >/dev/null
 
+  set +e
+  failure="$(apply_action_error "$worker" batch-worker "$run_dir" "$(rev "$run_dir")" batch-initial-finalize '{"type":"finalize"}')"
+  failure_status=$?
+  set -e
+  test "$failure_status" -ne 0
+  grep -Fq '"error":"review_not_ready"' <<<"$failure"
+
   apply_action "$worker" batch-worker "$run_dir" "$(rev "$run_dir")" batch-withdraw \
-    '{"type":"withdraw_approval","reason":"Record exact GitHub receipts and pending-to-green readiness"}' >/dev/null
+    '{"type":"withdraw_approval","reason":"Record confirmed REQUEST_CHANGES receipt"}' >/dev/null
+  approve_explainer "$worker" batch-worker "$reviewer" batch-reviewer \
+    "$worker" batch-worker "$run_dir" "$(rev "$run_dir")" batch-review batch-requested-open
+  requested_bundle="$(stage_analysis_manifest "$worker" batch-worker "$run_dir" \
+    requested "${requested_specs[@]}")"
+  identity="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["identity"])' <<<"$requested_bundle")"
+  requested_manifest="$(python3 -c 'import json,sys; print(json.dumps(json.load(sys.stdin)["deliverables"],separators=(",",":")))' <<<"$requested_bundle")"
+  reviewing="$(apply_action "$worker" batch-worker "$run_dir" "$(rev "$run_dir")" batch-requested \
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$identity\",\"deliverables\":${requested_manifest},\"verification\":[\"REQUEST_CHANGES receipt persisted; run remains incomplete\"]}}")"
+  digest="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' <<<"$reviewing")"
+  approve_explainer "$worker" batch-worker "$reviewer" batch-reviewer \
+    "$worker" batch-worker "$run_dir" "$(rev "$run_dir")" batch-review batch-requested
+  apply_action "$reviewer" batch-reviewer "$run_dir" "$(rev "$run_dir")" batch-requested-approve \
+    "{\"type\":\"record_review\",\"verdict\":\"approved\",\"checkpoint_identity\":\"$identity\",\"manifest_digest\":\"$digest\",\"scope_revision\":0,\"findings\":[]}" >/dev/null
+  set +e
+  failure="$(apply_action_error "$worker" batch-worker "$run_dir" "$(rev "$run_dir")" batch-requested-finalize '{"type":"finalize"}')"
+  failure_status=$?
+  set -e
+  test "$failure_status" -ne 0
+  grep -Fq '"error":"review_not_ready"' <<<"$failure"
+
+  apply_action "$worker" batch-worker "$run_dir" "$(rev "$run_dir")" batch-receipt-withdraw \
+    '{"type":"withdraw_approval","reason":"Record exact APPROVE receipts and pending-to-green readiness"}' >/dev/null
   approve_explainer "$worker" batch-worker "$reviewer" batch-reviewer \
     "$worker" batch-worker "$run_dir" "$(rev "$run_dir")" batch-review batch-receipt-open
   receipt_bundle="$(stage_analysis_manifest "$worker" batch-worker "$run_dir" \
