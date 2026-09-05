@@ -73,6 +73,8 @@ def validate_current_basis(record, member_id, member_numbers):
         for value in (author, actor, head, base, observed_at, review_basis)
     ):
         reject(f"{member_id} lacks full identity, revision, timestamp, or basis evidence")
+    author = author.strip()
+    actor = actor.strip()
     if actor.casefold() == author.casefold() or not FULL_REVISION.fullmatch(head) or not FULL_REVISION.fullmatch(base):
         reject(f"{member_id} identity or revision evidence is invalid")
     number = int(member_id.removeprefix("pr-"))
@@ -124,7 +126,7 @@ def validate_artifact(record, member_url, member_id, member_numbers):
     if not isinstance(receipts, list) or not any(
         isinstance(receipt, dict)
         and receipt.get("pr") == number
-        and str(receipt.get("actor", "")).casefold() == actor.casefold()
+        and str(receipt.get("actor", "")).strip().casefold() == actor.casefold()
         and receipt.get("head") == head
         and receipt.get("state") == "APPROVE"
         and receipt.get("body_digest") == body_digest
@@ -147,6 +149,11 @@ def validate(snapshot, members, artifact_dir):
     }
     if len(repositories) != 1:
         reject("persistent Review members do not belong to one canonical repository")
+    workspace = snapshot.get("workspace")
+    workspace_repository = workspace.get("repository_id") if isinstance(workspace, dict) else None
+    member_repository = "github.com/" + "/".join(next(iter(repositories)))
+    if not isinstance(workspace_repository, str) or workspace_repository.casefold() != member_repository:
+        reject("persistent Review members do not match the canonical workspace repository")
     deliverables = checkpoint.get("deliverables")
     if not isinstance(deliverables, list) or len(deliverables) != len(members):
         reject("persistent Review checkpoint does not cover every frozen member")

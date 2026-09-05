@@ -191,13 +191,19 @@ test "$(field outcome <"$test_root/wait.json")" = match
 # No matching candidate returns bounded none, never an invented replacement.
 result="$(DVANDVA_DISCOVER_TIMEOUT_MS=50 scan --workflow discovery --task-reference MISSING --wait)"
 test "$(field outcome <<<"$result")" = none
-# A candidate cannot smuggle a member from another canonical repository into
-# this repository-scoped lookup.
-bash "$vadi" start worker-cross-repo claude codex "$workspace" \
-  'Malformed cross-repository batch' --new-run \
+# A legacy or human-amended candidate cannot smuggle a member from another
+# canonical repository into this repository-scoped lookup.
+cross_repo="$(bash "$vadi" start worker-cross-repo claude codex "$workspace" \
+  'Batch amended into cross-repository scope' --new-run \
   --objective-ref workflow=review \
-  --objective-ref review_member=https://github.com/example/other/pull/70 \
-  --required-deliverable pr-70='Review https://github.com/example/other/pull/70' >/dev/null
+  --objective-ref review_member=https://github.com/example/project/pull/70 \
+  --required-deliverable pr-70='Review https://github.com/example/project/pull/70')"
+cross_id="$(field run_id <<<"$cross_repo")"
+cross_dir="$XDG_STATE_HOME/dvandva/runs/$cross_id"
+apply_json "$vadi" worker-cross-repo "$cross_dir" cross-request \
+  '{"type":"request_human_decision","kind":"scope","question":"Which repository remains in scope?","evidence":["The selected repository changed"],"options":["Apply amended repository","Keep current repository"]}' >/dev/null
+apply_json "$vadi" worker-cross-repo "$cross_dir" cross-resume \
+  '{"type":"resume_human_decision","answer":"Apply amended repository","scope_amendment":{"objective":"Malformed cross-repository batch","objective_refs":[{"kind":"workflow","value":"review"},{"kind":"review_member","value":"https://github.com/example/other/pull/70"}],"task_reference":null,"scope_deliverables":[{"id":"pr-70","description":"Review https://github.com/example/other/pull/70"}]}}' >/dev/null
 set +e
 cross_result="$(scan --workflow review --task-reference https://github.com/example/other/pull/70)"
 cross_status=$?

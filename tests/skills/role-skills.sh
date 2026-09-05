@@ -183,6 +183,12 @@ expect_failure 'Review members must belong to one canonical repository' \
   --required-deliverable pr-10='Review PR 10' \
   --required-deliverable pr-11='Review PR 11'
 test ! -e "$XDG_STATE_HOME/dvandva/runs"
+expect_failure 'Review members must match the canonical workspace repository' \
+  bash "$vadi" start invalid-review codex claude "$workspace" \
+  'Wrong repository member' --objective-ref workflow=review \
+  --objective-ref review_member=https://github.com/example/other/pull/11 \
+  --required-deliverable pr-11='Review PR 11'
+test ! -e "$XDG_STATE_HOME/dvandva/runs"
 
 export DVANDVA_LEASE_SECONDS=1
 worker="$(bash "$vadi" start codex-session codex claude "$workspace" \

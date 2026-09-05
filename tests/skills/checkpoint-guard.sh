@@ -74,6 +74,7 @@ pathlib.Path(sys.argv[1]).write_text(json.dumps({
         {"kind": "review_member", "value": "https://github.com/example/other/pull/32"},
     ]},
     "task": {"reference": None},
+    "workspace": {"repository_id": "github.com/axatbhardwaj/dvandva"},
     "checkpoint": {"kind": "analysis", "deliverables": []},
 }))
 PY
@@ -95,7 +96,7 @@ if mode == "complete":
     record.update({"author":"author","acting_reviewer":"reviewer","head":"1"*40,"base":"2"*40,"dependencies":[],"observed_at":"2026-09-06T12:00:00Z","review_basis":"Exact head/base and merged disposition re-queried"})
 contents=json.dumps(record,separators=(",",":")); digest=hashlib.sha256(contents.encode()).hexdigest()
 (root/f"{digest}.json").write_text(json.dumps({"digest":digest,"contents":contents}))
-snapshot={"revision":7,"objective":{"refs":[{"kind":"workflow","value":"review"},{"kind":"review_member","value":record["url"]}]},"task":{"reference":None},"checkpoint":{"kind":"analysis","deliverables":[{"id":"pr-31","artifacts":[{"kind":"analysis_digest","value":digest}]}]}}
+snapshot={"revision":7,"objective":{"refs":[{"kind":"workflow","value":"review"},{"kind":"review_member","value":record["url"]}]},"task":{"reference":None},"workspace":{"repository_id":"github.com/axatbhardwaj/dvandva"},"checkpoint":{"kind":"analysis","deliverables":[{"id":"pr-31","artifacts":[{"kind":"analysis_digest","value":digest}]}]}}
 snapshot_path.write_text(json.dumps(snapshot))
 PY
 }
@@ -109,6 +110,20 @@ find "$review_dir" -maxdepth 1 -type f -exec unlink {} \;
 terminal_fixture complete
 python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json"
 
+# Repository identity is bound to the credential-checked run workspace, not
+# merely shared among all frozen members.
+python3 - "$test_root/review-snapshot.json" <<'PY'
+import json, pathlib, sys
+path=pathlib.Path(sys.argv[1]); snapshot=json.loads(path.read_text())
+snapshot["workspace"]["repository_id"]="github.com/example/other"
+path.write_text(json.dumps(snapshot))
+PY
+set +e
+error="$(python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json")"; status=$?
+set -e
+test "$status" -ne 0
+grep -Fq 'members do not match the canonical workspace repository' <<<"$error"
+
 # Open readiness requires the same complete current basis as terminal evidence,
 # in addition to its exact approval receipt.
 open_fixture() { python3 - "$review_dir" "$test_root/review-snapshot.json" "$1" <<'PY'
@@ -121,14 +136,16 @@ if mode.startswith("missing-"): record.pop(mode.removeprefix("missing-"))
 if mode == "invalid-base": record["base"]="main"
 if mode == "invalid-observed_at": record["observed_at"]="yesterday"
 if mode == "invalid-dependencies": record["dependencies"]=[31]
+if mode == "padded-self-review": record["author"]=" reviewer "
+if mode == "padded-receipt": record["receipts"][0]["actor"]=" reviewer "
 contents=json.dumps(record,separators=(",",":")); digest=hashlib.sha256(contents.encode()).hexdigest()
 (root/f"{digest}.json").write_text(json.dumps({"digest":digest,"contents":contents}))
-snapshot={"revision":7,"objective":{"refs":[{"kind":"workflow","value":"review"},{"kind":"review_member","value":record["url"]}]},"task":{"reference":None},"checkpoint":{"kind":"analysis","deliverables":[{"id":"pr-31","artifacts":[{"kind":"analysis_digest","value":digest}]}]}}
+snapshot={"revision":7,"objective":{"refs":[{"kind":"workflow","value":"review"},{"kind":"review_member","value":record["url"]}]},"task":{"reference":None},"workspace":{"repository_id":"github.com/axatbhardwaj/dvandva"},"checkpoint":{"kind":"analysis","deliverables":[{"id":"pr-31","artifacts":[{"kind":"analysis_digest","value":digest}]}]}}
 snapshot_path.write_text(json.dumps(snapshot))
 PY
 }
 find "$review_dir" -maxdepth 1 -type f -exec unlink {} \;
-for mode in missing-base missing-dependencies missing-observed_at missing-review_basis invalid-base invalid-observed_at invalid-dependencies; do
+for mode in missing-base missing-dependencies missing-observed_at missing-review_basis invalid-base invalid-observed_at invalid-dependencies padded-self-review; do
   open_fixture "$mode"
   set +e
   error="$(python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json")"; status=$?
@@ -138,6 +155,9 @@ for mode in missing-base missing-dependencies missing-observed_at missing-review
   find "$review_dir" -maxdepth 1 -type f -exec unlink {} \;
 done
 open_fixture complete
+python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json"
+find "$review_dir" -maxdepth 1 -type f -exec unlink {} \;
+open_fixture padded-receipt
 python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json"
 
 # Metadata keys in examples/body text and oversized files must not mark a skill
