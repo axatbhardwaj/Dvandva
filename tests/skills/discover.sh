@@ -78,7 +78,7 @@ batch="$(bash "$vadi" start worker-batch claude codex "$workspace" \
   --required-deliverable pr-41='Review https://github.com/example/project/pull/41' \
   --required-deliverable pr-42='Review https://github.com/example/project/pull/42')"
 batch_id="$(field run_id <<<"$batch")"
-result="$(scan --workflow review --task-reference https://github.com/example/project/pull/42)"
+result="$(scan --workflow review --task-reference https://GITHUB.com/EXAMPLE/PROJECT/pull/42)"
 python3 -c 'import json,sys; s=json.load(sys.stdin); assert s["outcome"] == "match"; assert s["candidates"][0]["run_id"] == sys.argv[1]; assert s["match_basis"] == "review_member"' "$batch_id" <<<"$result"
 # An exact member shared by two eligible batches is ambiguous; lookup must not
 # guess the newest candidate.
@@ -131,8 +131,16 @@ set +e
 duplicate_result="$(scan --workflow review --task-reference https://github.com/example/project/pull/55)"
 duplicate_status=$?
 set -e
-test "$duplicate_status" -ne 0
-test "$(field error <<<"$duplicate_result")" = invalid_discovery_response
+test "$duplicate_status" -eq 0
+python3 -c 'import json,sys; s=json.load(sys.stdin); assert s["outcome"] == "none"; assert s["invalid_candidates"] == [{"run_id":sys.argv[1],"error":"candidate has duplicate review_member references"}]' "$duplicate_id" <<<"$duplicate_result"
+# One malformed candidate cannot poison a healthy exact member match.
+healthy_55="$(bash "$vadi" start worker-healthy-55 claude codex "$workspace" \
+  'Healthy batch beside malformed scope' --new-run --objective-ref workflow=review \
+  --objective-ref review_member=https://github.com/example/project/pull/55 \
+  --required-deliverable pr-55='Review https://github.com/example/project/pull/55')"
+healthy_55_id="$(field run_id <<<"$healthy_55")"
+result="$(scan --workflow review --task-reference https://github.com/example/project/pull/55)"
+python3 -c 'import json,sys; s=json.load(sys.stdin); assert s["outcome"] == "match"; assert s["candidates"][0]["run_id"] == sys.argv[1]; assert len(s["invalid_candidates"]) == 1' "$healthy_55_id" <<<"$result"
 # Freeflow is independently filterable and never aliases Implementation.
 freeflow="$(create worker-freeflow 'Investigate runtime behavior' REPORT-1 freeflow)"
 freeflow_id="$(field run_id <<<"$freeflow")"
@@ -178,8 +186,8 @@ set +e
 cross_result="$(scan --workflow review --task-reference https://github.com/example/other/pull/70)"
 cross_status=$?
 set -e
-test "$cross_status" -ne 0
-test "$(field error <<<"$cross_result")" = invalid_discovery_response
+test "$cross_status" -eq 0
+python3 -c 'import json,sys; s=json.load(sys.stdin); assert s["outcome"] == "none"; assert s["invalid_candidates"][0]["error"] == "candidate has a non-canonical or cross-repository review member"' <<<"$cross_result"
 cmp "$vadi" "$prati"
 cmp "$repo_root/skills/vadi/scripts/discover.py" "$repo_root/skills/prativadi/scripts/discover.py"
 printf 'automatic run discovery: ok\n'

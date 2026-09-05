@@ -32,47 +32,62 @@ def filter_candidates(result, args):
         raise ValueError("kernel candidates must be an array")
     selected = []
     match_bases = []
+    invalid_candidates = []
     for candidate in candidates:
-        peer_key = "worker_harness" if args.role == "reviewer" else "reviewer_harness"
-        if candidate[peer_key].casefold() != args.peer.casefold():
-            continue
-        refs = candidate["objective"]["refs"]
-        workflows = [workflow(ref["value"]) for ref in refs if ref["kind"] == "workflow"]
-        if len(workflows) > 1:
-            raise ValueError("candidate has ambiguous workflow references")
-        actual = workflows[0] if workflows else "implementation"
-        if actual != workflow(args.workflow):
-            continue
-        match_basis = None
-        if actual == "review":
-            members = [ref["value"] for ref in refs if ref["kind"] == "review_member"]
-            if (args.task_reference and candidate["task_reference"] != args.task_reference
-                    and args.task_reference not in members):
+        try:
+            peer_key = "worker_harness" if args.role == "reviewer" else "reviewer_harness"
+            if candidate[peer_key].casefold() != args.peer.casefold():
                 continue
-            if len(members) != len({member.casefold() for member in members}):
-                raise ValueError("candidate has duplicate review_member references")
-            if members and not args.repository_id.casefold().startswith("github.com/"):
-                raise ValueError("review members require a canonical GitHub repository")
-            member_pattern = re.compile(
-                rf"^https://{re.escape(args.repository_id)}/pull/[1-9][0-9]*$",
-                re.IGNORECASE,
-            )
-            if any(not member_pattern.fullmatch(member) for member in members):
-                raise ValueError("candidate has a non-canonical or cross-repository review member")
-        else:
-            members = []
-        if args.task_reference:
-            if candidate["task_reference"] == args.task_reference:
-                match_basis = "task_reference"
-            elif actual == "review" and args.task_reference in members:
-                match_basis = "review_member"
+            refs = candidate["objective"]["refs"]
+            workflows = [workflow(ref["value"]) for ref in refs if ref["kind"] == "workflow"]
+            if len(workflows) > 1:
+                raise ValueError("candidate has ambiguous workflow references")
+            actual = workflows[0] if workflows else "implementation"
+            if actual != workflow(args.workflow):
+                continue
+            match_basis = None
+            if actual == "review":
+                members = [ref["value"] for ref in refs if ref["kind"] == "review_member"]
+                member_match = (
+                    args.task_reference is not None
+                    and any(member.casefold() == args.task_reference.casefold() for member in members)
+                )
+                if (args.task_reference and candidate["task_reference"] != args.task_reference
+                        and not member_match):
+                    continue
+                if len(members) != len({member.casefold() for member in members}):
+                    raise ValueError("candidate has duplicate review_member references")
+                if members and not args.repository_id.casefold().startswith("github.com/"):
+                    raise ValueError("review members require a canonical GitHub repository")
+                member_pattern = re.compile(
+                    rf"^https://{re.escape(args.repository_id)}/pull/[1-9][0-9]*$",
+                    re.IGNORECASE,
+                )
+                if any(not member_pattern.fullmatch(member) for member in members):
+                    raise ValueError("candidate has a non-canonical or cross-repository review member")
             else:
+                members = []
+                member_match = False
+            if args.task_reference:
+                if candidate["task_reference"] == args.task_reference:
+                    match_basis = "task_reference"
+                elif actual == "review" and member_match:
+                    match_basis = "review_member"
+                else:
+                    continue
+            if args.objective and candidate["objective"]["summary"] != args.objective:
                 continue
-        if args.objective and candidate["objective"]["summary"] != args.objective:
+            selected.append(candidate)
+            match_bases.append(match_basis)
+        except (AttributeError, KeyError, TypeError, ValueError) as error:
+            invalid_candidates.append({
+                "run_id": candidate.get("run_id") if isinstance(candidate, dict) else None,
+                "error": str(error),
+            })
             continue
-        selected.append(candidate)
-        match_bases.append(match_basis)
     result["candidates"] = selected
+    if invalid_candidates:
+        result["invalid_candidates"] = invalid_candidates
     if result["outcome"] != "corrupt":
         if not selected:
             result["outcome"] = "none"
