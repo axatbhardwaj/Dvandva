@@ -7,6 +7,10 @@ import subprocess
 import sys
 import time
 
+sys.dont_write_bytecode = True
+
+from role_guard import CandidateError, ref_values, validate_review_members
+
 
 def kernel_json(binary, *args):
     result = subprocess.run([binary, *args], text=True, capture_output=True)
@@ -22,6 +26,7 @@ def kernel_json(binary, *args):
 
 def workflow(value):
     # Persistent Review must not adopt legacy one-shot pr_review runs.
+    value = value.casefold()
     return "babysitting" if value == "babysit" else value
 
 
@@ -30,23 +35,59 @@ def filter_candidates(result, args):
     if not isinstance(candidates, list):
         raise ValueError("kernel candidates must be an array")
     selected = []
+    match_bases = []
+    invalid_candidates = []
     for candidate in candidates:
-        peer_key = "worker_harness" if args.role == "reviewer" else "reviewer_harness"
-        if candidate[peer_key].casefold() != args.peer.casefold():
+        try:
+            peer_key = "worker_harness" if args.role == "reviewer" else "reviewer_harness"
+            if candidate[peer_key].casefold() != args.peer.casefold():
+                continue
+            refs = candidate["objective"]["refs"]
+            if not isinstance(refs, list):
+                raise CandidateError("candidate objective references are not an array")
+            workflows = [workflow(value) for value in ref_values(candidate, "workflow")]
+            if len(workflows) > 1:
+                raise ValueError("candidate has ambiguous workflow references")
+            actual = workflows[0] if workflows else "implementation"
+            if actual != workflow(args.workflow):
+                continue
+            match_basis = None
+            if actual == "review":
+                members = ref_values(candidate, "review_member")
+                member_match = (
+                    args.task_reference is not None
+                    and any(member.casefold() == args.task_reference.casefold() for member in members)
+                )
+                if (args.task_reference and candidate["task_reference"] != args.task_reference
+                        and not member_match):
+                    continue
+                if len(members) != len({member.casefold() for member in members}):
+                    raise CandidateError("candidate has duplicate review_member references")
+                if members:
+                    validate_review_members(args.repository_id, members)
+            else:
+                members = []
+                member_match = False
+            if args.task_reference:
+                if candidate["task_reference"] == args.task_reference:
+                    match_basis = "task_reference"
+                elif actual == "review" and member_match:
+                    match_basis = "review_member"
+                else:
+                    continue
+            if args.objective and candidate["objective"]["summary"] != args.objective:
+                continue
+            selected.append(candidate)
+            match_bases.append(match_basis)
+        except (AttributeError, CandidateError, KeyError, TypeError) as error:
+            invalid_candidates.append({
+                "run_id": candidate.get("run_id") if isinstance(candidate, dict) else None,
+                "error": str(error),
+            })
             continue
-        refs = candidate["objective"]["refs"]
-        workflows = [workflow(ref["value"]) for ref in refs if ref["kind"] == "workflow"]
-        if len(workflows) > 1:
-            raise ValueError("candidate has ambiguous workflow references")
-        actual = workflows[0] if workflows else "implementation"
-        if actual != workflow(args.workflow):
-            continue
-        if args.task_reference and candidate["task_reference"] != args.task_reference:
-            continue
-        if args.objective and candidate["objective"]["summary"] != args.objective:
-            continue
-        selected.append(candidate)
     result["candidates"] = selected
+    if invalid_candidates:
+        result["invalid_candidates"] = invalid_candidates
     if result["outcome"] != "corrupt":
         if not selected:
             result["outcome"] = "none"
@@ -58,6 +99,8 @@ def filter_candidates(result, args):
             result["outcome"] = "busy"
         else:
             result["outcome"] = "match"
+            if match_bases[0] is not None:
+                result["match_basis"] = match_bases[0]
     result["read_only"] = True
     return result
 
@@ -71,8 +114,11 @@ def main():
     parser.add_argument("harness")
     parser.add_argument("peer")
     parser.add_argument("workspace")
-    parser.add_argument("--workflow", required=True,
-                        choices=["discovery", "implementation", "babysitting", "review", "babysit", "pr_review"])
+    parser.add_argument(
+        "--workflow", required=True,
+        choices=["discovery", "implementation", "babysitting", "review",
+                 "freeflow", "babysit", "pr_review"],
+    )
     parser.add_argument("--task-reference")
     parser.add_argument("--objective", help="Optional exact canonical objective, never a fuzzy query")
     parser.add_argument("--wait", action="store_true")
@@ -87,6 +133,7 @@ def main():
     if not 1 <= timeout <= 60000 or not 1 <= interval <= 60000:
         parser.error("discovery timeout and interval must be between 1 and 60000 ms")
     identity = kernel_json(args.binary, "identify", "--workspace", args.workspace)
+    args.repository_id = identity["repository_id"]
     deadline = time.monotonic() + timeout / 1000
     while True:
         result = kernel_json(args.binary, "discover", "--read-only", "--runs-dir", args.runs_dir,

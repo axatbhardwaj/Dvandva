@@ -19,10 +19,10 @@ export XDG_DATA_HOME="$test_root/data"
 export XDG_STATE_HOME="$test_root/state"
 # The facade resolves the pinned version directory directly; `current` is only
 # the shared default selector and must not be able to break a pinned session.
-binary="$XDG_DATA_HOME/dvandva/bin/0.3.9/dvandva-kernel"
+binary="$XDG_DATA_HOME/dvandva/bin/0.4.0/dvandva-kernel"
 mkdir -p "$(dirname "$binary")"
 cp "$repo_root/v4/target/debug/dvandva-v4" "$binary"
-ln -s 0.3.9 "$XDG_DATA_HOME/dvandva/bin/current"
+ln -s 0.4.0 "$XDG_DATA_HOME/dvandva/bin/current"
 
 workspace="$test_root/workspace"
 mkdir -p "$workspace"
@@ -48,7 +48,7 @@ test "$(bash "$vadi" session-id)" = "codex-session"
 generated="$(env -u CODEX_SESSION_ID bash "$vadi" session-id --generate)"
 [[ "$generated" =~ ^[0-9a-f-]{36}$ ]]
 probe="$(bash "$vadi" probe)"
-grep -Fq '"version": "0.3.9"' <<<"$probe"
+grep -Fq '"version": "0.4.0"' <<<"$probe"
 grep -Fq '"write_schema": "dvandva.run.v2"' <<<"$probe"
 grep -Fq '"read_schemas": [' <<<"$probe"
 grep -Fq '"role_api": 2' <<<"$probe"
@@ -59,15 +59,15 @@ grep -Fq '"publish": false' <<<"$probe"
 mv "$binary" "$binary.real"
 cat >"$binary" <<'ADVERSARIAL_KERNEL'
 #!/usr/bin/env bash
-valid_probe='{"package":"dvandva-v4","version":"0.3.9","publish":false,"write_schema":"dvandva.run.v2","read_schemas":["dvandva.run.v2","dvandva.run.v1"],"role_api":2,"capabilities":{"upgrade_from_v1":true},"compatible":true}'
+valid_probe='{"package":"dvandva-v4","version":"0.4.0","publish":false,"write_schema":"dvandva.run.v2","read_schemas":["dvandva.run.v2","dvandva.run.v1"],"role_api":2,"capabilities":{"upgrade_from_v1":true},"compatible":true}'
 if test "${1:-}" = "--version"; then
   case "${DVANDVA_FAKE_MODE:-valid}" in
-    valid|probe_*) printf 'dvandva-v4 0.3.9\n' ;;
-    version_nul) printf 'dvandva-v4 0.3.9\0\n' ;;
-    version_invalid_utf8) printf 'dvandva-v4 0.3.9\377\n' ;;
-    version_oversized) printf 'dvandva-v4 0.3.9'; head -c 300 /dev/zero | tr '\0' x ;;
-    version_extra_newline) printf 'dvandva-v4 0.3.9\n\n' ;;
-    version_nonzero) printf 'dvandva-v4 0.3.9\n'; exit 7 ;;
+    valid|probe_*) printf 'dvandva-v4 0.4.0\n' ;;
+    version_nul) printf 'dvandva-v4 0.4.0\0\n' ;;
+    version_invalid_utf8) printf 'dvandva-v4 0.4.0\377\n' ;;
+    version_oversized) printf 'dvandva-v4 0.4.0'; head -c 300 /dev/zero | tr '\0' x ;;
+    version_extra_newline) printf 'dvandva-v4 0.4.0\n\n' ;;
+    version_nonzero) printf 'dvandva-v4 0.4.0\n'; exit 7 ;;
   esac
   exit 0
 fi
@@ -103,14 +103,14 @@ mv "$binary.real" "$binary"
 mv "$binary" "$binary.real"
 cat >"$binary" <<'DECOY_KERNEL'
 #!/usr/bin/env bash
-if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.3.9\n'; exit 0; fi
+if test "${1:-}" = "--version"; then printf 'dvandva-v4 0.4.0\n'; exit 0; fi
 if test "${1:-}" = "probe"; then
   printf '%s\n' '{' \
     '  "package": 7, "version": false, "publish": true, "write_schema": [],' \
     '  "read_schemas": "wrong", "role_api": "2",' \
     '  "capabilities": {"upgrade_from_v1": "true"}, "compatible": "true",' \
     '  "decoy": {' \
-    '    "package": "dvandva-v4", "version": "0.3.9", "publish": false,' \
+    '    "package": "dvandva-v4", "version": "0.4.0", "publish": false,' \
     '    "write_schema": "dvandva.run.v2",' \
     '    "read_schemas": ["dvandva.run.v2", "dvandva.run.v1"],' \
     '    "role_api": 2, "capabilities": {"upgrade_from_v1": true},' \
@@ -145,6 +145,57 @@ expect_failure 'incompatible kernel' bash "$old_facade" start old codex claude \
   "$workspace" 'Must not mutate' DEF-OLD --new-run
 test ! -e "$XDG_STATE_HOME/dvandva/runs"
 
+# New persistent Review creation requires frozen member scope. Historical
+# member-less runs remain resumable through their existing exact IDs.
+expect_failure 'persistent Review requires at least one review_member' \
+  bash "$vadi" start invalid-review codex claude "$workspace" \
+  'Invalid member-less Review' --new-run --objective-ref workflow=review \
+  --required-deliverable review='Invalid member-less Review'
+test ! -e "$XDG_STATE_HOME/dvandva/runs"
+expect_failure 'persistent Review requires at least one review_member' \
+  bash "$vadi" start invalid-review codex claude "$workspace" \
+  'Invalid member-less Review' --objective-ref workflow=review \
+  --required-deliverable review='Invalid member-less Review'
+test ! -e "$XDG_STATE_HOME/dvandva/runs"
+expect_failure 'persistent Review requires at least one review_member' \
+  bash "$vadi" start invalid-review codex claude "$workspace" \
+  'Invalid member-less Review' --objective-ref Workflow=review \
+  --required-deliverable review='Invalid member-less Review'
+test ! -e "$XDG_STATE_HOME/dvandva/runs"
+expect_failure 'at most one workflow objective reference' \
+  bash "$vadi" start invalid-review codex claude "$workspace" \
+  'Ambiguous workflow' --objective-ref workflow=review \
+  --objective-ref workflow=freeflow \
+  --required-deliverable review='Invalid member-less Review'
+test ! -e "$XDG_STATE_HOME/dvandva/runs"
+expect_failure 'Review members must be unique' \
+  bash "$vadi" start invalid-review codex claude "$workspace" \
+  'Duplicate members' --objective-ref workflow=review \
+  --objective-ref review_member=https://github.com/example/project/pull/10 \
+  --objective-ref review_member=https://GITHUB.com/EXAMPLE/PROJECT/pull/10 \
+  --required-deliverable pr-10='Review PR 10'
+test ! -e "$XDG_STATE_HOME/dvandva/runs"
+expect_failure 'Review members must belong to one canonical repository' \
+  bash "$vadi" start invalid-review codex claude "$workspace" \
+  'Non-canonical URL prefix' --objective-ref workflow=review \
+  --objective-ref review_member=HTTPS://GITHUB.COM/example/project/pull/10 \
+  --required-deliverable pr-10='Review PR 10'
+test ! -e "$XDG_STATE_HOME/dvandva/runs"
+expect_failure 'Review members must belong to one canonical repository' \
+  bash "$vadi" start invalid-review codex claude "$workspace" \
+  'Cross-repository members' --objective-ref workflow=review \
+  --objective-ref review_member=https://github.com/example/project/pull/10 \
+  --objective-ref review_member=https://github.com/example/other/pull/11 \
+  --required-deliverable pr-10='Review PR 10' \
+  --required-deliverable pr-11='Review PR 11'
+test ! -e "$XDG_STATE_HOME/dvandva/runs"
+expect_failure 'Review members must match the canonical workspace repository' \
+  bash "$vadi" start invalid-review codex claude "$workspace" \
+  'Wrong repository member' --objective-ref workflow=review \
+  --objective-ref review_member=https://github.com/example/other/pull/11 \
+  --required-deliverable pr-11='Review PR 11'
+test ! -e "$XDG_STATE_HOME/dvandva/runs"
+
 export DVANDVA_LEASE_SECONDS=1
 worker="$(bash "$vadi" start codex-session codex claude "$workspace" \
   'Implement DEF-123' DEF-123 --objective-ref ticket=https://tracker.test/DEF-123 \
@@ -176,7 +227,7 @@ rm "$XDG_DATA_HOME/dvandva/bin/current"
 ln -s 0.0.0 "$XDG_DATA_HOME/dvandva/bin/current"
 bash "$vadi" read codex-session "$run_dir" | grep -F '"revision": 3' >/dev/null
 rm "$XDG_DATA_HOME/dvandva/bin/current"
-ln -s 0.3.9 "$XDG_DATA_HOME/dvandva/bin/current"
+ln -s 0.4.0 "$XDG_DATA_HOME/dvandva/bin/current"
 
 # Observe is claim-independent and read-only: a session with no credential can
 # watch the run, sees the explicit read-only marker, and never moves the head.
@@ -535,8 +586,8 @@ do
 done
 
 for required in \
-  '0.3.9' \
-  'skills-v0.3.9' \
+  '0.4.0' \
+  'skills-v0.4.0' \
   'release target' \
   'fails closed if either is missing' \
   'Linux x86_64 only' \

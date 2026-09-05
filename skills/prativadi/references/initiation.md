@@ -7,9 +7,13 @@ The kernel's legal actions, exact-run checks and publication gates still apply.
 ## Declare and discover
 
 For a new run, derive the workflow from the human's request. Store one objective
-ref: `workflow=discovery`, `workflow=implementation`, `workflow=babysitting`, or
-`workflow=review`. Default to implementation only when the request does not
-select another workflow. Existing `workflow=implementation|babysit|pr_review`
+ref: `workflow=discovery`, `workflow=implementation`, `workflow=babysitting`,
+`workflow=review`, or `workflow=freeflow`. Explicit workflow selection wins.
+Route reports, codebase investigations, exploratory diagnostics, and testing
+that do not fit a specialized workflow to Freeflow; ordinary scoped building
+remains Implementation, and a multi-PR review remains Review. Default to
+implementation only when the request does not select another workflow. Existing
+`workflow=implementation|babysit|pr_review`
 values remain valid: babysit means Babysitting; pr_review remains the legacy
 one-shot external review. Never relabel or expand an existing run on resume.
 
@@ -77,6 +81,16 @@ When the user supplies an exact ID, bypass discovery entirely and preserve
 run_missing/scope_mismatch behavior. No background completion or auto-wake
 capability is assumed.
 
+For persistent Review, an exact canonical member PR URL supplied as
+`--task-reference` to `discover` may match either the candidate's scalar task
+reference (existing single-PR behavior) or one `review_member` objective ref.
+After a member match, exact-join by run ID without passing that member as a
+scalar task assertion when the batch has a different or null task. Recheck the
+complete frozen member refs, deliverables, repository, and pairing from the
+fresh joined snapshot. Duplicate member refs, a cross-repository member, scope
+movement before exact join, or multiple eligible runs fail closed; never repair
+scope or choose the newest candidate during observational lookup.
+
 The exact peer prompt is still a recovery shortcut, but copying it is optional:
 prativadi can discover the run even while vadi's activation turn is polling.
 If interrupted before pairing, read fresh state and re-show the exact peer
@@ -115,6 +129,18 @@ A user-only skill runs only when the human explicitly invokes that skill in
 this session. Honor its own questions, approvals and publishing behavior;
 never copy its method to bypass invocation restrictions.
 
+When scope makes an installed user-only skill mandatory, record its canonical
+skill root as `required_user_skill=<root>`. Record
+`invoked_user_skill=<same root>` only after the human explicitly invokes that
+skill; if invocation occurs after initiation, use the existing human-approved
+scope amendment to add the reference. This is a durable role attestation based
+on explicit human invocation, not independent harness proof, and must never be
+synthesized by an agent. Before a Freeflow checkpoint, the public
+role facade reads `SKILL.md` and `agents/openai.yaml` at that root and requires
+`disable-model-invocation: true` or `allow_implicit_invocation: false`, plus the
+matching invocation reference. Missing, unreadable, model-invocable, or
+uninvoked mandatory metadata fails closed without adding kernel state.
+
 When the next required step is an uninvoked skill, report progress with
 `phase=waiting` and detail `waiting_for_skill: <command>; <reason>`, show the
 run ID and exact command, then yield the turn. This is an intentional human
@@ -133,13 +159,19 @@ answers; an actual question may yield for the answer rather than busy-polling.
 ## Workflow-specific continuation
 
 Discovery: read `references/discovery.md` in either role before domain work.
+Freeflow: read `references/freeflow.md`; retain its current plan and choose
+skills, evidence, checkpoint kind, and executed testing within existing authority.
+For code-carrying or mixed scope, start with `delivery_kind=code`; for report,
+investigation, or testing-only scope, use `delivery_kind=analysis`. Every
+Freeflow run has exactly one of these markers.
 Implementation: consume the approved spec/tickets; when Matt's implement method
 was selected, wait for the human's `/implement` invocation. Its local code-review
 is vadi's self-check; prativadi separately owns exact-checkpoint acceptance.
 Babysitting: follow the existing babysit repair/maintenance contract, including
 live ownership verification, gh stack, CI, feedback and fresh merge authority.
 
-For new `workflow=review`, follow the existing pr_review independent review,
+For new `workflow=review`, read `references/review.md` and follow the existing
+pr_review independent review,
 no-patch and receipt-verification contract with this completion override:
 `REQUEST_CHANGES` is a completed review round, not a completed run. Keep the
 run active after its receipt-bearing checkpoint is approved; withhold finalize

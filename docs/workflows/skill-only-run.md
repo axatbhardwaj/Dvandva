@@ -31,8 +31,8 @@ Then explicitly ask one session:
 $setup-dvandva install Dvandva.
 ```
 
-The `skills-v0.3.9` GitHub release provides `dvandva-kernel-linux-x86_64` and
-`SHA256SUMS`. Setup verifies the digest and the complete kernel 0.3.9,
+The `skills-v0.4.0` GitHub release provides `dvandva-kernel-linux-x86_64` and
+`SHA256SUMS`. Setup verifies the digest and the complete kernel 0.4.0,
 `dvandva.run.v2`, role API 2 probe before installing under
 `${XDG_DATA_HOME:-$HOME/.local/share}/dvandva/`, outside `PATH`. The crate is
 non-publishable and no plugin or marketplace package is involved.
@@ -204,12 +204,13 @@ printf 'installed policy check: model invocation allowed\n'
 The RED/GREEN fresh-agent scenarios are recorded in
 [`docs/case-studies/2026-09-01-prativadi-code-review-pressure-test.md`](../case-studies/2026-09-01-prativadi-code-review-pressure-test.md).
 
-## Discovery and four-workflow initiation
+## Discovery and five-workflow initiation
 
-The active role contracts now expose Discovery, Implementation, Babysitting
-and Review. Read [initiation](../../skills/vadi/references/initiation.md) before
+The active role contracts now expose Discovery, Implementation, Babysitting,
+Review, and Freeflow. Read [initiation](../../skills/vadi/references/initiation.md) before
 activation and [discovery](../../skills/vadi/references/discovery.md) for paired
-spec/ticket work. Identical references ship inside both role skills.
+spec/ticket work. Freeflow and persistent Review have their own role-local
+references. Every shared reference ships byte-identically inside both roles.
 
 New discovery runs record `workflow=discovery` and `discovery_stage=spec|tickets`.
 Source discovery is bounded read-only preflight. Prativadi's independent source
@@ -227,6 +228,36 @@ before the paired review; a ready-for-agent label cannot replace approval.
 tickets and returns changes through the complete analysis checkpoint cycle.
 
 New `workflow=review` extends review across author updates and CI completion.
+It may freeze one or more canonical PR URLs from one repository, with one
+required deliverable per member. All-member review, adjudication, receipt, and
+readiness evidence travels through complete immutable candidates and one atomic
+Baton verdict. Exact member lookup is observational; after selection the peer
+exact-joins by run ID and rechecks the complete scope. Changed members and
+affected stack dependents are refreshed while independently checked unaffected
+evidence may be retained. No per-PR kernel state, child run, or merge authority
+is introduced.
+
+New `workflow=freeflow` supports source-backed reports, codebase investigation,
+exploratory diagnostics, executed testing, and test-and-fix. It starts with an
+outcome, deliverables, environment/revision, authority, and observable completion
+criteria, then keeps one current plan with evidence and limitations. Non-code
+deliveries may use staged analysis; anything containing code uses a Git
+checkpoint and the existing Standards/Spec review rule. Code-carrying or mixed
+Freeflow scope records `delivery_kind=code`, which lets the verified role facade
+reject an analysis checkpoint without adding kernel state; report,
+investigation, and testing-only scope records `delivery_kind=analysis` and the
+facade rejects a Git checkpoint. Missing, duplicated, and invalid markers fail
+closed at checkpoint submission. Browser E2E means an
+actual running-application journey with environment, steps, observable state,
+and passed/failed/blocked/not-run results—not generated tests or API calls alone.
+
+The five workflows share one autonomy rule: routine in-scope choices, recovery,
+checks, and peer revisions continue under previously granted authority. A
+human-selected user-only skill remains explicit; model-invocable skills may run
+automatically, and optional unavailable companions take a disclosed native
+method. Human Decisions remain only for genuinely new intent, scope, or
+authority.
+
 The stored `pr_review` workflow remains one-shot for compatibility; a confirmed
 REQUEST_CHANGES ends that legacy objective only. `babysitting` uses the existing
 `babysit` ownership, maintenance and explicit merge-authority rules.
@@ -250,3 +281,7 @@ an explicit supplied run ID bypasses discovery. A natural-language paraphrase
 is never silently substituted for the selected run's canonical scope. No match
 waits, multiple matches ask, and the chosen ID persists across turns. Discovery
 and existing exact joins are tested by `bash tests/skills/discover.sh`.
+For persistent Review, the exact task filter also recognizes a canonical
+`review_member` URL. The helper reports `match_basis=review_member`; exact start
+then uses only the run ID (unless the human supplied the batch's real scalar
+task) and the role rechecks every member and deliverable from the joined scope.

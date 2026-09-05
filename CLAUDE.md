@@ -19,6 +19,11 @@
   delivery candidate, after the whole scoped implementation is ready. Analysis
   checkpoints and unavailable-companion cases use native review. Capability
   evidence is recorded in `docs/workflows/skill-only-run.md`.
+- New runs route through five role-contract workflows: Discovery,
+  Implementation, Babysitting, Review, and Freeflow. Freeflow uses evidence and
+  real interfaces without requiring a spec/ticket pipeline. Persistent Review
+  may freeze multiple same-repository PRs in one complete manifest; legacy
+  `pr_review` remains one-shot.
 - Semantic roles submit and review only complete checkpoint bindings. Use
   checkpoint supersession or approval withdrawal for newly discovered work.
 - Each work-carrying handoff opens an obligation. Vadi stages the run's digest-bound HTML,

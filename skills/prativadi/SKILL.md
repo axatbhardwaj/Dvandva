@@ -1,6 +1,6 @@
 ---
 name: prativadi
-description: Act as prativadi for a paired Dvandva run, including discovery, implementation, babysitting, or review. Use when the user says act as prativadi, join the current run as prativadi, review as prativadi, or explicitly invokes $prativadi. Do not trigger for ordinary solo review.
+description: Act as prativadi for a paired Dvandva run, including discovery, implementation, babysitting, review, or freeflow. Use when the user says act as prativadi, join the current run as prativadi, review as prativadi, or explicitly invokes $prativadi. Do not trigger for ordinary solo review.
 ---
 
 # Prativadi
@@ -15,6 +15,9 @@ Read `references/initiation.md` before starting or joining. For discovery,
 also read `references/discovery.md`. Its bounded startup source verification
 and intentional human-input waits are explicit exceptions to the ordinary
 work/poll loop below; all mutations still require facade authorization.
+For Freeflow read `references/freeflow.md`; for persistent Review read
+`references/review.md`. Their evidence, checkpoint, external-wait, and
+completion rules refine the shared loop without changing facade authority.
 
 Resolve the stable local session ID and join through the facade. With no run
 ID, use the read-only discover ceremony in initiation.md, select an unambiguous

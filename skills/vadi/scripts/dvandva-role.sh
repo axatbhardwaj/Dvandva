@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-skill_name="$(basename "$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")")"
+script_dir="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+skill_name="$(basename "$(dirname "$script_dir")")"
 case "$skill_name" in
   vadi) role="worker" ;;
   prativadi) role="reviewer" ;;
@@ -12,7 +13,7 @@ case "$skill_name" in
 esac
 data_home="${XDG_DATA_HOME:-${HOME:?HOME is required}/.local/share}"
 state_home="${XDG_STATE_HOME:-${HOME:?HOME is required}/.local/state}"
-kernel_version="0.3.9"
+kernel_version="0.4.0"
 # Resolve the pinned version directly, never the shared bin/current selector:
 # a concurrent session selecting another version must not break this run.
 binary="$data_home/dvandva/bin/$kernel_version/dvandva-kernel"
@@ -23,16 +24,55 @@ role_api="2"
 version_max_bytes=256
 probe_max_bytes=16384
 handshake_dir=""
+facade_action_dir=""
+facade_action_file=""
+review_artifact_dir=""
+
+clear_review_materialization() {
+  local artifact
+  if test -n "$review_artifact_dir" && test -d "$review_artifact_dir"; then
+    for artifact in "$review_artifact_dir"/*.json; do
+      test -f "$artifact" || continue
+      unlink "$artifact" || true
+    done
+    rmdir "$review_artifact_dir" || true
+  fi
+  review_artifact_dir=""
+}
 
 cleanup() {
   local status=$?
   trap - EXIT
+  clear_review_materialization
+  if test -n "$facade_action_file" && test -f "$facade_action_file"; then
+    unlink "$facade_action_file" || true
+  fi
+  if test -n "$facade_action_dir" && test -d "$facade_action_dir"; then
+    rmdir "$facade_action_dir" || true
+  fi
   if test -n "$handshake_dir"; then
     rm -rf -- "$handshake_dir" || true
   fi
   exit "$status"
 }
 trap cleanup EXIT
+
+clear_action_copy() {
+  test -z "$facade_action_file" || test ! -f "$facade_action_file" || \
+    unlink "$facade_action_file"
+  test -z "$facade_action_dir" || test ! -d "$facade_action_dir" || \
+    rmdir "$facade_action_dir"
+  facade_action_file=""
+  facade_action_dir=""
+}
+
+copy_action_once() {
+  facade_action_dir="$(mktemp -d "${TMPDIR:-/tmp}/dvandva-action.XXXXXX")"
+  chmod 700 "$facade_action_dir"
+  facade_action_file="$facade_action_dir/action.json"
+  cp -- "$1" "$facade_action_file"
+  chmod 600 "$facade_action_file"
+}
 
 incompatible_kernel() {
   printf 'dvandva-role: incompatible kernel; explicitly invoke $setup-dvandva doctor\n' >&2
@@ -250,6 +290,47 @@ start_role() {
     printf 'dvandva-role: --run-id and --new-run are mutually exclusive\n' >&2
     exit 2
   }
+  if test -z "$selected_run"; then
+    local workflow_ref="" workflow_refs=0 review_members=0 value kind member_key index
+    local -a review_member_values=()
+    local -A seen_review_members=()
+    for index in "${!objective_refs[@]}"; do
+      value="${objective_refs[$index]}"
+      kind="${value%%=*}"
+      case "${kind,,}" in
+        workflow)
+          workflow_ref="${value#*=}"
+          workflow_ref="${workflow_ref,,}"
+          objective_refs[$index]="workflow=$workflow_ref"
+          workflow_refs=$((workflow_refs + 1))
+          ;;
+        review_member)
+          member_key="${value#*=}"
+          objective_refs[$index]="review_member=$member_key"
+          member_key="${member_key,,}"
+          test -z "${seen_review_members[$member_key]:-}" || {
+            printf 'dvandva-role: non-exact Review members must be unique\n' >&2
+            exit 2
+          }
+          seen_review_members[$member_key]=1
+          review_member_values+=("${value#*=}")
+          review_members=$((review_members + 1))
+          ;;
+      esac
+    done
+    test "$workflow_refs" -le 1 || {
+      printf 'dvandva-role: non-exact starts permit at most one workflow objective reference\n' >&2
+      exit 2
+    }
+    if test "$workflow_ref" = review && test "$review_members" -eq 0; then
+      printf 'dvandva-role: non-exact persistent Review requires at least one review_member objective reference\n' >&2
+      exit 2
+    fi
+    if test "$workflow_ref" = review; then
+      "$binary" identify --workspace "$workspace" | \
+        python3 -B "$script_dir/role_guard.py" review-start "${review_member_values[@]}"
+    fi
+  fi
 
   local args=(
     role start --api "$role_api"
@@ -266,13 +347,42 @@ start_role() {
   args+=(--interaction "$interaction")
   test -z "$objective" || args+=(--objective "$objective")
   test -z "$task" || args+=(--task-reference "$task")
-  local value
   for value in "${objective_refs[@]}"; do args+=(--objective-ref "$value"); done
   for value in "${deliverables[@]}"; do args+=(--required-deliverable "$value"); done
   test -z "$wait_flag" || args+=("$wait_flag")
   test -z "$new_flag" || args+=("$new_flag")
   test -z "$selected_run" || args+=(--run-id "$selected_run")
   "$binary" "${args[@]}"
+}
+
+# The kernel deliberately treats workflow metadata as opaque objective refs.
+# Enforce the role contract's one semantic checkpoint distinction at the
+# public facade without adding a schema field or kernel state.
+guard_checkpoint_kind() {
+  local snapshot="$1" expected_revision="$2" action_file="$3"
+  printf '%s' "$snapshot" | python3 -B \
+    "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/checkpoint_guard.py" \
+    "$action_file" "$expected_revision"
+}
+
+# Final Review readiness depends on the exact per-member bytes cited by the
+# checkpoint. Materialize them only through credential-checked kernel reads.
+guard_review_finalize() {
+  local snapshot="$1" expected_revision="$2" action_file="$3"
+  local helper digests digest artifact_file
+  helper="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/review_guard.py"
+  digests="$(printf '%s' "$snapshot" | python3 -B "$helper" list \
+    "$action_file" "$expected_revision")"
+  review_artifact_dir="$(mktemp -d "$facade_action_dir/review-artifacts.XXXXXX")"
+  chmod 700 "$review_artifact_dir"
+  while IFS= read -r digest; do
+    test -n "$digest" || continue
+    artifact_file="$review_artifact_dir/$digest.json"
+    (umask 077; "$binary" role analysis "${common[@]}" --digest "$digest" >"$artifact_file")
+  done <<<"$digests"
+  printf '%s' "$snapshot" | python3 -B "$helper" validate \
+    "$action_file" "$expected_revision" "$review_artifact_dir"
+  clear_review_materialization
 }
 
 run_dir_command() {
@@ -310,7 +420,16 @@ run_dir_command() {
         printf 'usage: dvandva-role.sh apply SESSION RUN_DIR REVISION ACTION_FILE\n' >&2
         exit 2
       }
-      "$binary" role apply "${common[@]}" --expected-revision "$1" --action "$2"
+      local snapshot apply_status
+      copy_action_once "$2"
+      snapshot="$("$binary" role read "${common[@]}")"
+      guard_checkpoint_kind "$snapshot" "$1" "$facade_action_file"
+      guard_review_finalize "$snapshot" "$1" "$facade_action_file"
+      apply_status=0
+      "$binary" role apply "${common[@]}" --expected-revision "$1" \
+        --action "$facade_action_file" || apply_status=$?
+      clear_action_copy
+      return "$apply_status"
       ;;
     wait)
       test "$#" -ge 1 && test "$#" -le 2 || {
@@ -436,7 +555,7 @@ case "$operation" in
   discover)
     require_kernel
     test "$#" -ge 4 || {
-      printf 'usage: dvandva-role.sh discover SESSION HARNESS PEER WORKSPACE --workflow NAME [--task-reference REF] [--objective EXACT] [--wait]\n' >&2
+      printf 'usage: dvandva-role.sh discover SESSION HARNESS PEER WORKSPACE --workflow NAME [--task-reference REF_OR_REVIEW_MEMBER] [--objective EXACT] [--wait]\n' >&2
       exit 2
     }
     python3 "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/discover.py" \
