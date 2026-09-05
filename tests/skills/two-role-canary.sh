@@ -730,8 +730,8 @@ interface:
 policy:
   allow_implicit_invocation: false
 EOF
-  rg -q '^disable-model-invocation:[[:space:]]*true$' "$skill_root/SKILL.md"
-  rg -q 'allow_implicit_invocation:[[:space:]]*false' "$skill_root/agents/openai.yaml"
+  grep -Eq '^disable-model-invocation:[[:space:]]*true$' "$skill_root/SKILL.md"
+  grep -Eq 'allow_implicit_invocation:[[:space:]]*false' "$skill_root/agents/openai.yaml"
   started="$(bash "$worker" start user-skill-worker codex claude "$workspace" \
     'Run a mandatory user-only method' --new-run --autonomous \
     --objective-ref workflow=freeflow --objective-ref delivery_kind=analysis \
