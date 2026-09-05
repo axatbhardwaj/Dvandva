@@ -97,8 +97,9 @@ and reused, and a duplicate question is rejected. A disposable mandatory
 user-only skill carries real `SKILL.md` and `agents/openai.yaml` metadata. The
 facade discovers those documented flags and rejects checkpoint submission when
 only `required_user_skill` is present, then accepts the same checkpoint shape in
-a positive run where explicit invocation is represented by the matching
-`invoked_user_skill` reference.
+a positive run where the matching `invoked_user_skill` reference records the
+role's durable attestation. The facade proves marker/metadata consistency, not
+the human action itself; the role contract forbids synthesizing this marker.
 
 The five-PR fixture also evaluates readiness before protocol finalization. Its
 initial mixed round and its confirmed `REQUEST_CHANGES` receipt both remain not
@@ -139,6 +140,9 @@ checkpoint guard: ok
 bash tests/skills/two-role-canary.sh
 github fixture: ok; writes=5; receipts=5; events=22
 two-role skill canary: ok
+
+bash tests/skills/browser-isolation.sh
+browser role isolation: ok
 ```
 
 Final full-suite GREEN evidence, rerun after the extracted-guard,
@@ -242,6 +246,13 @@ and success states, reload persistence, separate browser contexts with isolated
 data, closure of one context without disrupting the other, and the repaired
 path. The fixture was disposable test data outside the repository; no product
 repair or external write occurred.
+
+The checked-in `browser-isolation.spec.js` separately provides reproducible
+simulated role-isolation coverage: two labeled contexts write distinct
+same-origin values, reload without overwriting one another, then closing only
+vadi's context leaves prativadi's page open and its persisted value intact.
+This does not claim live paired browser ownership; that remains part of the
+paired/model limitation above.
 
 This is executed browser/test-and-fix evidence, not evidence that the uninstalled
 Freeflow routing contract ran in a live role session. The current paired/model
