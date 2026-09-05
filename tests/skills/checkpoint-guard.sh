@@ -138,6 +138,10 @@ if mode == "invalid-observed_at": record["observed_at"]="yesterday"
 if mode == "invalid-dependencies": record["dependencies"]=[31]
 if mode == "padded-self-review": record["author"]=" reviewer "
 if mode == "padded-receipt": record["receipts"][0]["actor"]=" reviewer "
+if mode == "padded-actor": record["acting_reviewer"]=" reviewer "
+if mode == "numeric-receipt":
+    record["acting_reviewer"]="123"
+    record["receipts"][0]["actor"]=123
 contents=json.dumps(record,separators=(",",":")); digest=hashlib.sha256(contents.encode()).hexdigest()
 (root/f"{digest}.json").write_text(json.dumps({"digest":digest,"contents":contents}))
 snapshot={"revision":7,"objective":{"refs":[{"kind":"workflow","value":"review"},{"kind":"review_member","value":record["url"]}]},"task":{"reference":None},"workspace":{"repository_id":"github.com/axatbhardwaj/dvandva"},"checkpoint":{"kind":"analysis","deliverables":[{"id":"pr-31","artifacts":[{"kind":"analysis_digest","value":digest}]}]}}
@@ -145,7 +149,7 @@ snapshot_path.write_text(json.dumps(snapshot))
 PY
 }
 find "$review_dir" -maxdepth 1 -type f -exec unlink {} \;
-for mode in missing-base missing-dependencies missing-observed_at missing-review_basis invalid-base invalid-observed_at invalid-dependencies padded-self-review; do
+for mode in missing-base missing-dependencies missing-observed_at missing-review_basis invalid-base invalid-observed_at invalid-dependencies padded-self-review numeric-receipt; do
   open_fixture "$mode"
   set +e
   error="$(python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json")"; status=$?
@@ -158,6 +162,9 @@ open_fixture complete
 python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json"
 find "$review_dir" -maxdepth 1 -type f -exec unlink {} \;
 open_fixture padded-receipt
+python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json"
+find "$review_dir" -maxdepth 1 -type f -exec unlink {} \;
+open_fixture padded-actor
 python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json"
 
 # Metadata keys in examples/body text and oversized files must not mark a skill

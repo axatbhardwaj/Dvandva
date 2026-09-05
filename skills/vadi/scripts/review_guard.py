@@ -110,7 +110,7 @@ def validate_artifact(record, member_url, member_id, member_numbers):
         reject(f"{member_id} has no verified open, closed, or merged disposition")
     exact_body = record.get("exact_body")
     body_digest = record.get("body_digest")
-    actor = record.get("acting_reviewer")
+    actor = record["acting_reviewer"].strip()
     head = record.get("head")
     receipts = record.get("receipts")
     if record.get("checks") != "green":
@@ -126,7 +126,8 @@ def validate_artifact(record, member_url, member_id, member_numbers):
     if not isinstance(receipts, list) or not any(
         isinstance(receipt, dict)
         and receipt.get("pr") == number
-        and str(receipt.get("actor", "")).strip().casefold() == actor.casefold()
+        and isinstance(receipt.get("actor"), str)
+        and receipt["actor"].strip().casefold() == actor.casefold()
         and receipt.get("head") == head
         and receipt.get("state") == "APPROVE"
         and receipt.get("body_digest") == body_digest
