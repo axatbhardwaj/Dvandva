@@ -289,6 +289,19 @@ start_role() {
     printf 'dvandva-role: --run-id and --new-run are mutually exclusive\n' >&2
     exit 2
   }
+  if test -n "$new_flag"; then
+    local workflow_ref="" review_members=0 value
+    for value in "${objective_refs[@]}"; do
+      case "${value%%=*}" in
+        workflow) workflow_ref="${value#*=}" ;;
+        review_member) review_members=$((review_members + 1)) ;;
+      esac
+    done
+    if test "${workflow_ref,,}" = review && test "$review_members" -eq 0; then
+      printf 'dvandva-role: new persistent Review requires at least one review_member objective reference\n' >&2
+      exit 2
+    fi
+  fi
 
   local args=(
     role start --api "$role_api"
@@ -305,7 +318,6 @@ start_role() {
   args+=(--interaction "$interaction")
   test -z "$objective" || args+=(--objective "$objective")
   test -z "$task" || args+=(--task-reference "$task")
-  local value
   for value in "${objective_refs[@]}"; do args+=(--objective-ref "$value"); done
   for value in "${deliverables[@]}"; do args+=(--required-deliverable "$value"); done
   test -z "$wait_flag" || args+=("$wait_flag")
@@ -319,7 +331,7 @@ start_role() {
 # public facade without adding a schema field or kernel state.
 guard_checkpoint_kind() {
   local snapshot="$1" expected_revision="$2" action_file="$3"
-  printf '%s' "$snapshot" | python3 \
+  printf '%s' "$snapshot" | python3 -B \
     "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/checkpoint_guard.py" \
     "$action_file" "$expected_revision"
 }
@@ -330,7 +342,7 @@ guard_review_finalize() {
   local snapshot="$1" expected_revision="$2" action_file="$3"
   local helper digests digest artifact_file
   helper="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/review_guard.py"
-  digests="$(printf '%s' "$snapshot" | python3 "$helper" list \
+  digests="$(printf '%s' "$snapshot" | python3 -B "$helper" list \
     "$action_file" "$expected_revision")"
   review_artifact_dir="$(mktemp -d "$facade_action_dir/review-artifacts.XXXXXX")"
   chmod 700 "$review_artifact_dir"
@@ -339,7 +351,7 @@ guard_review_finalize() {
     artifact_file="$review_artifact_dir/$digest.json"
     (umask 077; "$binary" role analysis "${common[@]}" --digest "$digest" >"$artifact_file")
   done <<<"$digests"
-  printf '%s' "$snapshot" | python3 "$helper" validate \
+  printf '%s' "$snapshot" | python3 -B "$helper" validate \
     "$action_file" "$expected_revision" "$review_artifact_dir"
   clear_review_materialization
 }
