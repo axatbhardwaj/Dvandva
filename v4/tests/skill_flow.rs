@@ -1461,3 +1461,26 @@ fn discovery_html_companion_uses_the_discovery_drivers() {
         assert!(policy.contains("Discovery follows the Discovery drivers above"));
     }
 }
+
+#[test]
+fn automatic_discovery_routes_to_exact_join_without_a_prompt_dependency() {
+    let (skill, _) = role_sources("prativadi");
+    assert!(skill.contains("With no run\nID, use the read-only discover ceremony"));
+    assert!(skill.contains("never fall back to discovery"));
+    for role in ["vadi", "prativadi"] {
+        let initiation = repository_file(&format!("skills/{role}/references/initiation.md"));
+        for rule in [
+            "CURRENT_HARNESS PEER_HARNESS WORKSPACE",
+            "Only `outcome=match` is eligible",
+            "all subsequent resumes use that exact ID",
+            "When the user supplies an exact ID, bypass discovery entirely",
+            "copying it is optional",
+        ] {
+            assert!(initiation.contains(rule), "{role} omitted {rule}");
+        }
+    }
+    assert_eq!(
+        repository_file("skills/vadi/scripts/discover.py"),
+        repository_file("skills/prativadi/scripts/discover.py")
+    );
+}

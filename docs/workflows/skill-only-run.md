@@ -234,3 +234,19 @@ REQUEST_CHANGES ends that legacy objective only. `babysitting` uses the existing
 Validation: `cargo test --locked --manifest-path v4/Cargo.toml --test skill_flow`
 checks source contracts and distributed-reference parity. These checks establish
 instruction presence and integration, not a live cross-harness planning run.
+
+## Automatic run lookup
+
+The role facade exposes `discover SESSION HARNESS PEER WORKSPACE --workflow NAME`
+with optional exact `--task-reference`, `--objective` and bounded `--wait`.
+The existing XDG registry is the sole source. Enumeration is read-only and
+uses `RunChannel::peek`; it cannot repair a head or create a lock. The facade
+requires the kernel's `discover --read-only` interface, so earlier kernels fail
+explicitly instead of silently running a repairing read. No schema migration
+or installed-kernel update is performed by lookup.
+
+Prativadi compares returned scopes with the request, then uses exact start;
+an explicit supplied run ID bypasses discovery. A natural-language paraphrase
+is never silently substituted for the selected run's canonical scope. No match
+waits, multiple matches ask, and the chosen ID persists across turns. Discovery
+and existing exact joins are tested by `bash tests/skills/discover.sh`.

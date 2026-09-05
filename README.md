@@ -89,7 +89,11 @@ Act as vadi for discovery of <objective>.
 ```
 
 Docs are discovered automatically; supplied references are optional search seeds.
-Vadi shows the exact peer join prompt. The existing initial explainer review
+Launch Astra independently with `Act as prativadi for discovery of <objective>`.
+Prativadi discovers available runs in the shared XDG registry and exact-joins
+an unambiguous scope. Multiple matches require a choice; no match waits for vadi.
+Vadi's exact peer join prompt remains an optional recovery shortcut, so a delayed
+activation message does not prevent the pair from forming. The existing initial explainer review
 records source verification and establishes the pair. Skill-invocation waits
 show the pending command and resume the exact run on your next message.
 See the [initiation contract](skills/vadi/references/initiation.md) and

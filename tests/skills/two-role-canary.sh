@@ -28,6 +28,9 @@ bash "$HOME/.agents/skills/setup-dvandva/scripts/setup-dvandva.sh" \
   install --version 0.3.8 >/dev/null
 
 for role in vadi prativadi; do
+  for host_skills in "$HOME/.agents/skills" "$HOME/.claude/skills"; do
+    cmp "$repo_root/skills/$role/scripts/discover.py" "$host_skills/$role/scripts/discover.py"
+  done
   for reference in initiation discovery; do
     cmp "$repo_root/skills/$role/references/$reference.md" \
       "$HOME/.agents/skills/$role/references/$reference.md"
