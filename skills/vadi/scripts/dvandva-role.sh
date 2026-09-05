@@ -289,7 +289,7 @@ start_role() {
     printf 'dvandva-role: --run-id and --new-run are mutually exclusive\n' >&2
     exit 2
   }
-  if test -n "$new_flag"; then
+  if test -z "$selected_run"; then
     local workflow_ref="" review_members=0 value
     for value in "${objective_refs[@]}"; do
       case "${value%%=*}" in
@@ -298,7 +298,7 @@ start_role() {
       esac
     done
     if test "${workflow_ref,,}" = review && test "$review_members" -eq 0; then
-      printf 'dvandva-role: new persistent Review requires at least one review_member objective reference\n' >&2
+      printf 'dvandva-role: non-exact persistent Review requires at least one review_member objective reference\n' >&2
       exit 2
     fi
   fi

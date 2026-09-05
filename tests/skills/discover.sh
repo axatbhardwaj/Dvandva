@@ -15,9 +15,17 @@ git -C "$workspace" remote add origin https://github.com/example/project.git
 field() { python3 -c 'import json,sys; print(json.load(sys.stdin)[sys.argv[1]])' "$1"; }
 scan() { bash "$prati" discover reviewer codex claude "$workspace" "$@"; }
 create() {
-  bash "$vadi" start "$1" claude codex "$workspace" "$2" \
-    --new-run --task-reference "$3" --objective-ref "workflow=$4" \
-    --required-deliverable delivery='Complete work'
+  if test "$4" = review; then
+    local number="${3#PR-}"
+    bash "$vadi" start "$1" claude codex "$workspace" "$2" \
+      --new-run --task-reference "$3" --objective-ref workflow=review \
+      --objective-ref "review_member=https://github.com/example/project/pull/$number" \
+      --required-deliverable "pr-$number=Review PR $number"
+  else
+    bash "$vadi" start "$1" claude codex "$workspace" "$2" \
+      --new-run --task-reference "$3" --objective-ref "workflow=$4" \
+      --required-deliverable delivery='Complete work'
+  fi
 }
 revision() {
   python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["revision"])' "$1/baton.json"
@@ -43,7 +51,9 @@ create worker-b 'Maintain our own change' PR-10 babysitting >/dev/null
 create worker-c 'Another external change' PR-20 review >/dev/null
 foreign="$(bash "$vadi" start worker-foreign other-harness codex "$workspace" \
   'Review with another worker' --new-run --task-reference PR-30 \
-  --objective-ref workflow=review --required-deliverable delivery='Complete work')"
+  --objective-ref workflow=review \
+  --objective-ref review_member=https://github.com/example/project/pull/30 \
+  --required-deliverable pr-30='Review PR 30')"
 foreign_id="$(field run_id <<<"$foreign")"
 # The intended peer must match before claiming, even for an otherwise unique task.
 test "$(field outcome <<<"$(scan --workflow review --task-reference PR-30)")" = none

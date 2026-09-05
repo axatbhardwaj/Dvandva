@@ -147,9 +147,14 @@ test ! -e "$XDG_STATE_HOME/dvandva/runs"
 
 # New persistent Review creation requires frozen member scope. Historical
 # member-less runs remain resumable through their existing exact IDs.
-expect_failure 'new persistent Review requires at least one review_member' \
+expect_failure 'persistent Review requires at least one review_member' \
   bash "$vadi" start invalid-review codex claude "$workspace" \
   'Invalid member-less Review' --new-run --objective-ref workflow=review \
+  --required-deliverable review='Invalid member-less Review'
+test ! -e "$XDG_STATE_HOME/dvandva/runs"
+expect_failure 'persistent Review requires at least one review_member' \
+  bash "$vadi" start invalid-review codex claude "$workspace" \
+  'Invalid member-less Review' --objective-ref workflow=review \
   --required-deliverable review='Invalid member-less Review'
 test ! -e "$XDG_STATE_HOME/dvandva/runs"
 
