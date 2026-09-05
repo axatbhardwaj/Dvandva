@@ -157,6 +157,24 @@ expect_failure 'persistent Review requires at least one review_member' \
   'Invalid member-less Review' --objective-ref workflow=review \
   --required-deliverable review='Invalid member-less Review'
 test ! -e "$XDG_STATE_HOME/dvandva/runs"
+expect_failure 'persistent Review requires at least one review_member' \
+  bash "$vadi" start invalid-review codex claude "$workspace" \
+  'Invalid member-less Review' --objective-ref Workflow=review \
+  --required-deliverable review='Invalid member-less Review'
+test ! -e "$XDG_STATE_HOME/dvandva/runs"
+expect_failure 'at most one workflow objective reference' \
+  bash "$vadi" start invalid-review codex claude "$workspace" \
+  'Ambiguous workflow' --objective-ref workflow=review \
+  --objective-ref workflow=freeflow \
+  --required-deliverable review='Invalid member-less Review'
+test ! -e "$XDG_STATE_HOME/dvandva/runs"
+expect_failure 'Review members must be unique' \
+  bash "$vadi" start invalid-review codex claude "$workspace" \
+  'Duplicate members' --objective-ref workflow=review \
+  --objective-ref review_member=https://github.com/example/project/pull/10 \
+  --objective-ref review_member=https://GITHUB.com/EXAMPLE/PROJECT/pull/10 \
+  --required-deliverable pr-10='Review PR 10'
+test ! -e "$XDG_STATE_HOME/dvandva/runs"
 
 export DVANDVA_LEASE_SECONDS=1
 worker="$(bash "$vadi" start codex-session codex claude "$workspace" \

@@ -130,13 +130,19 @@ assert s["scope_deliverables"] == [{"id":"pr-82","description":"Review https://g
 ' <<<"$joined_drift"
 test "$(field outcome <<<"$(scan --workflow review --task-reference https://github.com/example/project/pull/81)")" = none
 # Duplicate member refs are malformed scope, not two votes for the same PR.
+# New starts reject them at the facade; retain discovery hardening for an older
+# or human-amended run whose durable scope contains duplicates.
 duplicate="$(bash "$vadi" start worker-duplicate claude codex "$workspace" \
-  'Malformed duplicate batch' --new-run \
+  'Batch amended into malformed duplicate scope' --new-run \
   --objective-ref workflow=review \
   --objective-ref review_member=https://github.com/example/project/pull/55 \
-  --objective-ref review_member=https://GITHUB.com/EXAMPLE/PROJECT/pull/55 \
   --required-deliverable pr-55='Review https://github.com/example/project/pull/55')"
 duplicate_id="$(field run_id <<<"$duplicate")"
+duplicate_dir="$XDG_STATE_HOME/dvandva/runs/$duplicate_id"
+apply_json "$vadi" worker-duplicate "$duplicate_dir" duplicate-request \
+  '{"type":"request_human_decision","kind":"scope","question":"Which members remain in scope?","evidence":["The selected batch changed"],"options":["Apply amended batch","Keep current batch"]}' >/dev/null
+apply_json "$vadi" worker-duplicate "$duplicate_dir" duplicate-resume \
+  '{"type":"resume_human_decision","answer":"Apply amended batch","scope_amendment":{"objective":"Malformed duplicate batch","objective_refs":[{"kind":"workflow","value":"review"},{"kind":"review_member","value":"https://github.com/example/project/pull/55"},{"kind":"review_member","value":"https://GITHUB.com/EXAMPLE/PROJECT/pull/55"}],"task_reference":null,"scope_deliverables":[{"id":"pr-55","description":"Review https://github.com/example/project/pull/55"}]}}' >/dev/null
 set +e
 duplicate_result="$(scan --workflow review --task-reference https://github.com/example/project/pull/55)"
 duplicate_status=$?

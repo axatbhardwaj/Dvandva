@@ -290,13 +290,35 @@ start_role() {
     exit 2
   }
   if test -z "$selected_run"; then
-    local workflow_ref="" review_members=0 value
-    for value in "${objective_refs[@]}"; do
-      case "${value%%=*}" in
-        workflow) workflow_ref="${value#*=}" ;;
-        review_member) review_members=$((review_members + 1)) ;;
+    local workflow_ref="" workflow_refs=0 review_members=0 value kind member_key index
+    local -A seen_review_members=()
+    for index in "${!objective_refs[@]}"; do
+      value="${objective_refs[$index]}"
+      kind="${value%%=*}"
+      case "${kind,,}" in
+        workflow)
+          workflow_ref="${value#*=}"
+          workflow_ref="${workflow_ref,,}"
+          objective_refs[$index]="workflow=$workflow_ref"
+          workflow_refs=$((workflow_refs + 1))
+          ;;
+        review_member)
+          member_key="${value#*=}"
+          objective_refs[$index]="review_member=$member_key"
+          member_key="${member_key,,}"
+          test -z "${seen_review_members[$member_key]:-}" || {
+            printf 'dvandva-role: non-exact Review members must be unique\n' >&2
+            exit 2
+          }
+          seen_review_members[$member_key]=1
+          review_members=$((review_members + 1))
+          ;;
       esac
     done
+    test "$workflow_refs" -le 1 || {
+      printf 'dvandva-role: non-exact starts permit at most one workflow objective reference\n' >&2
+      exit 2
+    }
     if test "${workflow_ref,,}" = review && test "$review_members" -eq 0; then
       printf 'dvandva-role: non-exact persistent Review requires at least one review_member objective reference\n' >&2
       exit 2
