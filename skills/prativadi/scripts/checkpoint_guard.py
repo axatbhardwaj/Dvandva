@@ -58,6 +58,27 @@ def strip_yaml_comment(value):
     return None if quote else value.strip()
 
 
+def parse_scalar(value):
+    """Accept a deliberately small, complete YAML scalar subset."""
+    if not value or value[0] in "[{|>" or value[-1:] in "]}":
+        return None
+    if value[0] == '"':
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, str) else None
+    if value[0] == "'":
+        if not re.fullmatch(r"'(?:[^']|'')*'", value):
+            return None
+        return value[1:-1].replace("''", "'")
+    # YAML forbids a colon followed by whitespace inside a plain scalar. Other
+    # collection and block forms are rejected above rather than partially read.
+    if re.search(r":\s", value) or value[0] in "-?:,!&*#@`":
+        return None
+    return value
+
+
 def parse_mapping(lines):
     """Parse the nested scalar-map subset used by skill metadata."""
     values = {}
@@ -85,12 +106,11 @@ def parse_mapping(lines):
         if not value:
             parents = list(path)
             continue
-        if value[0] in "[{|>" or value[-1:] in "]}":
-            return None
-        if value[0] in {"'", '"'} and value[-1:] != value[0]:
+        scalar = parse_scalar(value)
+        if scalar is None:
             return None
         parents = list(path[:-1])
-        values[path] = value.strip("'\"").casefold()
+        values[path] = scalar.casefold()
     return values
 
 
