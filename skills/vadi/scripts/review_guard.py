@@ -10,14 +10,10 @@ import sys
 
 sys.dont_write_bytecode = True
 
-from role_guard import load_action, ref_values, rejection
+from role_guard import load_action, parse_review_member, ref_values, rejection
 
 
 DIGEST = re.compile(r"[0-9a-f]{64}")
-MEMBER = re.compile(
-    r"https://github\.com/([A-Z0-9](?:[A-Z0-9-]{0,37}[A-Z0-9])?)/([A-Z0-9_.-]{1,100})/pull/([1-9][0-9]*)",
-    re.I,
-)
 FULL_REVISION = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})", re.I)
 
 
@@ -56,8 +52,8 @@ def checkpoint_digests(snapshot):
 
 
 def member_number(url):
-    match = MEMBER.fullmatch(url)
-    return int(match.group(3)) if match else None
+    parsed = parse_review_member(url)
+    return parsed[2] if parsed else None
 
 
 def validate_current_basis(record, member_id, member_numbers):
@@ -65,14 +61,13 @@ def validate_current_basis(record, member_id, member_numbers):
     actor = record.get("acting_reviewer")
     head = record.get("head")
     base = record.get("base")
-    observed_at = record.get("observed_at")
     review_basis = record.get("review_basis")
     dependencies = record.get("dependencies")
     if not all(
         isinstance(value, str) and value.strip()
-        for value in (author, actor, head, base, observed_at, review_basis)
+        for value in (author, actor, head, base, review_basis)
     ):
-        reject(f"{member_id} lacks full identity, revision, timestamp, or basis evidence")
+        reject(f"{member_id} lacks full identity, revision, or basis evidence")
     author = author.strip()
     actor = actor.strip()
     if actor.casefold() == author.casefold() or not FULL_REVISION.fullmatch(head) or not FULL_REVISION.fullmatch(base):
@@ -86,9 +81,13 @@ def validate_current_basis(record, member_id, member_numbers):
         or any(dependency not in member_numbers for dependency in dependencies)
     ):
         reject(f"{member_id} dependency relationship evidence is invalid")
+
+
+def validate_timestamp(record, member_id):
+    observed_at = record.get("observed_at")
     try:
         observed = datetime.fromisoformat(observed_at.replace("Z", "+00:00"))
-    except ValueError:
+    except (AttributeError, ValueError):
         reject(f"{member_id} timestamp is invalid")
     if observed.tzinfo is None:
         reject(f"{member_id} timestamp is invalid")
@@ -103,11 +102,12 @@ def validate_artifact(record, member_url, member_id, member_numbers):
     disposition = record.get("disposition")
     if record.get("evidence_valid") is not True:
         reject(f"{member_id} evidence is not current")
-    validate_current_basis(record, member_id, member_numbers)
+    validate_timestamp(record, member_id)
     if disposition in {"closed", "merged"}:
         return
     if disposition != "open":
         reject(f"{member_id} has no verified open, closed, or merged disposition")
+    validate_current_basis(record, member_id, member_numbers)
     exact_body = record.get("exact_body")
     body_digest = record.get("body_digest")
     actor = record["acting_reviewer"].strip()
@@ -140,12 +140,12 @@ def validate(snapshot, members, artifact_dir):
     checkpoint = snapshot.get("checkpoint")
     if not isinstance(checkpoint, dict) or checkpoint.get("kind") != "analysis":
         reject("persistent Review finalization requires a current analysis checkpoint")
-    member_matches = [MEMBER.fullmatch(url) for url in members]
-    parsed_members = [int(match.group(3)) if match else None for match in member_matches]
+    member_matches = [parse_review_member(url) for url in members]
+    parsed_members = [match[2] if match else None for match in member_matches]
     if not members or any(number is None for number in parsed_members) or len(set(url.casefold() for url in members)) != len(members):
         reject("persistent Review has invalid or duplicate frozen members")
     repositories = {
-        (match.group(1).casefold(), match.group(2).casefold())
+        (match[0], match[1])
         for match in member_matches if match
     }
     if len(repositories) != 1:

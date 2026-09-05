@@ -84,14 +84,16 @@ set -e
 test "$status" -ne 0
 grep -Fq 'members do not belong to one canonical repository' <<<"$error"
 
-# A terminal disposition is evidence, not a shortcut around identity, revision,
-# timestamp, and basis fields.
+# A verified terminal disposition does not pretend that current-head review
+# evidence still exists. Identity and disposition remain mandatory.
 review_dir="$test_root/review-artifacts"
 mkdir -p "$review_dir"
 terminal_fixture() { python3 - "$review_dir" "$test_root/review-snapshot.json" "$1" <<'PY'
 import hashlib, json, pathlib, sys
 root, snapshot_path, mode = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]
-record = {"url":"https://github.com/axatbhardwaj/Dvandva/pull/31","disposition":"merged","evidence_valid":True}
+record = {"url":"https://github.com/axatbhardwaj/Dvandva/pull/31","disposition":"merged","evidence_valid":True,"observed_at":"2026-09-06T12:00:00Z"}
+if mode == "missing-observed-at":
+    record.pop("observed_at")
 if mode == "complete":
     record.update({"author":"author","acting_reviewer":"reviewer","head":"1"*40,"base":"2"*40,"dependencies":[],"observed_at":"2026-09-06T12:00:00Z","review_basis":"Exact head/base and merged disposition re-queried"})
 contents=json.dumps(record,separators=(",",":")); digest=hashlib.sha256(contents.encode()).hexdigest()
@@ -101,11 +103,14 @@ snapshot_path.write_text(json.dumps(snapshot))
 PY
 }
 terminal_fixture minimal
+python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json"
+find "$review_dir" -maxdepth 1 -type f -exec unlink {} \;
+terminal_fixture missing-observed-at
 set +e
 error="$(python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json")"; status=$?
 set -e
 test "$status" -ne 0
-grep -Fq 'review_not_ready' <<<"$error"
+grep -Fq 'timestamp is invalid' <<<"$error"
 find "$review_dir" -maxdepth 1 -type f -exec unlink {} \;
 terminal_fixture complete
 python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json"
@@ -124,8 +129,7 @@ set -e
 test "$status" -ne 0
 grep -Fq 'members do not match the canonical workspace repository' <<<"$error"
 
-# Open readiness requires the same complete current basis as terminal evidence,
-# in addition to its exact approval receipt.
+# Open readiness requires complete current basis and an exact approval receipt.
 open_fixture() { python3 - "$review_dir" "$test_root/review-snapshot.json" "$1" <<'PY'
 import hashlib, json, pathlib, sys
 root, snapshot_path, mode = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2]), sys.argv[3]

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-skill_name="$(basename "$(dirname "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")")")"
+script_dir="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")"
+skill_name="$(basename "$(dirname "$script_dir")")"
 case "$skill_name" in
   vadi) role="worker" ;;
   prativadi) role="reviewer" ;;
@@ -291,7 +292,6 @@ start_role() {
   }
   if test -z "$selected_run"; then
     local workflow_ref="" workflow_refs=0 review_members=0 value kind member_key index
-    local member_repository="" review_repository="" workspace_repository=""
     local -a review_member_values=()
     local -A seen_review_members=()
     for index in "${!objective_refs[@]}"; do
@@ -313,7 +313,7 @@ start_role() {
             exit 2
           }
           seen_review_members[$member_key]=1
-          review_member_values+=("$member_key")
+          review_member_values+=("${value#*=}")
           review_members=$((review_members + 1))
           ;;
       esac
@@ -327,31 +327,8 @@ start_role() {
       exit 2
     fi
     if test "$workflow_ref" = review; then
-      for member_key in "${review_member_values[@]}"; do
-        if [[ "$member_key" =~ ^https://github\.com/([A-Za-z0-9]([A-Za-z0-9-]{0,37}[A-Za-z0-9])?)/([A-Za-z0-9_.-]{1,100})/pull/([1-9][0-9]*)$ ]]; then
-          member_repository="${BASH_REMATCH[1],,}/${BASH_REMATCH[3],,}"
-        else
-          printf 'dvandva-role: Review members must belong to one canonical repository\n' >&2
-          exit 2
-        fi
-        if test -z "$review_repository"; then
-          review_repository="$member_repository"
-        elif test "$member_repository" != "$review_repository"; then
-          printf 'dvandva-role: Review members must belong to one canonical repository\n' >&2
-          exit 2
-        fi
-      done
-      workspace_repository="$("$binary" identify --workspace "$workspace" | python3 -c '
-import json, sys
-value = json.load(sys.stdin).get("repository_id")
-if not isinstance(value, str) or not value:
-    raise SystemExit(1)
-print(value.casefold())
-')"
-      if test "$workspace_repository" != "github.com/$review_repository"; then
-        printf 'dvandva-role: Review members must match the canonical workspace repository\n' >&2
-        exit 2
-      fi
+      "$binary" identify --workspace "$workspace" | \
+        python3 -B "$script_dir/role_guard.py" review-start "${review_member_values[@]}"
     fi
   fi
 

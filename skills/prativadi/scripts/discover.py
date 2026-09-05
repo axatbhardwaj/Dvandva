@@ -3,10 +3,13 @@
 import argparse
 import json
 import os
-import re
 import subprocess
 import sys
 import time
+
+sys.dont_write_bytecode = True
+
+from role_guard import CandidateError, validate_review_members
 
 
 def kernel_json(binary, *args):
@@ -56,15 +59,9 @@ def filter_candidates(result, args):
                         and not member_match):
                     continue
                 if len(members) != len({member.casefold() for member in members}):
-                    raise ValueError("candidate has duplicate review_member references")
-                if members and not args.repository_id.casefold().startswith("github.com/"):
-                    raise ValueError("review members require a canonical GitHub repository")
-                member_pattern = re.compile(
-                    rf"^https://{re.escape(args.repository_id)}/pull/[1-9][0-9]*$",
-                    re.IGNORECASE,
-                )
-                if any(not member_pattern.fullmatch(member) for member in members):
-                    raise ValueError("candidate has a non-canonical or cross-repository review member")
+                    raise CandidateError("candidate has duplicate review_member references")
+                if members:
+                    validate_review_members(args.repository_id, members)
             else:
                 members = []
                 member_match = False
@@ -79,7 +76,7 @@ def filter_candidates(result, args):
                 continue
             selected.append(candidate)
             match_bases.append(match_basis)
-        except (AttributeError, KeyError, TypeError, ValueError) as error:
+        except (AttributeError, CandidateError, KeyError, TypeError) as error:
             invalid_candidates.append({
                 "run_id": candidate.get("run_id") if isinstance(candidate, dict) else None,
                 "error": str(error),

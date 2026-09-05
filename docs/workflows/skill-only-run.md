@@ -206,7 +206,7 @@ The RED/GREEN fresh-agent scenarios are recorded in
 
 ## Discovery and five-workflow initiation
 
-The active role contracts now expose Discovery, Implementation, Babysitting
+The active role contracts now expose Discovery, Implementation, Babysitting,
 Review, and Freeflow. Read [initiation](../../skills/vadi/references/initiation.md) before
 activation and [discovery](../../skills/vadi/references/discovery.md) for paired
 spec/ticket work. Freeflow and persistent Review have their own role-local

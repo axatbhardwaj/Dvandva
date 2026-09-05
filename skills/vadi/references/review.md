@@ -88,11 +88,13 @@ kernel `role analysis` interface and validates the documented per-member record
 and exact receipt coordinates before passing the same copied finalize action to
 the kernel's atomic revision check. It never reads Baton or artifact files
 directly.
+Every new non-exact Review start requires at least one `review_member`; use an
+exact run ID to resume legacy member-less Review state.
 The analysis checkpoint kind is intentional: these deliverables are immutable
 non-code review, receipt, and readiness records, not changes to a PR branch.
 The facade requires each frozen member exactly once and checks canonical URL,
-disposition/current-evidence status, identity, full revisions, timestamp and
-review basis; an open member additionally needs green checks, no blocking
+disposition/current-evidence status; an open member additionally needs identity,
+full revisions, timestamp, review basis, green checks, no blocking
 feedback, adjudicated approval, exact body digest, and a matching formal
 receipt. This is a role-contract gate around existing kernel artifacts, not a
 new kernel schema.

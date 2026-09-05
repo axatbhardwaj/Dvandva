@@ -210,6 +210,26 @@ cross_status=$?
 set -e
 test "$cross_status" -eq 0
 python3 -c 'import json,sys; s=json.load(sys.stdin); assert s["outcome"] == "none"; assert s["invalid_candidates"][0]["error"] == "candidate has a non-canonical or cross-repository review member"' <<<"$cross_result"
+# Multiple workflow refs are a run-contract violation, not a malformed member
+# that discovery may silently skip. This intentionally poisons later scans, so
+# keep the fixture last.
+ambiguous_workflow="$(bash "$vadi" start worker-ambiguous-workflow claude codex "$workspace" \
+  'Review batch amended into ambiguous workflow scope' --new-run \
+  --objective-ref workflow=review \
+  --objective-ref review_member=https://github.com/example/project/pull/56 \
+  --required-deliverable pr-56='Review https://github.com/example/project/pull/56')"
+ambiguous_workflow_id="$(field run_id <<<"$ambiguous_workflow")"
+ambiguous_workflow_dir="$XDG_STATE_HOME/dvandva/runs/$ambiguous_workflow_id"
+apply_json "$vadi" worker-ambiguous-workflow "$ambiguous_workflow_dir" ambiguous-workflow-request \
+  '{"type":"request_human_decision","kind":"scope","question":"Which workflow remains in scope?","evidence":["The workflow selection changed"],"options":["Apply ambiguous workflow","Keep Review"]}' >/dev/null
+apply_json "$vadi" worker-ambiguous-workflow "$ambiguous_workflow_dir" ambiguous-workflow-resume \
+  '{"type":"resume_human_decision","answer":"Apply ambiguous workflow","scope_amendment":{"objective":"Malformed ambiguous workflow","objective_refs":[{"kind":"workflow","value":"review"},{"kind":"workflow","value":"freeflow"},{"kind":"review_member","value":"https://github.com/example/project/pull/56"}],"task_reference":null,"scope_deliverables":[{"id":"pr-56","description":"Review https://github.com/example/project/pull/56"}]}}' >/dev/null
+set +e
+ambiguous_workflow_result="$(scan --workflow review 2>&1)"
+ambiguous_workflow_status=$?
+set -e
+test "$ambiguous_workflow_status" -ne 0
+grep -Fq 'candidate has ambiguous workflow references' <<<"$ambiguous_workflow_result"
 cmp "$vadi" "$prati"
 cmp "$repo_root/skills/vadi/scripts/discover.py" "$repo_root/skills/prativadi/scripts/discover.py"
 printf 'automatic run discovery: ok\n'

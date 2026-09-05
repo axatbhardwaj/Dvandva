@@ -1553,6 +1553,7 @@ fn persistent_review_defines_complete_multi_pr_rounds_and_exact_receipts() {
             "full canonical `https://github.com/OWNER/REPO/pull/NUMBER` URL",
             "freeze membership",
             "review_member",
+            "non-exact Review start requires at least one `review_member`",
             "stable distinct deliverable ID",
             "Legacy `pr_review`",
             "complete initial review of every active member",

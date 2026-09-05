@@ -625,9 +625,12 @@ assert [step["name"] for step in steps] == [
     "Verify archived v3 remains intact",
     "Verify setup skill",
     "Verify HTML deliverables",
+    "Verify checkpoint guard",
     "Verify role skills",
     "Verify automatic run discovery",
     "Verify release packaging",
+    "Install browser test tooling",
+    "Verify browser isolation",
     "Verify two-role canary",
     "Verify poll behaviour",
 ]
@@ -645,9 +648,12 @@ for obsolete_readme_test in ['readme_contract::documents_action_aware_waits', 'r
 assert "bash tests/skills/setup-dvandva.sh" in runs
 assert "bash tests/skills/discover.sh" in runs
 assert "bash tests/skills/html-deliverables.sh" in runs
+assert "bash tests/skills/checkpoint-guard.sh" in runs
 assert "bash tests/skills/poll-errors.sh" in runs
 assert "bash tests/skills/role-skills.sh" in runs
 assert "bash tests/skills/package-release.sh" in runs
+assert "npx --yes playwright@1.63.0 install --with-deps chromium" in runs
+assert "bash tests/skills/browser-isolation.sh" in runs
 assert "bash tests/skills/two-role-canary.sh" in runs
 assert "bash tests/skills/poll.sh" in runs
 release_steps = workflow["jobs"]["release"]["steps"]

@@ -47,12 +47,18 @@ jobs:
         run: bash tests/skills/setup-dvandva.sh
       - name: Verify HTML deliverables
         run: bash tests/skills/html-deliverables.sh
+      - name: Verify checkpoint guard
+        run: bash tests/skills/checkpoint-guard.sh
       - name: Verify role skills
         run: bash tests/skills/role-skills.sh
       - name: Verify automatic run discovery
         run: bash tests/skills/discover.sh
       - name: Verify release packaging
         run: bash tests/skills/package-release.sh
+      - name: Install browser test tooling
+        run: npx --yes playwright@1.63.0 install --with-deps chromium
+      - name: Verify browser isolation
+        run: bash tests/skills/browser-isolation.sh
       - name: Verify two-role canary
         run: bash tests/skills/two-role-canary.sh
       - name: Verify poll behaviour
