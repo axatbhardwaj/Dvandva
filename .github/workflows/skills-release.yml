@@ -49,6 +49,8 @@ jobs:
         run: bash tests/skills/html-deliverables.sh
       - name: Verify role skills
         run: bash tests/skills/role-skills.sh
+      - name: Verify automatic run discovery
+        run: bash tests/skills/discover.sh
       - name: Verify release packaging
         run: bash tests/skills/package-release.sh
       - name: Verify two-role canary

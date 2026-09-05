@@ -8,7 +8,7 @@ trap 'rm -rf -- "$test_root"' EXIT
 cargo build --quiet --locked --manifest-path "$repo_root/v4/Cargo.toml"
 export XDG_DATA_HOME="$test_root/data" XDG_STATE_HOME="$test_root/state"
 export POLL_TEST_KERNEL="$repo_root/v4/target/debug/dvandva-v4"
-binary="$XDG_DATA_HOME/dvandva/bin/0.3.8/dvandva-kernel"
+binary="$XDG_DATA_HOME/dvandva/bin/0.3.9/dvandva-kernel"
 mkdir -p "$(dirname "$binary")"
 # Only the wait is fault-injected. The real binary supplies the pinned probe.
 cat >"$binary" <<'KERNEL'
