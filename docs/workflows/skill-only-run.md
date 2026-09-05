@@ -203,3 +203,34 @@ printf 'installed policy check: model invocation allowed\n'
 
 The RED/GREEN fresh-agent scenarios are recorded in
 [`docs/case-studies/2026-09-01-prativadi-code-review-pressure-test.md`](../case-studies/2026-09-01-prativadi-code-review-pressure-test.md).
+
+## Discovery and four-workflow initiation
+
+The active role contracts now expose Discovery, Implementation, Babysitting
+and Review. Read [initiation](../../skills/vadi/references/initiation.md) before
+activation and [discovery](../../skills/vadi/references/discovery.md) for paired
+spec/ticket work. Identical references ship inside both role skills.
+
+New discovery runs record `workflow=discovery` and `discovery_stage=spec|tickets`.
+Source discovery is bounded read-only preflight. Prativadi's independent source
+investigation is part of the existing initial explainer review; ordinary product
+work still waits for its approval. User-only skill waits intentionally yield
+and exact-resume, overriding ordinary foreground polling for that wait only.
+The existing schema, immutable checkpoint cycle and publication gates remain.
+
+Discovery uses Fable 5.1/high as Claude vadi and Astra/high as Codex prativadi.
+Its separate terminal spec and ticket runs share sessions, not mutable approval.
+Implementation starts in fresh Sol/high vadi and Opus prativadi sessions.
+Matt skills remain separately installed and unchanged. `/to-spec` publishes
+before the paired review; a ready-for-agent label cannot replace approval.
+`/to-tickets` retains its human breakdown approval; prativadi verifies published
+tickets and returns changes through the complete analysis checkpoint cycle.
+
+New `workflow=review` extends review across author updates and CI completion.
+The stored `pr_review` workflow remains one-shot for compatibility; a confirmed
+REQUEST_CHANGES ends that legacy objective only. `babysitting` uses the existing
+`babysit` ownership, maintenance and explicit merge-authority rules.
+
+Validation: `cargo test --locked --manifest-path v4/Cargo.toml --test skill_flow`
+checks source contracts and distributed-reference parity. These checks establish
+instruction presence and integration, not a live cross-harness planning run.
