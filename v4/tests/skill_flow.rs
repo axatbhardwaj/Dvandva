@@ -1484,3 +1484,137 @@ fn automatic_discovery_routes_to_exact_join_without_a_prompt_dependency() {
         repository_file("skills/prativadi/scripts/discover.py")
     );
 }
+
+#[test]
+fn freeflow_is_a_fifth_workflow_with_autonomous_evidence_bound_delivery() {
+    let mut references = Vec::new();
+    for role in ["vadi", "prativadi"] {
+        let (skill, contract) = role_sources(role);
+        let initiation = repository_file(&format!("skills/{role}/references/initiation.md"));
+        let freeflow = repository_file(&format!("skills/{role}/references/freeflow.md"));
+        references.push(freeflow.clone());
+        let source = format!("{skill}\n{contract}\n{initiation}\n{freeflow}")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        for required in [
+            "workflow=freeflow",
+            "reports, codebase investigations, exploratory diagnostics, and testing",
+            "Explicit workflow selection wins",
+            "outcome, required deliverables, relevant environment and revisions, authorized actions, and observable completion criteria",
+            "current plan",
+            "completed work, evidence, remaining tasks, limitations, and next owner",
+            "Routine design choices, test seams, document organization, tool choices, reversible local work, checks, recovery, and peer revisions",
+            "previously granted authority",
+            "user-only skill",
+            "model-invocable",
+            "analysis checkpoints only for deliveries without code changes",
+            "mixed test-and-fix deliveries use a `git` checkpoint",
+            "immutable Git commit, tree, or blob",
+            "source identities, revisions or capture times",
+            "passed, failed, blocked, or not run",
+            "running application",
+            "navigation, input or submission, observable results, and persisted state",
+            "isolated browser instances or profiles",
+            "Testing alone does not authorize product repairs",
+        ] {
+            assert!(source.contains(required), "{role} Freeflow contract omitted {required:?}");
+        }
+    }
+    assert_eq!(
+        references[0], references[1],
+        "Freeflow reference must ship identically"
+    );
+}
+
+#[test]
+fn persistent_review_defines_complete_multi_pr_rounds_and_exact_receipts() {
+    let mut references = Vec::new();
+    for role in ["vadi", "prativadi"] {
+        let (_, contract) = role_sources(role);
+        let initiation = repository_file(&format!("skills/{role}/references/initiation.md"));
+        let review = repository_file(&format!("skills/{role}/references/review.md"));
+        references.push(review.clone());
+        let source = format!("{contract}\n{initiation}\n{review}")
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        for required in [
+            "one or more PRs",
+            "one canonical repository",
+            "full canonical `https://github.com/OWNER/REPO/pull/NUMBER` URL",
+            "freeze membership",
+            "review_member",
+            "stable distinct deliverable ID",
+            "Legacy `pr_review`",
+            "complete initial review of every active member",
+            "one atomic checkpoint verdict",
+            "Pending CI and an adjudicated `REQUEST_CHANGES`",
+            "author and acting reviewer identities",
+            "full head and base revisions",
+            "exact body",
+            "body digest",
+            "zero duplicate submissions",
+            "withdraw approval",
+            "changed member and affected dependent PRs",
+            "unaffected evidence",
+            "bounded read-only GitHub readiness observations",
+            "merged or closed",
+            "Never merge",
+        ] {
+            assert!(
+                source.contains(required),
+                "{role} Review contract omitted {required:?}"
+            );
+        }
+    }
+    assert_eq!(
+        references[0], references[1],
+        "Review reference must ship identically"
+    );
+}
+
+#[test]
+fn public_workflow_docs_and_canary_cover_the_new_surface_without_kernel_claims() {
+    let glossary = repository_file("CONTEXT.md");
+    let readme = repository_file("README.md");
+    let workflow = repository_file("docs/workflows/skill-only-run.md")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    let canary = repository_file("tests/skills/two-role-canary.sh");
+    for required in [
+        "`discovery`, `implementation`,",
+        "`babysitting`, `review`, or `freeflow`",
+        "Workflow values are objective references, not kernel states",
+        "**Review Member**",
+        "**Review Round**",
+    ] {
+        assert!(glossary.contains(required), "glossary omitted {required:?}");
+    }
+    assert!(readme.contains("## Five workflows"));
+    assert!(readme.contains("**Freeflow:**"));
+    for required in [
+        "No per-PR kernel state, child run, or merge authority is introduced",
+        "passed/failed/blocked/not-run",
+        "previously granted authority",
+        "match_basis=review_member",
+    ] {
+        assert!(
+            workflow.contains(required),
+            "workflow evidence omitted {required:?}"
+        );
+    }
+    for required in [
+        "members=(101 102 103 104 105)",
+        "batch-missing",
+        "batch-duplicate",
+        "withdraw_approval",
+        "zero duplicate writes",
+    ] {
+        assert!(
+            canary.contains(required),
+            "batch canary omitted {required:?}"
+        );
+    }
+}
