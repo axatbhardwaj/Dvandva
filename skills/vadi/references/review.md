@@ -92,9 +92,10 @@ Every new non-exact Review start requires at least one `review_member`; use an
 exact run ID to resume legacy member-less Review state.
 The analysis checkpoint kind is intentional: these deliverables are immutable
 non-code review, receipt, and readiness records, not changes to a PR branch.
-The facade requires each frozen member exactly once and checks canonical URL,
-disposition/current-evidence status; an open member additionally needs identity,
-full revisions, timestamp, review basis, green checks, no blocking
+The facade requires each frozen member exactly once and checks canonical URL
+and disposition/current-evidence status. Every member carries identity, full
+revisions, timestamp, review basis, findings/verdict fields, receipts/checks,
+and a next action; an open member additionally needs green checks, no blocking
 feedback, adjudicated approval, exact body digest, and a matching formal
 receipt. This is a role-contract gate around existing kernel artifacts, not a
 new kernel schema.

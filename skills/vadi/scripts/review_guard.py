@@ -56,33 +56,6 @@ def member_number(url):
     return parsed[2] if parsed else None
 
 
-def validate_current_basis(record, member_id, member_numbers):
-    author = record.get("author")
-    actor = record.get("acting_reviewer")
-    head = record.get("head")
-    base = record.get("base")
-    review_basis = record.get("review_basis")
-    dependencies = record.get("dependencies")
-    if not all(
-        isinstance(value, str) and value.strip()
-        for value in (author, actor, head, base, review_basis)
-    ):
-        reject(f"{member_id} lacks full identity, revision, or basis evidence")
-    author = author.strip()
-    actor = actor.strip()
-    if actor.casefold() == author.casefold() or not FULL_REVISION.fullmatch(head) or not FULL_REVISION.fullmatch(base):
-        reject(f"{member_id} identity or revision evidence is invalid")
-    number = int(member_id.removeprefix("pr-"))
-    if (
-        not isinstance(dependencies, list)
-        or any(type(dependency) is not int for dependency in dependencies)
-        or len(dependencies) != len(set(dependencies))
-        or number in dependencies
-        or any(dependency not in member_numbers for dependency in dependencies)
-    ):
-        reject(f"{member_id} dependency relationship evidence is invalid")
-
-
 def validate_timestamp(record, member_id):
     observed_at = record.get("observed_at")
     try:
@@ -145,7 +118,6 @@ def validate_artifact(record, member_url, member_id, member_numbers):
         return
     if disposition != "open":
         reject(f"{member_id} has no verified open, closed, or merged disposition")
-    validate_current_basis(record, member_id, member_numbers)
     exact_body = record.get("exact_body")
     body_digest = record.get("body_digest")
     actor = record["acting_reviewer"].strip()

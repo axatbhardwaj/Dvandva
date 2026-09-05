@@ -1554,6 +1554,7 @@ fn persistent_review_defines_complete_multi_pr_rounds_and_exact_receipts() {
             "freeze membership",
             "review_member",
             "non-exact Review start requires at least one `review_member`",
+            "Every member carries identity, full revisions, timestamp, review basis",
             "stable distinct deliverable ID",
             "Legacy `pr_review`",
             "complete initial review of every active member",
