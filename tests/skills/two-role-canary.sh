@@ -103,6 +103,13 @@ rev() {
   python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["revision"])' "$1/baton.json"
 }
 
+fixture_commit() {
+  local label="$1"
+  git -C "$workspace" -c user.name=Canary -c user.email=canary@example.invalid \
+    commit --quiet --allow-empty -m "$label"
+  git -C "$workspace" rev-parse HEAD
+}
+
 # Stage the bytes behind an analysis deliverable and echo their digest, so the
 # manifest cites something the reviewer can materialize.
 stage_analysis() {
@@ -224,12 +231,7 @@ run_casting() {
 
   approve_explainer "$worker" "$worker_session" "$reviewer" "$reviewer_session" \
     "$sites_publisher" "$sites_session" "$run_dir" 2 "$site_id" deployment-1
-  # Git checkpoints bind full-length object names, so the per-casting suffix
-  # has to stay inside the hex alphabet.
-  local nibble
-  case "$label" in normal) nibble=1 ;; reverse) nibble=2 ;; *) nibble=f ;; esac
-  checkpoint_a="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa$nibble"
-  checkpoint_b="bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb$nibble"
+  checkpoint_a="$(fixture_commit "$label checkpoint A")"
   reviewing_a="$(apply_action "$worker" "$worker_session" "$run_dir" 5 checkpoint-a-$label \
     "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"git\",\"identity\":\"$checkpoint_a\",\"deliverables\":[{\"id\":\"implementation\",\"artifacts\":[{\"kind\":\"commit\",\"value\":\"$checkpoint_a\"}]}],\"verification\":[\"cargo test\"]}}")"
   digest_a="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' <<<"$reviewing_a")"
@@ -239,6 +241,7 @@ run_casting() {
     "{\"type\":\"record_review\",\"verdict\":\"changes_requested\",\"checkpoint_identity\":\"$checkpoint_a\",\"manifest_digest\":\"$digest_a\",\"scope_revision\":0,\"findings\":[\"Add contention coverage\"]}" >/dev/null
   approve_explainer "$worker" "$worker_session" "$reviewer" "$reviewer_session" \
     "$sites_publisher" "$sites_session" "$run_dir" 10 "$site_id" deployment-3
+  checkpoint_b="$(fixture_commit "$label checkpoint B")"
   reviewing_b="$(apply_action "$worker" "$worker_session" "$run_dir" 13 checkpoint-b-$label \
     "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"git\",\"identity\":\"$checkpoint_b\",\"deliverables\":[{\"id\":\"implementation\",\"artifacts\":[{\"kind\":\"commit\",\"value\":\"$checkpoint_b\"}]}],\"verification\":[\"cargo test\",\"contention test\"]}}")"
   digest_b="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' <<<"$reviewing_b")"
@@ -499,14 +502,16 @@ run_discovery_startup() {
 }
 run_discovery_startup
 
-# The workflow contract marks code-carrying Freeflow scope at initiation. The
-# public role facade must reject an analysis checkpoint even when the staged
-# report names a commit, while report-only Freeflow retains analysis delivery.
+# Every Freeflow scope declares code or analysis delivery at initiation. The
+# public role facade rejects missing/invalid markers and mismatched checkpoint
+# kinds while retaining report-only analysis delivery.
 run_checkpoint_kind_guard() {
   local worker="$HOME/.agents/skills/vadi/scripts/dvandva-role.sh"
   local reviewer="$HOME/.claude/skills/prativadi/scripts/dvandva-role.sh"
   local started run_id run_dir source artifact identity failure failure_status reviewing
-  local commit="cccccccccccccccccccccccccccccccccccccccc"
+  local current_revision stale_revision
+  local fake_commit="cccccccccccccccccccccccccccccccccccccccc" commit mismatch_commit
+  local report_commit="dddddddddddddddddddddddddddddddddddddddd"
 
   started="$(bash "$worker" start mixed-worker codex claude "$workspace" \
     'Test and fix the reported defect' --new-run \
@@ -518,15 +523,41 @@ run_checkpoint_kind_guard() {
   approve_explainer "$worker" mixed-worker "$reviewer" mixed-reviewer \
     "$worker" mixed-worker "$run_dir" "$(rev "$run_dir")" mixed-delivery mixed-start
   source="$test_root/mixed-analysis.md"
+  commit="$(fixture_commit 'mixed checkpoint')"
   printf '# Mixed delivery\nCode changes committed at %s\n' "$commit" >"$source"
   artifact="$(sha256sum "$source" | cut -d' ' -f1)"
   apply_action "$worker" mixed-worker "$run_dir" "$(rev "$run_dir")" mixed-stage \
     "{\"type\":\"stage_analysis\",\"source_path\":\"$source\"}" >/dev/null
   identity="$(analysis_identity "$artifact")"
+  current_revision="$(rev "$run_dir")"
+  stale_revision="$((current_revision - 1))"
   set +e
-  failure="$(apply_action_error "$worker" mixed-worker "$run_dir" "$(rev "$run_dir")" \
+  failure="$(apply_action_error "$worker" mixed-worker "$run_dir" "$stale_revision" \
+    mixed-stale-analysis \
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$identity\",\"deliverables\":[{\"id\":\"mixed\",\"artifacts\":[{\"kind\":\"analysis_digest\",\"value\":\"$artifact\"}]}],\"verification\":[\"stale submission\"]}}")"
+  failure_status=$?
+  set -e
+  test "$failure_status" -ne 0
+  grep -Fq '"error":"revision_conflict"' <<<"$failure"
+  set +e
+  failure="$(apply_action_error "$worker" mixed-worker "$run_dir" "$current_revision" \
     mixed-analysis \
     "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$identity\",\"deliverables\":[{\"id\":\"mixed\",\"artifacts\":[{\"kind\":\"analysis_digest\",\"value\":\"$artifact\"}]}],\"verification\":[\"commit named in report\"]}}")"
+  failure_status=$?
+  set -e
+  test "$failure_status" -ne 0
+  grep -Fq '"error":"invalid_checkpoint"' <<<"$failure"
+  set +e
+  failure="$(apply_action_error "$worker" mixed-worker "$run_dir" "$(rev "$run_dir")" mixed-fake-git \
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"git\",\"identity\":\"$fake_commit\",\"deliverables\":[{\"id\":\"mixed\",\"artifacts\":[{\"kind\":\"commit\",\"value\":\"$fake_commit\"}]}],\"verification\":[\"fake commit must fail\"]}}")"
+  failure_status=$?
+  set -e
+  test "$failure_status" -ne 0
+  grep -Fq '"error":"invalid_checkpoint"' <<<"$failure"
+  mismatch_commit="$(fixture_commit 'mismatched artifact checkpoint')"
+  set +e
+  failure="$(apply_action_error "$worker" mixed-worker "$run_dir" "$(rev "$run_dir")" mixed-mismatch-git \
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"git\",\"identity\":\"$commit\",\"deliverables\":[{\"id\":\"mixed\",\"artifacts\":[{\"kind\":\"commit\",\"value\":\"$mismatch_commit\"}]}],\"verification\":[\"mismatched commit artifact must fail\"]}}")"
   failure_status=$?
   set -e
   test "$failure_status" -ne 0
@@ -537,6 +568,7 @@ run_checkpoint_kind_guard() {
 
   started="$(bash "$worker" start report-worker codex claude "$workspace" \
     'Produce an evidence-backed report' --new-run --objective-ref workflow=freeflow \
+    --objective-ref delivery_kind=analysis \
     --required-deliverable report='Source-backed report')"
   run_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])' <<<"$started")"
   run_dir="$XDG_STATE_HOME/dvandva/runs/$run_id"
@@ -545,9 +577,51 @@ run_checkpoint_kind_guard() {
     "$worker" report-worker "$run_dir" "$(rev "$run_dir")" report-delivery report-start
   artifact="$(stage_analysis "$worker" report-worker "$run_dir" report-only)"
   identity="$(analysis_identity "$artifact")"
+  set +e
+  failure="$(apply_action_error "$worker" report-worker "$run_dir" "$(rev "$run_dir")" report-git \
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"git\",\"identity\":\"$report_commit\",\"deliverables\":[{\"id\":\"report\",\"artifacts\":[{\"kind\":\"commit\",\"value\":\"$report_commit\"}]}],\"verification\":[\"report cannot become code delivery\"]}}")"
+  failure_status=$?
+  set -e
+  test "$failure_status" -ne 0
+  grep -Fq '"error":"invalid_checkpoint"' <<<"$failure"
   reviewing="$(apply_action "$worker" report-worker "$run_dir" "$(rev "$run_dir")" report-analysis \
     "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$identity\",\"deliverables\":[{\"id\":\"report\",\"artifacts\":[{\"kind\":\"analysis_digest\",\"value\":\"$artifact\"}]}],\"verification\":[\"sources checked\"]}}")"
   python3 -c 'import json,sys; s=json.load(sys.stdin); assert s["status"] == "reviewing" and s["checkpoint"]["kind"] == "analysis"' <<<"$reviewing"
+
+  started="$(bash "$worker" start missing-kind-worker codex claude "$workspace" \
+    'Report with a missing delivery marker' --new-run --objective-ref workflow=freeflow \
+    --required-deliverable report='Source-backed report')"
+  run_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])' <<<"$started")"
+  run_dir="$XDG_STATE_HOME/dvandva/runs/$run_id"
+  bash "$reviewer" start missing-kind-reviewer claude codex "$workspace" --run-id "$run_id" >/dev/null
+  artifact="$(stage_analysis "$worker" missing-kind-worker "$run_dir" missing-kind)"
+  identity="$(analysis_identity "$artifact")"
+  set +e
+  failure="$(apply_action_error "$worker" missing-kind-worker "$run_dir" "$(rev "$run_dir")" \
+    missing-kind-checkpoint \
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$identity\",\"deliverables\":[{\"id\":\"report\",\"artifacts\":[{\"kind\":\"analysis_digest\",\"value\":\"$artifact\"}]}],\"verification\":[\"sources checked\"]}}")"
+  failure_status=$?
+  set -e
+  test "$failure_status" -ne 0
+  grep -Fq '"error":"invalid_checkpoint"' <<<"$failure"
+
+  started="$(bash "$worker" start invalid-kind-worker codex claude "$workspace" \
+    'Report with an invalid delivery marker' --new-run --objective-ref workflow=freeflow \
+    --objective-ref delivery_kind=report \
+    --required-deliverable report='Source-backed report')"
+  run_id="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])' <<<"$started")"
+  run_dir="$XDG_STATE_HOME/dvandva/runs/$run_id"
+  bash "$reviewer" start invalid-kind-reviewer claude codex "$workspace" --run-id "$run_id" >/dev/null
+  artifact="$(stage_analysis "$worker" invalid-kind-worker "$run_dir" invalid-kind)"
+  identity="$(analysis_identity "$artifact")"
+  set +e
+  failure="$(apply_action_error "$worker" invalid-kind-worker "$run_dir" "$(rev "$run_dir")" \
+    invalid-kind-checkpoint \
+    "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$identity\",\"deliverables\":[{\"id\":\"report\",\"artifacts\":[{\"kind\":\"analysis_digest\",\"value\":\"$artifact\"}]}],\"verification\":[\"sources checked\"]}}")"
+  failure_status=$?
+  set -e
+  test "$failure_status" -ne 0
+  grep -Fq '"error":"invalid_checkpoint"' <<<"$failure"
 }
 run_checkpoint_kind_guard
 
@@ -558,6 +632,7 @@ run_batch_review() {
   local worker="$HOME/.agents/skills/vadi/scripts/dvandva-role.sh"
   local reviewer="$HOME/.claude/skills/prativadi/scripts/dvandva-role.sh"
   local started run_id run_dir failure failure_status reviewing digest identity terminal missing_identity
+  local round_identity round_digest
   local fixture_root="$test_root/github-review-fixture" round_bundle receipt_bundle
   local manifest missing_manifest duplicate_manifest receipt_manifest
   local -a members=(101 102 103 104 105) refs=() deliverables=()
@@ -619,6 +694,8 @@ PY
   reviewing="$(apply_action "$worker" batch-worker "$run_dir" "$(rev "$run_dir")" batch-round \
     "{\"type\":\"submit_checkpoint\",\"checkpoint\":{\"kind\":\"analysis\",\"identity\":\"$identity\",\"deliverables\":${manifest},\"verification\":[\"five deterministic PR fixtures inspected: mixed APPROVE and REQUEST_CHANGES; pending CI recorded\"]}}")"
   digest="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' <<<"$reviewing")"
+  round_identity="$identity"
+  round_digest="$digest"
   approve_explainer "$worker" batch-worker "$reviewer" batch-reviewer \
     "$worker" batch-worker "$run_dir" "$(rev "$run_dir")" batch-review batch-round
   apply_action "$reviewer" batch-reviewer "$run_dir" "$(rev "$run_dir")" batch-approve \
@@ -637,6 +714,14 @@ PY
   digest="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["checkpoint"]["manifest_digest"])' <<<"$reviewing")"
   approve_explainer "$worker" batch-worker "$reviewer" batch-reviewer \
     "$worker" batch-worker "$run_dir" "$(rev "$run_dir")" batch-review batch-receipts
+  set +e
+  failure="$(apply_action_error "$reviewer" batch-reviewer "$run_dir" "$(rev "$run_dir")" \
+    batch-stale-approval \
+    "{\"type\":\"record_review\",\"verdict\":\"approved\",\"checkpoint_identity\":\"$round_identity\",\"manifest_digest\":\"$round_digest\",\"scope_revision\":0,\"findings\":[]}")"
+  failure_status=$?
+  set -e
+  test "$failure_status" -ne 0
+  grep -Fq '"error":"stale_review"' <<<"$failure"
   apply_action "$reviewer" batch-reviewer "$run_dir" "$(rev "$run_dir")" batch-receipt-approve \
     "{\"type\":\"record_review\",\"verdict\":\"approved\",\"checkpoint_identity\":\"$identity\",\"manifest_digest\":\"$digest\",\"scope_revision\":0,\"findings\":[]}" >/dev/null
   terminal="$(apply_action "$worker" batch-worker "$run_dir" "$(rev "$run_dir")" batch-finalize '{"type":"finalize"}')"

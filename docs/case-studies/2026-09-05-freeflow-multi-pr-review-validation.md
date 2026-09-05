@@ -2,10 +2,10 @@
 
 ## Scope and evidence boundary
 
-This report validates the active v4 role-contract changes for issue #31 at
-source revision `c07c74e579a49857ed981dea2506e4dccd54a007` plus the uncommitted
-implementation under review. It does not change the v4 kernel schema, legal
-statuses, claim model, or archived v3 tree.
+This report validates the active v4 role-contract changes for issue #31 as one
+immutable candidate under review. The candidate's exact identity belongs to
+the final checkpoint evidence rather than mutable worktree prose. It does not
+change the v4 kernel schema, legal statuses, claim model, or archived v3 tree.
 
 The evidence classes below are intentionally separate. A deterministic fixture
 or local two-role canary is not evidence that two live model sessions completed
@@ -50,15 +50,30 @@ the existing five-deliverable analysis checkpoint. The public facade rejected
 missing and duplicate manifest coverage, then exercised the complete
 review-round → approval → receipt update/approval withdrawal → complete
 replacement → readiness approval → finalization cycle. There was no per-PR
-kernel approval or child run.
+kernel approval or child run. A stale approval carrying the superseded round's
+identity and manifest digest is rejected before the current receipt-bearing
+round is approved.
 
-The same canary proves the checkpoint-kind acceptance rule. A code-carrying
-Freeflow run marked with `delivery_kind=code` cannot submit an analysis
-checkpoint merely because its staged report names a commit; the verified role
-facade returns `invalid_checkpoint`. The Git checkpoint succeeds. A separate
-report-only Freeflow run remains able to submit a staged analysis checkpoint.
+The discovery regression enumerates a Review member, applies a human-approved
+scope amendment before exact join, and proves that the join returns the new
+scope revision/member/deliverable rather than the earlier enumeration. The old
+member no longer matches observational lookup.
+
+The same canary proves the checkpoint-kind acceptance rule. Every Freeflow run
+must carry exactly one `delivery_kind=code|analysis` marker. A code-carrying run
+cannot submit an analysis checkpoint merely because its staged report names a
+commit; an analysis-only run cannot submit a Git checkpoint. Missing and
+invalid markers also return `invalid_checkpoint`. The matching Git and analysis
+checkpoints succeed.
 The guard reads its run snapshot through the pinned kernel's credential-checked
-`role read` operation and never opens Baton state directly.
+`role read` operation and never opens Baton state directly. It evaluates the
+policy only when that snapshot revision matches the facade caller's expected
+revision; kernel apply remains the atomic authority for later races.
+The facade copies the caller action once into a mode-600 private temporary file,
+then gives those same bytes to the guard and kernel. Git identities and commit
+artifacts must match a real commit in the verified worktree; cited tree and blob
+objects must also be available. The canary rejects a syntactically valid fake
+commit before accepting a real fixture commit.
 
 ## Commands and observed results
 
@@ -70,6 +85,10 @@ Focused RED evidence:
   were folded case-insensitively.
 - `tests/skills/two-role-canary.sh` failed before the role-facade checkpoint-kind
   guard rejected a code-marked analysis submission.
+- The expanded facade canary failed while a syntactically valid but unavailable
+  Git identity was accepted, and while Freeflow could omit its delivery marker.
+- The lookup regression failed before an exact join returned the amended scope
+  rather than the member set observed during enumeration.
 - The validation-report contract failed while this case-study file was absent.
 
 Focused GREEN evidence recorded during implementation:

@@ -19,6 +19,17 @@ create() {
     --new-run --task-reference "$3" --objective-ref "workflow=$4" \
     --required-deliverable delivery='Complete work'
 }
+revision() {
+  python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["revision"])' "$1/baton.json"
+}
+apply_json() {
+  local facade="$1" session="$2" run_dir="$3" name="$4" payload="$5"
+  local action="$test_root/$name.json"
+  printf '%s\n' "$payload" >"$action"
+  chmod 600 "$action"
+  bash "$facade" apply "$session" "$run_dir" "$(revision "$run_dir")" "$action"
+  unlink "$action"
+}
 # An empty lookup neither creates registry directories nor requires objective wording.
 result="$(scan --workflow review)"
 test "$(field outcome <<<"$result")" = none
@@ -81,6 +92,33 @@ test "$(field outcome <<<"$(scan --workflow review --task-reference https://gith
 # member as a scalar task assertion.
 joined_batch="$(bash "$prati" start batch-reviewer codex claude "$workspace" --run-id "$batch_id")"
 test "$(field run_id <<<"$joined_batch")" = "$batch_id"
+# Enumeration is not an exact-join assertion. If the human changes canonical
+# scope between those operations, exact join returns the new scope and the role
+# must recheck it instead of acting on the enumerated member list.
+drift_batch="$(bash "$vadi" start worker-drift claude codex "$workspace" \
+  'Review a selection that changes before join' --new-run \
+  --objective-ref workflow=review \
+  --objective-ref review_member=https://github.com/example/project/pull/81 \
+  --required-deliverable pr-81='Review https://github.com/example/project/pull/81')"
+drift_id="$(field run_id <<<"$drift_batch")"
+drift_dir="$XDG_STATE_HOME/dvandva/runs/$drift_id"
+result="$(scan --workflow review --task-reference https://github.com/example/project/pull/81)"
+test "$(field outcome <<<"$result")" = match
+apply_json "$vadi" worker-drift "$drift_dir" drift-request \
+  '{"type":"request_human_decision","kind":"scope","question":"Which reviewed PR remains in scope?","evidence":["The human changed the selected PR"],"options":["Review PR 82","Keep PR 81"]}' >/dev/null
+apply_json "$vadi" worker-drift "$drift_dir" drift-resume \
+  '{"type":"resume_human_decision","answer":"Review PR 82","scope_amendment":{"objective":"Review the amended selection","objective_refs":[{"kind":"workflow","value":"review"},{"kind":"review_member","value":"https://github.com/example/project/pull/82"}],"task_reference":null,"scope_deliverables":[{"id":"pr-82","description":"Review https://github.com/example/project/pull/82"}]}}' >/dev/null
+joined_drift="$(bash "$prati" start drift-reviewer codex claude "$workspace" --run-id "$drift_id")"
+python3 -c '
+import json, sys
+s = json.load(sys.stdin)
+refs = {(ref["kind"], ref["value"]) for ref in s["objective"]["refs"]}
+assert s["scope_revision"] == 1
+assert ("review_member", "https://github.com/example/project/pull/82") in refs
+assert all(value != "https://github.com/example/project/pull/81" for _, value in refs)
+assert s["scope_deliverables"] == [{"id":"pr-82","description":"Review https://github.com/example/project/pull/82"}]
+' <<<"$joined_drift"
+test "$(field outcome <<<"$(scan --workflow review --task-reference https://github.com/example/project/pull/81)")" = none
 # Duplicate member refs are malformed scope, not two votes for the same PR.
 duplicate="$(bash "$vadi" start worker-duplicate claude codex "$workspace" \
   'Malformed duplicate batch' --new-run \
