@@ -7,6 +7,13 @@
 
 ## Active v4 discipline
 
+- Use a dedicated worktree for each new repository task without asking. Reuse
+  a harness-created worktree only if it belongs to that task; resumes reuse the
+  same task worktree. New work must not inherit a completed task's checkout.
+  Prefer native worktree tools, otherwise create a uniquely named sibling with
+  `git worktree add` from the intended base. Preserve unrelated edits. Reviewers
+  use their own checkout pinned to the authorized revision. Record the path and
+  branch in the handoff; never silently fall back to writes in a shared tree.
 - The human starts Claude and Codex separately in T3 Code. Never invoke the
   peer harness from a role.
 - Use only the root role skills and their private facade; never read or edit
