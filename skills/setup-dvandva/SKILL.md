@@ -9,7 +9,7 @@ disable-model-invocation: true
 Run the bundled `scripts/setup-dvandva.sh` for exactly the operation the user
 requested: `install`, `update`, `doctor`, or `uninstall`.
 
-The release target is version `0.4.0`, tag `skills-v0.4.0`, write schema
+The release target is version `0.4.1`, tag `skills-v0.4.1`, write schema
 `dvandva.run.v2`, facade API 2. The installer resolves the tag and asset at
 invocation and fails closed if either is missing. Report the script's evidence
 and do not reconstruct its download, checksum, ownership, compatibility, or
