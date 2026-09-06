@@ -131,6 +131,8 @@ def validate_artifact(record, member_url, member_id, member_numbers):
         reject(f"{member_id} does not have a current APPROVE verdict")
     if not all(isinstance(value, str) and value for value in (exact_body, body_digest, actor, head)):
         reject(f"{member_id} is missing receipt identity evidence")
+    if len(exact_body.splitlines()) >= 400:
+        reject(f"{member_id} formal review body must be under 400 lines")
     if hashlib.sha256(exact_body.encode()).hexdigest() != body_digest:
         reject(f"{member_id} exact review body digest does not match")
     if not isinstance(receipts, list) or not any(

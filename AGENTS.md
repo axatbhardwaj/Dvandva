@@ -19,6 +19,13 @@ Prefer concise, source-backed docs over speculative architecture. If a workflow 
 
 ## Working Rules
 
+- Use a dedicated worktree for each new repository task without asking. Reuse
+  a harness-created worktree only if it belongs to that task; resumes reuse the
+  same task worktree. New work must not inherit a completed task's checkout.
+  Prefer native worktree tools, otherwise create a uniquely named sibling with
+  `git worktree add` from the intended base. Preserve unrelated edits. Reviewers
+  use their own checkout pinned to the authorized revision. Record the path and
+  branch in the handoff; never silently fall back to writes in a shared tree.
 - Keep coordination protocols in `docs/protocol/`.
 - Keep workflow designs in `docs/workflows/`.
 - Keep tool research in `docs/research/`.

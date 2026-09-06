@@ -39,6 +39,44 @@ Check actual model identity, role skills, required explicitly invoked companion
 skills and tracker access. Report a missing capability without installing,
 reconfiguring or silently substituting it. Follow model-selection.md.
 
+## Task worktree isolation
+
+Use a dedicated Git worktree for every new repository task, across all five
+workflows. This is standing authorization: do not ask permission to create it.
+A harness-created worktree satisfies the rule only when it belongs to this
+task. Resume and linked spec/ticket stages reuse their recorded task worktree;
+a completed or unrelated task's checkout does not qualify merely because it
+is already a linked worktree.
+
+Inspect repository identity, worktree registration, branch, task ownership and
+working-tree status first. Prefer a native harness worktree operation when
+available; otherwise use `git worktree add` with a unique task branch and a
+sibling directory in the established worktree location. If using an in-repo
+worktree directory, verify it is ignored. Never nest worktrees inside another
+task's checkout, overwrite existing work, reset, stash or move unrelated edits.
+Use the task's required base or exact revision; refresh the intended branch
+when starting new work rather than inheriting an unrelated checkout's HEAD.
+
+For new runs, prepare the task worktree before facade start and pass its path
+as WORKSPACE. This permits Git isolation setup during preflight, not product
+edits or broader external actions. For exact joins/resumes, validate the run
+through the facade first; a missing/mismatched run never authorizes creating a
+replacement run or checkout. Record the task/role worktree path, branch/base
+and purpose in the run's existing progress/explainer evidence. Keep the same
+run identity, repository identity and XDG Run Channel across worktrees.
+
+Vadi owns the task's writable worktree. Prativadi uses its own isolated
+checkout for any Git inspection, execution or generated files, pinned to the
+exact authorized checkpoint or PR head; it never checks out or writes in
+vadi's active tree. Additional simultaneous review targets use separate pinned
+worktrees. Analysis-only review may read immutable staged artifacts directly.
+A report/testing task in a Git repository still gets task isolation; a purely
+external task without a repository uses private task storage instead of an
+invented repository. Preserve worktrees for resumption and handoff; remove only
+clean task-owned trees when cleanup is authorized. If isolation cannot be
+established, report the concrete blocker and continue useful read-only work;
+do not silently write in a shared checkout.
+
 ## Automatic peer discovery
 
 The human starts both sessions independently under the same Linux user and
