@@ -42,6 +42,9 @@ artifact content only. Revisions always replace the complete batch candidate.
 
 ## External writes and receipts
 
+Before preparing or submitting each external verdict, read and follow
+[formal review submission](review-submission.md).
+
 After semantic approval of a complete round, vadi may submit the approved
 external reviews during Finalizing. Immediately before each write, recheck the
 exact PR, head/base, actor versus author, authority, and adjudicated exact body.

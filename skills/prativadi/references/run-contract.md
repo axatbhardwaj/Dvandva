@@ -99,6 +99,9 @@ In `implementation`, review each newly authorized complete checkpoint under exis
 
 In `babysit`, prativadi is an internal sanity filter, not the real reviewer. Independently check each exact fix head and CI evidence before vadi re-requests the existing colleague reviewer. Unresolved findings block that request, but neither internal approval nor thread resolution is colleague acceptance; feedback, changed head, or failed gate reopens the loop. After colleague approval, progress from `merge_ready` to `maintaining_ready` and refresh live GitHub between bounded Baton waits; GitHub does not wake Baton. Head, base, CI, approval, requested-change, or thread drift reopens the fix and review loop. Never merge without fresh human authorization.
 
+For every legacy `pr_review` verdict, read and follow
+[formal review submission](review-submission.md) before preparation or submission.
+
 In `pr_review`, make an independent first pass without vadi's report, covering diff, spec, standards, regressions, security edges, and practical failures. Then compare and adjudicate every vadi finding into final `APPROVE` or `REQUEST_CHANGES` that vadi submits. After the write, prativadi independently re-queries the same GitHub receipt: review ID, exact PR, actor, state, reviewed commit/head, and body digest. Head drift before both confirmations invalidates the attempt and restarts review. A Dvandva approval in `pr_review` approves the receipt-bearing review artifact; formal `REQUEST_CHANGES` still completes after confirmed submission. Sources: [workflow-mode evidence](../../../docs/research/2026-09-01-workflow-mode-github-evidence.md).
 
 In `review`, follow `review.md`. Prativadi independently investigates every

@@ -140,6 +140,12 @@ root, snapshot_path, mode = pathlib.Path(sys.argv[1]), pathlib.Path(sys.argv[2])
 body="Approved on exact current evidence"; head="3"*40
 record={"url":"https://github.com/axatbhardwaj/Dvandva/pull/31","disposition":"open","evidence_valid":True,"author":"author","acting_reviewer":"reviewer","head":head,"base":"4"*40,"dependencies":[],"observed_at":"2026-09-06T12:00:00Z","review_basis":"Exact head, base, dependency, checks, feedback, and receipt query","findings":[],"proposed_verdict":"APPROVE","checks":"green","blocking_feedback":[],"adjudicated_verdict":"APPROVE","exact_body":body,"body_digest":hashlib.sha256(body.encode()).hexdigest(),"next_action":"Finalize after exact approval receipt"}
 record["receipts"]=[{"pr":31,"actor":"reviewer","head":head,"state":"APPROVE","body_digest":record["body_digest"]}]
+if mode in {"body-399", "body-400"}:
+    record["exact_body"]="line\n"*int(mode.split("-")[1])
+    record["body_digest"]=hashlib.sha256(record["exact_body"].encode()).hexdigest()
+    record["receipts"][0]["body_digest"]=record["body_digest"]
+if mode in {"comment-receipt", "pending-receipt"}:
+    record["receipts"][0]["state"]=mode.split("-")[0].upper()
 if mode.startswith("missing-"): record.pop(mode.removeprefix("missing-"))
 if mode == "invalid-base": record["base"]="main"
 if mode == "invalid-observed_at": record["observed_at"]="yesterday"
@@ -157,7 +163,7 @@ snapshot_path.write_text(json.dumps(snapshot))
 PY
 }
 find "$review_dir" -maxdepth 1 -type f -exec unlink {} \;
-for mode in missing-base missing-dependencies missing-observed_at missing-review_basis missing-findings missing-proposed_verdict missing-next_action invalid-base invalid-observed_at invalid-dependencies padded-self-review numeric-receipt; do
+for mode in missing-base missing-dependencies missing-observed_at missing-review_basis missing-findings missing-proposed_verdict missing-next_action invalid-base invalid-observed_at invalid-dependencies padded-self-review numeric-receipt body-400 comment-receipt pending-receipt; do
   open_fixture "$mode"
   set +e
   error="$(python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json")"; status=$?
@@ -166,6 +172,9 @@ for mode in missing-base missing-dependencies missing-observed_at missing-review
   grep -Fq 'review_not_ready' <<<"$error"
   find "$review_dir" -maxdepth 1 -type f -exec unlink {} \;
 done
+open_fixture body-399
+python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json"
+find "$review_dir" -maxdepth 1 -type f -exec unlink {} \;
 open_fixture complete
 python3 "$vadi_review" validate "$action" 7 "$review_dir" <"$test_root/review-snapshot.json"
 find "$review_dir" -maxdepth 1 -type f -exec unlink {} \;
