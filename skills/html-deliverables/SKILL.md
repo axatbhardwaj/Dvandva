@@ -36,13 +36,17 @@ reduced-motion rule. Map the subject's opposing actors or states to `--vadi` and
 For both new pages and revisions, preserve this exact answer-first structure:
 
 - Put one non-empty `h1`, one `.thesis`, and one `.status` before every
-  `section`. The status contains one `.next` whose action says more than its
-  static “Next:” label.
-- Make `<section id="summary" data-reader-summary>` the first section. Inside
-  it, include exactly one item for each of `data-summary="outcome"`,
-  `data-summary="meaning"`, and `data-summary="next"`.
+  `section`. The status must state the current status in its own text, outside
+  its one nested `.next`; that action must say more than its static “Next:”
+  label.
+- Make `<section id="summary" data-reader-summary>` the first section and the
+  only section carrying `data-reader-summary`. Inside it, include exactly one
+  item for each of `data-summary="outcome"`, `data-summary="meaning"`, and
+  `data-summary="next"`. Each item must answer its prompt with non-empty body
+  text outside the item's heading.
 - Include exactly one section for each required depth layer: `#scope`,
-  `#evidence`, `#decisions`, and `#plan`.
+  `#evidence`, `#decisions`, and `#plan`, and give every section non-empty
+  content.
 - Include at least one `<details class="technical">` whose disclosed body has
   real content beyond its `summary` label.
 

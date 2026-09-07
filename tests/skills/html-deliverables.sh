@@ -96,6 +96,9 @@ elif case == "summary-not-first":
     text = text.replace('id="summary"', 'id="background"', 1)
 elif case == "missing-reader-summary":
     text = text.replace(" data-reader-summary", "", 1)
+elif case == "duplicate-reader-summary":
+    text = text.replace('<section id="scope">',
+                        '<section id="scope" data-reader-summary>', 1)
 elif case == "missing-status":
     text = text.replace('class="status"', 'class="not-status"', 1)
 elif case == "missing-next":
@@ -114,6 +117,15 @@ elif case == "empty-technical":
                   count=1, flags=re.S)
 elif case == "missing-scope":
     text = re.sub(r'<section id="scope">.*?</section>', '', text,
+                  count=1, flags=re.S)
+elif case in {"missing-evidence", "missing-decisions", "missing-plan"}:
+    section_id = case.removeprefix("missing-")
+    text = re.sub(rf'<section id="{section_id}">.*?</section>', '', text,
+                  count=1, flags=re.S)
+elif case in {"empty-scope", "empty-evidence", "empty-decisions", "empty-plan"}:
+    section_id = case.removeprefix("empty-")
+    text = re.sub(rf'<section id="{section_id}">.*?</section>',
+                  f'<section id="{section_id}"></section>', text,
                   count=1, flags=re.S)
 elif case == "empty-heading":
     text = text.replace('<h1>One checkpoint has passed independent review</h1>',
@@ -164,6 +176,11 @@ elif case == "heading-after-sections":
     text = text.replace(heading, '', 1)
     main_end = text.index('</main>')
     text = text[:main_end] + heading + text[main_end:]
+elif case == "thesis-after-sections":
+    thesis = re.search(r'  <p class="thesis">.*?</p>\n', text, re.S).group(0)
+    text = text.replace(thesis, '', 1)
+    main_end = text.index('</main>')
+    text = text[:main_end] + thesis + text[main_end:]
 elif case == "status-only-has-next":
     text = text.replace('<strong>Ready for the next gate</strong>', '<strong></strong>', 1)
     text = text.replace(
@@ -177,11 +194,35 @@ elif case == "duplicate-outcome":
         r'    <article class="summary-item" data-summary="outcome">.*?</article>\n',
         text, re.S).group(0)
     text = text.replace(item, item + item, 1)
+elif case in {"label-only-outcome", "label-only-meaning", "label-only-summary-next"}:
+    kind = case.removeprefix("label-only-")
+    if kind == "summary-next":
+        kind = "next"
+    pattern = rf'(<article class="summary-item" data-summary="{kind}">\s*<h3>.*?</h3>)\s*<p>.*?</p>'
+    text = re.sub(pattern, r'\1\n      <p></p>', text, count=1, flags=re.S)
+elif case in {"duplicate-meaning", "duplicate-summary-next"}:
+    kind = case.removeprefix("duplicate-")
+    if kind == "summary-next":
+        kind = "next"
+    item = re.search(
+        rf'    <article class="summary-item" data-summary="{kind}">.*?</article>\n',
+        text, re.S).group(0)
+    text = text.replace(item, item + item, 1)
 elif case == "duplicate-next-action":
     item = re.search(r'    <p class="next">.*?</p>\n', text, re.S).group(0)
     text = text.replace(item, item + item, 1)
 elif case == "duplicate-heading":
     item = re.search(r'  <h1>.*?</h1>\n', text, re.S).group(0)
+    text = text.replace(item, item + item, 1)
+elif case == "duplicate-thesis":
+    item = re.search(r'  <p class="thesis">.*?</p>\n', text, re.S).group(0)
+    text = text.replace(item, item + item, 1)
+elif case == "duplicate-status":
+    item = re.search(r'  <aside class="status".*?</aside>\n', text, re.S).group(0)
+    text = text.replace(item, item + item, 1)
+elif case in {"duplicate-scope", "duplicate-evidence", "duplicate-decisions", "duplicate-plan"}:
+    section_id = case.removeprefix("duplicate-")
+    item = re.search(rf'<section id="{section_id}">.*?</section>\n', text, re.S).group(0)
     text = text.replace(item, item + item, 1)
 path.write_text(text)
 PY
@@ -207,6 +248,7 @@ expect_failure missing-foot 'missing non-empty .foot stamp'
 expect_failure unreplaced-content 'unreplaced REQUIRED content placeholder'
 expect_failure summary-not-first 'the first section must be #summary'
 expect_failure missing-reader-summary 'expected #summary to be the one data-reader-summary section'
+expect_failure duplicate-reader-summary 'expected #summary to be the one data-reader-summary section'
 expect_failure missing-status 'expected one non-empty current-status block'
 expect_failure missing-next 'expected one non-empty next-action statement'
 expect_failure missing-meaning 'expected one non-empty meaning summary item'
@@ -215,6 +257,13 @@ expect_failure missing-summary-next 'expected one non-empty next summary item'
 expect_failure missing-technical 'expected at least one details.technical disclosure'
 expect_failure empty-technical 'expected every details.technical disclosure to be non-empty'
 expect_failure missing-scope 'expected one #scope section'
+expect_failure missing-evidence 'expected one #evidence section'
+expect_failure missing-decisions 'expected one #decisions section'
+expect_failure missing-plan 'expected one #plan section'
+expect_failure empty-scope 'expected #scope section to contain non-empty content'
+expect_failure empty-evidence 'expected #evidence section to contain non-empty content'
+expect_failure empty-decisions 'expected #decisions section to contain non-empty content'
+expect_failure empty-plan 'expected #plan section to contain non-empty content'
 expect_failure empty-heading 'expected one non-empty h1 conclusion'
 expect_failure empty-thesis 'expected one non-empty thesis statement'
 expect_failure empty-next-after-voids 'expected one non-empty next-action statement'
@@ -227,11 +276,23 @@ expect_failure omitted-next-close 'expected one non-empty next-action statement'
 expect_failure boilerplate-next 'expected one non-empty next-action statement'
 expect_failure summary-items-outside-summary 'summary items must be inside #summary'
 expect_failure heading-after-sections 'h1 conclusion must appear before the first section'
-expect_failure status-only-has-next 'expected one non-empty current-status block'
+expect_failure thesis-after-sections 'thesis statement must appear before the first section'
+expect_failure status-only-has-next 'current-status block needs its own text beyond the next-action line'
 expect_failure technical-only-has-label 'expected every details.technical disclosure to be non-empty'
+expect_failure label-only-outcome 'expected one non-empty outcome summary answer'
+expect_failure label-only-meaning 'expected one non-empty meaning summary answer'
+expect_failure label-only-summary-next 'expected one non-empty next summary answer'
 expect_failure duplicate-outcome 'duplicate outcome summary items' 'summary items must be inside #summary'
+expect_failure duplicate-meaning 'duplicate meaning summary items' 'summary items must be inside #summary'
+expect_failure duplicate-summary-next 'duplicate next summary items' 'summary items must be inside #summary'
 expect_failure duplicate-next-action 'duplicate next-action statements'
 expect_failure duplicate-heading 'duplicate h1 conclusions'
+expect_failure duplicate-thesis 'duplicate thesis statements'
+expect_failure duplicate-status 'duplicate current-status blocks'
+expect_failure duplicate-scope 'expected one #scope section'
+expect_failure duplicate-evidence 'expected one #evidence section'
+expect_failure duplicate-decisions 'expected one #decisions section'
+expect_failure duplicate-plan 'expected one #plan section'
 
 void_elements="$test_root/void-elements.html"
 cp "$valid" "$void_elements"
