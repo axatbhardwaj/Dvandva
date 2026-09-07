@@ -31,8 +31,8 @@ Then explicitly ask one session:
 $setup-dvandva install Dvandva.
 ```
 
-The `skills-v0.4.1` GitHub release provides `dvandva-kernel-linux-x86_64` and
-`SHA256SUMS`. Setup verifies the digest and the complete kernel 0.4.1,
+The `skills-v0.4.2` GitHub release provides `dvandva-kernel-linux-x86_64` and
+`SHA256SUMS`. Setup verifies the digest and the complete kernel 0.4.2,
 `dvandva.run.v2`, role API 2 probe before installing under
 `${XDG_DATA_HOME:-$HOME/.local/share}/dvandva/`, outside `PATH`. The crate is
 non-publishable and no plugin or marketplace package is involved.
@@ -59,7 +59,10 @@ for concrete design questions. Each parent alone mutates Baton or GitHub.
 The portable [model policy](../../skills/vadi/references/model-selection.md)
 travels with each role skill; optional advisers do not block ordinary work.
 The `html-deliverables` companion supplies the house template, static validation,
-and desktop/mobile visual-review guidance for the rolling status page.
+and desktop/mobile visual-review guidance for the rolling status page. Its
+answer-first projection gives a human the conclusion, importance, current
+status, and next action in the first viewport, then progressively discloses the
+complete protocol evidence and audit trail.
 
 ```text
 Codex session A: Act as vadi and implement DEF-123 with deliverable implementation.

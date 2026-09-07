@@ -5,24 +5,71 @@ description: Use when creating or revising a human-facing Dvandva HTML report, e
 
 # Dvandva HTML deliverables
 
+Write for an interested human who has not been following the run. The page
+succeeds when that reader can answer these questions in about 30 seconds:
+
+1. What is the answer or outcome?
+2. Why does it matter?
+3. What happens next, and who owns it?
+
+Use an **answer-first** reading order. Put the conclusion, current status, and
+next action in the first viewport. Follow with the reasoning and evidence.
+Place hashes, source manifests, exhaustive matrices, commands, and other audit
+material in labelled `<details class="technical">` blocks unless the reader
+needs them to understand the conclusion. Keep the canonical scope, complete
+manifest, findings and decisions, and current plan/TODO in the page; progressive
+disclosure changes their prominence, not their completeness.
+
+Use plain, specific language. Define unavoidable Dvandva terms on first use,
+name roles only when ownership matters, keep paragraphs focused on one idea,
+and make headings state conclusions rather than merely naming topics. Remove
+repeated status, ornamental prose, and any detail that does not help the reader
+understand, decide, verify, or act. A diagram must make one relationship easier
+to grasp; explain its takeaway in prose and do not use it as decoration.
+
 Start from `template.html` in this directory and keep it a complete standalone
 HTML document. Preserve its `:root` token values, dark color scheme, typography,
-figure overflow, and reduced-motion rule. Map the subject's opposing actors or
-states to `--vadi` and `--prat`; reserve `--seal`, `--stop`, and `--human` for
-their stated meanings.
+figure overflow, answer-first markers, technical-detail disclosure, and
+reduced-motion rule. Map the subject's opposing actors or states to `--vadi` and
+`--prat`; reserve `--seal`, `--stop`, and `--human` for their stated meanings.
+
+For both new pages and revisions, preserve this exact answer-first structure:
+
+- Treat `h1`, `.thesis`, `.status`, and `.next` as document-wide singletons.
+  Put the non-empty `h1`, `.thesis`, and `.status` before every `section`. The
+  status must contain exactly one non-empty `[data-status-answer]` outside its
+  one nested `.next`. That action must contain exactly one non-empty
+  `[data-next-answer]`; its label does not count as the answer.
+- Make `<section id="summary" data-reader-summary>` the first section and the
+  only section carrying `data-reader-summary`. Inside it, include exactly one
+  item for each of `data-summary="outcome"`, `data-summary="meaning"`, and
+  `data-summary="next"`. Each item must contain exactly one
+  `[data-summary-answer]` element with the non-empty answer; a question heading
+  or unmarked label never counts as the answer.
+- Include exactly one section for each required depth layer: `#scope`,
+  `#evidence`, `#decisions`, and `#plan`. Give each of those four sections
+  non-empty body content; its eyebrow, heading, and disclosure labels do not
+  count as body content.
+- Include at least one `<details class="technical">`. Every such disclosure
+  must have real body content beyond its `summary` label.
 
 Fill the metadata with a schema shaped as
 `dvandva.artifact.<artifact_type>.v1`, a matching `artifact_type`, title, ISO
 date, and exact source/checkpoint basis. Replace every placeholder. Each section
 opens with an eyebrow and a thesis-style `h2`. Draw structural ideas as inline,
-labelled SVG figures with captions; use prose to interpret them. End with a
+labelled SVG figures with captions. For every `figure`, the static validator
+requires an inline `svg` with a non-empty `aria-label` specifically; SVGs
+outside figures are not checked, and a `title`/`aria-labelledby` alternative
+does not satisfy this contract. Interpret each figure in prose. End with a
 `.foot` stamp naming what the page reflects and its as-of checkpoint/version.
 
 Run `python3 <this-skill-directory>/scripts/validate.py <artifact.html>`, then
 render and inspect the complete page at desktop and mobile widths. Check text,
 contrast, clipped content, horizontal page overflow, figure-local scrolling,
-and reduced-motion behavior. Static validation does not replace rendered
-inspection.
+and reduced-motion behavior. Read the rendered first viewport as the intended
+human: the answer, importance, status, and next action must be clear without
+opening technical details. Static validation does not replace this comprehension
+check or the rendered inspection.
 
 ## Active v4 runs
 
