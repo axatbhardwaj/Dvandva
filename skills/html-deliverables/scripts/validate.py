@@ -93,22 +93,27 @@ class ContractParser(HTMLParser):
     def _close_implicit_text_blocks(self, tag, rules):
         self.active_text_blocks = [
             capture for capture in self.active_text_blocks
-            if tag not in rules.get(capture["open_tags"][0], set())
+            if tag not in rules.get(
+                capture.get("boundary_tag") or capture["open_tags"][0], set()
+            )
         ]
 
-    def _start_text_block(self, kind, tag):
+    def _start_text_block(self, kind, tag, boundary_tag=None):
         text = []
         self.text_blocks.setdefault(kind, []).append(text)
         self.active_text_blocks.append({
             "kind": kind,
             "open_tags": [tag],
             "text": text,
+            "boundary_tag": boundary_tag,
         })
 
     def _end_text_blocks(self, tag):
         for capture in list(self.active_text_blocks):
             open_tags = capture["open_tags"]
-            if tag in open_tags:
+            if tag == capture.get("boundary_tag"):
+                open_tags.clear()
+            elif tag in open_tags:
                 matching_index = len(open_tags) - 1 - open_tags[::-1].index(tag)
                 del open_tags[matching_index:]
             elif tag in IMPLICIT_END_CLOSE.get(open_tags[0], set()):
@@ -158,8 +163,28 @@ class ContractParser(HTMLParser):
         if "status" in classes:
             self._start_text_block("status", tag)
             self.status_before_sections |= not self.section_ids
+        if "data-status-answer" in values and any(
+            capture["kind"] == "status" for capture in self.active_text_blocks
+        ):
+            status_capture = next(
+                capture for capture in reversed(self.active_text_blocks)
+                if capture["kind"] == "status"
+            )
+            self._start_text_block(
+                "status-answer", tag, status_capture["open_tags"][0]
+            )
         if "next" in classes:
             self._start_text_block("next", tag)
+        if "data-next-answer" in values and any(
+            capture["kind"] == "next" for capture in self.active_text_blocks
+        ):
+            next_capture = next(
+                capture for capture in reversed(self.active_text_blocks)
+                if capture["kind"] == "next"
+            )
+            self._start_text_block(
+                "next-answer", tag, next_capture["open_tags"][0]
+            )
         if tag == "section":
             section_id = values.get("id")
             is_reader_summary = "data-reader-summary" in values
@@ -332,16 +357,26 @@ def validate(path):
         errors.append("duplicate current-status blocks")
     elif not status_blocks:
         errors.append("expected one non-empty current-status block")
-    elif not "".join(status_blocks[0]).strip():
-        errors.append("current-status block needs its own text beyond the next-action line")
     elif not parser.status_before_sections:
         errors.append("current-status block must appear before the first section")
+    status_answers = parser.text_blocks.get("status-answer", [])
+    if len(status_answers) > 1:
+        errors.append("duplicate current-status answers")
+    elif not status_answers:
+        errors.append("expected one designated current-status answer")
+    elif not "".join(status_answers[0]).strip():
+        errors.append("expected one non-empty current-status answer")
     next_blocks = parser.text_blocks.get("next", [])
-    next_text = "".join(next_blocks[0]) if len(next_blocks) == 1 else ""
-    next_text = re.sub(r"^\s*next\s*:\s*", "", next_text, flags=re.I)
     if len(next_blocks) > 1:
         errors.append("duplicate next-action statements")
-    elif not next_blocks or not next_text.strip():
+    elif not next_blocks:
+        errors.append("expected one non-empty next-action statement")
+    next_answers = parser.text_blocks.get("next-answer", [])
+    if len(next_answers) > 1:
+        errors.append("duplicate next-action answers")
+    elif not next_answers:
+        errors.append("expected one designated next-action answer")
+    elif not "".join(next_answers[0]).strip():
         errors.append("expected one non-empty next-action statement")
     summary_item_outside = False
     for kind in ("outcome", "meaning", "next"):

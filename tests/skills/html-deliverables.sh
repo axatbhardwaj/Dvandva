@@ -14,6 +14,8 @@ grep -Fq 'allow_implicit_invocation: true' \
   "$repo_root/skills/html-deliverables/agents/openai.yaml"
 grep -Fq 'document-wide singletons' "$repo_root/skills/html-deliverables/SKILL.md"
 grep -Fq '`aria-label` specifically' "$repo_root/skills/html-deliverables/SKILL.md"
+grep -Fq '`[data-status-answer]`' "$repo_root/skills/html-deliverables/SKILL.md"
+grep -Fq '`[data-next-answer]`' "$repo_root/skills/html-deliverables/SKILL.md"
 
 valid="$test_root/valid.html"
 python3 - "$template" "$valid" <<'PY'
@@ -143,7 +145,7 @@ elif case == "empty-thesis":
         '<p class="thesis"></p>', 1)
 elif case == "empty-next-after-voids":
     text = re.sub(r'<p class="next">.*?</p>',
-                  '<p class="next"><br><br><br></p>', text,
+                  '<p class="next"><span data-next-answer><br><br><br></span></p>', text,
                   count=1, flags=re.S)
 elif case == "status-after-summary":
     status = re.search(r'  <aside class="status".*?</aside>\n', text, re.S).group(0)
@@ -152,7 +154,7 @@ elif case == "status-after-summary":
     text = text[:first_section_end] + '\n' + status + text[first_section_end:]
 elif case == "unclosed-next-child":
     text = re.sub(r'<p class="next">.*?</p>',
-                  '<p class="next"><span></p>', text,
+                  '<p class="next"><span data-next-answer><span></p>', text,
                   count=1, flags=re.S)
 elif case == "unclosed-heading-child":
     text = re.sub(r'<h1>.*?</h1>', '<h1><span></h1>', text,
@@ -167,12 +169,22 @@ elif case == "unclosed-technical-child":
                   count=1, flags=re.S)
 elif case == "omitted-next-close":
     text = re.sub(r'<p class="next">.*?</p>',
-                  '<p class="next"><span>', text,
+                  '<p class="next"><span data-next-answer><span>', text,
                   count=1, flags=re.S)
 elif case == "boilerplate-next":
     text = re.sub(r'<p class="next">.*?</p>',
-                  '<p class="next"><b>Next:</b> </p>', text,
+                  '<p class="next"><b>Next:</b> <span data-next-answer></span></p>', text,
                   count=1, flags=re.S)
+elif case == "reworded-boilerplate-next":
+    text = re.sub(r'<p class="next">.*?</p>',
+                  '<p class="next"><b>Next action:</b> <span data-next-answer></span></p>', text,
+                  count=1, flags=re.S)
+elif case == "missing-next-answer-marker":
+    text = text.replace(' data-next-answer', '', 1)
+elif case == "duplicate-next-answer-marker":
+    text = text.replace(
+        '<span data-next-answer>',
+        '<span data-next-answer></span><span data-next-answer>', 1)
 elif case == "summary-items-outside-summary":
     grid = re.search(r'  <div class="summary-grid">.*?</div>\n', text, re.S).group(0)
     text = text.replace(grid, '', 1)
@@ -191,7 +203,18 @@ elif case == "thesis-after-sections":
 elif case == "status-only-has-next":
     text = text.replace('<strong>Ready for the next gate</strong>', '<strong></strong>', 1)
     text = text.replace(
-        '<p>The reviewer approved the exact staged checkpoint.</p>', '<p></p>', 1)
+        '<p data-status-answer>The reviewer approved the exact staged checkpoint.</p>',
+        '<p data-status-answer></p>', 1)
+elif case == "status-only-has-label":
+    text = text.replace(
+        '<p data-status-answer>The reviewer approved the exact staged checkpoint.</p>',
+        '<p data-status-answer></p>', 1)
+elif case == "missing-status-answer-marker":
+    text = text.replace(' data-status-answer', '', 1)
+elif case == "duplicate-status-answer-marker":
+    text = text.replace(
+        '<p data-status-answer>',
+        '<p data-status-answer></p><p data-status-answer>', 1)
 elif case == "technical-only-has-label":
     text = re.sub(r'<details class="technical">.*?</details>',
                   '<details class="technical"><summary>Full source manifest</summary></details>',
@@ -207,7 +230,11 @@ elif case in {"label-only-outcome", "label-only-meaning", "label-only-summary-ne
         kind = "next"
     pattern = rf'(<article class="summary-item" data-summary="{kind}">\s*<h3>.*?</h3>)\s*<p[^>]*>.*?</p>'
     text = re.sub(pattern, r'\1\n      <p data-summary-answer></p>', text, count=1, flags=re.S)
-elif case in {"unmarked-p-outcome", "unmarked-strong-meaning", "missing-answer-marker", "duplicate-answer-marker"}:
+elif case in {
+    "unmarked-p-outcome", "unmarked-strong-meaning", "missing-answer-marker",
+    "missing-next-summary-answer-marker", "duplicate-answer-marker",
+    "duplicate-meaning-answer-marker", "duplicate-next-summary-answer-marker",
+}:
     if case == "unmarked-p-outcome":
         replacement = '<article class="summary-item" data-summary="outcome"><p>What changed?</p></article>'
         text = re.sub(r'<article class="summary-item" data-summary="outcome">.*?</article>',
@@ -218,6 +245,27 @@ elif case in {"unmarked-p-outcome", "unmarked-strong-meaning", "missing-answer-m
                       replacement, text, count=1, flags=re.S)
     elif case == "missing-answer-marker":
         text = text.replace(' data-summary-answer', '', 1)
+    elif case == "missing-next-summary-answer-marker":
+        next_item = re.search(
+            r'<article class="summary-item" data-summary="next">.*?</article>',
+            text, re.S).group(0)
+        text = text.replace(next_item, next_item.replace(' data-summary-answer', '', 1), 1)
+    elif case == "duplicate-meaning-answer-marker":
+        meaning_item = re.search(
+            r'<article class="summary-item" data-summary="meaning">.*?</article>',
+            text, re.S).group(0)
+        duplicated = meaning_item.replace(
+            '<p data-summary-answer>',
+            '<p data-summary-answer></p><p data-summary-answer>', 1)
+        text = text.replace(meaning_item, duplicated, 1)
+    elif case == "duplicate-next-summary-answer-marker":
+        next_item = re.search(
+            r'<article class="summary-item" data-summary="next">.*?</article>',
+            text, re.S).group(0)
+        duplicated = next_item.replace(
+            '<p data-summary-answer>',
+            '<p data-summary-answer></p><p data-summary-answer>', 1)
+        text = text.replace(next_item, duplicated, 1)
     else:
         text = text.replace('<p data-summary-answer>',
                             '<p data-summary-answer></p><p data-summary-answer>', 1)
@@ -299,10 +347,16 @@ expect_failure unclosed-thesis-child 'expected one non-empty thesis statement'
 expect_failure unclosed-technical-child 'expected every details.technical disclosure to be non-empty'
 expect_failure omitted-next-close 'expected one non-empty next-action statement'
 expect_failure boilerplate-next 'expected one non-empty next-action statement'
+expect_failure reworded-boilerplate-next 'expected one non-empty next-action statement'
+expect_failure missing-next-answer-marker 'expected one designated next-action answer'
+expect_failure duplicate-next-answer-marker 'duplicate next-action answers'
 expect_failure summary-items-outside-summary 'summary items must be inside #summary'
 expect_failure heading-after-sections 'h1 conclusion must appear before the first section'
 expect_failure thesis-after-sections 'thesis statement must appear before the first section'
-expect_failure status-only-has-next 'current-status block needs its own text beyond the next-action line'
+expect_failure status-only-has-next 'expected one non-empty current-status answer'
+expect_failure status-only-has-label 'expected one non-empty current-status answer'
+expect_failure missing-status-answer-marker 'expected one designated current-status answer'
+expect_failure duplicate-status-answer-marker 'duplicate current-status answers'
 expect_failure technical-only-has-label 'expected every details.technical disclosure to be non-empty'
 expect_failure label-only-outcome 'expected one non-empty outcome summary answer'
 expect_failure label-only-meaning 'expected one non-empty meaning summary answer'
@@ -311,6 +365,9 @@ expect_failure unmarked-p-outcome 'expected one designated outcome summary answe
 expect_failure unmarked-strong-meaning 'expected one designated meaning summary answer'
 expect_failure missing-answer-marker 'expected one designated outcome summary answer'
 expect_failure duplicate-answer-marker 'duplicate outcome summary answers'
+expect_failure missing-next-summary-answer-marker 'expected one designated next summary answer'
+expect_failure duplicate-meaning-answer-marker 'duplicate meaning summary answers'
+expect_failure duplicate-next-summary-answer-marker 'duplicate next summary answers'
 expect_failure duplicate-outcome 'duplicate outcome summary items' 'summary items must be inside #summary'
 expect_failure duplicate-meaning 'duplicate meaning summary items' 'summary items must be inside #summary'
 expect_failure duplicate-summary-next 'duplicate next summary items' 'summary items must be inside #summary'

@@ -37,8 +37,9 @@ For both new pages and revisions, preserve this exact answer-first structure:
 
 - Treat `h1`, `.thesis`, `.status`, and `.next` as document-wide singletons.
   Put the non-empty `h1`, `.thesis`, and `.status` before every `section`. The
-  status must state the current status in its own text, outside its one nested
-  `.next`; that action must say more than its static “Next:” label.
+  status must contain exactly one non-empty `[data-status-answer]` outside its
+  one nested `.next`. That action must contain exactly one non-empty
+  `[data-next-answer]`; its label does not count as the answer.
 - Make `<section id="summary" data-reader-summary>` the first section and the
   only section carrying `data-reader-summary`. Inside it, include exactly one
   item for each of `data-summary="outcome"`, `data-summary="meaning"`, and
@@ -46,19 +47,20 @@ For both new pages and revisions, preserve this exact answer-first structure:
   `[data-summary-answer]` element with the non-empty answer; a question heading
   or unmarked label never counts as the answer.
 - Include exactly one section for each required depth layer: `#scope`,
-  `#evidence`, `#decisions`, and `#plan`, and give every section non-empty body
-  content. Its eyebrow, heading, and disclosure labels do not count as body
-  content.
-- Include at least one `<details class="technical">` whose disclosed body has
-  real content beyond its `summary` label.
+  `#evidence`, `#decisions`, and `#plan`. Give each of those four sections
+  non-empty body content; its eyebrow, heading, and disclosure labels do not
+  count as body content.
+- Include at least one `<details class="technical">`. Every such disclosure
+  must have real body content beyond its `summary` label.
 
 Fill the metadata with a schema shaped as
 `dvandva.artifact.<artifact_type>.v1`, a matching `artifact_type`, title, ISO
 date, and exact source/checkpoint basis. Replace every placeholder. Each section
 opens with an eyebrow and a thesis-style `h2`. Draw structural ideas as inline,
-labelled SVG figures with captions; require an `aria-label` specifically on
-every `svg` (a `title`/`aria-labelledby` alternative does not
-satisfy this static contract), and interpret each figure in prose. End with a
+labelled SVG figures with captions. For every `figure`, the static validator
+requires an inline `svg` with a non-empty `aria-label` specifically; SVGs
+outside figures are not checked, and a `title`/`aria-labelledby` alternative
+does not satisfy this contract. Interpret each figure in prose. End with a
 `.foot` stamp naming what the page reflects and its as-of checkpoint/version.
 
 Run `python3 <this-skill-directory>/scripts/validate.py <artifact.html>`, then
