@@ -59,7 +59,9 @@ For separate planning sessions, use Astra/Fable with the human's chosen skills
 and hand off a concise approved plan. Implementation sessions run Sol at `high`
 as Codex vadi and Opus as Claude prativadi; Astra/Fable are optional advisers.
 The restored `html-deliverables` skill supplies the shared visual template and
-standalone checks. See the role-local
+standalone checks. Its answer-first contract puts the conclusion, importance,
+current status, and next action before progressively disclosed technical
+evidence. See the role-local
 [`model-selection.md`](skills/vadi/references/model-selection.md).
 Matt Pocock's user-invoked workflow skills still require human invocation;
 prativadi automatically uses the model-invocable `code-review` skill for Git

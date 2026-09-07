@@ -39,6 +39,17 @@ class ContractParser(HTMLParser):
         self.figure = None
         self.foot_depth = 0
         self.foot_text = []
+        self.section_ids = []
+        self.reader_summary_ids = []
+        self.status_depth = 0
+        self.status_blocks = []
+        self.status_before_sections = False
+        self.next_depth = 0
+        self.next_blocks = []
+        self.summary_item_depth = 0
+        self.summary_items = {}
+        self.technical_details = 0
+        self.required_placeholders = []
 
     def handle_decl(self, decl):
         self.doctype |= decl.lower() == "doctype html"
@@ -46,6 +57,28 @@ class ContractParser(HTMLParser):
     def handle_starttag(self, tag, attrs):
         values = dict(attrs)
         classes = set(values.get("class", "").split())
+        if self.status_depth:
+            self.status_depth += 1
+        elif "status" in classes:
+            self.status_depth = 1
+            self.status_blocks.append([])
+            self.status_before_sections |= not self.section_ids
+        if self.next_depth:
+            self.next_depth += 1
+        elif "next" in classes:
+            self.next_depth = 1
+            self.next_blocks.append([])
+        if self.summary_item_depth:
+            self.summary_item_depth += 1
+        elif "data-summary" in values:
+            self.summary_item_depth = 1
+            self.summary_items.setdefault(values["data-summary"], []).append([])
+        if tag == "section":
+            self.section_ids.append(values.get("id"))
+            if "data-reader-summary" in values:
+                self.reader_summary_ids.append(values.get("id"))
+        if tag == "details" and "technical" in classes:
+            self.technical_details += 1
         if tag == "title":
             self.title_depth += 1
         if tag == "script" and values.get("id") == "dvandva-artifact-meta":
@@ -55,15 +88,22 @@ class ContractParser(HTMLParser):
                 self.meta_blocks.append([])
             self.meta_depth += 1
         if tag == "figure":
-            self.figure = {"svg": False, "caption_depth": 0, "caption": []}
+            self.figure = {"svg": False, "svg_label": "", "caption_depth": 0, "caption": []}
         elif self.figure is not None and tag == "svg":
             self.figure["svg"] = True
+            self.figure["svg_label"] = values.get("aria-label", "")
         elif self.figure is not None and tag == "figcaption":
             self.figure["caption_depth"] += 1
         if "foot" in classes:
             self.foot_depth += 1
 
     def handle_endtag(self, tag):
+        if self.status_depth:
+            self.status_depth -= 1
+        if self.next_depth:
+            self.next_depth -= 1
+        if self.summary_item_depth:
+            self.summary_item_depth -= 1
         if tag == "title" and self.title_depth:
             self.title_depth -= 1
         if tag == "script" and self.meta_depth:
@@ -85,6 +125,16 @@ class ContractParser(HTMLParser):
             self.figure["caption"].append(data)
         if self.foot_depth:
             self.foot_text.append(data)
+        if self.status_depth:
+            self.status_blocks[-1].append(data)
+        if self.next_depth:
+            self.next_blocks[-1].append(data)
+        if self.summary_item_depth:
+            self.summary_items[next(reversed(self.summary_items))][-1].append(data)
+
+    def handle_comment(self, data):
+        if data.strip().startswith("REQUIRED:"):
+            self.required_placeholders.append(data.strip())
 
 
 def validate(path):
@@ -100,6 +150,8 @@ def validate(path):
         return [f"cannot parse HTML: {error}"]
 
     errors = []
+    if parser.required_placeholders:
+        errors.append("unreplaced REQUIRED content placeholder")
     if not parser.doctype:
         errors.append("missing HTML5 doctype")
     if not "".join(parser.title).strip():
@@ -148,11 +200,29 @@ def validate(path):
         errors.append("SVG needs a minimum width")
     if not re.search(r"@media\s*\(prefers-reduced-motion:\s*reduce\)", text, re.I):
         errors.append("missing reduced-motion media rule")
+    if not parser.section_ids or parser.section_ids[0] != "summary":
+        errors.append("the first section must be #summary")
+    if parser.reader_summary_ids != ["summary"]:
+        errors.append("expected #summary to be the one data-reader-summary section")
+    if len(parser.status_blocks) != 1 or not "".join(parser.status_blocks[0]).strip():
+        errors.append("expected one non-empty current-status block")
+    elif not parser.status_before_sections:
+        errors.append("current-status block must appear before the first section")
+    if len(parser.next_blocks) != 1 or not "".join(parser.next_blocks[0]).strip():
+        errors.append("expected one non-empty next-action statement")
+    for kind in ("outcome", "meaning", "next"):
+        items = parser.summary_items.get(kind, [])
+        if len(items) != 1 or not "".join(items[0]).strip():
+            errors.append(f"expected one non-empty {kind} summary item")
+    if parser.technical_details < 1:
+        errors.append("expected at least one details.technical disclosure")
     if not parser.figures:
         errors.append("at least one figure is required")
     for figure in parser.figures:
         if not figure["svg"]:
             errors.append("every figure needs an inline SVG")
+        if not figure["svg_label"].strip() or "<!--" in figure["svg_label"]:
+            errors.append("every figure needs a plain-language SVG aria-label")
         if not "".join(figure["caption"]).strip():
             errors.append("every figure needs a non-empty figcaption")
     if not "".join(parser.foot_text).strip():

@@ -59,7 +59,10 @@ for concrete design questions. Each parent alone mutates Baton or GitHub.
 The portable [model policy](../../skills/vadi/references/model-selection.md)
 travels with each role skill; optional advisers do not block ordinary work.
 The `html-deliverables` companion supplies the house template, static validation,
-and desktop/mobile visual-review guidance for the rolling status page.
+and desktop/mobile visual-review guidance for the rolling status page. Its
+answer-first projection gives a human the conclusion, importance, current
+status, and next action in the first viewport, then progressively discloses the
+complete protocol evidence and audit trail.
 
 ```text
 Codex session A: Act as vadi and implement DEF-123 with deliverable implementation.
