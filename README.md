@@ -1,6 +1,61 @@
-# Dvandva
+# Dvandva — retired
 
-> **Dvandva v4 is the active skill-only interface.** The `skills-v0.4.2`
+> **Retired.** Dvandva is no longer maintained or supported for new use.
+> This repository is preserved as historical evidence for study. Do not
+> install the kernel or role skills, and do not start a Dvandva run.
+>
+> **Replacement (personal setup, not distributed here).** The maintainer now
+> works through a personal Astra-led [Paseo](https://github.com/getpaseo/paseo)
+> setup: one driver owns scope and routing, dispatching specialist profiles
+> only when they improve the result. Paseo owns agent and session
+> orchestration; there is no Dvandva-style workflow state engine. This
+> configuration is personal — it is not an installable replacement shipped by
+> this repository.
+>
+> **Why:** the replacement removes the extra baton and workflow-state layer.
+> A single driver coordinates bounded specialists, immutable-candidate review,
+> and concise handoff artifacts through Paseo's existing orchestration skills.
+
+The private kernel and the `setup-dvandva`, `vadi`, `prativadi`, and
+`html-deliverables` skills have been removed from the maintainer's Codex and
+Claude Code installations. Saved run history and backups are preserved.
+
+## Replacement roles
+
+| Profile | Model / effort | Job |
+|---|---|---|
+| `astra-driver` | Astra, medium | Owns scope, acceptance, routing, synthesis, decisions, recovery |
+| `fable-planner` | Fable 5.1, high | Planning partner for substantial design choices |
+| `research-sonnet` | Sonnet, medium | Requirements, documents, prior decisions, alternatives |
+| `research-sol-medium` | Sol, medium | Code, dependencies, tests, implementation constraints |
+| `research-grok` | Grok 4.6 | Targeted current external research |
+| `implement-sol-high` | Sol, high | Implementation, tests, repairs |
+| `review-opus` | Opus, high | One `code-review` (Standards + Spec) per immutable Git candidate |
+| `docs-muse` | Muse Spark, free via OpenCode | Documentation and explainers from accepted evidence |
+
+Tiny tasks stay direct — specialists are launched only when useful. A changed
+revision is a new candidate and needs a fresh review. Matt Pocock's skills
+remain available, with their human-only invocation boundaries preserved.
+Ordinary authorized work has no automatic `/implement` gate.
+
+## Historical record
+
+The v4 skill-only manual below is preserved as unsupported history: it keeps
+the retired installer, role prompts, release facts, and validator references
+as archival evidence instead of repeating them as onboarding. For the
+protocols, workflows, and decisions behind it, see
+[`docs/protocol/minimal-run-baton.md`](docs/protocol/minimal-run-baton.md),
+[`docs/workflows/skill-only-run.md`](docs/workflows/skill-only-run.md), and
+[`docs/adr/`](docs/adr/).
+
+<details>
+<summary>Historical v4 manual (unsupported — archival evidence, not instructions)</summary>
+
+> Everything inside this section is archival evidence. Do not run the install,
+> setup, or role commands below, and do not treat the installer, role prompts,
+> release automation, or validator as active onboarding.
+
+> **Dvandva v4 was the final skill-only interface.** The `skills-v0.4.2`
 > GitHub release pairs the private, non-publishable kernel `0.4.2` with schema
 > `dvandva.run.v2` and role API 2. Source checkout and tests are
 > development-only.
@@ -10,7 +65,7 @@
 > architecture. macOS and native Windows are not supported; on Windows, use
 > WSL2. T3 Code runs the role sessions on Linux, which is the tested path.
 
-## Active v4 skill-only interface
+## Historical v4 skill-only interface (retired)
 
 Install the four source skills for Claude Code and Codex:
 
@@ -146,3 +201,5 @@ product.md                          # product specification and acceptance crite
 - No GitHub API integration.
 - No PR creation.
 - No npm-first distribution path.
+
+</details>

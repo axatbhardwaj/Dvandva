@@ -1,5 +1,11 @@
 # Dvandva project instructions
 
+> **Retired.** Dvandva is retired: do not install it, reactivate it, or start
+> a run. The maintainer's replacement is a personal Astra-led
+> [Paseo](https://github.com/getpaseo/paseo) setup, not anything distributed by
+> this repository. Everything below is historical instruction preserved for
+> study; where it says "active", read "historical".
+
 > **Active v4 skills; retired v3 archive.** Preserve the v3 crate/plugin tree as
 > historical evidence and never install or reactivate it. Active work may
 > publish only the root `setup-dvandva`, `vadi`, and `prativadi` skills plus the
