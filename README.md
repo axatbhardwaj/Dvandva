@@ -1,6 +1,6 @@
 # Dvandva — retired
 
-> **Retired.** Dvandva is no longer maintained or supported for new use.
+> **Dvandva is retired and archived.** It is no longer maintained or supported for new use.
 > This repository is preserved as historical evidence for study. Do not
 > install the kernel or role skills, and do not start a Dvandva run.
 >
@@ -30,8 +30,8 @@ Claude Code installations. Saved run history and backups are preserved.
 | `research-sol-medium` | Sol, medium | Code, dependencies, tests, implementation constraints |
 | `research-grok` | Grok 4.6 | Targeted current external research |
 | `implement-sol-high` | Sol, high | Implementation, tests, repairs |
-| `review-opus` | Opus, high | One `code-review` (Standards + Spec) per immutable Git candidate |
-| `docs-muse` | Muse Spark, free via OpenCode | Documentation and explainers from accepted evidence |
+| `review-opus` | Opus, high | One `code-review` (Standards + Spec) per applicable immutable Git candidate |
+| `docs-muse` | Muse Spark, medium, free via OpenCode | Documentation and explainers from accepted evidence |
 
 Tiny tasks stay direct — specialists are launched only when useful. A changed
 revision is a new candidate and needs a fresh review. Matt Pocock's skills
