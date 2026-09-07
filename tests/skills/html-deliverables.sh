@@ -130,6 +130,39 @@ elif case == "status-after-summary":
     text = text.replace(status, '', 1)
     first_section_end = text.index('</section>') + len('</section>')
     text = text[:first_section_end] + '\n' + status + text[first_section_end:]
+elif case == "unclosed-next-child":
+    text = re.sub(r'<p class="next">.*?</p>',
+                  '<p class="next"><span></p>', text,
+                  count=1, flags=re.S)
+elif case == "unclosed-heading-child":
+    text = re.sub(r'<h1>.*?</h1>', '<h1><span></h1>', text,
+                  count=1, flags=re.S)
+elif case == "unclosed-thesis-child":
+    text = re.sub(r'<p class="thesis">.*?</p>',
+                  '<p class="thesis"><span></p>', text,
+                  count=1, flags=re.S)
+elif case == "unclosed-technical-child":
+    text = re.sub(r'<details class="technical">.*?</details>',
+                  '<details class="technical"><span></details>', text,
+                  count=1, flags=re.S)
+elif case == "omitted-next-close":
+    text = re.sub(r'<p class="next">.*?</p>',
+                  '<p class="next"><span>', text,
+                  count=1, flags=re.S)
+elif case == "boilerplate-next":
+    text = re.sub(r'<p class="next">.*?</p>',
+                  '<p class="next"><b>Next:</b> </p>', text,
+                  count=1, flags=re.S)
+elif case == "summary-items-outside-summary":
+    grid = re.search(r'  <div class="summary-grid">.*?</div>\n', text, re.S).group(0)
+    text = text.replace(grid, '', 1)
+    plan_end = text.rindex('</section>')
+    text = text[:plan_end] + grid + text[plan_end:]
+elif case == "heading-after-sections":
+    heading = re.search(r'  <h1>.*?</h1>\n', text, re.S).group(0)
+    text = text.replace(heading, '', 1)
+    main_end = text.index('</main>')
+    text = text[:main_end] + heading + text[main_end:]
 path.write_text(text)
 PY
   if python3 "$validator" "$file" >"$test_root/$label.out" 2>&1; then
@@ -162,6 +195,14 @@ expect_failure empty-heading 'expected one non-empty h1 conclusion'
 expect_failure empty-thesis 'expected one non-empty thesis statement'
 expect_failure empty-next-after-voids 'expected one non-empty next-action statement'
 expect_failure status-after-summary 'current-status block must appear before the first section'
+expect_failure unclosed-next-child 'expected one non-empty next-action statement'
+expect_failure unclosed-heading-child 'expected one non-empty h1 conclusion'
+expect_failure unclosed-thesis-child 'expected one non-empty thesis statement'
+expect_failure unclosed-technical-child 'expected every details.technical disclosure to be non-empty'
+expect_failure omitted-next-close 'expected one non-empty next-action statement'
+expect_failure boilerplate-next 'expected one non-empty next-action statement'
+expect_failure summary-items-outside-summary 'summary items must be inside #summary'
+expect_failure heading-after-sections 'h1 conclusion must appear before the first section'
 
 void_elements="$test_root/void-elements.html"
 cp "$valid" "$void_elements"

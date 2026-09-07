@@ -22,6 +22,33 @@ VOID_ELEMENTS = {
     "link", "meta", "param", "source", "track", "wbr",
 }
 
+P_BREAKERS = {
+    "address", "article", "aside", "blockquote", "div", "dl", "fieldset",
+    "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header",
+    "hgroup", "hr", "main", "menu", "nav", "ol", "p", "pre", "search",
+    "section", "table", "ul",
+}
+
+IMPLICIT_START_CLOSE = {
+    "p": P_BREAKERS,
+    "li": {"li"},
+    "dt": {"dt", "dd"},
+    "dd": {"dt", "dd"},
+    "tr": {"tr"},
+    "td": {"td", "th"},
+    "th": {"td", "th"},
+}
+
+IMPLICIT_END_CLOSE = {
+    "p": P_BREAKERS | {"body", "html"},
+    "li": {"menu", "ol", "ul"},
+    "dt": {"dl"},
+    "dd": {"dl"},
+    "tr": {"table", "tbody", "tfoot", "thead"},
+    "td": {"table", "tbody", "tfoot", "thead", "tr"},
+    "th": {"table", "tbody", "tfoot", "thead", "tr"},
+}
+
 
 def unique_object(pairs):
     result = {}
@@ -45,7 +72,10 @@ class ContractParser(HTMLParser):
         self.foot_depth = 0
         self.foot_text = []
         self.section_ids = []
+        self.section_stack = []
         self.reader_summary_ids = []
+        self.summary_item_locations = {}
+        self.h1_before_sections = []
         self.status_before_sections = False
         self.text_blocks = {}
         self.active_text_blocks = {}
@@ -56,15 +86,22 @@ class ContractParser(HTMLParser):
             for open_tags in self.active_text_blocks.values():
                 open_tags.append(tag)
 
+    def _close_implicit_text_blocks(self, tag, rules):
+        for kind, open_tags in list(self.active_text_blocks.items()):
+            if tag in rules.get(open_tags[0], set()):
+                del self.active_text_blocks[kind]
+
     def _start_text_block(self, kind, tag):
         self.text_blocks.setdefault(kind, []).append([])
         self.active_text_blocks[kind] = [tag]
 
     def _end_text_blocks(self, tag):
         for kind, open_tags in list(self.active_text_blocks.items()):
-            if open_tags[-1] != tag:
-                continue
-            open_tags.pop()
+            if tag in open_tags:
+                matching_index = len(open_tags) - 1 - open_tags[::-1].index(tag)
+                del open_tags[matching_index:]
+            elif tag in IMPLICIT_END_CLOSE.get(open_tags[0], set()):
+                open_tags.clear()
             if not open_tags:
                 del self.active_text_blocks[kind]
 
@@ -74,24 +111,33 @@ class ContractParser(HTMLParser):
     def handle_starttag(self, tag, attrs):
         values = dict(attrs)
         classes = set(values.get("class", "").split())
+        self._close_implicit_text_blocks(tag, IMPLICIT_START_CLOSE)
         self._extend_text_blocks(tag)
         if "status" in classes:
             self._start_text_block("status", tag)
             self.status_before_sections |= not self.section_ids
         if "next" in classes:
             self._start_text_block("next", tag)
+        if tag == "section":
+            section_id = values.get("id")
+            is_reader_summary = "data-reader-summary" in values
+            self.section_ids.append(section_id)
+            self.section_stack.append((section_id, is_reader_summary))
+            if is_reader_summary:
+                self.reader_summary_ids.append(section_id)
         if "data-summary" in values:
-            self._start_text_block(f'summary:{values["data-summary"]}', tag)
+            summary_kind = values["data-summary"]
+            self._start_text_block(f"summary:{summary_kind}", tag)
+            self.summary_item_locations.setdefault(summary_kind, []).append(
+                any(is_summary for _, is_summary in self.section_stack)
+            )
         if tag == "details" and "technical" in classes:
             self._start_text_block("technical", tag)
         if tag == "h1":
             self._start_text_block("h1", tag)
+            self.h1_before_sections.append(not self.section_ids)
         if "thesis" in classes:
             self._start_text_block("thesis", tag)
-        if tag == "section":
-            self.section_ids.append(values.get("id"))
-            if "data-reader-summary" in values:
-                self.reader_summary_ids.append(values.get("id"))
         if tag == "title":
             self.title_depth += 1
         if tag == "script" and values.get("id") == "dvandva-artifact-meta":
@@ -112,6 +158,8 @@ class ContractParser(HTMLParser):
 
     def handle_endtag(self, tag):
         self._end_text_blocks(tag)
+        if tag == "section" and self.section_stack:
+            self.section_stack.pop()
         if tag == "title" and self.title_depth:
             self.title_depth -= 1
         if tag == "script" and self.meta_depth:
@@ -217,12 +265,19 @@ def validate(path):
     elif not parser.status_before_sections:
         errors.append("current-status block must appear before the first section")
     next_blocks = parser.text_blocks.get("next", [])
-    if len(next_blocks) != 1 or not "".join(next_blocks[0]).strip():
+    next_text = "".join(next_blocks[0]) if len(next_blocks) == 1 else ""
+    next_text = re.sub(r"^\s*next\s*:\s*", "", next_text, flags=re.I)
+    if len(next_blocks) != 1 or not next_text.strip():
         errors.append("expected one non-empty next-action statement")
+    summary_items_are_inside = True
     for kind in ("outcome", "meaning", "next"):
         items = parser.text_blocks.get(f"summary:{kind}", [])
         if len(items) != 1 or not "".join(items[0]).strip():
             errors.append(f"expected one non-empty {kind} summary item")
+        if parser.summary_item_locations.get(kind) != [True]:
+            summary_items_are_inside = False
+    if not summary_items_are_inside:
+        errors.append("summary items must be inside #summary")
     technical_blocks = parser.text_blocks.get("technical", [])
     if not technical_blocks:
         errors.append("expected at least one details.technical disclosure")
@@ -231,6 +286,8 @@ def validate(path):
     heading_blocks = parser.text_blocks.get("h1", [])
     if len(heading_blocks) != 1 or not "".join(heading_blocks[0]).strip():
         errors.append("expected one non-empty h1 conclusion")
+    elif parser.h1_before_sections != [True]:
+        errors.append("h1 conclusion must appear before the first section")
     thesis_blocks = parser.text_blocks.get("thesis", [])
     if len(thesis_blocks) != 1 or not "".join(thesis_blocks[0]).strip():
         errors.append("expected one non-empty thesis statement")
