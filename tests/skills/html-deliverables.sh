@@ -66,6 +66,7 @@ expect_failure() {
   local file="$test_root/$label.html"
   cp "$valid" "$file"
   python3 - "$file" "$label" <<'PY'
+import re
 import sys
 from pathlib import Path
 
@@ -100,8 +101,35 @@ elif case == "missing-next":
     text = text.replace('class="next"', 'class="not-next"', 1)
 elif case == "missing-meaning":
     text = text.replace('data-summary="meaning"', 'data-summary="context"', 1)
+elif case == "missing-outcome":
+    text = text.replace('data-summary="outcome"', 'data-summary="context"', 1)
+elif case == "missing-summary-next":
+    text = text.replace('data-summary="next"', 'data-summary="context"', 1)
 elif case == "missing-technical":
     text = text.replace('class="technical"', 'class="not-technical"', 1)
+elif case == "empty-technical":
+    text = re.sub(r'<details class="technical">.*?</details>',
+                  '<details class="technical"></details>', text,
+                  count=1, flags=re.S)
+elif case == "missing-scope":
+    text = re.sub(r'<section id="scope">.*?</section>', '', text,
+                  count=1, flags=re.S)
+elif case == "empty-heading":
+    text = text.replace('<h1>One checkpoint has passed independent review</h1>',
+                        '<h1></h1>', 1)
+elif case == "empty-thesis":
+    text = text.replace(
+        '<p class="thesis">The approved bytes and review evidence describe one immutable delivery.</p>',
+        '<p class="thesis"></p>', 1)
+elif case == "empty-next-after-voids":
+    text = re.sub(r'<p class="next">.*?</p>',
+                  '<p class="next"><br><br><br></p>', text,
+                  count=1, flags=re.S)
+elif case == "status-after-summary":
+    status = re.search(r'  <aside class="status".*?</aside>\n', text, re.S).group(0)
+    text = text.replace(status, '', 1)
+    first_section_end = text.index('</section>') + len('</section>')
+    text = text[:first_section_end] + '\n' + status + text[first_section_end:]
 path.write_text(text)
 PY
   if python3 "$validator" "$file" >"$test_root/$label.out" 2>&1; then
@@ -125,6 +153,29 @@ expect_failure missing-reader-summary 'expected #summary to be the one data-read
 expect_failure missing-status 'expected one non-empty current-status block'
 expect_failure missing-next 'expected one non-empty next-action statement'
 expect_failure missing-meaning 'expected one non-empty meaning summary item'
+expect_failure missing-outcome 'expected one non-empty outcome summary item'
+expect_failure missing-summary-next 'expected one non-empty next summary item'
 expect_failure missing-technical 'expected at least one details.technical disclosure'
+expect_failure empty-technical 'expected every details.technical disclosure to be non-empty'
+expect_failure missing-scope 'expected one #scope section'
+expect_failure empty-heading 'expected one non-empty h1 conclusion'
+expect_failure empty-thesis 'expected one non-empty thesis statement'
+expect_failure empty-next-after-voids 'expected one non-empty next-action statement'
+expect_failure status-after-summary 'current-status block must appear before the first section'
+
+void_elements="$test_root/void-elements.html"
+cp "$valid" "$void_elements"
+python3 - "$void_elements" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text()
+text = text.replace('Ready for the next gate', 'Ready<br>for the next gate', 1)
+text = text.replace('The complete delivery passed its independent review.',
+                    'The complete delivery<br>passed its independent review.', 1)
+path.write_text(text)
+PY
+python3 "$validator" "$void_elements" | grep -Fq 'html-deliverable: valid'
 
 printf 'html-deliverables tests: ok\n'
