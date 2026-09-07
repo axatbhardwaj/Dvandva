@@ -12,6 +12,8 @@ test -x "$validator"
 test -f "$template"
 grep -Fq 'allow_implicit_invocation: true' \
   "$repo_root/skills/html-deliverables/agents/openai.yaml"
+grep -Fq 'document-wide singletons' "$repo_root/skills/html-deliverables/SKILL.md"
+grep -Fq '`aria-label` specifically' "$repo_root/skills/html-deliverables/SKILL.md"
 
 valid="$test_root/valid.html"
 python3 - "$template" "$valid" <<'PY'
@@ -127,6 +129,11 @@ elif case in {"empty-scope", "empty-evidence", "empty-decisions", "empty-plan"}:
     text = re.sub(rf'<section id="{section_id}">.*?</section>',
                   f'<section id="{section_id}"></section>', text,
                   count=1, flags=re.S)
+elif case in {"boilerplate-scope", "boilerplate-evidence", "boilerplate-decisions", "boilerplate-plan"}:
+    section_id = case.removeprefix("boilerplate-")
+    text = re.sub(rf'<section id="{section_id}">.*?</section>',
+                  f'<section id="{section_id}"><p class="eyebrow">Label only</p><h2>Heading only</h2></section>',
+                  text, count=1, flags=re.S)
 elif case == "empty-heading":
     text = text.replace('<h1>One checkpoint has passed independent review</h1>',
                         '<h1></h1>', 1)
@@ -198,8 +205,22 @@ elif case in {"label-only-outcome", "label-only-meaning", "label-only-summary-ne
     kind = case.removeprefix("label-only-")
     if kind == "summary-next":
         kind = "next"
-    pattern = rf'(<article class="summary-item" data-summary="{kind}">\s*<h3>.*?</h3>)\s*<p>.*?</p>'
-    text = re.sub(pattern, r'\1\n      <p></p>', text, count=1, flags=re.S)
+    pattern = rf'(<article class="summary-item" data-summary="{kind}">\s*<h3>.*?</h3>)\s*<p[^>]*>.*?</p>'
+    text = re.sub(pattern, r'\1\n      <p data-summary-answer></p>', text, count=1, flags=re.S)
+elif case in {"unmarked-p-outcome", "unmarked-strong-meaning", "missing-answer-marker", "duplicate-answer-marker"}:
+    if case == "unmarked-p-outcome":
+        replacement = '<article class="summary-item" data-summary="outcome"><p>What changed?</p></article>'
+        text = re.sub(r'<article class="summary-item" data-summary="outcome">.*?</article>',
+                      replacement, text, count=1, flags=re.S)
+    elif case == "unmarked-strong-meaning":
+        replacement = '<article class="summary-item" data-summary="meaning"><strong>Why it matters</strong></article>'
+        text = re.sub(r'<article class="summary-item" data-summary="meaning">.*?</article>',
+                      replacement, text, count=1, flags=re.S)
+    elif case == "missing-answer-marker":
+        text = text.replace(' data-summary-answer', '', 1)
+    else:
+        text = text.replace('<p data-summary-answer>',
+                            '<p data-summary-answer></p><p data-summary-answer>', 1)
 elif case in {"duplicate-meaning", "duplicate-summary-next"}:
     kind = case.removeprefix("duplicate-")
     if kind == "summary-next":
@@ -260,10 +281,14 @@ expect_failure missing-scope 'expected one #scope section'
 expect_failure missing-evidence 'expected one #evidence section'
 expect_failure missing-decisions 'expected one #decisions section'
 expect_failure missing-plan 'expected one #plan section'
-expect_failure empty-scope 'expected #scope section to contain non-empty content'
-expect_failure empty-evidence 'expected #evidence section to contain non-empty content'
-expect_failure empty-decisions 'expected #decisions section to contain non-empty content'
-expect_failure empty-plan 'expected #plan section to contain non-empty content'
+expect_failure empty-scope 'expected #scope section to contain non-empty body content'
+expect_failure empty-evidence 'expected #evidence section to contain non-empty body content'
+expect_failure empty-decisions 'expected #decisions section to contain non-empty body content'
+expect_failure empty-plan 'expected #plan section to contain non-empty body content'
+expect_failure boilerplate-scope 'expected #scope section to contain non-empty body content'
+expect_failure boilerplate-evidence 'expected #evidence section to contain non-empty body content'
+expect_failure boilerplate-decisions 'expected #decisions section to contain non-empty body content'
+expect_failure boilerplate-plan 'expected #plan section to contain non-empty body content'
 expect_failure empty-heading 'expected one non-empty h1 conclusion'
 expect_failure empty-thesis 'expected one non-empty thesis statement'
 expect_failure empty-next-after-voids 'expected one non-empty next-action statement'
@@ -282,6 +307,10 @@ expect_failure technical-only-has-label 'expected every details.technical disclo
 expect_failure label-only-outcome 'expected one non-empty outcome summary answer'
 expect_failure label-only-meaning 'expected one non-empty meaning summary answer'
 expect_failure label-only-summary-next 'expected one non-empty next summary answer'
+expect_failure unmarked-p-outcome 'expected one designated outcome summary answer'
+expect_failure unmarked-strong-meaning 'expected one designated meaning summary answer'
+expect_failure missing-answer-marker 'expected one designated outcome summary answer'
+expect_failure duplicate-answer-marker 'duplicate outcome summary answers'
 expect_failure duplicate-outcome 'duplicate outcome summary items' 'summary items must be inside #summary'
 expect_failure duplicate-meaning 'duplicate meaning summary items' 'summary items must be inside #summary'
 expect_failure duplicate-summary-next 'duplicate next summary items' 'summary items must be inside #summary'

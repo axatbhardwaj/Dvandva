@@ -35,17 +35,19 @@ reduced-motion rule. Map the subject's opposing actors or states to `--vadi` and
 
 For both new pages and revisions, preserve this exact answer-first structure:
 
-- Put one non-empty `h1`, one `.thesis`, and one `.status` before every
-  `section`. The status must state the current status in its own text, outside
-  its one nested `.next`; that action must say more than its static “Next:”
-  label.
+- Treat `h1`, `.thesis`, `.status`, and `.next` as document-wide singletons.
+  Put the non-empty `h1`, `.thesis`, and `.status` before every `section`. The
+  status must state the current status in its own text, outside its one nested
+  `.next`; that action must say more than its static “Next:” label.
 - Make `<section id="summary" data-reader-summary>` the first section and the
   only section carrying `data-reader-summary`. Inside it, include exactly one
   item for each of `data-summary="outcome"`, `data-summary="meaning"`, and
-  `data-summary="next"`. Each item must answer its prompt with non-empty body
-  text outside the item's heading.
+  `data-summary="next"`. Each item must contain exactly one
+  `[data-summary-answer]` element with the non-empty answer; a question heading
+  or unmarked label never counts as the answer.
 - Include exactly one section for each required depth layer: `#scope`,
-  `#evidence`, `#decisions`, and `#plan`, and give every section non-empty
+  `#evidence`, `#decisions`, and `#plan`, and give every section non-empty body
+  content. Its eyebrow, heading, and disclosure labels do not count as body
   content.
 - Include at least one `<details class="technical">` whose disclosed body has
   real content beyond its `summary` label.
@@ -54,7 +56,9 @@ Fill the metadata with a schema shaped as
 `dvandva.artifact.<artifact_type>.v1`, a matching `artifact_type`, title, ISO
 date, and exact source/checkpoint basis. Replace every placeholder. Each section
 opens with an eyebrow and a thesis-style `h2`. Draw structural ideas as inline,
-labelled SVG figures with captions; use prose to interpret them. End with a
+labelled SVG figures with captions; require an `aria-label` specifically on
+every `svg` (a `title`/`aria-labelledby` alternative does not
+satisfy this static contract), and interpret each figure in prose. End with a
 `.foot` stamp naming what the page reflects and its as-of checkpoint/version.
 
 Run `python3 <this-skill-directory>/scripts/validate.py <artifact.html>`, then

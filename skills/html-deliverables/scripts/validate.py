@@ -75,6 +75,7 @@ class ContractParser(HTMLParser):
         self.section_stack = []
         self.section_texts = {}
         self.active_section_texts = []
+        self.active_section_exclusions = []
         self.reader_summary_ids = []
         self.summary_item_locations = {}
         self.h1_before_sections = []
@@ -115,6 +116,30 @@ class ContractParser(HTMLParser):
             if not open_tags:
                 self.active_text_blocks.remove(capture)
 
+    def _extend_section_exclusions(self, tag):
+        if tag not in VOID_ELEMENTS:
+            for capture in self.active_section_exclusions:
+                capture.append(tag)
+
+    def _close_implicit_section_exclusions(self, tag, rules):
+        self.active_section_exclusions = [
+            capture for capture in self.active_section_exclusions
+            if tag not in rules.get(capture[0], set())
+        ]
+
+    def _end_section_exclusions(self, tag):
+        if tag == "section":
+            self.active_section_exclusions.clear()
+            return
+        for capture in list(self.active_section_exclusions):
+            if tag in capture:
+                matching_index = len(capture) - 1 - capture[::-1].index(tag)
+                del capture[matching_index:]
+            elif tag in IMPLICIT_END_CLOSE.get(capture[0], set()):
+                capture.clear()
+            if not capture:
+                self.active_section_exclusions.remove(capture)
+
     def handle_decl(self, decl):
         self.doctype |= decl.lower() == "doctype html"
 
@@ -123,6 +148,13 @@ class ContractParser(HTMLParser):
         classes = set(values.get("class", "").split())
         self._close_implicit_text_blocks(tag, IMPLICIT_START_CLOSE)
         self._extend_text_blocks(tag)
+        self._close_implicit_section_exclusions(tag, IMPLICIT_START_CLOSE)
+        self._extend_section_exclusions(tag)
+        if self.active_section_texts and (
+            "eyebrow" in classes
+            or tag in {"h1", "h2", "h3", "h4", "h5", "h6", "summary"}
+        ):
+            self.active_section_exclusions.append([tag])
         if "status" in classes:
             self._start_text_block("status", tag)
             self.status_before_sections |= not self.section_ids
@@ -144,17 +176,15 @@ class ContractParser(HTMLParser):
             self.summary_item_locations.setdefault(summary_kind, []).append(
                 any(is_summary for _, is_summary in self.section_stack)
             )
-        if tag in {"h1", "h2", "h3", "h4", "h5", "h6"}:
+        if "data-summary-answer" in values:
             summary_capture = next(
-                (
-                    capture for capture in reversed(self.active_text_blocks)
-                    if capture["kind"].startswith("summary:")
-                ),
+                (capture for capture in reversed(self.active_text_blocks)
+                 if capture["kind"].startswith("summary:")),
                 None,
             )
             if summary_capture is not None:
                 summary_kind = summary_capture["kind"].split(":", 1)[1]
-                self._start_text_block(f"summary-label:{summary_kind}", tag)
+                self._start_text_block(f"summary-answer:{summary_kind}", tag)
         if tag == "details" and "technical" in classes:
             self._start_text_block("technical", tag)
         if tag == "summary" and any(
@@ -188,6 +218,7 @@ class ContractParser(HTMLParser):
 
     def handle_endtag(self, tag):
         self._end_text_blocks(tag)
+        self._end_section_exclusions(tag)
         if tag == "section" and self.section_stack:
             self.section_stack.pop()
             self.active_section_texts.pop()
@@ -214,8 +245,9 @@ class ContractParser(HTMLParser):
             self.foot_text.append(data)
         if self.active_text_blocks:
             self.active_text_blocks[-1]["text"].append(data)
-        for section_text in self.active_section_texts:
-            section_text.append(data)
+        if not self.active_section_exclusions:
+            for section_text in self.active_section_texts:
+                section_text.append(data)
 
     def handle_comment(self, data):
         if data.strip().startswith("REQUIRED:"):
@@ -294,7 +326,7 @@ def validate(path):
         if section_count != 1:
             errors.append(f"expected one #{section_id} section")
         elif not "".join(parser.section_texts[section_id][0]).strip():
-            errors.append(f"expected #{section_id} section to contain non-empty content")
+            errors.append(f"expected #{section_id} section to contain non-empty body content")
     status_blocks = parser.text_blocks.get("status", [])
     if len(status_blocks) > 1:
         errors.append("duplicate current-status blocks")
@@ -318,7 +350,12 @@ def validate(path):
             errors.append(f"duplicate {kind} summary items")
         elif not items:
             errors.append(f"expected one non-empty {kind} summary item")
-        elif not "".join(items[0]).strip():
+        answers = parser.text_blocks.get(f"summary-answer:{kind}", [])
+        if len(answers) > 1:
+            errors.append(f"duplicate {kind} summary answers")
+        elif not answers:
+            errors.append(f"expected one designated {kind} summary answer")
+        elif not "".join(answers[0]).strip():
             errors.append(f"expected one non-empty {kind} summary answer")
         if False in parser.summary_item_locations.get(kind, []):
             summary_item_outside = True
