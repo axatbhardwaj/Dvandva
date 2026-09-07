@@ -1,5 +1,11 @@
 # AGENTS.md
 
+> **Retired.** Dvandva is retired: do not install it, reactivate it, or start a
+> run. The maintainer's replacement is a personal Astra-led
+> [Paseo](https://github.com/getpaseo/paseo) setup, not anything distributed by
+> this repository. Everything below is historical instruction preserved for
+> study; where it says "active", read "historical".
+
 ## Purpose
 
 > **Active v4 skills; retired v3 archive.** The final v3 crate release remains
