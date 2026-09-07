@@ -63,6 +63,7 @@ python3 "$validator" "$valid" | grep -Fq 'html-deliverable: valid'
 expect_failure() {
   local label="$1"
   local expected="$2"
+  local unexpected="${3:-}"
   local file="$test_root/$label.html"
   cp "$valid" "$file"
   python3 - "$file" "$label" <<'PY'
@@ -163,6 +164,25 @@ elif case == "heading-after-sections":
     text = text.replace(heading, '', 1)
     main_end = text.index('</main>')
     text = text[:main_end] + heading + text[main_end:]
+elif case == "status-only-has-next":
+    text = text.replace('<strong>Ready for the next gate</strong>', '<strong></strong>', 1)
+    text = text.replace(
+        '<p>The reviewer approved the exact staged checkpoint.</p>', '<p></p>', 1)
+elif case == "technical-only-has-label":
+    text = re.sub(r'<details class="technical">.*?</details>',
+                  '<details class="technical"><summary>Full source manifest</summary></details>',
+                  text, count=1, flags=re.S)
+elif case == "duplicate-outcome":
+    item = re.search(
+        r'    <article class="summary-item" data-summary="outcome">.*?</article>\n',
+        text, re.S).group(0)
+    text = text.replace(item, item + item, 1)
+elif case == "duplicate-next-action":
+    item = re.search(r'    <p class="next">.*?</p>\n', text, re.S).group(0)
+    text = text.replace(item, item + item, 1)
+elif case == "duplicate-heading":
+    item = re.search(r'  <h1>.*?</h1>\n', text, re.S).group(0)
+    text = text.replace(item, item + item, 1)
 path.write_text(text)
 PY
   if python3 "$validator" "$file" >"$test_root/$label.out" 2>&1; then
@@ -170,6 +190,10 @@ PY
     exit 1
   fi
   grep -Fq "$expected" "$test_root/$label.out"
+  if [[ -n "$unexpected" ]] && grep -Fq "$unexpected" "$test_root/$label.out"; then
+    printf 'expected %s not to report %s\n' "$label" "$unexpected" >&2
+    exit 1
+  fi
 }
 
 expect_failure bad-meta 'metadata date must use YYYY-MM-DD'
@@ -203,6 +227,11 @@ expect_failure omitted-next-close 'expected one non-empty next-action statement'
 expect_failure boilerplate-next 'expected one non-empty next-action statement'
 expect_failure summary-items-outside-summary 'summary items must be inside #summary'
 expect_failure heading-after-sections 'h1 conclusion must appear before the first section'
+expect_failure status-only-has-next 'expected one non-empty current-status block'
+expect_failure technical-only-has-label 'expected every details.technical disclosure to be non-empty'
+expect_failure duplicate-outcome 'duplicate outcome summary items' 'summary items must be inside #summary'
+expect_failure duplicate-next-action 'duplicate next-action statements'
+expect_failure duplicate-heading 'duplicate h1 conclusions'
 
 void_elements="$test_root/void-elements.html"
 cp "$valid" "$void_elements"

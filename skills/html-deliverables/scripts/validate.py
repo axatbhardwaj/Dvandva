@@ -83,27 +83,34 @@ class ContractParser(HTMLParser):
 
     def _extend_text_blocks(self, tag):
         if tag not in VOID_ELEMENTS:
-            for open_tags in self.active_text_blocks.values():
-                open_tags.append(tag)
+            for capture in self.active_text_blocks:
+                capture["open_tags"].append(tag)
 
     def _close_implicit_text_blocks(self, tag, rules):
-        for kind, open_tags in list(self.active_text_blocks.items()):
-            if tag in rules.get(open_tags[0], set()):
-                del self.active_text_blocks[kind]
+        self.active_text_blocks = [
+            capture for capture in self.active_text_blocks
+            if tag not in rules.get(capture["open_tags"][0], set())
+        ]
 
     def _start_text_block(self, kind, tag):
-        self.text_blocks.setdefault(kind, []).append([])
-        self.active_text_blocks[kind] = [tag]
+        text = []
+        self.text_blocks.setdefault(kind, []).append(text)
+        self.active_text_blocks.append({
+            "kind": kind,
+            "open_tags": [tag],
+            "text": text,
+        })
 
     def _end_text_blocks(self, tag):
-        for kind, open_tags in list(self.active_text_blocks.items()):
+        for capture in list(self.active_text_blocks):
+            open_tags = capture["open_tags"]
             if tag in open_tags:
                 matching_index = len(open_tags) - 1 - open_tags[::-1].index(tag)
                 del open_tags[matching_index:]
             elif tag in IMPLICIT_END_CLOSE.get(open_tags[0], set()):
                 open_tags.clear()
             if not open_tags:
-                del self.active_text_blocks[kind]
+                self.active_text_blocks.remove(capture)
 
     def handle_decl(self, decl):
         self.doctype |= decl.lower() == "doctype html"
@@ -133,6 +140,11 @@ class ContractParser(HTMLParser):
             )
         if tag == "details" and "technical" in classes:
             self._start_text_block("technical", tag)
+        if tag == "summary" and any(
+            capture["kind"] == "technical"
+            for capture in self.active_text_blocks
+        ):
+            self._start_text_block("technical-label", tag)
         if tag == "h1":
             self._start_text_block("h1", tag)
             self.h1_before_sections.append(not self.section_ids)
@@ -181,8 +193,8 @@ class ContractParser(HTMLParser):
             self.figure["caption"].append(data)
         if self.foot_depth:
             self.foot_text.append(data)
-        for kind in self.active_text_blocks:
-            self.text_blocks[kind][-1].append(data)
+        if self.active_text_blocks:
+            self.active_text_blocks[-1]["text"].append(data)
 
     def handle_comment(self, data):
         if data.strip().startswith("REQUIRED:"):
@@ -260,23 +272,29 @@ def validate(path):
         if parser.section_ids.count(section_id) != 1:
             errors.append(f"expected one #{section_id} section")
     status_blocks = parser.text_blocks.get("status", [])
-    if len(status_blocks) != 1 or not "".join(status_blocks[0]).strip():
+    if len(status_blocks) > 1:
+        errors.append("duplicate current-status blocks")
+    elif not status_blocks or not "".join(status_blocks[0]).strip():
         errors.append("expected one non-empty current-status block")
     elif not parser.status_before_sections:
         errors.append("current-status block must appear before the first section")
     next_blocks = parser.text_blocks.get("next", [])
     next_text = "".join(next_blocks[0]) if len(next_blocks) == 1 else ""
     next_text = re.sub(r"^\s*next\s*:\s*", "", next_text, flags=re.I)
-    if len(next_blocks) != 1 or not next_text.strip():
+    if len(next_blocks) > 1:
+        errors.append("duplicate next-action statements")
+    elif not next_blocks or not next_text.strip():
         errors.append("expected one non-empty next-action statement")
-    summary_items_are_inside = True
+    summary_item_outside = False
     for kind in ("outcome", "meaning", "next"):
         items = parser.text_blocks.get(f"summary:{kind}", [])
-        if len(items) != 1 or not "".join(items[0]).strip():
+        if len(items) > 1:
+            errors.append(f"duplicate {kind} summary items")
+        elif not items or not "".join(items[0]).strip():
             errors.append(f"expected one non-empty {kind} summary item")
-        if parser.summary_item_locations.get(kind) != [True]:
-            summary_items_are_inside = False
-    if not summary_items_are_inside:
+        if False in parser.summary_item_locations.get(kind, []):
+            summary_item_outside = True
+    if summary_item_outside:
         errors.append("summary items must be inside #summary")
     technical_blocks = parser.text_blocks.get("technical", [])
     if not technical_blocks:
@@ -284,7 +302,9 @@ def validate(path):
     elif any(not "".join(block).strip() for block in technical_blocks):
         errors.append("expected every details.technical disclosure to be non-empty")
     heading_blocks = parser.text_blocks.get("h1", [])
-    if len(heading_blocks) != 1 or not "".join(heading_blocks[0]).strip():
+    if len(heading_blocks) > 1:
+        errors.append("duplicate h1 conclusions")
+    elif not heading_blocks or not "".join(heading_blocks[0]).strip():
         errors.append("expected one non-empty h1 conclusion")
     elif parser.h1_before_sections != [True]:
         errors.append("h1 conclusion must appear before the first section")

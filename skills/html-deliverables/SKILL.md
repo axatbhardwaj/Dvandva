@@ -33,6 +33,19 @@ figure overflow, answer-first markers, technical-detail disclosure, and
 reduced-motion rule. Map the subject's opposing actors or states to `--vadi` and
 `--prat`; reserve `--seal`, `--stop`, and `--human` for their stated meanings.
 
+For both new pages and revisions, preserve this exact answer-first structure:
+
+- Put one non-empty `h1`, one `.thesis`, and one `.status` before every
+  `section`. The status contains one `.next` whose action says more than its
+  static “Next:” label.
+- Make `<section id="summary" data-reader-summary>` the first section. Inside
+  it, include exactly one item for each of `data-summary="outcome"`,
+  `data-summary="meaning"`, and `data-summary="next"`.
+- Include exactly one section for each required depth layer: `#scope`,
+  `#evidence`, `#decisions`, and `#plan`.
+- Include at least one `<details class="technical">` whose disclosed body has
+  real content beyond its `summary` label.
+
 Fill the metadata with a schema shaped as
 `dvandva.artifact.<artifact_type>.v1`, a matching `artifact_type`, title, ISO
 date, and exact source/checkpoint basis. Replace every placeholder. Each section
